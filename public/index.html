@@ -1239,6 +1239,7 @@
               <input type="file" accept=".mp3,.mp4,.m4a,.wav,.ogg,.webm,.flac,.aac" style="display:none" onchange="importarAudio(event)">
             </label>
             <span id="audio-file-nome" style="font-size:12px;font-family:var(--mono);color:var(--muted)"></span>
+            <button id="btn-cancelar-audio" onclick="cancelarAudio()" style="display:none;align-items:center;gap:6px;padding:7px 12px;background:rgba(255,92,92,0.1);border:1px solid rgba(255,92,92,0.3);border-radius:8px;cursor:pointer;font-size:11px;font-weight:600;font-family:var(--sans);color:var(--danger)">✕ Cancelar</button>
           </div>
 
           <!-- Progresso da transcrição -->
@@ -1570,6 +1571,7 @@ function showPanel(name) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('panel-' + name).classList.add('active');
+  try { localStorage.setItem('sh_active_panel', name); } catch(e) {}
   const m = PAGE_META[name] || {};
   document.getElementById('topbar-title').textContent = m.title || name;
   document.getElementById('topbar-sub').textContent = m.sub || '';
@@ -2237,83 +2239,103 @@ async function verificarServidor() {
   } catch(e) { return false; }
 }
 
+// ── AssemblyAI Transcription (keys from server) ──
+const ASSEMBLYAI_KEY = 'PROXY'; // handled server-side
+let OPENAI_API_KEY = '';
+fetch('/api/config').then(r => r.json()).then(d => { OPENAI_API_KEY = d.openai || ''; }).catch(() => {});
+let audioAbortController = null;
+let pollTimer = null;
+
 async function importarAudio(event) {
   const file = event.target.files[0];
   if (!file) return;
+  processarArquivoAudio(file);
+}
 
+function cancelarAudio() {
+  if (audioAbortController) { audioAbortController.abort(); audioAbortController = null; }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  document.getElementById('audio-progress-wrap').style.display = 'none';
+  document.getElementById('audio-file-nome').textContent = '';
+  const btn = document.getElementById('btn-cancelar-audio');
+  if (btn) btn.style.display = 'none';
+  toast('Transcrição cancelada', 'warn');
+}
+
+function setAudioProgress(pct, label, log) {
+  document.getElementById('audio-progress-bar').style.width = pct + '%';
+  document.getElementById('audio-progress-pct').textContent = Math.round(pct) + '%';
+  document.getElementById('audio-progress-label').textContent = label;
+  if (log !== undefined) document.getElementById('audio-log').textContent = log;
+}
+
+async function processarArquivoAudio(file) {
+  audioAbortController = new AbortController();
   document.getElementById('audio-file-nome').textContent = file.name;
   document.getElementById('audio-progress-wrap').style.display = 'block';
-  document.getElementById('audio-progress-label').textContent = 'Verificando servidor...';
-  document.getElementById('audio-progress-pct').textContent = '0%';
-  document.getElementById('audio-progress-bar').style.width = '0%';
+  const cancelBtn = document.getElementById('btn-cancelar-audio');
+  if (cancelBtn) cancelBtn.style.display = 'inline-flex';
   document.getElementById('audio-log').textContent = '';
 
-  const servidorAtivo = await verificarServidor();
-  
-  if (!servidorAtivo) {
-    document.getElementById('audio-progress-label').textContent = 'Servidor não encontrado';
-    document.getElementById('audio-log').innerHTML = '<span style="color:var(--danger)">Abra o terminal e rode:<br><strong>python3 ~/Documents/Condominio\ Service/watcher.py</strong></span>';
-    toast('Inicie o watcher no terminal primeiro', 'err');
-    return;
+  try {
+    const tamanhoMB = (file.size / 1024 / 1024).toFixed(1);
+    setAudioProgress(5, 'Enviando arquivo (' + tamanhoMB + 'MB)...', 'Conectando ao AssemblyAI...');
+
+    const uploadResp = await fetch('/api/assemblyai/upload', {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream' },
+      body: file,
+      signal: audioAbortController?.signal
+    });
+
+    if (!uploadResp.ok) throw new Error('Falha no upload: ' + uploadResp.status);
+    const { upload_url } = await uploadResp.json();
+    setAudioProgress(20, 'Arquivo enviado! Iniciando transcrição...', 'Upload concluído ✓');
+
+    const transcriptResp = await fetch('/api/assemblyai/transcript', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ audio_url: upload_url, language_code: 'pt', punctuate: true, format_text: true }),
+      signal: audioAbortController?.signal
+    });
+
+    if (!transcriptResp.ok) throw new Error('Falha ao iniciar transcrição: ' + transcriptResp.status);
+    const { id } = await transcriptResp.json();
+    setAudioProgress(25, 'Transcrevendo... (pode levar alguns minutos)', 'ID: ' + id);
+
+    let progresso = 25;
+    await new Promise((resolve, reject) => {
+      pollTimer = setInterval(async () => {
+        if (audioAbortController?.signal.aborted) { clearInterval(pollTimer); reject(new Error('Cancelado')); return; }
+        try {
+          const pollResp = await fetch('/api/assemblyai/transcript/' + id);
+          const result = await pollResp.json();
+          if (result.status === 'completed') {
+            clearInterval(pollTimer);
+            setAudioProgress(100, 'Transcrição concluída!', result.text?.slice(0, 200));
+            document.getElementById('ata-transcricao').value = result.text || '';
+            if (cancelBtn) cancelBtn.style.display = 'none';
+            toast('Transcrição concluída! ' + (result.text?.length || 0) + ' caracteres', 'ok');
+            resolve();
+          } else if (result.status === 'error') {
+            clearInterval(pollTimer);
+            reject(new Error(result.error || 'Erro na transcrição'));
+          } else {
+            progresso = Math.min(progresso + 2, 90);
+            setAudioProgress(progresso, 'Transcrevendo... (' + result.status + ')', 'Aguardando AssemblyAI...');
+          }
+        } catch(e) { if (e.name !== 'AbortError') console.error(e); }
+      }, 3000);
+    });
+
+  } catch(e) {
+    if (e.name === 'AbortError' || e.message === 'Cancelado') return;
+    setAudioProgress(0, 'Erro: ' + e.message, '');
+    document.getElementById('audio-log').innerHTML = '<span style="color:var(--danger)">' + e.message + '</span>';
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    toast('Erro: ' + e.message, 'err');
   }
-
-  document.getElementById('audio-progress-label').textContent = 'Enviando áudio...';
-  document.getElementById('audio-progress-pct').textContent = '5%';
-  document.getElementById('audio-progress-bar').style.width = '5%';
-
-  // Lê arquivo como base64
-  const reader = new FileReader();
-  reader.onload = async function(e) {
-    const b64 = e.target.result.split(',')[1];
-    try {
-      const resp = await fetch(HUB_SERVER + '/transcrever', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({nome: file.name, audio: b64})
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        toast('Áudio enviado! Transcrevendo...', 'ok');
-        iniciarMonitoramentoStatus();
-      } else {
-        toast('Erro: ' + data.erro, 'err');
-      }
-    } catch(e) {
-      toast('Erro ao enviar áudio: ' + e.message, 'err');
-    }
-  };
-  reader.readAsDataURL(file);
 }
-
-function iniciarMonitoramentoStatus() {
-  clearInterval(audioProgressTimer);
-  audioProgressTimer = setInterval(async () => {
-    try {
-      const r = await fetch(HUB_SERVER + '/status');
-      const s = await r.json();
-      
-      document.getElementById('audio-progress-bar').style.width = s.pct + '%';
-      document.getElementById('audio-progress-pct').textContent = s.pct + '%';
-      document.getElementById('audio-progress-label').textContent = s.msg || 'Processando...';
-      document.getElementById('audio-log').textContent = s.msg || '';
-      
-      if (s.erro) {
-        clearInterval(audioProgressTimer);
-        document.getElementById('audio-progress-label').textContent = 'Erro: ' + s.erro;
-        document.getElementById('audio-log').style.color = 'var(--danger)';
-        toast('Erro na transcrição: ' + s.erro, 'err');
-      }
-      
-      if (!s.ativa && s.pct === 100 && s.texto) {
-        clearInterval(audioProgressTimer);
-        document.getElementById('ata-transcricao').value = s.texto;
-        document.getElementById('audio-progress-label').textContent = 'Transcrição concluída!';
-        toast('Transcrição carregada com sucesso!', 'ok');
-      }
-    } catch(e) {}
-  }, 1500);
-}
-
 function abrirPastaTranscricoes() {
   const input = document.createElement('input');
   input.type = 'file';
@@ -2364,6 +2386,16 @@ async function searchCondominioDash(query) {
     dd.innerHTML = '<div class="cond-loading">Erro: ' + e.message + '</div>';
   }
 }
+
+// Restaura painel ativo ao carregar
+(function restorePanel() {
+  try {
+    const saved = localStorage.getItem('sh_active_panel');
+    if (saved && document.getElementById('panel-' + saved)) {
+      setTimeout(() => showPanel(saved), 50);
+    }
+  } catch(e) {}
+})();
 
 document.addEventListener('click', function(e) {
   var dd = document.getElementById('dash-cond-dropdown');
@@ -2451,12 +2483,80 @@ document.addEventListener('click', e => {
 // ============================================================
 let pautaCount = 1;
 
+async function extrairTextoPdf(arrayBuffer) {
+  if (!window.pdfjsLib) {
+    await new Promise((res, rej) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let texto = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    texto += content.items.map(it => it.str).join(' ') + '\n';
+  }
+  return texto.trim();
+}
+
+function anexarPdfPauta(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const item = input.closest('.pauta-item');
+  const nomeEl = item.querySelector('.pauta-pdf-nome');
+  const label = input.closest('label');
+  const reader = new FileReader();
+  reader.onload = async function(e) {
+    if (nomeEl) { nomeEl.textContent = 'Lendo PDF...'; nomeEl.style.display = 'inline'; }
+    if (label) { label.style.borderColor = 'var(--gs-blue)'; label.style.color = 'var(--gs-blue)'; }
+    try {
+      const textoPdf = await extrairTextoPdf(e.target.result);
+      const resp = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + OPENAI_API_KEY },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini', max_tokens: 1500,
+          messages: [{ role: 'user', content: 'Leia este edital de assembleia e retorne APENAS JSON puro sem markdown:\n{"campos":{"condominio":"nome","data":"DD/MM/AAAA","sindico":"nome","local":"local","tipo":"AGO ou AGE ou RCO","pauta":"assunto principal"},"resumo":"pontos importantes"}\nRetorne SOMENTE o JSON.\n\nTEXTO:\n' + textoPdf.slice(0, 4000) }]
+        })
+      });
+      const data = await resp.json();
+      const textoRaw = data.choices?.[0]?.message?.content || '{}';
+      const textoLimpo = textoRaw.replace(/```json|```/g, '').trim();
+      let campos = {}, resumo = '';
+      try { const p = JSON.parse(textoLimpo); campos = p.campos || {}; resumo = p.resumo || ''; } catch(e) { resumo = textoRaw; }
+      if (campos.condominio && !document.getElementById('ata-cond').value) document.getElementById('ata-cond').value = campos.condominio;
+      if (campos.data && !document.getElementById('ata-data').value) document.getElementById('ata-data').value = campos.data;
+      if (campos.sindico && !document.getElementById('ata-sindico').value) document.getElementById('ata-sindico').value = campos.sindico;
+      if (campos.local && !document.getElementById('ata-local').value) document.getElementById('ata-local').value = campos.local;
+      if (campos.tipo) { const sel = document.getElementById('ata-tipo'); for (let opt of sel.options) { if (opt.value.toLowerCase().includes(campos.tipo.toLowerCase().slice(0,3))) { sel.value = opt.value; break; } } }
+      const inputTexto = item.querySelector('input[type=text]');
+      if (campos.pauta && inputTexto && !inputTexto.value) inputTexto.value = campos.pauta;
+      input.dataset.pdfTexto = resumo;
+      if (nomeEl) { nomeEl.textContent = '📎 ' + file.name; }
+      toast('PDF lido — campos preenchidos automaticamente!', 'ok');
+    } catch(err) {
+      input.dataset.pdfTexto = '[PDF: ' + file.name + ']';
+      if (nomeEl) nomeEl.textContent = '📎 ' + file.name;
+      toast('PDF anexado: ' + file.name, 'warn');
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 function addPauta() {
   pautaCount++;
   const div = document.createElement('div');
   div.className = 'pauta-item';
-  div.innerHTML = `<input type="text" placeholder="Item de pauta ${pautaCount}"
-    style="flex:1;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+  div.style.cssText = 'flex-wrap:wrap;gap:6px;align-items:flex-start';
+  div.innerHTML = `<input type="text" placeholder="Item de pauta ${pautaCount}" style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+    <label style="display:inline-flex;align-items:center;gap:5px;padding:8px 11px;background:var(--bg3);border:1px dashed var(--border2);border-radius:8px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--muted);white-space:nowrap">
+      📎 PDF<input type="file" accept="application/pdf" style="display:none" onchange="anexarPdfPauta(this)">
+    </label>
+    <span class="pauta-pdf-nome" style="font-size:10px;font-family:var(--mono);color:var(--gs-blue);display:none;align-self:center"></span>
     <button class="pauta-remove" onclick="removePauta(this)">×</button>`;
   document.getElementById('pauta-list').appendChild(div);
 }
