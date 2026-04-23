@@ -3755,9 +3755,8 @@ showPanel = function(name) {
 </script>
 <script>
 function cpGetCondominioAtivo() {
-  if (cpCondAtivo) return cpCondAtivo;
-  if (window.cpCondominios && window.cpCondominios.length > 0) return window.cpCondominios[0];
-  return null;
+  if (cpCondAtivo) return cpCondominios.find(x => x.id === cpCondAtivo) || cpCondominios[0];
+  return cpCondominios[0] || null;
 }
 
 function statusCor(s) {
