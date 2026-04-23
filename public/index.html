@@ -3611,7 +3611,7 @@ async function cpAnexarFoto(demandaId, tipo, event) {
   reader.readAsDataURL(file);
 }
 
-
+async function cpAplicarUpdate(data) {
   const c = cpCondAtivo || cpCondominios[0];
   if (!c) { alert('Nenhum condomínio ativo.'); return; }
   let atualizados = 0;
