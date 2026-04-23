@@ -3783,7 +3783,16 @@ function gerarRelatorioSindico() {
   const c = cpGetCondominioAtivo();
   if (!c) { alert('Nenhum condomínio selecionado.'); return; }
   const hoje = new Date().toLocaleDateString('pt-BR');
-  const todas = [...(c.prioridades||[]), ...(c.demandas||[])];
+
+  // Deduplica — usa só demandas, remove duplicatas por título
+  const todasRaw = [...(c.demandas||[]), ...(c.prioridades||[])];
+  const vistas = new Set();
+  const todas = todasRaw.filter(d => {
+    if (vistas.has(d.titulo)) return false;
+    vistas.add(d.titulo);
+    return true;
+  });
+
   const conc = todas.filter(d => d.status === 'Concluído').length;
   const pend = todas.filter(d => d.status === 'Pendente').length;
   const and  = todas.filter(d => d.status === 'Em andamento').length;
@@ -3799,8 +3808,8 @@ function gerarRelatorioSindico() {
     <tr>
       <td>${l.nome}</td>
       <td style="color:${l.status==='Concluído'?'#22c55e':'#f59e0b'};font-weight:600">${l.status}</td>
-      <td>${l.tecnico}</td>
-      <td>${l.dataLaudo}</td>
+      <td>${l.tecnico||'—'}</td>
+      <td>${l.data_laudo||l.dataLaudo||'—'}</td>
       <td style="color:${l.enviado?'#22c55e':'#f59e0b'}">${l.enviado?'✓ Enviado':'Pendente'}</td>
     </tr>`).join('');
 
@@ -3877,7 +3886,16 @@ function gerarRelatorioInterno() {
   const c = cpGetCondominioAtivo();
   if (!c) { alert('Nenhum condomínio selecionado.'); return; }
   const hoje = new Date().toLocaleDateString('pt-BR');
-  const todas = [...(c.prioridades||[]), ...(c.demandas||[])];
+
+  // Deduplica por título
+  const todasRaw = [...(c.demandas||[]), ...(c.prioridades||[])];
+  const vistas = new Set();
+  const todas = todasRaw.filter(d => {
+    if (vistas.has(d.titulo)) return false;
+    vistas.add(d.titulo);
+    return true;
+  });
+
   const total = todas.length;
   const conc = todas.filter(d=>d.status==='Concluído').length;
   const prog = total ? Math.round((conc/total)*100) : 0;
@@ -3897,8 +3915,8 @@ function gerarRelatorioInterno() {
     <tr>
       <td>${l.nome}</td>
       <td style="color:${l.status==='Concluído'?'#22c55e':'#f59e0b'};font-weight:600">${l.status}</td>
-      <td>${l.tecnico}</td>
-      <td>${l.dataLaudo}</td>
+      <td>${l.tecnico||'—'}</td>
+      <td>${l.data_laudo||l.dataLaudo||'—'}</td>
       <td style="color:${l.enviado?'#22c55e':'#ef4444'}">${l.enviado?'✓ Enviado':'❌ Não enviado'}</td>
     </tr>`).join('');
 
