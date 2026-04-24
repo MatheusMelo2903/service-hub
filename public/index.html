@@ -3978,6 +3978,9 @@ async function dcSalvarDemandas() {
   } catch(_) {}
 
   const agora = new Date().toISOString();
+  // Sem `return=minimal`: supaFetch devolve a linha inserida (truthy) em sucesso ou null em erro.
+  // Isso permite distinguir falha por item em vez de sempre mostrar toast verde.
+  let ok = 0, fail = 0;
   for (let i = 0; i < dcDemandasPreview.length; i++) {
     const d = dcDemandasPreview[i];
     baseNum += 1;
@@ -3997,11 +4000,18 @@ async function dcSalvarDemandas() {
       origem_texto_bruto: textoBruto,
       processado_em: agora
     };
-    await supaFetch('demandas', { method: 'POST', prefer: 'return=minimal', body: JSON.stringify(payload) });
+    const r = await supaFetch('demandas', { method: 'POST', body: JSON.stringify(payload) });
+    if (r) ok++; else fail++;
   }
-  toast(dcDemandasPreview.length + ' demanda(s) salva(s) com sucesso', 'ok');
-  dcDescartarPreview();
-  document.getElementById('dc-texto-bruto').value = '';
+  if (fail === 0) {
+    toast(ok + ' demanda(s) salva(s) com sucesso', 'ok');
+    dcDescartarPreview();
+    document.getElementById('dc-texto-bruto').value = '';
+  } else if (ok === 0) {
+    toast('Erro ao salvar demandas. Veja o console (provável migração pendente).', 'err');
+  } else {
+    toast(ok + ' salva(s), ' + fail + ' falharam. Veja o console.', 'warn');
+  }
 }
 
 // Auto-select Camarás when panel is opened
