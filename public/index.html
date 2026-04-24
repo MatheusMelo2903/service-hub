@@ -915,6 +915,9 @@
       <span class="nav-icon">✓</span> Tarefas
       <span class="nav-badge">em breve</span>
     </div>
+    <div class="nav-item" onclick="showPanel('demandas-cliente')">
+      <span class="nav-icon">📞</span> Demandas de Cliente
+    </div>
   </nav>
 
   <div class="sidebar-footer">
@@ -1422,6 +1425,82 @@
       </div>
     </div>
 
+    <!-- DEMANDAS DE CLIENTE -->
+    <div class="panel" id="panel-demandas-cliente">
+      <div class="card">
+        <div class="card-header" style="align-items:center;gap:16px;flex-wrap:wrap">
+          <span class="card-title">Demandas de Cliente</span>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
+            <label style="font-size:12px;color:var(--muted);font-family:var(--mono)">Condomínio</label>
+            <select id="dc-select-cond" style="min-width:240px;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:var(--mono);font-size:12px">
+              <option value="">— selecione —</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="tabs">
+          <div class="tab active" onclick="setTab(this,'tab-dc-caixa')">Caixa de Entrada</div>
+          <div class="tab" onclick="setTab(this,'tab-dc-painel')">Painel</div>
+          <div class="tab" onclick="setTab(this,'tab-dc-geradores')">Geradores</div>
+          <div class="tab" onclick="setTab(this,'tab-dc-clientes')">Clientes</div>
+        </div>
+
+        <!-- Caixa de Entrada -->
+        <div id="tab-dc-caixa">
+          <div class="form-group">
+            <label>Cole o texto solto com as demandas</label>
+            <textarea id="dc-texto-bruto" rows="12"
+              placeholder="Ex: síndico ligou pedindo pra trocar lâmpadas queimadas do hall principal, virou urgência. e a portaria reclamou que o portão tá abrindo sozinho de novo. precisa chamar a manutenção pra ver isso essa semana."
+              style="width:100%;font-family:var(--mono);font-size:13px;line-height:1.6;padding:14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);resize:vertical"></textarea>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn btn-primary" id="dc-btn-processar" onclick="dcProcessarTextoIA()">
+              <span>✨</span> Processar com IA
+            </button>
+          </div>
+
+          <div id="dc-extraidas-container" style="display:none;margin-top:28px">
+            <div class="card-header" style="margin-bottom:12px">
+              <span class="card-title">Demandas extraídas</span>
+              <span id="dc-extraidas-count" style="font-size:11px;color:var(--muted);font-family:var(--mono)"></span>
+            </div>
+            <div id="dc-extraidas-list" style="display:flex;flex-direction:column;gap:12px"></div>
+            <div style="display:flex;gap:8px;margin-top:16px">
+              <button class="btn btn-primary" onclick="dcSalvarDemandas()">✓ Confirmar e Salvar</button>
+              <button class="btn btn-ghost" onclick="dcDescartarPreview()">✕ Descartar</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Painel (placeholder Etapa 2/3) -->
+        <div id="tab-dc-painel" style="display:none">
+          <div class="empty" style="background:var(--bg3);border-radius:var(--radius);padding:40px;text-align:center">
+            <div class="empty-icon">📊</div>
+            <div class="empty-title">Em construção — Etapa 2/3</div>
+            <div class="empty-sub">painel consolidado de demandas por cliente</div>
+          </div>
+        </div>
+
+        <!-- Geradores (placeholder Etapa 2/3) -->
+        <div id="tab-dc-geradores" style="display:none">
+          <div class="empty" style="background:var(--bg3);border-radius:var(--radius);padding:40px;text-align:center">
+            <div class="empty-icon">⚙</div>
+            <div class="empty-title">Em construção — Etapa 2/3</div>
+            <div class="empty-sub">geradores de atas, laudos e relatórios a partir das demandas</div>
+          </div>
+        </div>
+
+        <!-- Clientes (placeholder Etapa 2/3) -->
+        <div id="tab-dc-clientes" style="display:none">
+          <div class="empty" style="background:var(--bg3);border-radius:var(--radius);padding:40px;text-align:center">
+            <div class="empty-icon">👥</div>
+            <div class="empty-title">Em construção — Etapa 2/3</div>
+            <div class="empty-sub">visão por cliente com histórico agregado</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- ATAS CONDOMINIAIS -->
     <div class="panel" id="panel-atas">
       <div class="card">
@@ -1812,6 +1891,7 @@ const PAGE_META = {
   atas:          { title: 'Atas Condominiais', sub: 'geração automática com IA' },
   condominios:   { title: 'Condomínios', sub: 'gestão de demandas por condomínio' },
   consumo:       { title: 'Leitura de Consumo', sub: 'fotos de medidores → Superlógica' },
+  'demandas-cliente': { title: 'Demandas de Cliente', sub: 'caixa de entrada, painel, geradores, clientes' },
 };
 
 function showPanel(name) {
@@ -3743,6 +3823,187 @@ async function cpGerarApresentacao() {
 // Init condomínios tab data
 document.getElementById('cp-top-data').textContent = new Date().toLocaleDateString('pt-BR', {day:'2-digit',month:'long',year:'numeric'});
 cpRenderSidebar();
+
+// ============================================================
+// DEMANDAS DE CLIENTE — Caixa de Entrada (Etapa 1)
+// ============================================================
+let dcDemandasPreview = [];
+
+async function dcCarregarCondominios() {
+  const sel = document.getElementById('dc-select-cond');
+  if (!sel) return;
+  const atual = sel.value;
+  try {
+    const conds = await supaFetch('condominios?select=id,nome&order=nome');
+    if (!conds) { toast('Erro ao carregar condomínios', 'err'); return; }
+    sel.innerHTML = '<option value="">— selecione —</option>' +
+      conds.map(c => `<option value="${dcEscape(c.id)}">${dcEscape(c.nome)}</option>`).join('');
+    if (atual) sel.value = atual;
+  } catch(e) {
+    toast('Erro ao carregar condomínios: ' + e.message, 'err');
+  }
+}
+
+async function dcProcessarTextoIA() {
+  const texto = (document.getElementById('dc-texto-bruto').value || '').trim();
+  const condId = document.getElementById('dc-select-cond').value;
+  if (!condId) { toast('Selecione um condomínio antes', 'warn'); return; }
+  if (!texto)  { toast('Cole o texto das demandas primeiro', 'warn'); return; }
+
+  const btn = document.getElementById('dc-btn-processar');
+  const labelOrig = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div> Processando...';
+
+  try {
+    const system = 'Você extrai demandas de gestão condominial a partir de texto solto em português brasileiro. Retorne APENAS um JSON array válido, sem markdown, sem comentários, sem texto adicional. Cada item segue o schema: {"titulo": string curto, "prio": "Alta"|"Média"|"Baixa", "sit": string descrevendo a situação atual, "acao": string com a próxima ação, "resp": string com responsável (ou "A definir"), "prazo": "YYYY-MM-DD" ou "A definir"}. Separe demandas distintas em itens separados. Se não houver demandas claras, retorne [].';
+
+    const resp = await fetch('/api/claude/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 2000,
+        system,
+        messages: [{ role: 'user', content: texto }]
+      })
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      console.error('[dc] /api/claude/messages falhou:', resp.status, err);
+      toast('Erro do proxy Claude (' + resp.status + '). Veja console.', 'err');
+      return;
+    }
+
+    const data = await resp.json();
+    const raw = (data.content?.[0]?.text || '').trim();
+    let arr = [];
+    try { arr = JSON.parse(raw); }
+    catch(_) {
+      // Parse defensivo: extrai primeiro array JSON do texto (caso venha embrulhado)
+      const m = raw.match(/\[[\s\S]*\]/);
+      if (m) { try { arr = JSON.parse(m[0]); } catch(__) {} }
+    }
+
+    if (!Array.isArray(arr) || arr.length === 0) {
+      console.warn('[dc] resposta bruta sem array:', raw);
+      toast('Nenhuma demanda identificada no texto', 'warn');
+      return;
+    }
+
+    dcDemandasPreview = arr.map(d => ({
+      titulo: (d && d.titulo) || '',
+      prio:   ['Alta','Média','Baixa'].includes(d && d.prio) ? d.prio : 'Média',
+      sit:    (d && d.sit)   || '',
+      acao:   (d && d.acao)  || '',
+      resp:   (d && d.resp)  || 'A definir',
+      prazo:  (d && typeof d.prazo === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.prazo)) ? d.prazo : ''
+    }));
+    dcRenderizarPreview(dcDemandasPreview);
+  } catch(e) {
+    console.error('[dc] erro no processamento:', e);
+    toast('Erro ao processar: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = labelOrig;
+  }
+}
+
+function dcRenderizarPreview(demandas) {
+  const cont  = document.getElementById('dc-extraidas-container');
+  const list  = document.getElementById('dc-extraidas-list');
+  const count = document.getElementById('dc-extraidas-count');
+  count.textContent = demandas.length + ' ite' + (demandas.length === 1 ? 'm' : 'ns');
+  list.innerHTML = demandas.map((d, i) => `
+    <div class="card" style="padding:16px">
+      <div style="display:grid;grid-template-columns:1fr 150px;gap:12px;margin-bottom:10px">
+        <div class="form-group" style="margin:0">
+          <label>Título</label>
+          <input type="text" value="${dcEscape(d.titulo)}" oninput="dcDemandasPreview[${i}].titulo=this.value">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Prioridade</label>
+          <select oninput="dcDemandasPreview[${i}].prio=this.value">
+            <option${d.prio==='Alta' ?' selected':''}>Alta</option>
+            <option${d.prio==='Média'?' selected':''}>Média</option>
+            <option${d.prio==='Baixa'?' selected':''}>Baixa</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:10px">
+        <label>Situação atual</label>
+        <textarea rows="2" style="width:100%;font-family:var(--mono);font-size:12px;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);resize:vertical" oninput="dcDemandasPreview[${i}].sit=this.value">${dcEscape(d.sit)}</textarea>
+      </div>
+      <div class="form-group" style="margin-bottom:10px">
+        <label>Próxima ação</label>
+        <textarea rows="2" style="width:100%;font-family:var(--mono);font-size:12px;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);resize:vertical" oninput="dcDemandasPreview[${i}].acao=this.value">${dcEscape(d.acao)}</textarea>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 180px;gap:12px">
+        <div class="form-group" style="margin:0">
+          <label>Responsável</label>
+          <input type="text" value="${dcEscape(d.resp)}" oninput="dcDemandasPreview[${i}].resp=this.value">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label>Prazo</label>
+          <input type="date" value="${d.prazo || ''}" oninput="dcDemandasPreview[${i}].prazo=this.value">
+        </div>
+      </div>
+    </div>
+  `).join('');
+  cont.style.display = 'block';
+}
+
+function dcEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function dcDescartarPreview() {
+  dcDemandasPreview = [];
+  document.getElementById('dc-extraidas-container').style.display = 'none';
+}
+
+async function dcSalvarDemandas() {
+  const condId     = document.getElementById('dc-select-cond').value;
+  const textoBruto = (document.getElementById('dc-texto-bruto').value || '').trim();
+  if (!condId) { toast('Selecione um condomínio', 'warn'); return; }
+  if (!dcDemandasPreview.length) { toast('Nada para salvar', 'warn'); return; }
+
+  // Próximo num: max(num)+1 do condomínio. Inclui prioridades e demandas (mesma tabela).
+  let baseNum = 0;
+  try {
+    const existentes = await supaFetch('demandas?condominio_id=eq.' + encodeURIComponent(condId) + '&select=num&order=num.desc&limit=1');
+    if (existentes && existentes.length) baseNum = Number(existentes[0].num) || 0;
+  } catch(_) {}
+
+  const agora = new Date().toISOString();
+  for (let i = 0; i < dcDemandasPreview.length; i++) {
+    const d = dcDemandasPreview[i];
+    baseNum += 1;
+    const payload = {
+      id: 'dc_' + Date.now() + '_' + i,
+      num: baseNum,
+      prio: d.prio,
+      status: 'aberta',
+      titulo: d.titulo,
+      sit: d.sit,
+      acao: d.acao,
+      resp: d.resp,
+      prazo: d.prazo || 'A definir',
+      tipo: 'demanda',
+      condominio_id: condId,
+      fonte: 'ia-caixa-entrada',
+      origem_texto_bruto: textoBruto,
+      processado_em: agora
+    };
+    await supaFetch('demandas', { method: 'POST', prefer: 'return=minimal', body: JSON.stringify(payload) });
+  }
+  toast(dcDemandasPreview.length + ' demanda(s) salva(s) com sucesso', 'ok');
+  dcDescartarPreview();
+  document.getElementById('dc-texto-bruto').value = '';
+}
+
 // Auto-select Camarás when panel is opened
 const _origShowPanel = showPanel;
 showPanel = function(name) {
@@ -3750,6 +4011,9 @@ showPanel = function(name) {
   if (name === 'condominios') {
     cpRenderSidebar();
     if (!cpCondAtivo && cpCondominios.length) cpSelecionarCond(cpCondominios[0].id);
+  }
+  if (name === 'demandas-cliente') {
+    dcCarregarCondominios();
   }
 };
 </script>
