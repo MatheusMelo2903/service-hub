@@ -15,7 +15,7 @@ SPA HTML único para gestão condominial. Hospedado no Railway, dados no Supabas
 git clone https://github.com/MatheusMelo2903/service-hub.git
 cd service-hub
 npm install
-export ANTHROPIC_API_KEY="sk-ant-..."
+export ANTHROPIC_KEY="sk-ant-..."
 export ASSEMBLYAI_KEY="..."
 export OPENAI_KEY="..."
 npm start
@@ -28,7 +28,7 @@ Servir via `python3 -m http.server` só funciona pra revisão visual — os endp
 
 | Variável | Usada por |
 |---|---|
-| `ANTHROPIC_API_KEY` | `/api/claude/messages` (Demandas de Cliente, extração de texto) |
+| `ANTHROPIC_KEY` | `/api/claude/messages` (Demandas de Cliente, extração de texto) |
 | `ASSEMBLYAI_KEY` | `/api/assemblyai/*` (Atas Condominiais, transcrição) |
 | `OPENAI_KEY` | `/api/config` (exposta no cliente) |
 
