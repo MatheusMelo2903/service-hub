@@ -3751,12 +3751,16 @@ function cpFecharModal() {
   document.getElementById('cp-inp-sindico').value = '';
 }
 
-function cpSalvarCondominio() {
+async function cpSalvarCondominio() {
   const nome = document.getElementById('cp-inp-nome').value.trim();
   const sindico = document.getElementById('cp-inp-sindico').value.trim();
   if (!nome || !sindico) return alert('Preencha todos os campos.');
   const id = nome.toLowerCase().replace(/[^a-z0-9]/g,'').substring(0,20) + Date.now();
-  cpCondominios.push({ id, nome, sindico, criadoEm: new Date().toLocaleDateString('pt-BR'), laudos: [], historico: [], prioridades: [], demandas: [] });
+  const criadoEm = new Date().toLocaleDateString('pt-BR');
+  // Sem prefer:return=minimal — devolve a linha em sucesso e null em erro.
+  const inserted = await supaFetch('condominios', { method: 'POST', body: JSON.stringify({ id, nome, sindico, criado_em: criadoEm }) });
+  if (!inserted) { toast('Erro ao salvar condomínio no Supabase', 'err'); return; }
+  cpCondominios.push({ id, nome, sindico, criadoEm, laudos: [], historico: [], prioridades: [], demandas: [] });
   cpSalvar();
   cpFecharModal();
   cpRenderSidebar();
