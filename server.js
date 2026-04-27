@@ -7,7 +7,9 @@ const ASSEMBLYAI_KEY = process.env.ASSEMBLYAI_KEY || '';
 const OPENAI_KEY = process.env.OPENAI_KEY || '';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY || '';
 
-app.use(express.static(path.join(__dirname, 'public')));
+// index: false impede que o express.static sirva index.html automaticamente para "/"
+// assim as rotas explícitas abaixo controlam o que aparece em cada caminho
+app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 app.get('/api/config', (req, res) => {
   res.json({ openai: OPENAI_KEY });
@@ -44,5 +46,12 @@ app.post('/api/claude/messages', express.json({limit:'10mb'}), (req, res) => {
   pr.write(body); pr.end();
 });
 
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+// Rota raiz: serve a landing page ServiceZone
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
+
+// Rota do sistema principal, acessada a partir do botão Entrar na landing
+app.get('/hub', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+
+// Qualquer rota desconhecida cai na landing, não no sistema
+app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
 app.listen(PORT, () => console.log('Service Hub porta ' + PORT));
