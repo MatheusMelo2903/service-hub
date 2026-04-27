@@ -4,16 +4,11 @@ const https = require('https');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const ASSEMBLYAI_KEY = process.env.ASSEMBLYAI_KEY || '';
-const OPENAI_KEY = process.env.OPENAI_KEY || '';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY || '';
 
 // index: false impede que o express.static sirva index.html automaticamente para "/"
 // assim as rotas explícitas abaixo controlam o que aparece em cada caminho
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
-
-app.get('/api/config', (req, res) => {
-  res.json({ openai: OPENAI_KEY });
-});
 
 app.post('/api/assemblyai/upload', express.raw({type:'*/*', limit:'5gb'}), (req, res) => {
   const opts = { hostname:'api.assemblyai.com', path:'/v2/upload', method:'POST', headers:{'authorization':ASSEMBLYAI_KEY,'content-type':'application/octet-stream','content-length':req.body.length} };

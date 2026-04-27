@@ -4,6 +4,19 @@ Registro cronológico de tarefas concluídas. Entrada mais recente no topo.
 
 ---
 
+## 2026-04-27 — Remoção de tokens expostos no frontend
+
+- Rota pública /api/config deletada (vazava OPENAI_KEY em JSON)
+- Constante ASSEMBLYAI_KEY_DIRECT e lógica IS_LOCAL removidas do index.html
+- Função processFilesConsumo migrada de chamada direta à API Anthropic para o proxy /api/claude/messages (estava quebrada em produção)
+- Comentário em inglês traduzido para português
+- Pendência pós-deploy: revogar chave AssemblyAI vazada e atualizar ASSEMBLYAI_KEY no Railway
+
+Arquivos alterados: `server.js`, `public/index.html`
+Implementado por: subagente programador
+
+---
+
 ## 2026-04-27 — Melhorias visuais da landing ServiceZone
 
 - Logo SVG oficial do Grupo Service substituiu a recriação amadora (com correção de bug tipográfico no path original)

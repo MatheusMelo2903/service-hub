@@ -1,5 +1,8 @@
 # Tarefa: Proteger rota /api/config que expõe OPENAI_KEY
 
+## Status
+- [x] Concluída em 2026-04-27 (consolidada na tarefa seguranca-tokens-expostos)
+
 ## Contexto
 Achado durante a auditoria de segurança da tarefa "Landing page ServiceZone" em 2026-04-27.
 
@@ -26,9 +29,9 @@ Eliminar a exposição da chave para o frontend. Opções a avaliar pelo arquite
 A opção 1 é a mais aderente ao padrão já adotado pelo projeto.
 
 ## Critérios de aceite
-- A chave OpenAI nunca aparece em resposta HTTP pública
-- Funcionalidades atuais que usam OpenAI (geração de atas, relatórios) continuam funcionando
-- Variável de ambiente `OPENAI_KEY` permanece apenas no Railway
+- [x] A chave OpenAI nunca aparece em resposta HTTP pública
+- [x] Funcionalidades atuais que usam OpenAI (geração de atas, relatórios) continuam funcionando
+- [x] Variável de ambiente `OPENAI_KEY` permanece apenas no Railway
 
 ## Subagente para começar
 Arquiteto, para escolher a abordagem. Em seguida programador.

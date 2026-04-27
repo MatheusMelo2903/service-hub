@@ -2600,18 +2600,10 @@ function audioDrop(e) {
 // TRANSCRIÇÃO VIA ASSEMBLYAI — qualquer tamanho, qualquer formato
 // Upload direto → poll até concluir → retorna texto completo
 // ============================================================
-// Detecta ambiente: se aberto via file:// ou domínio sem proxy, usa chamada direta
-// Se aberto via Railway (proxy disponível), usa proxy do servidor
-const IS_LOCAL = location.protocol === 'file:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-const ASSEMBLYAI_KEY_DIRECT = 'ca39770f7b1d490e8330b0cda616948a';
-
-// URLs dinâmicas: proxy Railway quando disponível, API direta como fallback
-const AAI_UPLOAD_URL = IS_LOCAL ? 'https://api.assemblyai.com/v2/upload' : '/api/assemblyai/upload';
-const AAI_TRANSCRIPT_URL = IS_LOCAL ? 'https://api.assemblyai.com/v2/transcript' : '/api/assemblyai/transcript';
-const AAI_POLL_BASE = IS_LOCAL ? 'https://api.assemblyai.com/v2/transcript/' : '/api/assemblyai/transcript/';
-
-// Key: direta quando local, "PROXY" quando no Railway (servidor substitui)
-const ASSEMBLYAI_KEY = IS_LOCAL ? ASSEMBLYAI_KEY_DIRECT : 'PROXY';
+// URLs do proxy AssemblyAI servido pelo backend (a chave fica no env ASSEMBLYAI_KEY no Railway)
+const AAI_UPLOAD_URL = '/api/assemblyai/upload';
+const AAI_TRANSCRIPT_URL = '/api/assemblyai/transcript';
+const AAI_POLL_BASE = '/api/assemblyai/transcript/';
 
 let audioAbortController = null;
 let pollTimer = null;
@@ -2652,7 +2644,6 @@ async function processarArquivoAudio(file) {
 
     const uploadResp = await fetch(AAI_UPLOAD_URL, {
       method: 'POST',
-      headers: { 'authorization': ASSEMBLYAI_KEY },
       body: file,
       signal: audioAbortController?.signal
     });
@@ -2664,7 +2655,7 @@ async function processarArquivoAudio(file) {
     // PASSO 2: Inicia transcrição
     const transcriptResp = await fetch(AAI_TRANSCRIPT_URL, {
       method: 'POST',
-      headers: { 'authorization': ASSEMBLYAI_KEY, 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         audio_url: upload_url,
         language_code: 'pt',
@@ -2686,9 +2677,7 @@ async function processarArquivoAudio(file) {
       pollTimer = setInterval(async () => {
         if (audioAbortController?.signal.aborted) { clearInterval(pollTimer); reject(new Error('Cancelado')); return; }
         try {
-          const pollResp = await fetch(AAI_POLL_BASE + id, {
-            headers: { 'authorization': ASSEMBLYAI_KEY }
-          });
+          const pollResp = await fetch(AAI_POLL_BASE + id);
           const result = await pollResp.json();
 
           if (result.status === 'completed') {
@@ -2702,7 +2691,7 @@ async function processarArquivoAudio(file) {
             clearInterval(pollTimer);
             reject(new Error(result.error || 'Erro na transcrição'));
           } else {
-            // still processing
+            // ainda processando
             progresso = Math.min(progresso + 2, 90);
             setAudioProgress(progresso, 'Transcrevendo... (' + result.status + ')', 'Aguardando AssemblyAI...');
           }
@@ -3082,7 +3071,7 @@ async function processFilesConsumo(files) {
     // Extrai leitura via Claude
     try {
       const b64 = await fileToBase64(file);
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      const resp = await fetch('/api/claude/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

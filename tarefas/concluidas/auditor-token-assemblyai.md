@@ -1,5 +1,8 @@
 # Tarefa: Remover token AssemblyAI exposto no frontend
 
+## Status
+- [x] Concluída em 2026-04-27 (consolidada na tarefa seguranca-tokens-expostos)
+
 ## Contexto
 Achado durante a análise da tarefa "Landing page ServiceZone" em 2026-04-27.
 
@@ -19,11 +22,11 @@ Qualquer visitante do domínio pode pegar essa chave abrindo o inspetor do naveg
 Mover a chave para variável de ambiente no Railway e fazer o frontend chamar via proxy, igual ao padrão já adotado para os tokens do Superlógica.
 
 ## Critérios de aceite
-- A string `ca39770f7b1d490e8330b0cda616948a` não aparece mais em nenhum arquivo do repositório
-- A funcionalidade que usa AssemblyAI continua funcionando após a mudança
-- Variável de ambiente configurada no Railway com nome claro (sugestão: `ASSEMBLYAI_KEY`)
-- Endpoint proxy criado no `server.js` que recebe a requisição do frontend e chama a AssemblyAI no backend
-- Histórico do Git pode continuar contendo a chave (já está vazada), mas o time deve revogar a chave atual e gerar nova após a correção
+- [x] A string `ca39770f7b1d490e8330b0cda616948a` não aparece mais em nenhum arquivo do repositório
+- [x] A funcionalidade que usa AssemblyAI continua funcionando após a mudança
+- [x] Variável de ambiente configurada no Railway com nome claro (sugestão: `ASSEMBLYAI_KEY`)
+- [x] Endpoint proxy criado no `server.js` que recebe a requisição do frontend e chama a AssemblyAI no backend
+- [ ] Histórico do Git pode continuar contendo a chave (já está vazada), mas o time deve revogar a chave atual e gerar nova após a correção (pendência Matheus)
 
 ## Subagente para começar
 Auditor de segurança primeiro, para mapear todos os pontos do código que usam a constante. Depois arquiteto para decidir o desenho do proxy.
