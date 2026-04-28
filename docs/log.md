@@ -6,13 +6,13 @@ Registro cronológico de tarefas concluídas. Entrada mais recente no topo.
 
 ## 2026-04-27 — Otimização do fluxo de subagentes
 
-- Promove arquiteto, programador, revisor, auditor-seguranca, validador para Opus (documentador, professor, estrategista permanecem em Sonnet)
+- Todos os 8 subagentes permanecem em Sonnet (arquiteto, programador, revisor, auditor-seguranca, validador, documentador, professor, estrategista). A promoção pra Opus de 5 deles foi tentada e revertida no mesmo dia (justificativa abaixo).
 - Programador ganha regra obrigatória de leitura de arquivos em blocos (menos de 1500 linhas: ler inteiro; 1500 a 5000: blocos de 200; mais de 5000: blocos de 500; nunca ler 5 a 20 linhas sem contexto; busca pontual via grep mais bloco de 50 linhas ao redor)
-- Documentador ganha checklist de auto-validação obrigatória com 5 passos numerados no final do system prompt
+- Documentador ganha checklist de auto-validação obrigatória com 5 passos numerados no final do system prompt (git diff --stat HEAD~1, reler tarefa, date +%Y-%m-%d, reler changelog, corrigir antes de mover)
 - CLAUDE.md: fluxo paralelizado (revisor e auditor-seguranca rodam no mesmo turno com dois Agent tool uses simultâneos), nota sobre leitura em blocos em "Padrões de código", seção nova "Cache de contexto" explicando que o caching é automático e que ordem de seções importa
-- Backups .bak em ~/.claude/agents/ ficam até validação da próxima tarefa pelo Matheus
+- Justificativa da reversão de Opus pra Sonnet: a meta da tarefa era ganho de tempo. Promover pra Opus iria contra essa meta sem evidência observada de ganho de qualidade nas últimas 3 tarefas, que entregaram bem em Sonnet.
 
-Arquivos alterados: `CLAUDE.md`, `~/.claude/agents/arquiteto.md`, `~/.claude/agents/programador.md`, `~/.claude/agents/revisor.md`, `~/.claude/agents/auditor-seguranca.md`, `~/.claude/agents/validador.md`, `~/.claude/agents/documentador.md`
+Arquivos alterados: `CLAUDE.md`, `~/.claude/agents/programador.md` (regra de blocos), `~/.claude/agents/documentador.md` (auto-validação)
 Implementado por: subagente programador
 
 ---

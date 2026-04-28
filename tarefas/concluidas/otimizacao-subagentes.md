@@ -3,6 +3,22 @@
 ## Status
 - [x] Concluída em 2026-04-27
 
+## Resultado final aplicado
+
+Decisão do Matheus durante a execução: reverter a promoção pra Opus dos 5 subagentes críticos (arquiteto, programador, revisor, auditor-seguranca, validador). Estado final: TODOS os 8 subagentes em Sonnet, que era o estado anterior à tarefa e o que entregou as 3 tarefas anteriores com qualidade comprovada.
+
+Justificativa registrada: a meta desta tarefa era ganho de tempo no ciclo. Subir pra Opus iria contra essa meta sem evidência observada de ganho de qualidade. Mantém o que estava funcionando.
+
+Mudanças preservadas (que continuam aplicadas no estado final):
+- Paralelização revisor + auditor-seguranca formalizada no CLAUDE.md (passos antes sequenciais 5 e 7 viraram um único passo paralelo no mesmo turno)
+- Regra de leitura de arquivos em blocos no `~/.claude/agents/programador.md`, com 5 linhas incluindo a regra de busca pontual via grep + bloco de 50 linhas
+- Auto-validação obrigatória de 5 passos no FINAL do `~/.claude/agents/documentador.md` (git diff --stat HEAD~1, reler tarefa, date, reler changelog, corrigir antes de mover)
+- Seção nova "Cache de contexto" no CLAUDE.md explicando que o prompt caching é automático no Claude Code e que ordem de seções importa
+- Linha em "Padrões de código" do CLAUDE.md referenciando a regra de blocos do programador
+
+Mudança removida na reversão:
+- Frontmatter `model: opus` em arquiteto, programador, revisor, auditor-seguranca, validador. Os 5 voltaram pra `model: sonnet`. Documentador, professor, estrategista nunca foram promovidos, ficaram em Sonnet o tempo todo.
+
 ## Objetivo
 Acelerar o ciclo de cada tarefa sem perder qualidade. Hoje cada tarefa passa por arquiteto, programador, revisor, auditor, validador e documentador em sequência. Algumas etapas podem rodar em paralelo, alguns subagentes desperdiçam contexto, e o documentador às vezes deixa passar inconsistências.
 
