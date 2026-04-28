@@ -944,6 +944,8 @@
 
     <!-- DASHBOARD -->
     <div class="panel active" id="panel-dashboard">
+<button onclick="dashAbrirModalNovoCondominio()" style="display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:#3B9AC7;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:16px;">+ Novo Condominio</button>
+
 
       <div class="card" style="margin-bottom:20px;background:linear-gradient(135deg,rgba(200,240,96,0.06),rgba(200,240,96,0.02));border-color:rgba(59,154,199,0.12)">
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
@@ -2374,10 +2376,13 @@ async function enviarDespesas() {
 async function enviarUnidades() {
   if (!state.config.appToken) { toast('Configure os tokens da API primeiro', 'err'); return; }
   const condId = state.config.condId;
-  if (!condId) { toast('Configure o ID do condomínio', 'err'); return; }
+  if (!condId) { toast('Configure o ID do condominio', 'err'); return; }
 
   const processed = state.unidades.processed;
-  if (!processed || !processed.length) { toast('Carregue uma planilha primeiro', 'err'); return; }
+  if (!processed || processed.length === 0) {
+    toast('Nenhuma unidade processada para enviar', 'err');
+    return;
+  }
 
   state.unidades.importing = true;
   state.unidades.shouldStop = false;
@@ -2389,132 +2394,125 @@ async function enviarUnidades() {
   const btnEnviar    = document.querySelector('[onclick="enviarUnidades()"]');
   const btnParar     = document.getElementById('btn-parar-uni');
 
-  progressWrap.style.display = 'block';
-  logDiv.style.display = 'block';
-  logDiv.innerHTML = '';
-  statusFinal.style.display = 'none';
+  if (progressWrap) progressWrap.style.display = 'block';
+  if (logDiv) { logDiv.style.display = 'block'; logDiv.innerHTML = ''; }
+  if (statusFinal) statusFinal.style.display = 'none';
   if (btnEnviar) btnEnviar.disabled = true;
   if (btnParar) btnParar.style.display = 'inline-flex';
 
-  const hdr = document.createElement('div');
-  hdr.style.cssText = 'padding:8px 0;color:var(--gs-blue);font-weight:600;border-bottom:1px solid var(--border);margin-bottom:6px;font-family:var(--mono);font-size:12px';
-  hdr.textContent = '▶ Iniciando importação paralela de ' + processed.length + ' unidades (10 simultâneas)...';
-  logDiv.appendChild(hdr);
+  const proxy      = 'https://superlogica-proxy-production.up.railway.app';
+  const appToken   = state.config.appToken;
+  const accessToken = state.config.accessToken;
+  const headers    = {
+    'Content-Type': 'application/json',
+    'app_token': appToken,
+    'access_token': accessToken
+  };
 
-  let ok = 0, err = 0, done = 0;
-  const BATCH = 10; // 10 unidades simultâneas
+  const total   = processed.length;
+  let sucesso   = 0;
+  let falhas    = 0;
+  const LOTE    = 10;
+  const DELAY   = 100;
 
-  async function enviarUmaUnidade(u) {
-    if (state.unidades.shouldStop) return { ok: false, parou: true };
-    try {
-      // PASSO 1: POST sem contatos (ID_TIPOCONTATO_TCON obrigatório no nível raiz)
-      const p1 = new URLSearchParams();
-      p1.set('ID_CONDOMINIO_COND',        condId);
-      p1.set('ST_UNIDADE_UNI',            u.ST_UNIDADE_UNI);
-      p1.set('ST_BLOCO_UNI',              u.ST_BLOCO_UNI || '');
-      p1.set('ID_TIPOCONTATO_TCON',       '3');
-      p1.set('FL_FORMADERECEBIMENTO_UNI', '1');
-
-      const r1   = await apiPost('/unidades/post', p1.toString());
-      const d1   = await r1.json();
-      const item = Array.isArray(d1) ? d1[0] : d1;
-
-      if (!item || item.status === '500' || item.status === 500) {
-        addLog(logDiv, u._unidadeRaw + ': erro POST — ' + (item?.msg || r1.status), 'err');
-        return { ok: false };
-      }
-
-      const idUnidade = item.id_unidade_uni;
-      const idContato = item.id_contato_con;
-
-      // PASSO 2: PUT com dados do proprietário usando IDs retornados
-      const p2 = new URLSearchParams();
-      p2.set('ID_CONDOMINIO_COND',              condId);
-      p2.set('ID_UNIDADE_UNI',                  idUnidade);
-      p2.set('contatos[0][ID_CONTATO_CON]',     idContato);
-      p2.set('contatos[0][FL_PROPRIETARIO_CON]','1');
-      if (u.prop_nome)     p2.set('contatos[0][ST_NOME_CON]',     u.prop_nome);
-      if (u.prop_cpf)      p2.set('contatos[0][ST_CPF_CON]',      u.prop_cpf);
-      if (u.prop_rg)       p2.set('contatos[0][ST_RG_CON]',       u.prop_rg);
-      if (u.prop_email)    p2.set('contatos[0][ST_EMAIL_CON]',     u.prop_email);
-      // Telefone: só dígitos, sem formatação
-      const fmtTel = t => t ? t.replace(/\D/g, '') : '';
-      const cel = fmtTel(u.prop_cel || u.prop_fone);
-      const fix = u.prop_cel ? fmtTel(u.prop_fone) : '';
-      if (cel) p2.set('contatos[0][ST_TELEFONE_CON]', cel);
-      if (fix) p2.set('contatos[0][ST_TELEFONE_CON2]', fix);
-
-      const urlPut = (state.config.proxy||'').replace(/\/$/, '') + '/v2/condor/unidades/post';
-      await fetch(urlPut, {
-        method: 'PUT',
-        headers: { 'Content-Type':'application/x-www-form-urlencoded', 'app_token':state.config.appToken, 'access_token':state.config.accessToken },
-        body: p2.toString()
-      });
-
-      addLog(logDiv, u._unidadeRaw + (u.prop_nome ? ' — ' + u.prop_nome : '') + ': ✓', 'ok');
-      return { ok: true };
-    } catch(e) {
-      addLog(logDiv, u._unidadeRaw + ': ' + e.message, 'err');
-      return { ok: false };
-    }
+  function log(msg, tipo) {
+    if (!logDiv) return;
+    const cor = tipo === 'ok' ? '#2DAE72' : tipo === 'err' ? '#E03A3A' : '#8892A4';
+    logDiv.innerHTML += `<div style="color:${cor};font-size:12px;margin:2px 0">${msg}</div>`;
+    logDiv.scrollTop = logDiv.scrollHeight;
   }
 
+  function atualizarBarra(feito) {
+    const pct = Math.round((feito / total) * 100);
+    if (progressBar) { progressBar.style.width = pct + '%'; progressBar.textContent = pct + '%'; }
+  }
 
-  // Processar em lotes paralelos
-  let parou = false;
-  for (let i = 0; i < processed.length; i += BATCH) {
-    if (state.unidades.shouldStop) { parou = true; break; }
+  async function processarUnidade(uni) {
+    const telefone = (uni.telefone || '').replace(/\D/g, '');
 
-    const lote = processed.slice(i, i + BATCH);
-    const resultados = await Promise.all(lote.map(u => enviarUmaUnidade(u)));
+    // PASSO 1: POST — cria a unidade
+    const bodyPost = {
+      ID_CONDOMINIO_COND:          condId,
+      ST_UNIDADE_UNI:              uni.unidade  || '',
+      ST_BLOCO_UNI:                uni.bloco    || '',
+      ID_TIPOCONTATO_TCON:         3,
+      FL_FORMADERECEBIMENTO_UNI:   1
+    };
 
-    resultados.forEach(r => {
-      done++;
-      if (r.ok) ok++;
-      else if (!r.parou) err++;
+    const resPost = await fetch(`${proxy}/v2/condor/unidades/post`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(bodyPost)
     });
 
-    // Atualizar barra de progresso
-    const pct = Math.round((done / processed.length) * 100);
-    progressBar.style.width = pct + '%';
+    if (!resPost.ok) {
+      const txt = await resPost.text().catch(() => resPost.status);
+      throw new Error(`POST falhou (${resPost.status}): ${txt}`);
+    }
 
-    // Pausa mínima entre lotes para não sobrecarregar
-    if (i + BATCH < processed.length && !state.unidades.shouldStop) {
-      await sleep(100);
+    const dataPost = await resPost.json();
+    const idUnidade = dataPost?.id_unidade_uni || dataPost?.[0]?.id_unidade_uni;
+    const idContato = dataPost?.id_contato_con || dataPost?.[0]?.id_contato_con;
+
+    if (!idUnidade) throw new Error('POST nao retornou id_unidade_uni');
+
+    // PASSO 2: PUT — atualiza com dados do proprietario
+    const bodyPut = {
+      ID_CONDOMINIO_COND: condId,
+      ID_UNIDADE_UNI:     idUnidade,
+      contatos: [{
+        ID_CONTATO_CON:       idContato || '',
+        FL_PROPRIETARIO_CON:  1,
+        ST_NOME_CON:          uni.nome     || '',
+        ST_CPF_CON:           uni.cpf      || '',
+        ST_EMAIL_CON:         uni.email    || '',
+        ST_TELEFONE_CON:      telefone
+      }]
+    };
+
+    const resPut = await fetch(`${proxy}/v2/condor/unidades/post`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(bodyPut)
+    });
+
+    if (!resPut.ok) {
+      const txt = await resPut.text().catch(() => resPut.status);
+      throw new Error(`PUT falhou (${resPut.status}): ${txt}`);
     }
   }
 
-  // Finalizar
+  // Processa em lotes de LOTE unidades simultaneas
+  for (let i = 0; i < total; i += LOTE) {
+    if (state.unidades.shouldStop) { log('Importacao interrompida pelo usuario.', 'warn'); break; }
+
+    const lote = processed.slice(i, i + LOTE);
+
+    await Promise.all(lote.map(async (uni, j) => {
+      const idx = i + j;
+      try {
+        await processarUnidade(uni);
+        sucesso++;
+        log(`[${idx + 1}/${total}] Unidade ${uni.unidade || idx + 1} enviada com sucesso`, 'ok');
+      } catch (err) {
+        falhas++;
+        log(`[${idx + 1}/${total}] Unidade ${uni.unidade || idx + 1} ERRO: ${err.message}`, 'err');
+      }
+      atualizarBarra(sucesso + falhas);
+    }));
+
+    if (i + LOTE < total) await new Promise(r => setTimeout(r, DELAY));
+  }
+
+  // Finalizacao
   state.unidades.importing = false;
   if (btnEnviar) btnEnviar.disabled = false;
   if (btnParar) btnParar.style.display = 'none';
-  progressBar.style.width = '100%';
+  if (statusFinal) statusFinal.style.display = 'block';
 
-  // Status final permanente
-  statusFinal.style.display = 'block';
-  if (parou) {
-    statusFinal.className = 'uni-status warn';
-    statusFinal.innerHTML = '<span>⏹</span><div><strong>Importação interrompida</strong><br>' + ok + ' unidades criadas antes de parar. ' + err + ' erros.</div>';
-  } else if (err === 0) {
-    statusFinal.className = 'uni-status success';
-    statusFinal.innerHTML = '<span>✓</span><div><strong>' + ok + ' unidades importadas com sucesso!</strong><br>Todos os dados foram enviados para o Superlógica.</div>';
-  } else {
-    statusFinal.className = 'uni-status error';
-    statusFinal.innerHTML = '<span>⚠</span><div><strong>' + ok + ' criadas, ' + err + ' com erro</strong><br>Verifique o log acima para detalhes.</div>';
-  }
-
-  state.stats.imports++;
-  state.stats.records += ok;
-  state.stats.errors += err;
-  document.getElementById('stat-imports').textContent = state.stats.imports;
-  document.getElementById('stat-records').textContent = state.stats.records;
-  document.getElementById('stat-errors').textContent = state.stats.errors;
-  addHistorico('Unidades: ' + ok + ' criadas' + (err ? ', ' + err + ' erros' : ' ✓'));
-
-  if (!parou) {
-    if (err === 0) toast(ok + ' unidades criadas com sucesso! ✓', 'ok');
-    else toast(ok + ' criadas, ' + err + ' com erro', 'warn');
-  }
+  const msg = `Importacao concluida: ${sucesso} sucesso / ${falhas} falha(s)`;
+  if (statusFinal) statusFinal.textContent = msg;
+  toast(msg, falhas === 0 ? 'ok' : 'warn');
 }
 function pararImportacaoUnidades() {
   state.unidades.shouldStop = true;
@@ -4237,6 +4235,87 @@ function gerarRelatorioInterno() {
   </body></html>`);
   w.document.close();
 }
+
+// ── Modal Novo Condominio no Dashboard ──────────────────────
+function dashAbrirModalNovoCondominio() {
+  document.getElementById('dash-modal-novo-cond').style.display = 'flex';
+}
+
+function dashFecharModalNovoCondominio() {
+  document.getElementById('dash-modal-novo-cond').style.display = 'none';
+  document.getElementById('dash-input-nome-cond').value = '';
+  document.getElementById('dash-input-id-superlogica').value = '';
+}
+
+function dashSalvarNovoCondominio() {
+  const nome = (document.getElementById('dash-input-nome-cond').value || '').trim();
+  const idSuperlogica = (document.getElementById('dash-input-id-superlogica').value || '').trim();
+
+  if (!nome) { toast('Informe o nome do condominio', 'err'); return; }
+  if (!idSuperlogica) { toast('Informe o ID Superlogica', 'err'); return; }
+
+  const novo = {
+    id:           Date.now(),
+    nome:         nome,
+    idSuperlogica: idSuperlogica,
+    sindico:      '',
+    demandas:     [],
+    prioridades:  [],
+    laudos:       [],
+    historico:    [],
+    assinaturas:  []
+  };
+
+  if (typeof cpCondominios !== 'undefined') {
+    cpCondominios.push(novo);
+  } else if (state && state.condominios) {
+    state.condominios.push(novo);
+  }
+
+  if (typeof salvarCondominios === 'function') salvarCondominios();
+
+  dashFecharModalNovoCondominio();
+  toast('Condominio "' + nome + '" cadastrado com sucesso!', 'ok');
+}
+// ────────────────────────────────────────────────────────────
+
 </script>
+
+<!-- Modal Novo Condominio no Dashboard -->
+<div id="dash-modal-novo-cond"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);
+            z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;padding:32px 28px;
+              width:100%;max-width:420px;box-shadow:0 8px 32px rgba(0,0,0,.18);">
+    <h3 style="margin:0 0 20px;font-size:16px;font-weight:700;color:#1E2533;">
+      Novo Condominio
+    </h3>
+    <label style="display:block;font-size:12px;color:#8892A4;margin-bottom:4px;">
+      Nome do Condominio
+    </label>
+    <input id="dash-input-nome-cond" type="text" placeholder="Ex: Residencial das Flores"
+           style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #D0EAF6;
+                  border-radius:8px;font-size:14px;color:#1E2533;margin-bottom:14px;outline:none;">
+    <label style="display:block;font-size:12px;color:#8892A4;margin-bottom:4px;">
+      ID Superlogica
+    </label>
+    <input id="dash-input-id-superlogica" type="text" placeholder="Ex: 167"
+           style="width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid #D0EAF6;
+                  border-radius:8px;font-size:14px;color:#1E2533;margin-bottom:22px;outline:none;">
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button onclick="dashFecharModalNovoCondominio()"
+              style="padding:9px 18px;border:1px solid #D0EAF6;background:#fff;
+                     border-radius:8px;font-size:13px;cursor:pointer;color:#8892A4;">
+        Cancelar
+      </button>
+      <button onclick="dashSalvarNovoCondominio()"
+              style="padding:9px 18px;border:none;background:#3B9AC7;color:#fff;
+                     border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">
+        Salvar
+      </button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>
