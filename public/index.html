@@ -2741,7 +2741,6 @@ async function searchCondominioDash(query) {
   if (query.length < 2) { dd.classList.remove('open'); return; }
   dd.classList.add('open');
   dd.innerHTML = '<div class="cond-loading">Buscando...</div>';
-        cpIniciarDropdownListener();
   try {
     // Busca nos condominios ja cadastrados no Supabase (cpCondominios)
     var local = (typeof cpCondominios !== 'undefined' ? cpCondominios : [])
@@ -2754,6 +2753,7 @@ async function searchCondominioDash(query) {
         var nome = (c.nome || 'Sem nome').replace(/"/g, '');
         return '<div class="cond-option" data-id="' + String(id) + '" data-nome="' + nome.replace(/"/g, '&quot;') + '"><span class="cond-name">' + nome + '</span><span class="cond-id">ID ' + id + '</span></div>';
       }).join('');
+      cpIniciarDropdownListener();
       return;
     }
     // Fallback: busca no Supabase direto
@@ -2764,6 +2764,7 @@ async function searchCondominioDash(query) {
         var nome = (c.nome || 'Sem nome').replace(/"/g, '');
         return '<div class="cond-option" data-id="' + String(id) + '" data-nome="' + nome.replace(/"/g, '&quot;') + '"><span class="cond-name">' + nome + '</span><span class="cond-id">ID ' + id + '</span></div>';
       }).join('');
+      cpIniciarDropdownListener();
       return;
     }
     dd.innerHTML = '<div class="cond-loading">Nenhum resultado</div>';
@@ -2790,9 +2791,13 @@ function cpIniciarDropdownListener() {
 function selecionarCondominioDash(id, nome) {
   var dd = document.getElementById('dash-cond-dropdown');
   var inp = document.getElementById('dash-cond-search');
-  if (dd) dd.classList.remove('open');
+  if (dd) { dd.classList.remove('open'); dd.innerHTML = ''; }
   if (inp) inp.value = nome;
-  selecionarCondominio(id, nome);
+  state.config.condId = id;
+  state.config.condNome = nome;
+  localStorage.setItem('sh_config', JSON.stringify(state.config));
+  atualizarDashCond();
+  toast('Condominio: ' + nome, 'ok');
 }
 
 document.addEventListener('click', function(e) {
