@@ -4,6 +4,32 @@ Registro cronológico de tarefas concluídas. Entrada mais recente no topo.
 
 ---
 
+## 2026-04-28 — Aliases zsh para Service Hub CLIs
+
+- Bloco "Service Hub CLIs" adicionado ao final de `~/.zshrc` com 4 aliases: `hubdeploy`, `hublog`, `hubstat`, `hubvars`
+- `hubdeploy` roda `git push origin main`, aguarda 5s (sleep 5 para Railway detectar o webhook), então exibe `railway logs --deployment`; não inclui `git add` pois stage é manual por decisão do Matheus
+- `hubvars` usa `railway variables`, que requer o projeto já linkado (concluído na T2)
+- gh aliases configurados: `hub` abre o repo no browser e `hubpr` cria PR com `--fill`
+- Backup do `.zshrc` anterior preservado em `~/.zshrc.bak`; sintaxe validada com `bash -n` sem erros
+
+Arquivos alterados: `~/.zshrc`, `~/.zshrc.bak`, `~/.config/gh/config.yml` (todos fora do repo)
+Implementado por: subagente programador
+
+---
+
+## 2026-04-28 — Instalação e link das CLIs gh e railway
+
+- gh CLI 2.91.0 já estava instalado em `/usr/local/bin/gh`, autenticado como `MatheusMelo2903` via keyring com scopes `repo`, `read:org`, `workflow` e `gist`
+- railway CLI 4.42.1 já estava instalado em `~/.local/bin/railway`, autenticado com a conta do Matheus
+- Projeto Railway `eloquent-love` linkado ao diretório `~/v8s/service-hub` via `railway link`, environment `production`, service `service-hub`
+- Permite usar `railway logs`, `railway status` e `railway variables` direto do terminal sem abrir o dashboard
+- Proximo passo: configurar aliases zsh (T3) e validar fluxo de commit via CLI (T4)
+
+Arquivos alterados: nenhum (infra local, fora do repo)
+Implementado por: subagente programador
+
+---
+
 ## 2026-04-28 — Limpeza dos UUIDs vazados no CLAUDE.md
 
 Incidente neutralizado em 27/04/2026: tokens Superlógica em texto plano em arquivos commitados foram substituídos por placeholder e os tokens originais foram revogados no painel Superlógica.
