@@ -2,6 +2,11 @@ const express = require('express');
 const path = require('path');
 const https = require('https');
 const app = express();
+
+// Railway opera atrás de proxy reverso. trust proxy faz Express respeitar
+// X-Forwarded-For e devolver o IP real do cliente em req.ip
+app.set('trust proxy', true);
+
 const PORT = process.env.PORT || 3000;
 const ASSEMBLYAI_KEY = process.env.ASSEMBLYAI_KEY || '';
 const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY || '';
@@ -39,6 +44,24 @@ app.post('/api/claude/messages', express.json({limit:'10mb'}), (req, res) => {
   const pr = https.request(opts, r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ try{res.status(r.statusCode).json(JSON.parse(d))}catch(e){res.status(500).json({error:d})} }); });
   pr.on('error', e => res.status(500).json({error:e.message}));
   pr.write(body); pr.end();
+});
+
+// Middleware 404 para rotas /api/* desconhecidas.
+// Posicionado depois de todas as rotas reais de /api e antes do catch-all geral.
+// Retorna JSON estruturado e loga via console.warn (404 é erro de cliente, não falha de servidor).
+app.use('/api', (req, res) => {
+  console.warn(JSON.stringify({
+    evento: 'api_404',
+    metodo: req.method,
+    caminho: req.baseUrl + req.path,
+    ip: req.ip,
+    timestamp: new Date().toISOString()
+  }));
+  res.status(404).json({
+    erro: 'rota não encontrada',
+    metodo: req.method,
+    caminho: req.baseUrl + req.path
+  });
 });
 
 // Rota raiz: serve a landing page ServiceZone

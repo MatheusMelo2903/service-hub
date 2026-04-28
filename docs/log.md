@@ -4,6 +4,19 @@ Registro cronológico de tarefas concluídas. Entrada mais recente no topo.
 
 ---
 
+## 2026-04-27 — Catch-all 404 JSON para /api/* desconhecido
+
+- Adicionado middleware `app.use('/api', ...)` que retorna 404 JSON estruturado em rotas `/api/*` não mapeadas, em vez de servir a landing como o catch-all geral fazia
+- Log via `console.warn` com formato JSON estruturado contendo evento, metodo, caminho, ip e timestamp
+- `app.set('trust proxy', true)` adicionado no topo do server.js para o Railway repassar o IP real do cliente via `req.ip`
+- `req.baseUrl + req.path` usado em vez de `req.path` solto, preservando o path completo dentro do mount `/api`
+- Middleware cobre todos os métodos HTTP (não só GET), via `app.use` em vez de `app.get`
+
+Arquivos alterados: `server.js`
+Implementado por: subagente programador
+
+---
+
 ## 2026-04-27 — Otimização do fluxo de subagentes
 
 - Todos os 8 subagentes permanecem em Sonnet (arquiteto, programador, revisor, auditor-seguranca, validador, documentador, professor, estrategista). A promoção pra Opus de 5 deles foi tentada e revertida no mesmo dia (justificativa abaixo).

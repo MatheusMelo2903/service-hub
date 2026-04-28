@@ -1,5 +1,13 @@
 # Tarefa: Catch-all do server.js retornar 404 JSON em /api/* desconhecido
 
+## Status
+- [x] Arquiteto
+- [x] Programador
+- [x] Revisor
+- [x] Auditor de seguranca
+- [x] Validador
+- [x] Documentador
+
 ## Objetivo
 Hoje qualquer rota não mapeada cai no catch-all e retorna a landing.html com status 200, inclusive `/api/qualquercoisa-inexistente`. Isso confunde debug de integrações e dá impressão errada de que a rota existe. Deve diferenciar:
 
@@ -18,11 +26,11 @@ Hoje qualquer rota não mapeada cai no catch-all e retorna a landing.html com st
 - Confirmar que `/api/inexistente` agora retorna 404
 
 ## Critérios de aceite
-- `curl -X GET https://.../api/inexistente` retorna 404 com JSON
-- `curl -X POST https://.../api/assemblyai/upload` continua respondendo (500 com body vazio, comportamento atual)
-- `curl -X GET https://.../qualquerpagina` continua servindo a landing
-- Rota raiz `/` continua servindo a landing
-- Rota `/hub` continua servindo o sistema
+- [x] `curl -X GET https://.../api/inexistente` retorna 404 com JSON
+- [x] `curl -X POST https://.../api/assemblyai/upload` continua respondendo (500 com body vazio, comportamento atual)
+- [x] `curl -X GET https://.../qualquerpagina` continua servindo a landing
+- [x] Rota raiz `/` continua servindo a landing
+- [x] Rota `/hub` continua servindo o sistema
 
 ## Riscos
 - Risco 1: a ordem das rotas precisa ser cuidadosa. `/api/*` 404 deve vir DEPOIS das rotas válidas e ANTES do catch-all genérico.
@@ -36,3 +44,6 @@ Baixa. Pega depois da Tarefa A (otimização de subagentes).
 
 ## Achado registrado por
 Auditor de segurança durante auditoria da tarefa `seguranca-tokens-expostos.md`.
+
+## Conclusão
+Concluída em 2026-04-27. Implementação usou `app.use('/api', ...)` cobrindo todos os métodos HTTP. Bugs corrigidos no ciclo: `req.path` perdia o prefixo `/api` dentro do mount (resolvido com `req.baseUrl + req.path`); `req.ip` devolvia IP do Railway em vez do cliente (resolvido com `app.set('trust proxy', true)`). Validador rodou 23 checks, todos passaram.
