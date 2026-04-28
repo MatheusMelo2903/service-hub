@@ -2742,19 +2742,41 @@ async function searchCondominioDash(query) {
   dd.classList.add('open');
   dd.innerHTML = '<div class="cond-loading">Buscando...</div>';
   try {
-    var url = buildUrl('/condominios', {somenteAtivos:1, pesquisa:query, pagina:0, itensPorPagina:15});
-    var r = await apiGet(url);
-    var data = await r.json();
-    var lista = Array.isArray(data) ? data : (data.data || []);
-    if (!lista.length) { dd.innerHTML = '<div class="cond-loading">Nenhum resultado</div>'; return; }
-    dd.innerHTML = lista.map(function(c) {
-      var id = c.ID_CONDOMINIO_COND || c.id_condominio_cond;
-      var nome = (c.ST_CONDOMINIO_COND || c.st_condominio_cond || 'Sem nome').replace(/"/g, '');
-      return '<div class="cond-option" onclick="selecionarCondominio(' + id + ',this.dataset.nome)" data-nome="' + nome + '"><span class="cond-name">' + nome + '</span><span class="cond-id">ID ' + id + '</span></div>';
-    }).join('');
+    // Busca nos condominios ja cadastrados no Supabase (cpCondominios)
+    var local = (typeof cpCondominios !== 'undefined' ? cpCondominios : [])
+      .filter(function(c) {
+        return c.nome && c.nome.toLowerCase().includes(query.toLowerCase());
+      });
+    if (local.length) {
+      dd.innerHTML = local.map(function(c) {
+        var id = c.idSuperlogica || c.id;
+        var nome = (c.nome || 'Sem nome').replace(/"/g, '');
+        return '<div class="cond-option" onclick="selecionarCondominioDash(' + JSON.stringify(String(id)) + ',' + JSON.stringify(nome) + ')" ><span class="cond-name">' + nome + '</span><span class="cond-id">ID ' + id + '</span></div>';
+      }).join('');
+      return;
+    }
+    // Fallback: busca no Supabase direto
+    var rows = await supaFetch('condominios?select=id,nome,id_superlogica&nome=ilike.*' + encodeURIComponent(query) + '*');
+    if (rows && rows.length) {
+      dd.innerHTML = rows.map(function(c) {
+        var id = c.id_superlogica || c.id;
+        var nome = (c.nome || 'Sem nome').replace(/"/g, '');
+        return '<div class="cond-option" onclick="selecionarCondominioDash(' + JSON.stringify(String(id)) + ',' + JSON.stringify(nome) + ')" ><span class="cond-name">' + nome + '</span><span class="cond-id">ID ' + id + '</span></div>';
+      }).join('');
+      return;
+    }
+    dd.innerHTML = '<div class="cond-loading">Nenhum resultado</div>';
   } catch(e) {
     dd.innerHTML = '<div class="cond-loading">Erro: ' + e.message + '</div>';
   }
+}
+
+function selecionarCondominioDash(id, nome) {
+  var dd = document.getElementById('dash-cond-dropdown');
+  var inp = document.getElementById('dash-cond-search');
+  if (dd) dd.classList.remove('open');
+  if (inp) inp.value = nome;
+  selecionarCondominio(id, nome);
 }
 
 document.addEventListener('click', function(e) {
