@@ -51,6 +51,7 @@ Visão de longo prazo: evoluir até virar SaaS multi-usuário com login, onde fu
 - Comentários em português brasileiro explicando o porquê, não o quê
 - Toda função com mais de 10 linhas tem comentário no topo
 - Nenhuma biblioteca externa nova sem aprovação do Matheus
+- Regra de leitura de arquivos em blocos pelo programador: ver definição do subagente programador em ~/.claude/agents/programador.md.
 
 ## Fluxo de trabalho obrigatório
 
@@ -60,13 +61,14 @@ Toda tarefa segue esta ordem:
 2. Subagente arquiteto lê e devolve plano detalhado
 3. Matheus aprova o plano
 4. Subagente programador implementa
-5. Subagente revisor revisa
-6. Subagente programador aplica correções
-7. Subagente auditor-seguranca verifica
-8. Subagente validador testa integrações
-9. Subagente documentador atualiza docs e move tarefa para concluidas
+5. Subagente revisor E subagente auditor-seguranca rodam EM PARALELO (mesmo turno, dois Agent tool uses simultâneos). Um analisa qualidade de código; o outro analisa segurança e tokens. São análises independentes e não precisam esperar uma pela outra.
+6. Se revisor OU auditor reprovar: subagente programador corrige todos os pontos levantados pelos dois antes de prosseguir. Se ambos aprovarem, pular direto para o passo 7.
+7. Subagente validador testa integrações
+8. Subagente documentador atualiza docs e move tarefa para concluidas
 
 NÃO pular etapas.
+
+Como invocar revisor e auditor em paralelo: no mesmo turno do orquestrador, dispare dois Agent tool uses simultaneamente, um apontando para o subagente revisor e outro para o subagente auditor-seguranca. Aguarde AMBOS retornarem antes de avaliar o resultado. Só prossiga para o passo 7 após ter os dois veredictos em mãos.
 
 ## O que está fora de escopo
 
@@ -84,6 +86,10 @@ O sistema tem duas camadas de entrada desde 2026-04-27:
 O server.js usa `express.static({ index: false })` com rotas explícitas `GET /` e `GET /hub`. O catch-all redireciona para a landing.
 
 Nunca alterar essas rotas sem checar se o botão Entrar da landing ainda aponta para `/hub`.
+
+## Cache de contexto
+
+O Claude Code faz prompt caching automaticamente para o conteúdo do CLAUDE.md e mensagens de sistema. Não há configuração manual a fazer no settings.json para isso. A ordem das seções neste arquivo importa: regras estáveis (que mudam pouco) ficam no topo, contexto volátil (estado do projeto, datas, IDs em uso) fica no final. Isso maximiza o reaproveitamento de cache entre turnos. Não tente reimplementar caching manual aqui — o harness já cuida.
 
 ## Quando estiver em dúvida
 

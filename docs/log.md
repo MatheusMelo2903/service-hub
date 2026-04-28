@@ -4,6 +4,19 @@ Registro cronológico de tarefas concluídas. Entrada mais recente no topo.
 
 ---
 
+## 2026-04-27 — Otimização do fluxo de subagentes
+
+- Promove arquiteto, programador, revisor, auditor-seguranca, validador para Opus (documentador, professor, estrategista permanecem em Sonnet)
+- Programador ganha regra obrigatória de leitura de arquivos em blocos (menos de 1500 linhas: ler inteiro; 1500 a 5000: blocos de 200; mais de 5000: blocos de 500; nunca ler 5 a 20 linhas sem contexto; busca pontual via grep mais bloco de 50 linhas ao redor)
+- Documentador ganha checklist de auto-validação obrigatória com 5 passos numerados no final do system prompt
+- CLAUDE.md: fluxo paralelizado (revisor e auditor-seguranca rodam no mesmo turno com dois Agent tool uses simultâneos), nota sobre leitura em blocos em "Padrões de código", seção nova "Cache de contexto" explicando que o caching é automático e que ordem de seções importa
+- Backups .bak em ~/.claude/agents/ ficam até validação da próxima tarefa pelo Matheus
+
+Arquivos alterados: `CLAUDE.md`, `~/.claude/agents/arquiteto.md`, `~/.claude/agents/programador.md`, `~/.claude/agents/revisor.md`, `~/.claude/agents/auditor-seguranca.md`, `~/.claude/agents/validador.md`, `~/.claude/agents/documentador.md`
+Implementado por: subagente programador
+
+---
+
 ## 2026-04-27 — Remoção de tokens expostos no frontend
 
 - Rota pública /api/config deletada (vazava OPENAI_KEY em JSON)
