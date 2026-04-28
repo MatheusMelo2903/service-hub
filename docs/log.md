@@ -4,6 +4,22 @@ Registro cronológico de tarefas concluídas. Entrada mais recente no topo.
 
 ---
 
+## 2026-04-28 — Limpeza dos UUIDs vazados no CLAUDE.md
+
+Incidente neutralizado em 27/04/2026: tokens Superlógica em texto plano em arquivos commitados foram substituídos por placeholder e os tokens originais foram revogados no painel Superlógica.
+
+- CLAUDE.md (linhas 38 a 39): app_token e access_token substituídos pelo placeholder `<configurado-via-Service-Hub-Configuracoes>`; zero UUIDs restantes confirmado via grep recursivo
+- Tarefa `seguranca-tokens-superlogica-vazados.md` também continha os valores em texto plano (linha 8): substituídos pelo mesmo placeholder e movida para `tarefas/concluidas/`
+- Tarefa `limpeza-claude-md-uuids-vazados.md`: removido identificador parcial do novo token que havia sido citado como evidência na descrição da tarefa; movida para `tarefas/concluidas/`
+- Estado operacional: 3 tokens antigos revogados no painel Superlógica; novo token Service Hub V8S configurado via localStorage na aba Configurações do Service Hub; conexão validada com "Conexão OK"
+
+**Aprendizado:** briefings que descrevem credenciais não devem conter prefixos do token vivo, mesmo truncados. O auditor identificou um prefixo parcial na descrição da própria tarefa de cleanup, citado como evidência do que havia sido rotacionado. Padrão a seguir: usar `<prefixo-omitido>` ou descrição genérica como "novo token Service Hub V8S em uso via localStorage" sem identificadores. Vale tanto pra commits quanto pra arquivos de tarefa em em-andamento.
+
+Arquivos alterados: `CLAUDE.md`, `tarefas/concluidas/seguranca-tokens-superlogica-vazados.md`, `tarefas/concluidas/limpeza-claude-md-uuids-vazados.md`
+Implementado por: subagente programador
+
+---
+
 ## 2026-04-27 — Reforço da regra de reporte intermediário no programador
 
 - Adicionado bloco "Regra de reporte intermediário (OBRIGATÓRIA)" no system prompt do subagente programador (~/.claude/agents/programador.md), nas linhas 28 a 30, logo após a regra de leitura de arquivos em blocos

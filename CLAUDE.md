@@ -35,8 +35,8 @@ Visão de longo prazo: evoluir até virar SaaS multi-usuário com login, onde fu
 - Proxy Superlógica: https://superlogica-proxy-production.up.railway.app
 - URL Service Hub: https://service-hub-production.up.railway.app
 - Tokens (NUNCA expor no frontend, sempre via proxy):
-  - app_token: 156b6871-1bf7-476b-8012-4424805569b8
-  - access_token: f8058080-4c9a-4983-aef1-86b41e22f032
+  - app_token: <configurado-via-Service-Hub-Configuracoes>
+  - access_token: <configurado-via-Service-Hub-Configuracoes>
 
 ## Regras de segurança
 
