@@ -2741,6 +2741,7 @@ async function searchCondominioDash(query) {
   if (query.length < 2) { dd.classList.remove('open'); return; }
   dd.classList.add('open');
   dd.innerHTML = '<div class="cond-loading">Buscando...</div>';
+        cpIniciarDropdownListener();
   try {
     // Busca nos condominios ja cadastrados no Supabase (cpCondominios)
     var local = (typeof cpCondominios !== 'undefined' ? cpCondominios : [])
@@ -2751,7 +2752,7 @@ async function searchCondominioDash(query) {
       dd.innerHTML = local.map(function(c) {
         var id = c.idSuperlogica || c.id;
         var nome = (c.nome || 'Sem nome').replace(/"/g, '');
-        return '<div class="cond-option" onclick="selecionarCondominioDash(' + JSON.stringify(String(id)) + ',' + JSON.stringify(nome) + ')" ><span class="cond-name">' + nome + '</span><span class="cond-id">ID ' + id + '</span></div>';
+        return '<div class="cond-option" data-id="' + String(id) + '" data-nome="' + nome.replace(/"/g, '&quot;') + '"><span class="cond-name">' + nome + '</span><span class="cond-id">ID ' + id + '</span></div>';
       }).join('');
       return;
     }
@@ -2761,13 +2762,28 @@ async function searchCondominioDash(query) {
       dd.innerHTML = rows.map(function(c) {
         var id = c.id_superlogica || c.id;
         var nome = (c.nome || 'Sem nome').replace(/"/g, '');
-        return '<div class="cond-option" onclick="selecionarCondominioDash(' + JSON.stringify(String(id)) + ',' + JSON.stringify(nome) + ')" ><span class="cond-name">' + nome + '</span><span class="cond-id">ID ' + id + '</span></div>';
+        return '<div class="cond-option" data-id="' + String(id) + '" data-nome="' + nome.replace(/"/g, '&quot;') + '"><span class="cond-name">' + nome + '</span><span class="cond-id">ID ' + id + '</span></div>';
       }).join('');
       return;
     }
     dd.innerHTML = '<div class="cond-loading">Nenhum resultado</div>';
   } catch(e) {
     dd.innerHTML = '<div class="cond-loading">Erro: ' + e.message + '</div>';
+  }
+}
+
+function cpIniciarDropdownListener() {
+  var dd = document.getElementById('cond-dropdown');
+  if (dd && !dd._listenerAdded) {
+    dd.addEventListener('click', function(e) {
+      var opt = e.target.closest('.cond-option');
+      if (opt) {
+        var id = opt.getAttribute('data-id');
+        var nome = opt.getAttribute('data-nome');
+        selecionarCondominioDash(id, nome);
+      }
+    });
+    dd._listenerAdded = true;
   }
 }
 
@@ -2815,7 +2831,7 @@ async function searchCondominio(query) {
       dropdown.innerHTML = lista.map(c => {
         const id = c.ID_CONDOMINIO_COND || c.id_condominio_cond;
         const nome = c.ST_CONDOMINIO_COND || c.st_condominio_cond || 'Sem nome';
-        return `<div class="cond-option" onclick="selecionarCondominio('${id}', '${nome.replace(/'/g,"\'")}')">
+        return '<div class="cond-option" data-id="' + String(id) + '" data-nome="' + nome.replace(/"/g, '&quot;') + '"><span class="cond-name">' + nome + '</span><span class="cond-id">ID ' + id + '</span></div>';
           <span class="cond-name">${nome}</span>
           <span class="cond-id">ID ${id}</span>
         </div>`;
