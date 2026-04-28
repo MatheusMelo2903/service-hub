@@ -4,6 +4,18 @@ Registro cronológico de tarefas concluídas. Entrada mais recente no topo.
 
 ---
 
+## 2026-04-27 — Reforço da regra de reporte intermediário no programador
+
+- Adicionado bloco "Regra de reporte intermediário (OBRIGATÓRIA)" no system prompt do subagente programador (~/.claude/agents/programador.md), nas linhas 28 a 30, logo após a regra de leitura de arquivos em blocos
+- Quando o prompt da tarefa pedir explicitamente "reportar antes", "confirmar antes de aplicar", "me mostrar antes do Edit" ou variação equivalente, o programador deve parar após o levantamento e devolver resultado em texto puro antes de chamar Edit/Write
+- Motivação: o programador pulou esse passo nas tarefas landing-servicezone e api-404-catchall; em tarefa de maior risco (delete, migration, mudança de permissão) o desvio poderia causar estrago irreversível
+- Backup ~/.claude/agents/programador.md.bak mantido até validação da próxima tarefa real
+
+Arquivos alterados: `~/.claude/agents/programador.md` (fora do repo, escopo global)
+Implementado por: subagente programador
+
+---
+
 ## 2026-04-27 — Catch-all 404 JSON para /api/* desconhecido
 
 - Adicionado middleware `app.use('/api', ...)` que retorna 404 JSON estruturado em rotas `/api/*` não mapeadas, em vez de servir a landing como o catch-all geral fazia
