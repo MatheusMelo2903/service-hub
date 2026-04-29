@@ -1,5 +1,34 @@
 # Changelog Service Hub
 
+## 29/04/2026 Importacao de unidades validada em escala
+
+### Adicionado
+- Importacao de unidades via API Superlogica ponta a ponta
+- Migracao SQL para vincular condominios ao Superlogica (id_condominio)
+- Documentacao definitiva do fluxo em docs/guia-definitivo-v2-2026-04-28.pdf
+
+### Corrigido
+- PUT contatos rejeitava UF com erro 'ES nao e um valor valido'
+  Causa: campo ST_ESTADO_CON nao existe na API Superlogica
+  Solucao: remover o campo, manter apenas ST_UF_CON
+- sanitizeProxyUrl normaliza URL do proxy Railway
+- getProxy retorna URL correta independente de prefixo
+
+### Validado
+- Fase A: 1 unidade (A-0201) com nome real persistido no Superlogica
+- Fase B: 10 unidades, POST 10/10 ok, PUT 10/10 ok
+- Fase C: 528 unidades (Quattro Residencial Clube), POST 528/528, PUT 528/528
+  405 com proprietario real, 123 com placeholder (vazios na origem)
+
+### Pendencias documentadas (nao bloqueiam)
+- Bug 403 em /v2/condor/condominios (busca em Configuracoes)
+- Validar aba Caixa de Entrada no painel Condominios
+
+
+---
+
+# Changelog Service Hub
+
 ## 2026-04-28 (segunda parte) — Refatoração 4-em-1: cond global, modal Dashboard unificado, fusão Condomínios+Demandas, remoção cadastro do painel Condomínios
 
 ### Resumo

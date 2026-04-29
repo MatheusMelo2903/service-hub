@@ -1,0 +1,17 @@
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# Dependencias
+node_modules/
+package-lock.json
+
+# Backups e temporarios
+*.bak
+*.bak-*
+*.log
+*.tmp
+
+# Editor
+.vscode/
+.idea/

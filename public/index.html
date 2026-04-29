@@ -1654,7 +1654,7 @@
         </div>
         <div class="form-group">
           <label>URL do proxy</label>
-          <input type="text" id="cfg-proxy" placeholder="https://seu-proxy.railway.app">
+          <input type="text" id="cfg-proxy" placeholder="https://seu-proxy.railway.app" onblur="this.value = sanitizeProxyUrl(this.value)">
           <div class="hint">
             Navegadores bloqueiam chamadas diretas à API do Superlógica por CORS.
             Configure um proxy simples no Railway ou Render (veja instruções abaixo) e cole a URL aqui.
@@ -1732,6 +1732,45 @@
 // ============================================================
 // CONDOMÍNIO ATIVO — funções globais de leitura e gravação
 // ============================================================
+
+/**
+ * Sanitiza a URL do proxy antes de gravar ou usar em fetch.
+ * Existe para resolver o erro "The string did not match the expected pattern" do
+ * Safari quando o proxy é salvo sem protocolo (ex: copiado sem https://).
+ * Também remove espaços unicode invisíveis que aparecem no copy/paste de URLs
+ * de terminais ou documentos, e força upgrade de http para https.
+ */
+function sanitizeProxyUrl(raw) {
+  if (raw === null || raw === undefined) return '';
+  let s = String(raw);
+  // Remove zero-width space (U+200B) e BOM (U+FEFF) e espaço comum que vazam no copy/paste
+  // Escapes explícitos evitam que editores normalizem encoding e apaguem os literais silenciosamente
+  s = s.replace(/[​﻿  ]/g, '');
+  s = s.trim();
+  // Bloqueia URI schemes perigosos antes de qualquer prefixo — melhor zerar que prefixar https://
+  if (/^(javascript|data|vbscript):/i.test(s)) return '';
+  if (!s) return '';
+  if (!/^https?:\/\//i.test(s)) {
+    // Sem protocolo: força https:// e remove barras iniciais extras
+    s = 'https://' + s.replace(/^\/+/, '');
+  } else if (/^http:\/\//i.test(s)) {
+    // http:// explícito: faz upgrade para https:// (proxy no Railway sempre TLS)
+    s = s.replace(/^http:\/\//i, 'https://');
+  }
+  // Remove barra final para evitar URLs como https://proxy.app//v2/...
+  s = s.replace(/\/+$/, '');
+  return s;
+}
+
+/**
+ * Getter que retorna o proxy sanitizado a partir de state.config.
+ * Centraliza todos os call sites: em vez de ler state.config.proxy diretamente
+ * e chamar sanitizeProxyUrl, basta chamar getProxy().
+ * Retorna string vazia se proxy nao estiver configurado.
+ */
+function getProxy() {
+  return sanitizeProxyUrl(state.config.proxy);
+}
 
 /**
  * Grava o condomínio ativo em localStorage E em window para acesso imediato
@@ -1889,10 +1928,25 @@ const CAMPOS_UNIDADE = [
   try {
     const c = JSON.parse(localStorage.getItem('sh_config') || '{}');
     state.config = c;
+
+    // Migracao silenciosa do proxy: corrige ausencia de protocolo ou espacos
+    // invisiveis que ficaram gravados de versoes anteriores do app.
+    if (c.proxy !== undefined) {
+      const proxySanitizado = sanitizeProxyUrl(c.proxy);
+      if (proxySanitizado !== (c.proxy || '')) {
+        console.log('[migracao] proxy sanitizado: \'' + c.proxy + '\' -> \'' + proxySanitizado + '\'');
+        state.config.proxy = proxySanitizado;
+        try { localStorage.setItem('sh_config', JSON.stringify(state.config)); } catch(_) {}
+      } else {
+        console.log('[migracao] proxy ja sanitizado');
+      }
+    }
+
     if (c.appToken) document.getElementById('cfg-app-token').value = c.appToken;
     if (c.accessToken) document.getElementById('cfg-access-token').value = c.accessToken;
     if (c.condId) document.getElementById('cfg-cond-id').value = c.condId;
-    if (c.proxy) document.getElementById('cfg-proxy').value = c.proxy;
+    // Exibe o valor sanitizado no campo para que o usuario ja veja o formato correto
+    if (state.config.proxy) document.getElementById('cfg-proxy').value = state.config.proxy;
     // Restaurar condomínio selecionado no painel Configurações
     if (c.condId && c.condNome) {
       const inp = document.getElementById('cond-search-input');
@@ -1935,6 +1989,21 @@ const CAMPOS_UNIDADE = [
         window.condominioAtivo = migrado;
         try { localStorage.setItem('condominioAtivo', JSON.stringify(migrado)); } catch(_) {}
       }
+    } catch(_) {}
+
+    // Migracao defensiva: se alguma versao antiga gravou condominioPadraoImportacao
+    // e nao ha condominioAtivo ainda, copia para o formato novo e remove a chave antiga.
+    try {
+      const legadoRaw = localStorage.getItem('condominioPadraoImportacao');
+      if (legadoRaw && !localStorage.getItem('condominioAtivo')) {
+        const legado = JSON.parse(legadoRaw);
+        if (legado && legado.id && legado.nome) {
+          localStorage.setItem('condominioAtivo', JSON.stringify(legado));
+          window.condominioAtivo = legado;
+          console.log('[migracao] condominioPadraoImportacao -> condominioAtivo');
+        }
+      }
+      if (legadoRaw) localStorage.removeItem('condominioPadraoImportacao');
     } catch(_) {}
 
     // Atualiza o card do Dashboard com o condomínio restaurado do localStorage
@@ -1981,7 +2050,8 @@ function saveConfig() {
     accessToken: document.getElementById('cfg-access-token').value.trim(),
     condId: cfgCondIdRaw || state.config.condId || '',
     condNome: state.config.condNome || '',
-    proxy: document.getElementById('cfg-proxy').value.trim(),
+    // sanitizeProxyUrl garante https://, remove espaços e barra final antes de gravar
+    proxy: sanitizeProxyUrl(document.getElementById('cfg-proxy').value),
   };
   localStorage.setItem('sh_config', JSON.stringify(state.config));
   updateStatusDot();
@@ -2008,8 +2078,8 @@ function updateStatusDot() {
 
 async function testConnection() {
   if (!state.config.appToken) { toast('Configure os tokens primeiro', 'err'); return; }
-  // Proxy é obrigatório para evitar CORS — falha explícita é melhor que TypeError silencioso
-  if (!state.config.proxy) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
+  // Proxy é obrigatório para evitar CORS — usa getProxy() para checar valor já sanitizado
+  if (!getProxy()) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
   toast('Testando conexao...', 'info');
   try {
     const condId = state.config.condId || '167';
@@ -2480,8 +2550,8 @@ function filterRows(el, filter) {
 // ============================================================
 async function enviarDespesas() {
   if (!state.config.appToken) { toast('Configure os tokens da API primeiro', 'err'); return; }
-  // Proxy obrigatório para não tentar chamada CORS direta
-  if (!state.config.proxy) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
+  // Proxy obrigatório para não tentar chamada CORS direta — usa getProxy() para valor sanitizado
+  if (!getProxy()) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
 
   const validos = state.despesas.validated.filter(r => r._valido);
   if (!validos.length) { toast('Nenhum registro válido para enviar', 'err'); return; }
@@ -2563,7 +2633,7 @@ async function enviarDespesas() {
 async function enviarUnidades() {
   if (!state.config.appToken) { toast('Configure os tokens da API primeiro', 'err'); return; }
   // Proxy obrigatório para não tentar chamada CORS direta a api.superlogica.net
-  if (!state.config.proxy) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
+  if (!getProxy()) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
   // Lê o condomínio ativo via getCondominioAtivo para garantir que id_superlogica (numérico)
   // seja usado como ID_CONDOMINIO_COND, nunca o UUID Supabase.
   const condAtivo = getCondominioAtivo();
@@ -2600,87 +2670,104 @@ async function enviarUnidades() {
   hdr.textContent = '▶ Iniciando importação paralela de ' + processed.length + ' unidades (10 simultâneas)...';
   logDiv.appendChild(hdr);
 
-  let ok = 0, err = 0, done = 0;
+  let postOk = 0, postFail = 0, putOk = 0, putFail = 0, done = 0;
+  const erros = [];
   const BATCH = 10; // 10 unidades simultâneas
 
-  async function enviarUmaUnidade(u) {
-    // Escape para dados de planilha que vão para addLog: previne XSS via innerHTML do log
-    const esc = (s) => String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    if (state.unidades.shouldStop) return { ok: false, parou: true };
-    try {
-      // PASSO 1: POST sem contatos (ID_TIPOCONTATO_TCON obrigatório no nível raiz)
-      const p1 = new URLSearchParams();
-      p1.set('ID_CONDOMINIO_COND',        condId);
-      p1.set('ST_UNIDADE_UNI',            u.ST_UNIDADE_UNI);
-      p1.set('ST_BLOCO_UNI',              u.ST_BLOCO_UNI || '');
-      p1.set('ID_TIPOCONTATO_TCON',       '3');
-      p1.set('FL_FORMADERECEBIMENTO_UNI', '1');
+  async function enviarUmaUnidade(u, idx, total) {
+  const idxPad = String(idx).padStart(4, '0');
+  const totalPad = String(total).padStart(4, '0');
+  // Escape para dados de planilha que vão para addLog: previne XSS via innerHTML do log
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-      const r1   = await apiPost('/unidades/post', p1.toString());
-      const d1   = await r1.json();
-      const item = Array.isArray(d1) ? d1[0] : d1;
+  if (state.unidades.shouldStop) throw new Error('parou');
 
-      if (!item || item.status === '500' || item.status === 500) {
-        addLog(logDiv, esc(u._unidadeRaw) + ': erro POST — ' + esc(item?.msg || r1.status), 'err');
-        return { ok: false };
-      }
+  // PASSO 1 POST: cria unidade vazia. ID_TIPOCONTATO_TCON e FL_FORMADERECEBIMENTO_UNI obrigatorios no nivel raiz.
+  const p1 = new URLSearchParams();
+  p1.set('ID_CONDOMINIO_COND',        condId);
+  p1.set('ST_UNIDADE_UNI',            u.ST_UNIDADE_UNI);
+  p1.set('ST_BLOCO_UNI',              u.ST_BLOCO_UNI || '');
+  p1.set('ID_TIPOCONTATO_TCON',       '3');
+  p1.set('FL_FORMADERECEBIMENTO_UNI', '1');
 
-      const idUnidade = item.id_unidade_uni;
-      const idContato = item.id_contato_con;
+  let d1;
+  try {
+    const r1 = await apiPost('/unidades/post', p1.toString());
+    d1 = await r1.json();
+  } catch (e) {
+    addLog(logDiv, '[POST ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + ' rede ' + esc(e.message), 'err');
+    throw new Error('POST falhou: ' + e.message);
+  }
 
-      // PASSO 2: PUT com dados do proprietário usando IDs retornados
-      const p2 = new URLSearchParams();
-      p2.set('ID_CONDOMINIO_COND',              condId);
-      p2.set('ID_UNIDADE_UNI',                  idUnidade);
-      p2.set('contatos[0][ID_CONTATO_CON]',     idContato);
-      p2.set('contatos[0][FL_PROPRIETARIO_CON]','1');
-      if (u.prop_nome)     p2.set('contatos[0][ST_NOME_CON]',     u.prop_nome);
-      if (u.prop_cpf)      p2.set('contatos[0][ST_CPF_CON]',      u.prop_cpf);
-      if (u.prop_rg)       p2.set('contatos[0][ST_RG_CON]',       u.prop_rg);
-      if (u.prop_email)    p2.set('contatos[0][ST_EMAIL_CON]',     u.prop_email);
-      // Telefone: só dígitos, sem formatação
-      const fmtTel = t => t ? t.replace(/\D/g, '') : '';
-      const cel = fmtTel(u.prop_cel || u.prop_fone);
-      const fix = u.prop_cel ? fmtTel(u.prop_fone) : '';
-      if (cel) p2.set('contatos[0][ST_TELEFONE_CON]', cel);
-      if (fix) p2.set('contatos[0][ST_TELEFONE_CON2]', fix);
-      // Endereço do proprietário (campos incluídos após migração para colunas fixas)
-      if (u.prop_cep)         p2.set('contatos[0][ST_CEP_CON]',         u.prop_cep);
-      if (u.prop_endereco)    p2.set('contatos[0][ST_ENDERECO_CON]',    u.prop_endereco);
-      if (u.prop_numero)      p2.set('contatos[0][ST_NUMERO_CON]',      u.prop_numero);
-      if (u.prop_bairro)      p2.set('contatos[0][ST_BAIRRO_CON]',      u.prop_bairro);
-      if (u.prop_complemento) p2.set('contatos[0][ST_COMPLEMENTO_CON]', u.prop_complemento);
-      if (u.prop_cidade)      p2.set('contatos[0][ST_CIDADE_CON]',      u.prop_cidade);
-      if (u.prop_estado)      p2.set('contatos[0][ST_ESTADO_CON]',      u.prop_estado);
+  const item = Array.isArray(d1) ? d1[0] : d1;
+  // Guard reforcado pre-PUT: rejeita array vazio, status 500, id_unidade_uni ausente, id_contato_con ausente
+  if (!item || item.status === '500' || item.status === 500 || !item.id_unidade_uni || !item.id_contato_con) {
+    const msg = item ? (item.msg || JSON.stringify(item).slice(0, 200)) : 'sem corpo';
+    addLog(logDiv, '[POST ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + ' ' + esc(msg), 'err');
+    throw new Error('POST falhou: ' + msg);
+  }
 
-      const urlPut = (state.config.proxy||'').replace(/\/$/, '') + '/v2/condor/unidades/post';
-      const r2 = await fetch(urlPut, {
-        method: 'PUT',
-        headers: { 'Content-Type':'application/x-www-form-urlencoded', 'app_token':state.config.appToken, 'access_token':state.config.accessToken },
-        body: p2.toString()
-      });
-      if (!r2.ok) {
-        const txt = await r2.text().catch(() => '');
-        addLog(logDiv, 'Falha PUT unidade ' + esc(u._unidadeRaw) + ': ' + r2.status + ' ' + esc(txt.slice(0, 200)), 'err');
-        return { ok: false, erro: 'PUT ' + r2.status };
-      }
-      let payloadResp = null;
-      try { payloadResp = await r2.json(); } catch (_) {}
-      // Superlógica retorna { status: "200", ... } em sucesso; qualquer outro status é falha
-      if (payloadResp && String(payloadResp.status) !== '200' && payloadResp.status !== undefined) {
-        const msgErr = (payloadResp.message || JSON.stringify(payloadResp)).slice(0, 200);
-        addLog(logDiv, 'PUT respondeu erro para unidade ' + esc(u._unidadeRaw) + ': ' + esc(msgErr), 'err');
-        return { ok: false, erro: msgErr };
-      }
+  const idUnidade = item.id_unidade_uni;
+  const idContato = item.id_contato_con;
+  addLog(logDiv, '[POST ' + idxPad + '/' + totalPad + '] OK ' + esc(u._unidadeRaw) + ' id_unidade=' + idUnidade + ' id_contato=' + idContato, 'ok');
 
-      addLog(logDiv, esc(u._unidadeRaw) + (u.prop_nome ? ' — ' + esc(u.prop_nome) : '') + ': ✓', 'ok');
-      return { ok: true };
-    } catch(e) {
-      addLog(logDiv, esc(u._unidadeRaw) + ': ' + esc(e.message), 'err');
-      return { ok: false };
-    }
+  // PASSO 2 PUT: popula nome, CPF, RG, email, telefones e endereco do proprietario.
+  const p2 = new URLSearchParams();
+  p2.set('ID_CONDOMINIO_COND',              condId);
+  p2.set('ID_UNIDADE_UNI',                  idUnidade);
+  p2.set('contatos[0][ID_CONTATO_CON]',     idContato);
+  p2.set('contatos[0][FL_PROPRIETARIO_CON]','1');
+  if (u.prop_nome)     p2.set('contatos[0][ST_NOME_CON]',     u.prop_nome);
+  if (u.prop_cpf)      p2.set('contatos[0][ST_CPF_CON]',      u.prop_cpf);
+  if (u.prop_rg)       p2.set('contatos[0][ST_RG_CON]',       u.prop_rg);
+  if (u.prop_email)    p2.set('contatos[0][ST_EMAIL_CON]',     u.prop_email);
+  // Telefone: so digitos, sem formatacao
+  const fmtTel = t => t ? t.replace(/\D/g, '') : '';
+  const cel = fmtTel(u.prop_cel || u.prop_fone);
+  const fix = u.prop_cel ? fmtTel(u.prop_fone) : '';
+  if (cel) p2.set('contatos[0][ST_TELEFONE_CON]', cel);
+  if (fix) p2.set('contatos[0][ST_TELEFONE_CON2]', fix);
+  // Endereco do proprietario
+  if (u.prop_cep)         p2.set('contatos[0][ST_CEP_CON]',         u.prop_cep);
+  if (u.prop_endereco)    p2.set('contatos[0][ST_ENDERECO_CON]',    u.prop_endereco);
+  if (u.prop_numero)      p2.set('contatos[0][ST_NUMERO_CON]',      u.prop_numero);
+  if (u.prop_bairro)      p2.set('contatos[0][ST_BAIRRO_CON]',      u.prop_bairro);
+  if (u.prop_complemento) p2.set('contatos[0][ST_COMPLEMENTO_CON]', u.prop_complemento);
+  if (u.prop_cidade)      p2.set('contatos[0][ST_CIDADE_CON]',      u.prop_cidade);
+
+  const urlPut = getProxy() + '/v2/condor/unidades/post';
+  let r2;
+  try {
+    r2 = await fetch(urlPut, {
+      method: 'PUT',
+      headers: { 'Content-Type':'application/x-www-form-urlencoded', 'app_token':state.config.appToken, 'access_token':state.config.accessToken },
+      body: p2.toString()
+    });
+  } catch (e) {
+    addLog(logDiv, '[PUT  ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + ' rede ' + esc(e.message), 'err');
+    throw new Error('PUT falhou: ' + e.message);
+  }
+
+  if (!r2.ok) {
+    const txt = await r2.text().catch(() => '');
+    addLog(logDiv, '[PUT  ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + ' HTTP ' + r2.status + ' ' + esc(txt.slice(0, 200)), 'err');
+    throw new Error('PUT falhou: HTTP ' + r2.status);
+  }
+
+  let d2 = null;
+  try { d2 = await r2.json(); } catch (_) {}
+  // CAUSA RAIZ CORRIGIDA: API retorna array; sucesso e data[0].status === '200'
+  const statusItem = Array.isArray(d2) ? (d2[0] && d2[0].status) : (d2 && d2.status);
+  if (String(statusItem) !== '200' && statusItem !== 200) {
+    const msgErr = (d2 ? JSON.stringify(d2) : '').slice(0, 200);
+    addLog(logDiv, '[PUT  ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + ' ' + esc(msgErr), 'err');
+    throw new Error('PUT falhou: ' + msgErr);
+  }
+
+  addLog(logDiv, '[PUT  ' + idxPad + '/' + totalPad + '] OK ' + esc(u._unidadeRaw) + (u.prop_nome ? ' — ' + esc(u.prop_nome) : ''), 'ok');
+  return { idUnidade, idContato };
   }
 
 
@@ -2690,20 +2777,42 @@ async function enviarUnidades() {
     if (state.unidades.shouldStop) { parou = true; break; }
 
     const lote = processed.slice(i, i + BATCH);
-    const resultados = await Promise.all(lote.map(u => enviarUmaUnidade(u)));
+    const settled = await Promise.allSettled(
+      lote.map((u, k) => enviarUmaUnidade(u, i + k + 1, processed.length))
+    );
 
-    resultados.forEach(r => {
+    settled.forEach((s, k) => {
+      const u = lote[k];
+      // Sinal de stop precoce: nao conta como done nem como erro
+      if (s.status === 'rejected' && s.reason && s.reason.message === 'parou') return;
       done++;
-      if (r.ok) ok++;
-      else if (!r.parou) err++;
+      if (s.status === 'fulfilled') {
+        postOk++;
+        putOk++;
+        return;
+      }
+      const msg = (s.reason && s.reason.message) ? s.reason.message : String(s.reason);
+      if (msg.startsWith('POST falhou')) {
+        postFail++;
+        erros.push({ unidade: u._unidadeRaw, fase: 'POST', mensagem: msg });
+      } else if (msg.startsWith('PUT falhou')) {
+        postOk++;
+        putFail++;
+        erros.push({ unidade: u._unidadeRaw, fase: 'PUT', mensagem: msg });
+      } else {
+        postFail++;
+        erros.push({ unidade: u._unidadeRaw, fase: 'desconhecida', mensagem: msg });
+      }
     });
 
-    // Atualizar barra de progresso e texto de progresso em tempo real
+    // Atualizar barra e texto de progresso em tempo real
     const pct = Math.round((done / processed.length) * 100);
     progressBar.style.width = pct + '%';
-    if (progressTexto) progressTexto.textContent = done + ' de ' + processed.length + ' unidades importadas';
+    if (progressTexto) {
+      progressTexto.textContent = 'POST ' + postOk + '/' + done + ' ok ' + postFail + ' fail · PUT ' + putOk + '/' + done + ' ok ' + putFail + ' fail · total ' + done + '/' + processed.length;
+    }
 
-    // Pausa mínima entre lotes para não sobrecarregar
+    // Pausa minima entre lotes para nao sobrecarregar
     if (i + BATCH < processed.length && !state.unidades.shouldStop) {
       await sleep(100);
     }
@@ -2714,32 +2823,70 @@ async function enviarUnidades() {
   if (btnEnviar) btnEnviar.disabled = false;
   if (btnParar) btnParar.style.display = 'none';
   progressBar.style.width = '100%';
-  if (progressTexto) progressTexto.textContent = done + ' de ' + processed.length + ' unidades processadas';
+  if (progressTexto) progressTexto.textContent = 'POST ' + postOk + '/' + done + ' ok ' + postFail + ' fail · PUT ' + putOk + '/' + done + ' ok ' + putFail + ' fail · total ' + done + '/' + processed.length;
 
-  // Status final permanente
+  const totalErr = postFail + putFail;
+
+  // Status final permanente (mesmo padrao visual de antes, agora com 4 contadores)
   statusFinal.style.display = 'block';
   if (parou) {
     statusFinal.className = 'uni-status warn';
-    statusFinal.innerHTML = '<span>⏹</span><div><strong>Importação interrompida</strong><br>' + ok + ' unidades criadas antes de parar. ' + err + ' erros.</div>';
-  } else if (err === 0) {
+    statusFinal.innerHTML = '<span>⏹</span><div><strong>Importação interrompida</strong><br>POST ok ' + postOk + ', POST fail ' + postFail + ', PUT ok ' + putOk + ', PUT fail ' + putFail + '.</div>';
+  } else if (totalErr === 0) {
     statusFinal.className = 'uni-status success';
-    statusFinal.innerHTML = '<span>✓</span><div><strong>' + ok + ' unidades importadas com sucesso!</strong><br>Todos os dados foram enviados para o Superlógica.</div>';
+    statusFinal.innerHTML = '<span>✓</span><div><strong>' + putOk + ' unidades importadas com sucesso!</strong><br>POST ok ' + postOk + ', PUT ok ' + putOk + '. Todos os dados foram enviados para o Superlógica.</div>';
   } else {
     statusFinal.className = 'uni-status error';
-    statusFinal.innerHTML = '<span>⚠</span><div><strong>' + ok + ' criadas, ' + err + ' com erro</strong><br>Verifique o log acima para detalhes.</div>';
+    statusFinal.innerHTML = '<span>⚠</span><div><strong>' + putOk + ' criadas, ' + totalErr + ' com erro</strong><br>POST ok ' + postOk + ', POST fail ' + postFail + ', PUT ok ' + putOk + ', PUT fail ' + putFail + '. Veja a tabela e o log para detalhes.</div>';
+  }
+
+  // Tabela de erros (DOM API, sem innerHTML em dado de planilha; preserva o padrao XSS-safe do pacote anterior)
+  // So aparece se houver erros. Inserida logo apos o statusFinal.
+  const wrapErros = statusFinal.parentNode.querySelector('.uni-erros-tabela');
+  if (wrapErros) wrapErros.remove(); // limpa tabela anterior em caso de re-execucao
+  if (erros.length > 0) {
+    const wrap = document.createElement('div');
+    wrap.className = 'uni-erros-tabela';
+    wrap.style.cssText = 'margin-top:12px;font-family:var(--mono);font-size:12px;max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:6px';
+    const tbl = document.createElement('table');
+    tbl.style.cssText = 'width:100%;border-collapse:collapse';
+    const thead = document.createElement('thead');
+    const trh = document.createElement('tr');
+    ['Unidade', 'Fase', 'Mensagem'].forEach(h => {
+      const th = document.createElement('th');
+      th.textContent = h;
+      th.style.cssText = 'text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);background:var(--bg-card);position:sticky;top:0';
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh);
+    tbl.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    erros.forEach(e => {
+      const tr = document.createElement('tr');
+      [e.unidade || '', e.fase || '', e.mensagem || ''].forEach(c => {
+        const td = document.createElement('td');
+        td.textContent = String(c);
+        td.style.cssText = 'padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:top';
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    wrap.appendChild(tbl);
+    statusFinal.parentNode.insertBefore(wrap, statusFinal.nextSibling);
   }
 
   state.stats.imports++;
-  state.stats.records += ok;
-  state.stats.errors += err;
+  state.stats.records += putOk;
+  state.stats.errors += totalErr;
   document.getElementById('stat-imports').textContent = state.stats.imports;
   document.getElementById('stat-records').textContent = state.stats.records;
   document.getElementById('stat-errors').textContent = state.stats.errors;
-  addHistorico('Unidades: ' + ok + ' criadas' + (err ? ', ' + err + ' erros' : ' ✓'));
+  addHistorico('Unidades: ' + putOk + ' criadas' + (totalErr ? ', ' + totalErr + ' erros' : ' ✓'));
 
   if (!parou) {
-    if (err === 0) toast(ok + ' unidades criadas com sucesso! ✓', 'ok');
-    else toast(ok + ' criadas, ' + err + ' com erro', 'warn');
+    if (totalErr === 0) toast(putOk + ' unidades criadas com sucesso! ✓', 'ok');
+    else toast(putOk + ' criadas, ' + totalErr + ' com erro', 'warn');
   }
 }
 function pararImportacaoUnidades() {
@@ -2753,8 +2900,10 @@ function pararImportacaoUnidades() {
 // caiam direto em api.superlogica.net, o que quebraria por CORS no browser.
 // Todos os callers devem checar null antes de fazer fetch.
 function buildUrl(path, params) {
-  if (!state.config.proxy) return null;
-  const base = state.config.proxy.replace(/\/$/, '') + '/v2/condor' + path;
+  // Usa getProxy() para garantir que a URL sempre tenha protocolo e sem barra final
+  const proxy = getProxy();
+  if (!proxy) return null;
+  const base = proxy + '/v2/condor' + path;
   const q = new URLSearchParams(params).toString();
   return base + (q ? '?' + q : '');
 }
@@ -3602,8 +3751,8 @@ function limparConsumo() {
 
 async function enviarConsumo() {
   if (!state.config.appToken) { toast('Configure os tokens da API primeiro', 'err'); return; }
-  // Proxy obrigatório — sem ele buildUrl retorna null e fetch quebraria com TypeError
-  if (!state.config.proxy) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
+  // Proxy obrigatório — usa getProxy() para checar valor já sanitizado e com https://
+  if (!getProxy()) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
   const validos = consumoItems.filter(c => c.unidade && c.leitura && c.leitura !== 'ilegível' && c.leitura !== 'erro');
   if (!validos.length) { toast('Preencha unidade e leitura para todos os medidores', 'err'); return; }
 
