@@ -3848,12 +3848,20 @@ function addHistorico(texto) {
 }
 
 function toast(msg, type) {
+  // Usa DOM API em vez de innerHTML para evitar XSS via msg interpolada.
+  // Varredura de callers confirmou zero usos com HTML intencional (2026-04-29).
   const wrap = document.getElementById('toast-wrap');
   const t = document.createElement('div');
   t.className = 'toast ' + (type || '');
   const icons = { ok: '✓', err: '✕', warn: '⚠', info: 'ℹ' };
-  t.innerHTML = `<span style="color:var(--${type==='ok'?'success':type==='err'?'danger':type==='warn'?'warning':'info'})">${icons[type]||''}</span> ${msg}`;
+  // Cor do ícone resolve a mesma variável CSS que o template anterior usava
+  const colorMap = { ok: 'var(--success)', err: 'var(--danger)', warn: 'var(--warning)', info: 'var(--info)' };
+  const span = document.createElement('span');
+  span.style.color = colorMap[type] || 'var(--info)';
+  span.textContent = icons[type] || '';
+  t.append(span, ' ', document.createTextNode(msg));
   wrap.appendChild(t);
+  // 4000ms: tempo suficiente para ler mensagens curtas sem travar a UI nem sumir rápido demais em mensagens mais longas
   setTimeout(() => t.remove(), 4000);
 }
 
@@ -4059,14 +4067,21 @@ function cpToggleDem(id) {
   if (b) b.classList.toggle('open');
 }
 
+// Renderiza a sidebar do painel Condomínios com a lista de condomínios disponíveis.
+// Lê o array global cpCondominios e marca como ativo o item cujo id bate com cpCondAtivo.
+// É chamada após cpCarregarDoSupabase, cpSelecionarCond e no override de showPanel,
+// garantindo que a sidebar sempre reflita o estado atual sem necessidade de reload.
 function cpRenderSidebar() {
+  // escHtml em vez de dcEscape porque c.id entra em onclick com aspas simples internas.
+  // dcEscape não escapa apóstrofo; escHtml escapa e cobre todos os chars perigosos.
   const list = document.getElementById('cp-cond-list');
   if (!list) return;
   list.innerHTML = cpCondominios.map(c => {
-    const iniciais = c.nome.split(' ').slice(0,2).map(w=>w[0]).join('').toUpperCase();
-    return `<div class="cp-cond-item ${cpCondAtivo === c.id ? 'active':''}" onclick="cpSelecionarCond('${c.id}')">
+    // iniciais deriva de c.nome, herda o risco de injeção — escapar também
+    const iniciais = escHtml(c.nome.split(' ').slice(0,2).map(w=>w[0]).join('').toUpperCase());
+    return `<div class="cp-cond-item ${cpCondAtivo === c.id ? 'active':''}" onclick="cpSelecionarCond('${escHtml(c.id)}')">
       <div class="cp-cond-avatar">${iniciais}</div>
-      <span class="cp-cond-name">${c.nome}</span>
+      <span class="cp-cond-name">${escHtml(c.nome)}</span>
       <div class="cp-dot"></div>
     </div>`;
   }).join('');
@@ -4690,7 +4705,7 @@ async function dcSalvarDemandas() {
       id: 'dc_' + Date.now() + '_' + i,
       num: baseNum,
       prio: d.prio,
-      status: 'aberta',
+      status: 'Pendente',
       titulo: d.titulo,
       sit: d.sit,
       acao: d.acao,
