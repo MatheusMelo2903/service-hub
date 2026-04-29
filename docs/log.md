@@ -4,6 +4,21 @@ Registro cronológico de tarefas concluídas. Entrada mais recente no topo.
 
 ---
 
+## 2026-04-29 — Revisão profunda pré SaaS, pipeline completo de 8 etapas com 3 fixes deployados
+
+A Etapa 0 do pipeline revelou uma divergência de 28 commits entre o remoto e o estado local, além de dois arquivos .bak (public/index.html.bak-antes-fracao e public/index.html.bak-pre-fix-uf) servidos publicamente via Railway com HTTP 200. Os arquivos foram movidos para /backups/ e um push imediato fechou a janela de exposição. A publishable key do Supabase que estava neles foi registrada como risco residual e auditoria de RLS ficou como pendência prioritária.
+
+O arquiteto fez segunda passada de validação com greps mecânicos nos 8 itens originais do escopo e identificou que apenas 3 ainda estavam incorretos: toast global usando innerHTML para interpolar msg (mais de 60 callers), cpRenderSidebar injetando c.nome e c.id sem escape em contexto de atributo onclick com aspas simples, e dcSalvarDemandas gravando status 'aberta' em vez do valor canônico 'Pendente'. Os outros 5 itens já haviam sido corrigidos em commits anteriores e foram apenas documentados.
+
+O programador corrigiu os 3 itens. O revisor levantou 2 pontos moderados na primeira passada, o programador aplicou polimento e o revisor aprovou na segunda rodada, dentro do limite de 4. O auditor confirmou SEGURO PARA COMMIT com 7 varreduras adicionais (zero matches para os tokens revogados 156b6871 e f8058080, diretório public/ sem .bak, console.log sem exposição de credenciais). O validador aprovou 8 abas intactas e 4 cenários de dry run. O deploy via polling fechou na tentativa 5 (150s), com HTTP 200 confirmado em / e /hub e marcador document.createTextNode presente no HTML servido.
+
+O resultado destrava a evolução do Service Hub para a fase SaaS multi usuário, com base de código auditada e superfície de XSS reduzida nas funções de maior alcance do sistema.
+
+Arquivos alterados: `public/index.html` (3 fixes, 4967 linhas), `CHANGELOG.md` (entrada adicionada), `docs/log.md` (este arquivo), `CLAUDE.md` (contagem de linhas atualizada), `~/.claude/agents/arquiteto.md` (contagem atualizada), `~/.claude/agents/programador.md` (contagem atualizada), `tarefas/concluidas/revisao-profunda-pre-saas.md` (movido de em-andamento)
+Implementado por: subagente programador
+
+---
+
 ## 2026-04-28 (segunda parte) — Refatoração 4-em-1: cond global, modal Dashboard unificado, fusão Condomínios+Demandas, remoção cadastro do painel Condomínios
 
 Quatro mudanças interligadas para eliminar duplicidade de seleção e simplificar navegação. Continuação direta da sessão anterior, por cima do trabalho ainda não commitado.

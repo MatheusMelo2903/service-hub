@@ -131,9 +131,9 @@ A pendência fica rastreada para evitar que o sistema conviva indefinidamente co
 - [x] Tarefa escrita
 - [x] Plano feito pelo arquiteto
 - [x] Plano aprovado pelo Matheus
-- [ ] Código implementado
-- [ ] Código revisado
-- [ ] Correções aplicadas
-- [ ] Auditoria de segurança aprovada
-- [ ] Validação aprovada
-- [ ] Documentação atualizada
+- [x] Código implementado
+- [x] Código revisado
+- [x] Correções aplicadas
+- [x] Auditoria de segurança aprovada
+- [x] Validação aprovada
+- [x] Documentação atualizada

@@ -1,5 +1,46 @@
 # Changelog Service Hub
 
+## 29/04/2026 — Revisão profunda pré SaaS, 3 fixes de XSS e bug lógico, deploy aprovado
+
+### Adicionado
+- Comentários de cabeçalho explicativos em toast (justificativa do timeout 4000ms) e cpRenderSidebar (cabeçalho da função e razão do escHtml em vez de dcEscape)
+- Branch local de segurança backup-pre-merge para rollback do pipeline (apagar na finalização)
+
+### Corrigido
+- Função toast (public/index.html linhas 3850 a 3866) reescrita com DOM API + document.createTextNode em vez de innerHTML, neutralizando XSS em mais de 60 callers. Varredura confirmou zero callers com tag HTML intencional.
+- cpRenderSidebar (linhas 4069 a 4088) escapa c.nome, c.id e iniciais com escHtml. Decisão escHtml em vez de dcEscape porque c.id entra dentro de onclick com aspas simples internas e dcEscape não escapa apóstrofo.
+- dcSalvarDemandas linha 4708 grava status 'Pendente' em vez de 'aberta'. Operação isolada, sem dependência com filtros, badges ou queries.
+
+### Validado
+- Auditor de segurança SEGURO PARA COMMIT, 7 varreduras adicionais sem crítico (tokens revogados 156b6871 e f8058080 zero matches em qualquer arquivo, public/ sem .bak, console.log não expõe app_token nem access_token)
+- Revisor APROVADO sem ressalva após rodada extra de polimento (2ª passada do loop, dentro do limite de 4)
+- Validador VALIDADO, 8 abas do sistema intactas, 4 cenários de dry run passaram (toast Lista A, toast Lista B com integers, cpRenderSidebar com nome e id sujos, dcSalvarDemandas com Pendente preservando todos os filtros)
+- 4 testes runtime manuais executados pelo Matheus, T1 persistência localStorage OK, T2 render Condomínios OK, T3 status Pendente literal gravado no Supabase confirmado e demanda de teste apagada, T4 toast com document.createTextNode validado no DevTools Sources
+- Deploy aprovado em produção, polling fechou na tentativa 5 (150s), HTTP 200 em / (40304 bytes) e em /hub (295721 bytes), marcador document.createTextNode presente no HTML servido
+
+### Pendências
+(a) Migração manual de status legado no Supabase. Rodar no Supabase Studio o comando `UPDATE demandas SET status='Pendente' WHERE status='aberta'`. Atinge especificamente as demandas com num 25 (id dc_1777074896060_0, processado_em 2026-04-24) e num 26 (id dc_1777074896282_1, processado_em 2026-04-24), criadas antes do fix. Sem isso, sistema convive com dois valores de status no banco. Prioridade média.
+
+(b) Auditoria de RLS no Supabase. Risco residual a considerar, a publishable key sb_publishable_LgUqE8qdyvhh6VhLD4c4yg_zo6aWJXH esteve presente em public/index.html.bak-antes-fracao e public/index.html.bak-pre-fix-uf, ambos publicamente acessíveis via Railway por janela indeterminada antes do move para /backups/ na Etapa 0. Assumir que a chave pode ter sido coletada por scraper neste período. RLS no Supabase é a única defesa restante. Auditoria de policies das tabelas condominios, demandas, laudos e historico é prioridade ALTA e deve ser concluída antes da abertura do SaaS multi usuário.
+
+(c) Verificação de git log no remoto pelos tokens revogados 156b6871 e f8058080. Comando sugerido `git log --all -p -S "156b6871"` e idem para o outro. Se aparecerem em commit antigo, vai ser preciso git filter-repo ou rotação preventiva. Verificação pendente, não bloqueio. Prioridade média.
+
+(d) TypeError latente em cpRenderSidebar linha 4081, c.nome.split(' ') executado antes de escHtml, lança erro se c.nome for null ou undefined. Risco anterior, dado obrigatório no Supabase via schema mas sem proteção no client. Sugestão de fix futuro, guard com fallback `c.nome || 'Sem nome'` antes do split. Prioridade média.
+
+(e) Schema da tabela demandas no Supabase usa processado_em em vez do padrão created_at. Descoberta colateral durante T3, não bloqueia, mas vale considerar normalização de schema antes da fase SaaS multi cliente. Também observa que condominio_id é string literal ('camaras'), não UUID, dado relevante pra modelagem multi cliente futura. Prioridade baixa.
+
+### Issues novos descobertos pelo arquiteto, fora do escopo desta rodada, vão para tarefa de outra sessão
+- Issue 3102 audio-log innerHTML com e.message vinda de APIs externas (AssemblyAI, Anthropic), prioridade ALTA. Vetor é externo, não self.
+- Issue 3736 renderConsumoGrid com `${item.url}` data URL local e `${item.unidade}` input do usuário sem escape, prioridade média (self XSS local).
+- Issue 3846 addHistorico com `${texto}` interpolado em innerHTML, prioridade média (self XSS local).
+
+### Arquivos modificados
+- `public/index.html` (modificado, 3 fixes aplicados, linha de contagem atualizada para 4967)
+
+Implementado por: subagente programador
+
+---
+
 ## 29/04/2026 Importacao de unidades validada em escala
 
 ### Adicionado

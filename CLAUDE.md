@@ -91,6 +91,10 @@ Nunca alterar essas rotas sem checar se o botão Entrar da landing ainda aponta 
 
 O Claude Code faz prompt caching automaticamente para o conteúdo do CLAUDE.md e mensagens de sistema. Não há configuração manual a fazer no settings.json para isso. A ordem das seções neste arquivo importa: regras estáveis (que mudam pouco) ficam no topo, contexto volátil (estado do projeto, datas, IDs em uso) fica no final. Isso maximiza o reaproveitamento de cache entre turnos. Não tente reimplementar caching manual aqui — o harness já cuida.
 
+## Estado atual do arquivo principal
+
+Em 2026-04-29 a revisão profunda pré SaaS deixou public/index.html com 4967 linhas, 3 fixes de segurança aplicados em toast, cpRenderSidebar e dcSalvarDemandas.
+
 ## Quando estiver em dúvida
 
 Perguntar ao Matheus em português direto. Uma ou duas perguntas, as mais críticas. Sem flood de perguntas.
