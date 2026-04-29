@@ -11,6 +11,9 @@ package-lock.json
 *.bak-*
 *.log
 *.tmp
+public/*.bak
+ServiceHubFracao*.html
+backups/
 
 # Editor
 .vscode/
