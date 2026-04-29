@@ -1916,6 +1916,7 @@ const CAMPOS_DESPESA = [
 const CAMPOS_UNIDADE = [
   { key: 'ST_UNIDADE_UNI', label: 'Nome da unidade', required: true },
   { key: 'ST_BLOCO_UNI',   label: 'Bloco',           required: false },
+  { key: 'NM_FRACAO_UNI',  label: 'Fração ideal',    required: false },
   { key: 'ST_NOME_CON',    label: 'Nome condômino',  required: false },
   { key: 'ST_EMAIL_CON',   label: 'Email',           required: false },
   { key: 'ST_TELEFONE_CON',label: 'Telefone',        required: false },
@@ -2263,6 +2264,17 @@ function processUnidadesData(headers, rows) {
   // Mantém apenas dígitos (para CPF, CEP, telefone)
   const cleanDigits = function(v) { return cleanVal(v).replace(/\D/g, ''); };
 
+  // Normaliza fracao ideal: aceita "0,135753" ou "0.135753" ou numero, devolve string com ponto
+  // ou string vazia se invalido/zero. Superlogica espera ponto decimal no campo NM_FRACAO_UNI.
+  const cleanFracao = function(v) {
+    if (v === null || v === undefined) return '';
+    var s = String(v).trim().replace(',', '.');
+    if (!s) return '';
+    var n = parseFloat(s);
+    if (!isFinite(n) || n <= 0) return '';
+    return String(n);
+  };
+
   // Separa "A 0201" em bloco "A" e numero "0201". Se não há espaço, numero = valor todo.
   const splitUnidade = function(raw) {
     var v = cleanVal(raw);
@@ -2327,6 +2339,7 @@ function processUnidadesData(headers, rows) {
       prop_complemento: cleanVal(row[28]),
       prop_cidade:      cid.cidade,
       prop_estado:      cid.estado,
+      prop_fracao:      cleanFracao(row[20]),
       inq_nome:         cleanVal(row[9]),
     });
   }
@@ -2346,7 +2359,7 @@ function renderPreviewUnidades(processed, filename) {
   preview.style.display = 'block';
   info.textContent = filename + ' · ' + processed.length + ' unidades · normalizadas e prontas para envio';
   const previewRows = processed.slice(0, 8);
-  let html = '<tr><th>Unidade</th><th>Bloco</th><th>Proprietário</th><th>CPF/CNPJ</th><th>Celular</th><th>Email</th><th>Cidade</th></tr>';
+  let html = '<tr><th>Unidade</th><th>Bloco</th><th>Proprietário</th><th>CPF/CNPJ</th><th>Celular</th><th>Email</th><th>Cidade</th><th>Fração</th></tr>';
   previewRows.forEach(function(r) {
     html += '<tr>' +
       '<td><b>' + esc(r.ST_UNIDADE_UNI) + '</b></td>' +
@@ -2356,6 +2369,7 @@ function renderPreviewUnidades(processed, filename) {
       '<td>' + (r.prop_cel || r.prop_fone ? esc(r.prop_cel || r.prop_fone) : '&mdash;') + '</td>' +
       '<td style="font-size:11px">' + (r.prop_email ? esc(r.prop_email) : '&mdash;') + '</td>' +
       '<td>' + (r.prop_cidade ? esc(r.prop_cidade) : '&mdash;') + '</td>' +
+      '<td style="font-family:var(--mono);font-size:11px">' + (r.prop_fracao ? esc(r.prop_fracao) : '&mdash;') + '</td>' +
       '</tr>';
   });
   if (processed.length > 8) {
@@ -2717,6 +2731,8 @@ async function enviarUnidades() {
   const p2 = new URLSearchParams();
   p2.set('ID_CONDOMINIO_COND',              condId);
   p2.set('ID_UNIDADE_UNI',                  idUnidade);
+  // Fracao ideal: campo da unidade (nivel raiz, fora de contatos[0]). So envia se houver valor.
+  if (u.prop_fracao) p2.set('NM_FRACAO_UNI', u.prop_fracao);
   p2.set('contatos[0][ID_CONTATO_CON]',     idContato);
   p2.set('contatos[0][FL_PROPRIETARIO_CON]','1');
   if (u.prop_nome)     p2.set('contatos[0][ST_NOME_CON]',     u.prop_nome);
