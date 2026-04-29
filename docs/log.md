@@ -4,6 +4,58 @@ Registro cronológico de tarefas concluídas. Entrada mais recente no topo.
 
 ---
 
+## 2026-04-28 (segunda parte) — Refatoração 4-em-1: cond global, modal Dashboard unificado, fusão Condomínios+Demandas, remoção cadastro do painel Condomínios
+
+Quatro mudanças interligadas para eliminar duplicidade de seleção e simplificar navegação. Continuação direta da sessão anterior, por cima do trabalho ainda não commitado.
+
+- Estado global unificado: `state.config.condId` como fonte única para todas as funções que acessam o proxy Superlógica. `cpSelecionarCond` e `saveConfig` ajustados para manter sincronismo. Toast padronizado "Selecione um condomínio ativo no Dashboard" quando condId vazio.
+- Modal unificado no Dashboard: campo de busca solto e botão `+ Novo condomínio` removidos do card. Substituídos por um único `btn-gerenciar-cond` que abre modal com abas "Buscar existente" e "Cadastrar novo". Funções `dashAbrirModalGerenciarCond`, `dashFecharModalGerenciarCond`, `dashModalSetTab` criadas.
+- Fusão de painéis: `panel-demandas-cliente` removido do menu lateral e do DOM. Funcionalidade de preview/salvar demandas virou aba "Caixa de Entrada" dentro do painel Condomínios, lendo `state.config.condId` como fonte. Função `cpRenderDemandasIA` criada.
+- Remoção do cadastro do painel Condomínios: botão, modal `cp-modal` e funções `cpAbrirModal`/`cpFecharModal`/`cpSalvarCondominio` removidos. Cadastro passa a existir exclusivamente no Dashboard.
+- Correções rodada 2: `cpAtualizarStatus`, `cpAnexarFoto`, `cpAplicarUpdate` corrigidas para usar `cpGetCondominioAtivo()` em vez de tratar `cpCondAtivo` string como objeto.
+- Validador: 30/30 aprovados.
+
+Arquivos alterados: `public/index.html` (modificado, 4444 a 4414 linhas), `docs/log.md` (este arquivo), `tarefas/concluidas/refatoracao-cond-global-unificacao-painel.md` (movido de em-andamento)
+Implementado por: subagente programador
+
+---
+
+## 2026-04-28 — Correção da seleção de condomínio no Dashboard e importação de unidades via API REST
+
+Sessão de recuperação após o site ter sido travado por trabalho não commitado em `public/index.html`. O stash foi preservado e o arquivo revertido para o commit limpo `7a30772`. As 3 funcionalidades foram reimplementadas de forma cirúrgica com 4 rodadas de revisor/auditor até aprovação e 30 pontos de validação aprovados.
+
+- Bug original corrigido: `searchCondominioDash` chamava `selecionarCondominio` do painel Configurações, disparando listeners cruzados e travando a tela. Função `selecionarCondominioDash` criada para isolar completamente o fluxo do Dashboard, sem nenhuma chamada à função homônima do painel Configurações.
+- Cadastro rápido de novo condomínio implementado via modal `dash-modal-novo-cond` com validação de nome e id_superlogica, POST no Supabase, auto-seleção imediata e atualização do array em memória `cpCondominios`.
+- Importação de unidades reescrita com mapeamento por índice fixo (header linha 4 com fallback automático), 7 campos de endereço no PUT, limpeza de valores inválidos (`nan`, `0.0`, `cep inválido`), progresso textual em tempo real (`X de Y unidades importadas`) e lotes de 10 com `Promise.all` + sleep 100ms.
+- Issues XSS fora de escopo registrados no CHANGELOG.md para tratamento futuro: `loadConfig` ~1818, `searchCondominio` do painel Configurações ~2979, `addLog` em `enviarDespesas`/`enviarConsumo`, e `toast` global.
+
+Arquivos alterados: `public/index.html` (modificado, 4242 -> 4444 linhas), `CHANGELOG.md` (criado na raiz), `tarefas/concluidas/correcao-selecao-cond-importacao-unidades.md` (movido de em-andamento)
+Implementado por: subagente programador
+
+---
+
+## 2026-04-28 — Seleção de condomínio com ID Superlógica manual
+
+Feature de gerenciamento de condomínio ativo implementada no `public/index.html` (445 inserções, 24 remoções). Migration SQL criada em arquivo separado para rodar no Supabase Studio antes do deploy.
+
+- Modal de cadastro com dois campos (nome e ID Superlógica numérico com validação de inteiro positivo), lista em ordem alfabética com busca por nome, botão para definir condomínio ativo e botão para remover.
+- Barra fixa no topo do Hub exibindo nome e ID Superlógica do condomínio ativo em destaque, visível em todas as abas. Se nenhum condomínio estiver ativo a barra exibe alerta pedindo seleção.
+- Guard de envio aplicado nas funções de importar unidades e importar despesas: botão desabilitado sem condomínio selecionado, modal de confirmação exige clique explícito mostrando nome e ID de destino antes de qualquer chamada à API Superlógica.
+- Trocar de condomínio ativo limpa `state.despesas.importing` e `state.unidades.importing` simetricamente. Defesa em profundidade nas funções `_Confirmado`: revalidam que o condomínio ainda existe antes de disparar a importação.
+- XSS prevenido via `dcEscape` em 5 pontos de renderização: barra de condomínio ativo, modal de confirmação de unidades, modal de confirmação de despesas, lista de seleção e sidebar de condomínios.
+- `updated_at` populado no PATCH para consistência no banco.
+- Decisão de design: coluna `ativo` ficou fora do banco, vive exclusivamente em localStorage por máquina. Evita conflito de sessões simultâneas em máquinas diferentes.
+- Correções aplicadas no ciclo revisor/auditor: `state.despesas.importing` tornado simétrico com unidades, XSS coberto nos 5 locais, comentário em inglês traduzido, defesa em profundidade adicionada, `updated_at` no PATCH.
+- Pendência não bloqueante: `Prefer: return=representation` no PATCH não tem leitura do corpo retornado. Gasta banda desnecessariamente. Vale ajustar em tarefa futura.
+- Migration SQL: `MIGRATION_CONDOMINIOS_SUPERLOGICA.sql` criado na raiz do repo. Precisa ser rodado no Supabase Studio antes do deploy em produção. Adiciona colunas `id_superlogica` (integer not null), `ativo` (boolean default false) e `updated_at` (timestamptz) à tabela `condominios` existente.
+
+Arquivos alterados: `public/index.html` (modificado), `MIGRATION_CONDOMINIOS_SUPERLOGICA.sql` (criado), `tarefas/concluidas/selecao-condominio-id-manual.md` (movido de em-andamento)
+Implementado por: subagente programador
+
+Proximos passos para o Matheus: (1) rodar `MIGRATION_CONDOMINIOS_SUPERLOGICA.sql` no Supabase Studio, (2) testar em localhost com `npm start`, (3) autorizar push com `hubdeploy`.
+
+---
+
 ## 2026-04-28 — Aliases zsh para Service Hub CLIs
 
 - Bloco "Service Hub CLIs" adicionado ao final de `~/.zshrc` com 4 aliases: `hubdeploy`, `hublog`, `hubstat`, `hubvars`

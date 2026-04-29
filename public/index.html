@@ -599,6 +599,44 @@
 
   .tab:hover:not(.active) { color: var(--text); }
 
+  /* BANNER CONDOMÍNIO ATIVO
+     Exibido no topo dos painéis que enviam dados ao Superlógica.
+     Dois estados: .ativo (azul) quando há condomínio selecionado,
+     .vazio (vermelho) quando nenhum condomínio foi selecionado. */
+  .banner-cond-ativo {
+    padding: 12px 16px;
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+    font-weight: 600;
+    gap: 12px;
+  }
+  .banner-cond-ativo.ativo {
+    background: var(--gs-blue-light);
+    color: var(--gs-blue);
+    border: 1px solid var(--gs-blue-mid);
+  }
+  .banner-cond-ativo.vazio {
+    background: rgba(224,58,58,0.08);
+    color: var(--danger);
+    border: 1px solid rgba(224,58,58,0.2);
+  }
+  .banner-cond-ativo button {
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid currentColor;
+    background: transparent;
+    color: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 12px;
+    font-family: var(--sans);
+  }
+  .banner-cond-ativo button:hover { opacity: 0.85; }
+
   /* Dashboard grid */
   .dash-grid {
     display: grid;
@@ -915,9 +953,6 @@
       <span class="nav-icon">✓</span> Tarefas
       <span class="nav-badge">em breve</span>
     </div>
-    <div class="nav-item" onclick="showPanel('demandas-cliente')">
-      <span class="nav-icon">📞</span> Demandas de Cliente
-    </div>
   </nav>
 
   <div class="sidebar-footer">
@@ -952,14 +987,8 @@
             <div id="dash-cond-nome" style="font-size:18px;font-weight:700;color:var(--gs-blue)">—</div>
             <div id="dash-cond-id" style="font-size:10px;font-family:var(--mono);color:var(--muted);margin-top:2px"></div>
           </div>
-          <div style="flex:1;min-width:200px;position:relative">
-            <input type="text" class="cond-search-input" id="dash-cond-search"
-              placeholder="Trocar condomínio..."
-              oninput="searchCondominioDash(this.value)"
-              autocomplete="off"
-              style="width:100%">
-            <div class="cond-dropdown" id="dash-cond-dropdown"></div>
-          </div>
+          <div style="flex:1"></div>
+          <button class="btn btn-primary" id="btn-gerenciar-cond" onclick="dashAbrirModalGerenciarCond()" style="flex-shrink:0">Selecionar ou cadastrar</button>
         </div>
       </div>
 
@@ -1017,6 +1046,9 @@
 
     <!-- IMPORTAR DESPESAS -->
     <div class="panel" id="panel-despesas">
+
+      <!-- Banner populado por renderBannerCondAtivo('despesas') ao abrir o painel -->
+      <div id="banner-cond-despesas"></div>
 
       <div class="tabs">
         <div class="tab active" onclick="setTab(this,'tab-upload')">1. Planilha</div>
@@ -1124,6 +1156,8 @@
 
     <!-- IMPORTAR UNIDADES -->
     <div class="panel" id="panel-unidades">
+      <!-- Banner populado por renderBannerCondAtivo('unidades') ao abrir o painel -->
+      <div id="banner-cond-unidades"></div>
       <div class="card">
         <div class="card-header">
           <span class="card-title">Importar Unidades</span>
@@ -1153,13 +1187,16 @@
         <div class="progress-wrap" id="uni-progress-wrap" style="display:none">
           <div class="progress-bar" id="uni-progress" style="width:0%"></div>
         </div>
+        <div id="uni-progresso-texto" style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-top:6px;display:none"></div>
         <div class="log-wrap" id="uni-log" style="display:none"></div>
         <div class="uni-status" id="uni-status-final" style="display:none"></div>
       </div>
     </div>
 
-    <!-- BOLETOS / CONCILIAÇÃO / NF / TAREFAS — em breve -->
+    <!-- BOLETOS / CONCILIAÇÃO / NF / TAREFAS: em breve -->
     <div class="panel" id="panel-boletos">
+      <!-- Banner populado por renderBannerCondAtivo('boletos') ao abrir o painel -->
+      <div id="banner-cond-boletos"></div>
       <div class="card">
         <div class="empty">
           <div class="empty-icon">◈</div>
@@ -1170,6 +1207,8 @@
     </div>
 
     <div class="panel" id="panel-financeiro">
+      <!-- Banner populado por renderBannerCondAtivo('financeiro') ao abrir o painel -->
+      <div id="banner-cond-financeiro"></div>
       <div class="card">
         <div class="empty">
           <div class="empty-icon">⇌</div>
@@ -1192,7 +1231,7 @@
     <div class="panel" id="panel-condominios">
       <!-- ===== CONDOMÍNIOS PANEL ===== -->
       <style>
-        /* COND PANEL — estilos isolados com prefixo .cp- */
+        /* COND PANEL: estilos isolados com prefixo .cp- */
         .cp-wrap { display:flex; height:calc(100vh - 120px); gap:0; margin: -20px -28px; overflow:hidden; }
         .cp-sidebar { width:240px; background:var(--gs-dark); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; overflow:hidden; }
         .cp-sidebar-sec { padding:14px 12px 6px; font-size:10px; font-family:var(--mono); color:rgba(255,255,255,0.35); text-transform:uppercase; letter-spacing:1.5px; }
@@ -1205,8 +1244,6 @@
         .cp-cond-name { font-weight:500; flex:1; }
         .cp-dot { width:5px; height:5px; border-radius:50%; background:rgba(255,255,255,0.15); flex-shrink:0; }
         .cp-cond-item.active .cp-dot { background:var(--gs-blue); }
-        .cp-btn-novo { margin:10px; padding:9px; background:var(--gs-blue-light); border:1.5px dashed rgba(59,154,199,0.3); border-radius:8px; color:var(--gs-blue); font-size:12px; font-weight:600; cursor:pointer; text-align:center; transition:all 0.15s; font-family:var(--sans); }
-        .cp-btn-novo:hover { background:rgba(59,154,199,0.12); }
         /* MAIN */
         .cp-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
         .cp-topbar { background:var(--bg2); border-bottom:1px solid var(--border); padding:0 22px; display:flex; align-items:center; justify-content:space-between; height:54px; flex-shrink:0; }
@@ -1319,18 +1356,6 @@
         .cp-empty .ico { font-size:40px; margin-bottom:12px; }
         .cp-empty h3 { font-size:16px; margin-bottom:6px; }
         .cp-empty p { font-size:12px; color:var(--muted); font-family:var(--mono); }
-        /* MODAL */
-        .cp-modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:400; align-items:center; justify-content:center; }
-        .cp-modal-overlay.open { display:flex; }
-        .cp-modal-box { background:var(--bg2); border-radius:14px; padding:26px; width:420px; border:1px solid var(--border2); box-shadow:0 20px 60px rgba(0,0,0,0.5); }
-        .cp-modal-box h3 { font-family:var(--sans); font-size:15px; margin-bottom:18px; }
-        .cp-modal-field { margin-bottom:12px; }
-        .cp-modal-field label { font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:4px; font-family:var(--mono); }
-        .cp-modal-field input { width:100%; padding:8px 12px; background:var(--bg3); border:1.5px solid var(--border2); border-radius:8px; font-family:var(--mono); font-size:12px; color:var(--text); outline:none; transition:border-color 0.15s; }
-        .cp-modal-field input:focus { border-color:var(--gs-blue); }
-        .cp-modal-btns { display:flex; gap:8px; justify-content:flex-end; margin-top:18px; }
-        .cp-btn-cancel { padding:8px 16px; border-radius:8px; border:1px solid var(--border2); background:var(--bg3); color:var(--text); cursor:pointer; font-size:12px; font-weight:600; font-family:var(--mono); }
-        .cp-btn-ok { padding:8px 16px; border-radius:8px; border:none; background:var(--gs-blue); color:#0e0e0f; cursor:pointer; font-size:12px; font-weight:700; font-family:var(--mono); }
         /* ASSIN EMPTY */
         .cp-assin-empty { background:var(--bg2); border-radius:10px; padding:40px; text-align:center; border:2px dashed var(--border2); }
         .cp-assin-empty .ico { font-size:36px; margin-bottom:10px; }
@@ -1343,7 +1368,6 @@
         <div class="cp-sidebar">
           <div class="cp-sidebar-sec">Condomínios</div>
           <div class="cp-cond-list" id="cp-cond-list"></div>
-          <div class="cp-btn-novo" onclick="cpAbrirModal()">+ Adicionar Condomínio</div>
         </div>
 
         <!-- MAIN AREA -->
@@ -1369,6 +1393,7 @@
             <button class="cp-tab-btn" onclick="cpShowTab('assinaturas', this)">✍️ Assinaturas</button>
             <button class="cp-tab-btn" onclick="gerarRelatorioSindico()" style="background:rgba(92,255,160,0.15);color:#5cffa0;border:1px solid rgba(92,255,160,0.3);">📄 Relatório Síndico</button>
             <button class="cp-tab-btn" onclick="gerarRelatorioInterno()" style="background:rgba(255,209,102,0.15);color:#ffd166;border:1px solid rgba(255,209,102,0.3);">🔒 Relatório Interno</button>
+            <button class="cp-tab-btn" onclick="cpShowTab('demandas-ia', this)">📥 Caixa de Entrada</button>
             <button class="cp-tab-btn" onclick="cpShowTab('importar', this)" style="background:rgba(92,160,255,0.15);color:#5ca0ff;border:1px solid rgba(92,160,255,0.3);">⬆️ Importar Update</button>
           </div>
 
@@ -1382,24 +1407,6 @@
         </div>
       </div>
 
-      <!-- MODAL NOVO CONDOMÍNIO -->
-      <div class="cp-modal-overlay" id="cp-modal">
-        <div class="cp-modal-box">
-          <h3>Adicionar Condomínio</h3>
-          <div class="cp-modal-field">
-            <label>Nome do Condomínio</label>
-            <input type="text" id="cp-inp-nome" placeholder="Ex: Reserva dos Camarás">
-          </div>
-          <div class="cp-modal-field">
-            <label>Nome do Síndico</label>
-            <input type="text" id="cp-inp-sindico" placeholder="Ex: Paulo">
-          </div>
-          <div class="cp-modal-btns">
-            <button class="cp-btn-cancel" onclick="cpFecharModal()">Cancelar</button>
-            <button class="cp-btn-ok" onclick="cpSalvarCondominio()">Adicionar</button>
-          </div>
-        </div>
-      </div>
 
       <!-- PDF VIEWER -->
       <div class="cp-pdf-overlay" id="cp-pdf-overlay" onclick="cpFecharPdf(event)">
@@ -1425,81 +1432,6 @@
       </div>
     </div>
 
-    <!-- DEMANDAS DE CLIENTE -->
-    <div class="panel" id="panel-demandas-cliente">
-      <div class="card">
-        <div class="card-header" style="align-items:center;gap:16px;flex-wrap:wrap">
-          <span class="card-title">Demandas de Cliente</span>
-          <div style="margin-left:auto;display:flex;align-items:center;gap:8px">
-            <label style="font-size:12px;color:var(--muted);font-family:var(--mono)">Condomínio</label>
-            <select id="dc-select-cond" style="min-width:240px;padding:8px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-family:var(--mono);font-size:12px">
-              <option value="">— selecione —</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="tabs">
-          <div class="tab active" onclick="setTab(this,'tab-dc-caixa')">Caixa de Entrada</div>
-          <div class="tab" onclick="setTab(this,'tab-dc-painel')">Painel</div>
-          <div class="tab" onclick="setTab(this,'tab-dc-geradores')">Geradores</div>
-          <div class="tab" onclick="setTab(this,'tab-dc-clientes')">Clientes</div>
-        </div>
-
-        <!-- Caixa de Entrada -->
-        <div id="tab-dc-caixa">
-          <div class="form-group">
-            <label>Cole o texto solto com as demandas</label>
-            <textarea id="dc-texto-bruto" rows="12"
-              placeholder="Ex: síndico ligou pedindo pra trocar lâmpadas queimadas do hall principal, virou urgência. e a portaria reclamou que o portão tá abrindo sozinho de novo. precisa chamar a manutenção pra ver isso essa semana."
-              style="width:100%;font-family:var(--mono);font-size:13px;line-height:1.6;padding:14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);resize:vertical"></textarea>
-          </div>
-          <div style="display:flex;gap:8px;margin-top:12px">
-            <button class="btn btn-primary" id="dc-btn-processar" onclick="dcProcessarTextoIA()">
-              <span>✨</span> Processar com IA
-            </button>
-          </div>
-
-          <div id="dc-extraidas-container" style="display:none;margin-top:28px">
-            <div class="card-header" style="margin-bottom:12px">
-              <span class="card-title">Demandas extraídas</span>
-              <span id="dc-extraidas-count" style="font-size:11px;color:var(--muted);font-family:var(--mono)"></span>
-            </div>
-            <div id="dc-extraidas-list" style="display:flex;flex-direction:column;gap:12px"></div>
-            <div style="display:flex;gap:8px;margin-top:16px">
-              <button class="btn btn-primary" onclick="dcSalvarDemandas()">✓ Confirmar e Salvar</button>
-              <button class="btn btn-ghost" onclick="dcDescartarPreview()">✕ Descartar</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Painel (placeholder Etapa 2/3) -->
-        <div id="tab-dc-painel" style="display:none">
-          <div class="empty" style="background:var(--bg3);border-radius:var(--radius);padding:40px;text-align:center">
-            <div class="empty-icon">📊</div>
-            <div class="empty-title">Em construção — Etapa 2/3</div>
-            <div class="empty-sub">painel consolidado de demandas por cliente</div>
-          </div>
-        </div>
-
-        <!-- Geradores (placeholder Etapa 2/3) -->
-        <div id="tab-dc-geradores" style="display:none">
-          <div class="empty" style="background:var(--bg3);border-radius:var(--radius);padding:40px;text-align:center">
-            <div class="empty-icon">⚙</div>
-            <div class="empty-title">Em construção — Etapa 2/3</div>
-            <div class="empty-sub">geradores de atas, laudos e relatórios a partir das demandas</div>
-          </div>
-        </div>
-
-        <!-- Clientes (placeholder Etapa 2/3) -->
-        <div id="tab-dc-clientes" style="display:none">
-          <div class="empty" style="background:var(--bg3);border-radius:var(--radius);padding:40px;text-align:center">
-            <div class="empty-icon">👥</div>
-            <div class="empty-title">Em construção — Etapa 2/3</div>
-            <div class="empty-sub">visão por cliente com histórico agregado</div>
-          </div>
-        </div>
-      </div>
-    </div>
 
     <!-- ATAS CONDOMINIAIS -->
     <div class="panel" id="panel-atas">
@@ -1745,16 +1677,189 @@
   </div>
 </main>
 
+<!-- MODAL: Gerenciar condomínio (Dashboard): unifica busca e cadastro em duas abas -->
+<div id="dash-modal-gerenciar-cond" class="modal-overlay" style="display:none">
+  <div class="modal" style="width:520px;max-width:95vw">
+    <div class="modal-title">Gerenciar Condomínio Ativo</div>
+    <div class="tabs" style="margin:8px 0 16px">
+      <div class="tab active" data-aba="buscar" onclick="dashModalSetTab('buscar')">Buscar existente</div>
+      <div class="tab" data-aba="cadastrar" onclick="dashModalSetTab('cadastrar')">Cadastrar novo</div>
+    </div>
+
+    <div id="dash-modal-aba-buscar">
+      <div style="position:relative">
+        <input type="text" id="dash-modal-cond-search" class="cond-search-input"
+               placeholder="Digite o nome do condomínio"
+               oninput="searchCondominioDash(this.value)"
+               autocomplete="off">
+        <div id="dash-modal-cond-dropdown" class="cond-dropdown"></div>
+      </div>
+      <div style="margin-top:12px;font-size:13px;color:var(--muted)" id="dash-modal-cond-ativo-hint"></div>
+    </div>
+
+    <div id="dash-modal-aba-cadastrar" style="display:none">
+      <div class="form-group">
+        <label for="dash-modal-nome-cond">Nome</label>
+        <input type="text" id="dash-modal-nome-cond" placeholder="Ex: Residencial Acácias" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label for="dash-modal-id-superlogica">ID Superlógica</label>
+        <input type="text" id="dash-modal-id-superlogica" inputmode="numeric" pattern="[0-9]*" placeholder="Ex: 167" autocomplete="off">
+      </div>
+      <p style="font-size:12px;color:var(--muted);margin-top:4px">Após salvar, o condomínio será selecionado automaticamente.</p>
+    </div>
+
+    <div class="modal-actions" style="text-align:right;margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="dashFecharModalGerenciarCond()">Fechar</button>
+      <button class="btn btn-primary" id="dash-modal-btn-salvar" onclick="dashSalvarNovoCondominio()" style="display:none">Salvar e selecionar</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOASTS -->
 <div class="toast-wrap" id="toast-wrap"></div>
 
 <script>
 // ============================================================
+// ============================================================
 // ESTADO GLOBAL
+// Convenção de prefixos:
+//   cp*  — exclusivo do painel Condomínios (cpSelecionarCond, cpRenderSidebar, etc.)
+//   getCondominioAtivo / setCondominioAtivo — GLOBAIS do app inteiro,
+//   usadas por qualquer painel que precise saber qual condomínio está ativo.
+// ============================================================
+
+// ============================================================
+// CONDOMÍNIO ATIVO — funções globais de leitura e gravação
+// ============================================================
+
+/**
+ * Grava o condomínio ativo em localStorage E em window para acesso imediato
+ * sem necessidade de parse. Sincroniza state.config para retrocompatibilidade.
+ * Ao final atualiza todos os banners visíveis e o card do Dashboard.
+ */
+function setCondominioAtivo(obj) {
+  // Valida se obj é um condomínio real (tem id e nome)
+  // Quando null/inválido: limpa tudo do localStorage em vez de gravar "null"
+  const valido = obj && obj.id && obj.nome;
+  if (valido) {
+    window.condominioAtivo = obj;
+    try { localStorage.setItem('condominioAtivo', JSON.stringify(obj)); } catch(_) {}
+  } else {
+    window.condominioAtivo = null;
+    try { localStorage.removeItem('condominioAtivo'); } catch(_) {}
+  }
+  // Retrocompatibilidade: state.config ainda é lido por enviarDespesas e afins.
+  // condId recebe id_superlogica (numérico) para a API Superlógica nunca receber UUID Supabase.
+  // Fallback pro uuid só em migração (id_superlogica ausente).
+  if (window.state && window.state.config) {
+    state.config.condId   = valido ? (obj.id_superlogica || obj.id) : '';
+    state.config.condNome = valido ? obj.nome : '';
+    // Persiste para que saveConfig não apague a seleção
+    try { localStorage.setItem('sh_config', JSON.stringify(state.config)); } catch(_) {}
+  }
+  // Atualiza card do Dashboard se já estiver no DOM
+  if (typeof atualizarDashCond === 'function') atualizarDashCond();
+  // Atualiza banners nos painéis que já foram renderizados
+  ['despesas','unidades','boletos','financeiro'].forEach(function(p) {
+    if (document.getElementById('banner-cond-' + p)) renderBannerCondAtivo(p);
+  });
+}
+
+/**
+ * Lê o condomínio ativo na seguinte ordem de prioridade:
+ * 1. window.condominioAtivo (em memória, sem parse)
+ * 2. localStorage.condominioAtivo (parse JSON)
+ * 3. state.config.condId + condNome (migração de estado antigo)
+ * Retorna null se nenhuma fonte tiver dado.
+ */
+function getCondominioAtivo() {
+  if (window.condominioAtivo) return window.condominioAtivo;
+  try {
+    const raw = localStorage.getItem('condominioAtivo');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.id && parsed.nome) {
+        window.condominioAtivo = parsed;
+        return parsed;
+      }
+    }
+  } catch(_) {}
+  // Fallback: migração do estado antigo (sh_config)
+  if (window.state && state.config && state.config.condId && state.config.condNome) {
+    return { id: state.config.condId, nome: state.config.condNome, id_superlogica: state.config.condId };
+  }
+  return null;
+}
+
+/**
+ * Renderiza o banner de condomínio ativo no topo do painel indicado.
+ * Usa DOM API em vez de innerHTML interpolado para evitar XSS via nome do condomínio.
+ * Recebe o painelId ('despesas', 'unidades', 'boletos', 'financeiro').
+ * Com condomínio ativo: banner azul com nome e ID Superlógica.
+ * Sem condomínio: banner vermelho bloqueando ação.
+ * Para 'despesas' também controla o disabled do btn-enviar.
+ */
+function renderBannerCondAtivo(painelId) {
+  const el = document.getElementById('banner-cond-' + painelId);
+  if (!el) return;
+  const cond = getCondominioAtivo();
+  // Limpa conteúdo anterior antes de reconstruir via DOM API
+  el.innerHTML = '';
+
+  if (cond) {
+    // Decide qual ID mostrar: prioriza id_superlogica, senão mostra id interno (migração)
+    const idLabel = cond.id_superlogica
+      ? 'ID Superlógica: ' + cond.id_superlogica
+      : 'ID: ' + cond.id;
+    el.className = 'banner-cond-ativo ativo';
+
+    const span = document.createElement('span');
+    const strong = document.createElement('strong');
+    // textContent evita XSS: nome do condomínio vem de input do usuário
+    strong.textContent = cond.nome;
+    span.append('Condomínio ativo: ', strong, ' ');
+    const idSpan = document.createElement('span');
+    idSpan.style.cssText = 'font-weight:400;opacity:.8';
+    // textContent evita XSS: idLabel é construído internamente, mas defensivo não custa
+    idSpan.textContent = '(' + idLabel + ')';
+    span.append(idSpan);
+    el.append(span);
+
+    const btn = document.createElement('button');
+    btn.textContent = 'Trocar';
+    btn.addEventListener('click', dashAbrirModalGerenciarCond);
+    el.append(btn);
+
+    // Com condomínio ativo: habilita botão de envio de despesas
+    if (painelId === 'despesas') {
+      const btnEnviar = document.getElementById('btn-enviar');
+      if (btnEnviar) { btnEnviar.disabled = false; btnEnviar.removeAttribute('title'); }
+    }
+  } else {
+    el.className = 'banner-cond-ativo vazio';
+
+    const span = document.createElement('span');
+    span.textContent = 'Nenhum condomínio selecionado. Selecione antes de continuar.';
+    el.append(span);
+
+    const btn = document.createElement('button');
+    btn.textContent = 'Selecionar';
+    btn.addEventListener('click', dashAbrirModalGerenciarCond);
+    el.append(btn);
+
+    // Sem condomínio: desabilita botão de envio de despesas para evitar envio ao lugar errado
+    if (painelId === 'despesas') {
+      const btnEnviar = document.getElementById('btn-enviar');
+      if (btnEnviar) { btnEnviar.disabled = true; btnEnviar.title = 'Selecione um condomínio primeiro'; }
+    }
+  }
+}
+
 // ============================================================
 const state = {
   despesas: { raw: [], headers: [], mapped: [], validated: [] },
-  unidades: { raw: [], headers: [] },
+  unidades: { raw: [], headers: [], processed: [], importing: false, shouldStop: false },
   stats: { imports: 0, records: 0, errors: 0 },
   config: {}
 };
@@ -1788,13 +1893,52 @@ const CAMPOS_UNIDADE = [
     if (c.accessToken) document.getElementById('cfg-access-token').value = c.accessToken;
     if (c.condId) document.getElementById('cfg-cond-id').value = c.condId;
     if (c.proxy) document.getElementById('cfg-proxy').value = c.proxy;
-    // Restaurar condomínio selecionado
+    // Restaurar condomínio selecionado no painel Configurações
     if (c.condId && c.condNome) {
       const inp = document.getElementById('cond-search-input');
       if (inp) inp.value = c.condNome;
+      // Badge reconstruído via DOM API para consistência com selecionarCondominio
+      // e para evitar XSS caso condNome/condId do localStorage contenham HTML
       const wrap = document.getElementById('cond-selected-wrap');
-      if (wrap) wrap.innerHTML = `<div class="cond-selected-badge">✓ ${c.condNome} <span style="color:var(--muted)">·</span> ID ${c.condId}<button onclick="limparCondominio()">×</button></div>`;
+      if (wrap) {
+        wrap.innerHTML = '';
+        const badge = document.createElement('div');
+        badge.className = 'cond-selected-badge';
+        badge.append('✓ ');
+        badge.append(document.createTextNode(c.condNome));
+        const sep = document.createElement('span');
+        sep.style.color = 'var(--muted)';
+        sep.textContent = ' · ';
+        badge.append(sep);
+        badge.append(document.createTextNode('ID ' + c.condId));
+        const btnL = document.createElement('button');
+        btnL.textContent = '×';
+        btnL.addEventListener('click', limparCondominio);
+        badge.append(btnL);
+        wrap.append(badge);
+      }
     }
+
+    // Migração one-shot: carrega condominioAtivo do localStorage novo.
+    // Se ainda não existir mas sh_config tiver condId/condNome,
+    // constrói o objeto de migração para não perder dado já gravado.
+    try {
+      const raw = localStorage.getItem('condominioAtivo');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.id && parsed.nome) {
+          window.condominioAtivo = parsed;
+        }
+      } else if (c.condId && c.condNome) {
+        // Estado antigo sem condominioAtivo: migra para o novo formato
+        const migrado = { id: c.condId, nome: c.condNome, id_superlogica: null };
+        window.condominioAtivo = migrado;
+        try { localStorage.setItem('condominioAtivo', JSON.stringify(migrado)); } catch(_) {}
+      }
+    } catch(_) {}
+
+    // Atualiza o card do Dashboard com o condomínio restaurado do localStorage
+    if (typeof atualizarDashCond === 'function') atualizarDashCond();
     updateStatusDot();
   } catch(e) {}
 
@@ -1828,10 +1972,14 @@ const CAMPOS_UNIDADE = [
 })();
 
 function saveConfig() {
+  // Preserva condId existente se o campo hidden estiver vazio.
+  // O usuário pode ter selecionado o cond pelo Dashboard (que não atualiza
+  // o hidden cfg-cond-id), e clicar em Salvar não deve apagar essa seleção.
+  const cfgCondIdRaw = (document.getElementById('cfg-cond-id').value || '').trim();
   state.config = {
     appToken: document.getElementById('cfg-app-token').value.trim(),
     accessToken: document.getElementById('cfg-access-token').value.trim(),
-    condId: document.getElementById('cfg-cond-id').value.trim(),
+    condId: cfgCondIdRaw || state.config.condId || '',
     condNome: state.config.condNome || '',
     proxy: document.getElementById('cfg-proxy').value.trim(),
   };
@@ -1860,7 +2008,9 @@ function updateStatusDot() {
 
 async function testConnection() {
   if (!state.config.appToken) { toast('Configure os tokens primeiro', 'err'); return; }
-  toast('Testando conexão...', 'info');
+  // Proxy é obrigatório para evitar CORS — falha explícita é melhor que TypeError silencioso
+  if (!state.config.proxy) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
+  toast('Testando conexao...', 'info');
   try {
     const condId = state.config.condId || '167';
     const url = buildUrl('/condominios', { id: condId, somenteAtivos: 1 });
@@ -1891,7 +2041,6 @@ const PAGE_META = {
   atas:          { title: 'Atas Condominiais', sub: 'geração automática com IA' },
   condominios:   { title: 'Condomínios', sub: 'gestão de demandas por condomínio' },
   consumo:       { title: 'Leitura de Consumo', sub: 'fotos de medidores → Superlógica' },
-  'demandas-cliente': { title: 'Demandas de Cliente', sub: 'caixa de entrada, painel, geradores, clientes' },
 };
 
 function showPanel(name) {
@@ -1907,6 +2056,12 @@ function showPanel(name) {
   });
   // Persiste painel ativo
   try { localStorage.setItem('sh_active_panel', name); } catch(e) {}
+  // Renderiza banner de condomínio ativo nos painéis que enviam ao Superlógica.
+  // O hook fica aqui (original) e não no override para sobreviver a qualquer
+  // reordenação de scripts — o override chama _origShowPanel que executa este código.
+  if (['despesas','unidades','boletos','financeiro'].includes(name)) {
+    renderBannerCondAtivo(name);
+  }
 }
 
 // Restaura painel ativo ao carregar
@@ -1978,14 +2133,26 @@ function processFile(file, type) {
     if (allRows.length < 2) { toast('Planilha vazia ou sem dados', 'err'); return; }
 
     if (type === 'unidades') {
-      // Detecta header automaticamente buscando por "Unidade"
-      let headerIdx = 0;
-      for (let i = 0; i < Math.min(10, allRows.length); i++) {
-        if (allRows[i] && allRows[i].some(c => String(c||'').trim().toLowerCase() === 'unidade')) {
-          headerIdx = i; break;
+      // Tenta o índice fixo 3 (linha 4 da planilha do Superlogica).
+      // Fallback: varre as primeiras 10 linhas procurando "unidade" na coluna 0.
+      let headerIdx = 3;
+      const headerRow = allRows[headerIdx] || null;
+      const col0 = headerRow ? String(headerRow[0] || '').toLowerCase() : '';
+      if (!col0.includes('unidade')) {
+        let achou = false;
+        for (let i = 0; i < Math.min(10, allRows.length); i++) {
+          const row = allRows[i] || [];
+          const c0 = String(row[0] || '').toLowerCase();
+          if (c0.includes('unidade')) { headerIdx = i; achou = true; break; }
+        }
+        // Planilha curta demais ou sem linha de cabeçalho reconhecível
+        if (!achou && !headerRow) {
+          toast('Planilha inválida: cabeçalho não encontrado.', 'err');
+          return;
         }
       }
-      const headers = allRows[headerIdx].map(h => String(h||'').trim());
+      const safeHeader = allRows[headerIdx] || [];
+      const headers = safeHeader.map(h => String(h||'').trim());
       const data_rows = allRows.slice(headerIdx + 1).filter(r =>
         r && r[0] && String(r[0]).trim() !== '' && String(r[0]).trim() !== 'Unidade'
       );
@@ -2008,103 +2175,117 @@ function processFile(file, type) {
 }
 
 // ============================================================
-// PROCESSAMENTO INTELIGENTE DE UNIDADES
+// PROCESSAMENTO DE UNIDADES: COLUNAS FIXAS
+// Mapeia pela posição exata da planilha do Superlogica, não por nome de header.
+// Compatível com renderPreviewUnidades e enviarUnidades (mesmos nomes de campo).
 // ============================================================
 function processUnidadesData(headers, rows) {
-  const h = headers.map(x => String(x||'').toLowerCase());
+  // Remove valores inválidos conhecidos, retorna string vazia se inválido
+  const cleanVal = function(v) {
+    if (v === null || v === undefined) return '';
+    var s = String(v).trim();
+    if (!s) return '';
+    var lower = s.toLowerCase();
+    if (['nan', '0', '0.0', 'cep inválido', 'cep invalido', 'inválido', 'invalido'].indexOf(lower) !== -1) return '';
+    return s;
+  };
 
-  function col(row) {
-    const keys = Array.from(arguments).slice(1);
-    for (const key of keys) {
-      const idx = h.findIndex(hh => hh.includes(key));
-      if (idx >= 0 && row[idx] !== undefined) {
-        const v = String(row[idx]||'').trim();
-        const bad = ['nan','0','0.0','cep inválido','cep invalido','inválido','invalido'];
-        if (v && !bad.includes(v.toLowerCase())) return v;
+  // Mantém apenas dígitos (para CPF, CEP, telefone)
+  const cleanDigits = function(v) { return cleanVal(v).replace(/\D/g, ''); };
+
+  // Separa "A 0201" em bloco "A" e numero "0201". Se não há espaço, numero = valor todo.
+  const splitUnidade = function(raw) {
+    var v = cleanVal(raw);
+    if (!v) return { numero: '', bloco: '' };
+    if (v.indexOf(' ') !== -1) {
+      var parts = v.split(/\s+/);
+      return { bloco: parts[0], numero: parts.slice(1).join(' ') };
+    }
+    return { numero: v, bloco: '' };
+  };
+
+  // Separa "Vitória ES" em cidade e sigla de estado.
+  // Se a última palavra for 2 letras maiúsculas, é a UF.
+  const splitCidadeEstado = function(raw) {
+    var v = cleanVal(raw);
+    if (!v) return { cidade: '', estado: '' };
+    var tokens = v.split(/\s+/);
+    if (tokens.length >= 2) {
+      var ult = tokens[tokens.length - 1].toUpperCase();
+      if (ult.length === 2 && /^[A-Z]{2}$/.test(ult)) {
+        return { cidade: tokens.slice(0, -1).join(' '), estado: ult };
       }
     }
-    return '';
-  }
+    return { cidade: v, estado: '' };
+  };
 
-  function splitPhone(f1, f2) {
-    const phones = [f1, f2].filter(p => p && p.trim());
-    let fixo = '', cel = '';
-    for (const p of phones) {
-      const digits = p.replace(/\D/g, '');
-      if (digits.length >= 10) {
-        const num = digits.slice(2);
-        if (num.startsWith('9') && num.length >= 9) { if (!cel) cel = p; }
-        else { if (!fixo) fixo = p; }
-      } else { if (!fixo) fixo = p; }
-    }
-    return [fixo, cel];
-  }
+  var out = [];
+  for (var ri = 0; ri < rows.length; ri++) {
+    var row = rows[ri];
+    if (!row || row.length === 0) continue;
+    var u0 = cleanVal(row[0]);
+    if (!u0) continue;
 
-  function parseUnidade(u) {
-    u = String(u||'').trim();
-    const parts = u.split('-');
-    if (parts.length === 2) return { num: parts[1], bloco: 'Torre ' + parts[0] };
-    return { num: u, bloco: '' };
-  }
+    var splitUni = splitUnidade(row[0]);
+    // Coluna 1 é Grupo/Bloco: tem precedência sobre o bloco extraído da coluna 0
+    var grupoBloco = cleanVal(row[1]) || splitUni.bloco;
 
-  function parseCidade(c) {
-    c = String(c||'').trim();
-    if (!c || c.toLowerCase().includes('inválido') || c.toLowerCase().includes('invalido')) return { cidade: '', estado: '' };
-    if (c.includes(' - ')) {
-      const idx = c.indexOf(' - ');
-      return { cidade: c.slice(0, idx).trim(), estado: c.slice(idx + 3).trim() };
-    }
-    return { cidade: c, estado: 'ES' };
-  }
+    // Telefone: preferir coluna 6 (Fone 1); fallback coluna 7 (Fone 2)
+    var fone1 = cleanDigits(row[6]);
+    var fone2 = cleanDigits(row[7]);
+    var telefone = fone1 || fone2;
 
-  return rows.map(function(row, idx) {
-    const unidadeRaw = col(row, 'unidade');
-    if (!unidadeRaw) return null;
-    const { num: unidadeNum, bloco } = parseUnidade(unidadeRaw);
-    const grupoBloco = col(row, 'grupo') || bloco;
-    const fone1 = col(row, 'fone 1', 'fone1');
-    const fone2 = col(row, 'fone 2', 'fone2');
-    const [fixoProp, celProp] = splitPhone(fone1, fone2);
-    const { cidade, estado } = parseCidade(col(row, 'cidade'));
-    const inqNome = col(row, 'inquilino');
-    return {
-      _linha: idx + 2,
-      _unidadeRaw: unidadeRaw,
-      ST_UNIDADE_UNI: unidadeNum,
+    var cid = splitCidadeEstado(row[29]);
+
+    out.push({
+      _linha: ri + 2,
+      _unidadeRaw: u0,
+      // Campos usados pelo POST/PUT do Superlogica
+      ST_UNIDADE_UNI: splitUni.numero,
       ST_BLOCO_UNI: grupoBloco,
-      prop_nome: col(row, 'proprietário', 'proprietario', 'nome'),
-      prop_cpf: col(row, 'cpf', 'cnpj'),
-      prop_rg: col(row, 'rg'),
-      prop_email: col(row, 'email'),
-      prop_fone: fixoProp,
-      prop_cel: celProp,
-      prop_cep: col(row, 'cep'),
-      prop_endereco: col(row, 'endereço', 'endereco'),
-      prop_bairro: col(row, 'bairro'),
-      prop_cidade: cidade,
-      prop_estado: estado,
-      inq_nome: inqNome,
-    };
-  }).filter(Boolean);
+      // Campos do proprietário (renderPreviewUnidades e enviarUnidades consomem esses nomes)
+      prop_nome:        cleanVal(row[2]),
+      prop_cpf:         cleanVal(row[3]),
+      prop_rg:          cleanVal(row[4]),
+      prop_email:       cleanVal(row[5]),
+      prop_fone:        telefone,  // enviarUnidades lê prop_fone quando prop_cel está vazio
+      prop_cel:         '',        // mantido para compatibilidade com renderPreviewUnidades
+      prop_cep:         cleanDigits(row[24]),
+      prop_endereco:    cleanVal(row[25]),
+      prop_numero:      cleanVal(row[26]),
+      prop_bairro:      cleanVal(row[27]),
+      prop_complemento: cleanVal(row[28]),
+      prop_cidade:      cid.cidade,
+      prop_estado:      cid.estado,
+      inq_nome:         cleanVal(row[9]),
+    });
+  }
+  return out;
 }
 
+// Renderiza preview de até 8 linhas da planilha de unidades.
+// Todos os campos de dados da planilha são escapados para evitar XSS via innerHTML.
 function renderPreviewUnidades(processed, filename) {
   const preview = document.getElementById('preview-unidades');
   const info = document.getElementById('unidades-info');
   const table = document.getElementById('unidades-table');
+  // Escape de dados externos (planilha do usuário) antes de interpolar em innerHTML
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   preview.style.display = 'block';
   info.textContent = filename + ' · ' + processed.length + ' unidades · normalizadas e prontas para envio';
   const previewRows = processed.slice(0, 8);
   let html = '<tr><th>Unidade</th><th>Bloco</th><th>Proprietário</th><th>CPF/CNPJ</th><th>Celular</th><th>Email</th><th>Cidade</th></tr>';
   previewRows.forEach(function(r) {
     html += '<tr>' +
-      '<td><b>' + r.ST_UNIDADE_UNI + '</b></td>' +
-      '<td>' + (r.ST_BLOCO_UNI||'—') + '</td>' +
-      '<td>' + (r.prop_nome||'<span style="color:var(--muted)">—</span>') + '</td>' +
-      '<td style="font-family:var(--mono);font-size:11px">' + (r.prop_cpf||'—') + '</td>' +
-      '<td>' + (r.prop_cel||r.prop_fone||'—') + '</td>' +
-      '<td style="font-size:11px">' + (r.prop_email||'—') + '</td>' +
-      '<td>' + (r.prop_cidade||'—') + '</td>' +
+      '<td><b>' + esc(r.ST_UNIDADE_UNI) + '</b></td>' +
+      '<td>' + (r.ST_BLOCO_UNI ? esc(r.ST_BLOCO_UNI) : '&mdash;') + '</td>' +
+      '<td>' + (r.prop_nome ? esc(r.prop_nome) : '<span style="color:var(--muted)">&mdash;</span>') + '</td>' +
+      '<td style="font-family:var(--mono);font-size:11px">' + (r.prop_cpf ? esc(r.prop_cpf) : '&mdash;') + '</td>' +
+      '<td>' + (r.prop_cel || r.prop_fone ? esc(r.prop_cel || r.prop_fone) : '&mdash;') + '</td>' +
+      '<td style="font-size:11px">' + (r.prop_email ? esc(r.prop_email) : '&mdash;') + '</td>' +
+      '<td>' + (r.prop_cidade ? esc(r.prop_cidade) : '&mdash;') + '</td>' +
       '</tr>';
   });
   if (processed.length > 8) {
@@ -2299,12 +2480,20 @@ function filterRows(el, filter) {
 // ============================================================
 async function enviarDespesas() {
   if (!state.config.appToken) { toast('Configure os tokens da API primeiro', 'err'); return; }
+  // Proxy obrigatório para não tentar chamada CORS direta
+  if (!state.config.proxy) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
 
   const validos = state.despesas.validated.filter(r => r._valido);
   if (!validos.length) { toast('Nenhum registro válido para enviar', 'err'); return; }
 
-  const condId = state.config.condId;
-  if (!condId) { toast('Configure o ID do condomínio nas configurações', 'err'); return; }
+  // Lê o condomínio ativo via getCondominioAtivo para garantir que id_superlogica (numérico)
+  // seja usado como ID_CONDOMINIO_COND, nunca o UUID Supabase.
+  const condAtivo = getCondominioAtivo();
+  const condId = condAtivo ? (condAtivo.id_superlogica || condAtivo.id) : null;
+  if (!condAtivo || !condAtivo.id_superlogica) {
+    toast('Selecione um condomínio com ID Superlógica antes de enviar', 'err');
+    return;
+  }
 
   const btn = document.getElementById('btn-enviar');
   btn.disabled = true;
@@ -2373,8 +2562,16 @@ async function enviarDespesas() {
 
 async function enviarUnidades() {
   if (!state.config.appToken) { toast('Configure os tokens da API primeiro', 'err'); return; }
-  const condId = state.config.condId;
-  if (!condId) { toast('Configure o ID do condomínio', 'err'); return; }
+  // Proxy obrigatório para não tentar chamada CORS direta a api.superlogica.net
+  if (!state.config.proxy) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
+  // Lê o condomínio ativo via getCondominioAtivo para garantir que id_superlogica (numérico)
+  // seja usado como ID_CONDOMINIO_COND, nunca o UUID Supabase.
+  const condAtivo = getCondominioAtivo();
+  const condId = condAtivo ? (condAtivo.id_superlogica || condAtivo.id) : null;
+  if (!condAtivo || !condAtivo.id_superlogica) {
+    toast('Selecione um condomínio com ID Superlógica antes de enviar', 'err');
+    return;
+  }
 
   const processed = state.unidades.processed;
   if (!processed || !processed.length) { toast('Carregue uma planilha primeiro', 'err'); return; }
@@ -2382,14 +2579,16 @@ async function enviarUnidades() {
   state.unidades.importing = true;
   state.unidades.shouldStop = false;
 
-  const progressWrap = document.getElementById('uni-progress-wrap');
-  const progressBar  = document.getElementById('uni-progress');
-  const logDiv       = document.getElementById('uni-log');
-  const statusFinal  = document.getElementById('uni-status-final');
-  const btnEnviar    = document.querySelector('[onclick="enviarUnidades()"]');
-  const btnParar     = document.getElementById('btn-parar-uni');
+  const progressWrap    = document.getElementById('uni-progress-wrap');
+  const progressBar     = document.getElementById('uni-progress');
+  const progressTexto   = document.getElementById('uni-progresso-texto');
+  const logDiv          = document.getElementById('uni-log');
+  const statusFinal     = document.getElementById('uni-status-final');
+  const btnEnviar       = document.querySelector('[onclick="enviarUnidades()"]');
+  const btnParar        = document.getElementById('btn-parar-uni');
 
   progressWrap.style.display = 'block';
+  if (progressTexto) { progressTexto.style.display = 'block'; progressTexto.textContent = '0 de ' + processed.length + ' unidades importadas'; }
   logDiv.style.display = 'block';
   logDiv.innerHTML = '';
   statusFinal.style.display = 'none';
@@ -2405,6 +2604,10 @@ async function enviarUnidades() {
   const BATCH = 10; // 10 unidades simultâneas
 
   async function enviarUmaUnidade(u) {
+    // Escape para dados de planilha que vão para addLog: previne XSS via innerHTML do log
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     if (state.unidades.shouldStop) return { ok: false, parou: true };
     try {
       // PASSO 1: POST sem contatos (ID_TIPOCONTATO_TCON obrigatório no nível raiz)
@@ -2420,7 +2623,7 @@ async function enviarUnidades() {
       const item = Array.isArray(d1) ? d1[0] : d1;
 
       if (!item || item.status === '500' || item.status === 500) {
-        addLog(logDiv, u._unidadeRaw + ': erro POST — ' + (item?.msg || r1.status), 'err');
+        addLog(logDiv, esc(u._unidadeRaw) + ': erro POST — ' + esc(item?.msg || r1.status), 'err');
         return { ok: false };
       }
 
@@ -2443,18 +2646,39 @@ async function enviarUnidades() {
       const fix = u.prop_cel ? fmtTel(u.prop_fone) : '';
       if (cel) p2.set('contatos[0][ST_TELEFONE_CON]', cel);
       if (fix) p2.set('contatos[0][ST_TELEFONE_CON2]', fix);
+      // Endereço do proprietário (campos incluídos após migração para colunas fixas)
+      if (u.prop_cep)         p2.set('contatos[0][ST_CEP_CON]',         u.prop_cep);
+      if (u.prop_endereco)    p2.set('contatos[0][ST_ENDERECO_CON]',    u.prop_endereco);
+      if (u.prop_numero)      p2.set('contatos[0][ST_NUMERO_CON]',      u.prop_numero);
+      if (u.prop_bairro)      p2.set('contatos[0][ST_BAIRRO_CON]',      u.prop_bairro);
+      if (u.prop_complemento) p2.set('contatos[0][ST_COMPLEMENTO_CON]', u.prop_complemento);
+      if (u.prop_cidade)      p2.set('contatos[0][ST_CIDADE_CON]',      u.prop_cidade);
+      if (u.prop_estado)      p2.set('contatos[0][ST_ESTADO_CON]',      u.prop_estado);
 
       const urlPut = (state.config.proxy||'').replace(/\/$/, '') + '/v2/condor/unidades/post';
-      await fetch(urlPut, {
+      const r2 = await fetch(urlPut, {
         method: 'PUT',
         headers: { 'Content-Type':'application/x-www-form-urlencoded', 'app_token':state.config.appToken, 'access_token':state.config.accessToken },
         body: p2.toString()
       });
+      if (!r2.ok) {
+        const txt = await r2.text().catch(() => '');
+        addLog(logDiv, 'Falha PUT unidade ' + esc(u._unidadeRaw) + ': ' + r2.status + ' ' + esc(txt.slice(0, 200)), 'err');
+        return { ok: false, erro: 'PUT ' + r2.status };
+      }
+      let payloadResp = null;
+      try { payloadResp = await r2.json(); } catch (_) {}
+      // Superlógica retorna { status: "200", ... } em sucesso; qualquer outro status é falha
+      if (payloadResp && String(payloadResp.status) !== '200' && payloadResp.status !== undefined) {
+        const msgErr = (payloadResp.message || JSON.stringify(payloadResp)).slice(0, 200);
+        addLog(logDiv, 'PUT respondeu erro para unidade ' + esc(u._unidadeRaw) + ': ' + esc(msgErr), 'err');
+        return { ok: false, erro: msgErr };
+      }
 
-      addLog(logDiv, u._unidadeRaw + (u.prop_nome ? ' — ' + u.prop_nome : '') + ': ✓', 'ok');
+      addLog(logDiv, esc(u._unidadeRaw) + (u.prop_nome ? ' — ' + esc(u.prop_nome) : '') + ': ✓', 'ok');
       return { ok: true };
     } catch(e) {
-      addLog(logDiv, u._unidadeRaw + ': ' + e.message, 'err');
+      addLog(logDiv, esc(u._unidadeRaw) + ': ' + esc(e.message), 'err');
       return { ok: false };
     }
   }
@@ -2474,9 +2698,10 @@ async function enviarUnidades() {
       else if (!r.parou) err++;
     });
 
-    // Atualizar barra de progresso
+    // Atualizar barra de progresso e texto de progresso em tempo real
     const pct = Math.round((done / processed.length) * 100);
     progressBar.style.width = pct + '%';
+    if (progressTexto) progressTexto.textContent = done + ' de ' + processed.length + ' unidades importadas';
 
     // Pausa mínima entre lotes para não sobrecarregar
     if (i + BATCH < processed.length && !state.unidades.shouldStop) {
@@ -2489,6 +2714,7 @@ async function enviarUnidades() {
   if (btnEnviar) btnEnviar.disabled = false;
   if (btnParar) btnParar.style.display = 'none';
   progressBar.style.width = '100%';
+  if (progressTexto) progressTexto.textContent = done + ' de ' + processed.length + ' unidades processadas';
 
   // Status final permanente
   statusFinal.style.display = 'block';
@@ -2523,10 +2749,12 @@ function pararImportacaoUnidades() {
 // ============================================================
 // API HELPERS
 // ============================================================
+// Retorna null quando o proxy não está configurado para evitar que chamadas
+// caiam direto em api.superlogica.net, o que quebraria por CORS no browser.
+// Todos os callers devem checar null antes de fazer fetch.
 function buildUrl(path, params) {
-  const base = state.config.proxy
-    ? state.config.proxy.replace(/\/$/, '') + '/v2/condor' + path
-    : 'https://api.superlogica.net/v2/condor' + path;
+  if (!state.config.proxy) return null;
+  const base = state.config.proxy.replace(/\/$/, '') + '/v2/condor' + path;
   const q = new URLSearchParams(params).toString();
   return base + (q ? '?' + q : '');
 }
@@ -2540,11 +2768,15 @@ function getHeaders(contentType = 'application/x-www-form-urlencoded') {
 }
 
 async function apiGet(url) {
+  // url já foi validada pelo caller — null não chega aqui se os callers estiverem corretos
+  if (!url) throw new Error('Configure o proxy nas Configuracoes antes de usar a API');
   return fetch(url, { method: 'GET', headers: getHeaders('application/json') });
 }
 
 async function apiPost(path, body) {
   const url = buildUrl(path, {});
+  // Aborta antes de tentar fetch(null), o que lançaria TypeError não tratado
+  if (!url) { toast('Configure o proxy nas Configuracoes', 'err'); throw new Error('Proxy nao configurado'); }
   return fetch(url, { method: 'POST', headers: getHeaders(), body });
 }
 
@@ -2597,7 +2829,7 @@ function audioDrop(e) {
 }
 
 // ============================================================
-// TRANSCRIÇÃO VIA ASSEMBLYAI — qualquer tamanho, qualquer formato
+// TRANSCRIÇÃO VIA ASSEMBLYAI: qualquer tamanho, qualquer formato
 // Upload direto → poll até concluir → retorna texto completo
 // ============================================================
 // URLs do proxy AssemblyAI servido pelo backend (a chave fica no env ASSEMBLYAI_KEY no Railway)
@@ -2728,44 +2960,230 @@ function importarTranscricao(event) {
   reader.readAsText(file, 'UTF-8');
 }
 
+// Atualiza o card do Dashboard com o condomínio ativo e ajusta o estilo do botão
+// de acordo com se há ou não condomínio selecionado.
+// Atualiza o card de condomínio ativo no Dashboard.
+// Lê de getCondominioAtivo() para garantir que qualquer ponto de
+// seleção (Configurações, painel Condomínios, modal do Dashboard) reflita aqui.
 function atualizarDashCond() {
-  var nome = (window.state && state.config && state.config.condNome) ? state.config.condNome : '—';
-  var id = (window.state && state.config && state.config.condId) ? state.config.condId : '';
+  var cond = getCondominioAtivo();
+  var nome = cond ? cond.nome : '—';
+  // NUNCA mostrar UUID do Supabase quando há id_superlogica disponível
+  var idText = '';
+  if (cond) {
+    idText = cond.id_superlogica
+      ? 'ID Superlógica: ' + cond.id_superlogica
+      : 'ID: ' + cond.id;
+  }
   var nEl = document.getElementById('dash-cond-nome');
   var iEl = document.getElementById('dash-cond-id');
   if (nEl) nEl.textContent = nome;
-  if (iEl) iEl.textContent = id ? 'ID ' + id : '';
+  if (iEl) iEl.textContent = idText;
+  // Ajusta botão: primário quando nenhum cond ativo, ghost quando já há seleção
+  var btnGer = document.getElementById('btn-gerenciar-cond');
+  if (btnGer) {
+    if (cond) {
+      btnGer.classList.remove('btn-primary');
+      btnGer.classList.add('btn-ghost');
+      btnGer.textContent = 'Trocar ou cadastrar';
+    } else {
+      btnGer.classList.remove('btn-ghost');
+      btnGer.classList.add('btn-primary');
+      btnGer.textContent = 'Selecionar ou cadastrar';
+    }
+  }
 }
 
+// Busca condomínio no modal do Dashboard: primeiro em cpCondominios (memória), depois Supabase.
+// Não chama Superlógica/proxy para não expor tokens no frontend.
 async function searchCondominioDash(query) {
-  var dd = document.getElementById('dash-cond-dropdown');
+  const dd = document.getElementById('dash-modal-cond-dropdown');
   if (!dd) return;
-  if (query.length < 2) { dd.classList.remove('open'); return; }
+  const q = (query || '').trim();
+  if (q.length < 2) {
+    dd.classList.remove('open');
+    dd.innerHTML = '';
+    return;
+  }
+  // Escape local para atributos HTML e innerHTML: evita XSS via dados da planilha/API
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  let resultados = [];
+
+  // 1) Busca local em cpCondominios (array em memória carregado do Supabase)
+  if (typeof cpCondominios !== 'undefined' && Array.isArray(cpCondominios)) {
+    const ql = q.toLowerCase();
+    resultados = cpCondominios
+      .filter(c => c && c.nome && c.nome.toLowerCase().includes(ql))
+      .map(c => ({ id: c.id, nome: c.nome, id_superlogica: c.id_superlogica || null }));
+  }
+
+  // 2) Fallback: consulta Supabase quando memória não tem resultados
+  if (resultados.length === 0) {
+    try {
+      const supaQ = encodeURIComponent('*' + q + '*');
+      const r = await supaFetch('condominios?select=id,nome,id_superlogica&nome=ilike.' + supaQ + '&order=nome.asc&limit=15');
+      if (Array.isArray(r)) resultados = r;
+    } catch (e) {
+      // Erro silencioso: array vazio já resulta em "Nenhum condomínio encontrado" na UI
+    }
+  }
+
+  if (resultados.length === 0) {
+    dd.innerHTML = '<div class="cond-option" style="opacity:.7;cursor:default">Nenhum condomínio encontrado</div>';
+    dd.classList.add('open');
+    return;
+  }
+
+  dd.innerHTML = resultados.slice(0, 15).map(c => {
+    const id = esc(c.id);
+    const nome = esc(c.nome);
+    const idSup = c.id_superlogica != null ? esc(c.id_superlogica) : '';
+    return '<div class="cond-option" data-id="' + id + '" data-nome="' + nome + '">'
+      + '<span class="cond-name">' + nome + '</span>'
+      + (idSup ? '<span class="cond-id">' + idSup + '</span>' : '')
+      + '</div>';
+  }).join('');
   dd.classList.add('open');
-  dd.innerHTML = '<div class="cond-loading">Buscando...</div>';
-  try {
-    var url = buildUrl('/condominios', {somenteAtivos:1, pesquisa:query, pagina:0, itensPorPagina:15});
-    var r = await apiGet(url);
-    var data = await r.json();
-    var lista = Array.isArray(data) ? data : (data.data || []);
-    if (!lista.length) { dd.innerHTML = '<div class="cond-loading">Nenhum resultado</div>'; return; }
-    dd.innerHTML = lista.map(function(c) {
-      var id = c.ID_CONDOMINIO_COND || c.id_condominio_cond;
-      var nome = (c.ST_CONDOMINIO_COND || c.st_condominio_cond || 'Sem nome').replace(/"/g, '');
-      return '<div class="cond-option" onclick="selecionarCondominio(' + id + ',this.dataset.nome)" data-nome="' + nome + '"><span class="cond-name">' + nome + '</span><span class="cond-id">ID ' + id + '</span></div>';
-    }).join('');
-  } catch(e) {
-    dd.innerHTML = '<div class="cond-loading">Erro: ' + e.message + '</div>';
+
+  // Event delegation: registra o listener uma única vez no pai para evitar duplicatas
+  if (!dd._listenerAdded) {
+    dd.addEventListener('click', function (ev) {
+      const opt = ev.target.closest('.cond-option');
+      if (!opt || !opt.dataset.id) return;
+      selecionarCondominioDash(opt.dataset.id, opt.dataset.nome);
+    });
+    dd._listenerAdded = true;
   }
 }
 
-document.addEventListener('click', function(e) {
-  var dd = document.getElementById('dash-cond-dropdown');
-  var inp = document.getElementById('dash-cond-search');
-  if (dd && inp && !dd.contains(e.target) && e.target !== inp) {
-    dd.classList.remove('open');
+// Seleciona condomínio via modal do Dashboard e fecha o modal em seguida.
+// NÃO chama selecionarCondominio para não disparar efeitos colaterais
+// do painel Configurações (cfg-cond-id, cond-search-input, cond-selected-wrap).
+function selecionarCondominioDash(id, nome) {
+  var dd = document.getElementById('dash-modal-cond-dropdown');
+  if (dd) { dd.classList.remove('open'); dd.innerHTML = ''; }
+  var inp = document.getElementById('dash-modal-cond-search');
+  if (inp) inp.value = nome;
+  // Busca objeto completo em cpCondominios para obter id_superlogica
+  var idSup = null;
+  if (typeof cpCondominios !== 'undefined' && Array.isArray(cpCondominios)) {
+    var encontrado = cpCondominios.find(function(x) { return x.id === id; });
+    if (encontrado) idSup = encontrado.id_superlogica || null;
   }
-});
+  // setCondominioAtivo sincroniza state.config, localStorage e banners.
+  // Importante: state.config.condId recebe id_superlogica (numérico) dentro de setCondominioAtivo.
+  setCondominioAtivo({ id: id, nome: nome, id_superlogica: idSup });
+  // Sincroniza o hidden do painel Configurações com o ID Superlógica (numérico),
+  // não o UUID Supabase, para que saveConfig não regrave UUID como condId.
+  var hiddenDash = document.getElementById('cfg-cond-id');
+  if (hiddenDash) hiddenDash.value = idSup || '';
+  dashFecharModalGerenciarCond();
+  toast('Condominio selecionado: ' + nome, 'ok');
+}
+
+// Abre o modal unificado de gerenciamento de condomínio, sempre na aba Buscar.
+function dashAbrirModalGerenciarCond() {
+  const m = document.getElementById('dash-modal-gerenciar-cond');
+  if (!m) return;
+  document.getElementById('dash-modal-nome-cond').value = '';
+  document.getElementById('dash-modal-id-superlogica').value = '';
+  document.getElementById('dash-modal-cond-search').value = '';
+  document.getElementById('dash-modal-cond-dropdown').innerHTML = '';
+  document.getElementById('dash-modal-cond-dropdown').classList.remove('open');
+  // Sempre começa na aba Buscar para evitar cadastro acidental
+  dashModalSetTab('buscar');
+  // Hint mostra condomínio atualmente ativo para o usuário saber o que está selecionado.
+  // Usa getCondominioAtivo() para ter acesso ao id_superlogica real (não UUID).
+  const hint = document.getElementById('dash-modal-cond-ativo-hint');
+  if (hint) {
+    const condAtual = getCondominioAtivo();
+    if (condAtual && condAtual.nome) {
+      const labelId = condAtual.id_superlogica
+        ? ' (ID Superlógica: ' + condAtual.id_superlogica + ')'
+        : '';
+      hint.textContent = 'Ativo: ' + condAtual.nome + labelId;
+    } else {
+      hint.textContent = 'Nenhum condomínio ativo no momento.';
+    }
+  }
+  m.style.display = 'flex';
+}
+
+function dashFecharModalGerenciarCond() {
+  const m = document.getElementById('dash-modal-gerenciar-cond');
+  if (m) m.style.display = 'none';
+}
+
+// Alterna entre as abas do modal (buscar/cadastrar) e ajusta visibilidade do botão Salvar.
+function dashModalSetTab(aba) {
+  const tabs = document.querySelectorAll('#dash-modal-gerenciar-cond .tab');
+  tabs.forEach(t => t.classList.toggle('active', t.dataset.aba === aba));
+  document.getElementById('dash-modal-aba-buscar').style.display = aba === 'buscar' ? '' : 'none';
+  document.getElementById('dash-modal-aba-cadastrar').style.display = aba === 'cadastrar' ? '' : 'none';
+  document.getElementById('dash-modal-btn-salvar').style.display = aba === 'cadastrar' ? '' : 'none';
+}
+
+// Valida campos, faz POST no Supabase, adiciona em cpCondominios em memória
+// e auto-seleciona o condomínio recém-cadastrado como ativo no Dashboard.
+async function dashSalvarNovoCondominio() {
+  const nome = (document.getElementById('dash-modal-nome-cond').value || '').trim();
+  const idSupRaw = (document.getElementById('dash-modal-id-superlogica').value || '').trim();
+  if (!nome) { toast('Informe o nome do condomínio.', 'err'); return; }
+  if (!idSupRaw || !/^[0-9]+$/.test(idSupRaw) || parseInt(idSupRaw, 10) <= 0) {
+    toast('ID Superlógica deve ser um número inteiro positivo.', 'err');
+    return;
+  }
+  const idSuperlogica = parseInt(idSupRaw, 10);
+  // UUID gerado no cliente porque a coluna id é NOT NULL sem default no Supabase.
+  // sindico: null evita violação NOT NULL caso a coluna seja NOT NULL sem default.
+  // Fallback para browsers que não suportam crypto.randomUUID (ex: HTTP sem TLS)
+  const novoId = (window.crypto && typeof crypto.randomUUID === 'function')
+    ? crypto.randomUUID()
+    : 'cond-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+  const payload = { id: novoId, nome, sindico: null, id_superlogica: idSuperlogica, criado_em: new Date().toISOString() };
+  // Usa supaFetchRich para expor o erro real ao usuário (RLS, schema, constraint, etc.)
+  const ret = await supaFetchRich('condominios', { method: 'POST', body: JSON.stringify(payload) });
+  if (!ret.ok) {
+    console.error('[supabase] erro ao salvar condominio:', ret);
+    toast('Erro Supabase ' + ret.status + ': ' + ret.detail, 'err');
+    return;
+  }
+  const dados = ret.data;
+  if (!dados || (Array.isArray(dados) && dados.length === 0)) {
+    toast('Falha ao salvar condomínio.', 'err');
+    return;
+  }
+  const novo = Array.isArray(dados) ? dados[0] : dados;
+  // Adiciona em memória para que a busca local já reflita o novo registro
+  if (typeof cpCondominios !== 'undefined' && Array.isArray(cpCondominios)) {
+    cpCondominios.push({
+      id: novo.id,
+      nome: novo.nome,
+      sindico: novo.sindico || '',
+      id_superlogica: novo.id_superlogica != null ? novo.id_superlogica : idSuperlogica,
+      prioridades: [],
+      demandas: [],
+      laudos: [],
+      historico: []
+    });
+  }
+  // Auto-selecionar como condomínio ativo usando setCondominioAtivo
+  // para garantir sincronização com localStorage, state.config e banners
+  const idSupFinal = novo.id_superlogica != null ? novo.id_superlogica : idSuperlogica;
+  setCondominioAtivo({ id: novo.id, nome: novo.nome, id_superlogica: idSupFinal });
+  // Sincroniza o hidden do painel Configurações com o ID Superlógica (numérico),
+  // não o UUID Supabase, para que saveConfig não regrave UUID como condId.
+  const hiddenNew = document.getElementById('cfg-cond-id');
+  if (hiddenNew) hiddenNew.value = idSupFinal || '';
+  dashFecharModalGerenciarCond();
+  toast('Condominio cadastrado e selecionado: ' + novo.nome, 'ok');
+}
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -2788,47 +3206,84 @@ async function searchCondominio(query) {
         return;
       }
       const url = buildUrl('/condominios', { somenteAtivos: 1, pesquisa: query, pagina: 0, itensPorPagina: 15 });
+      // Proxy não configurado: orienta o usuário sem tentar fetch(null)
+      if (!url) {
+        dropdown.innerHTML = '<div class="cond-loading" style="color:var(--danger)">Configure o proxy nas Configuracoes antes de buscar.</div>';
+        return;
+      }
       const r = await apiGet(url);
       const data = await r.json();
       const lista = Array.isArray(data) ? data : (data.data || []);
       if (!lista.length) { dropdown.innerHTML = '<div class="cond-loading">Nenhum resultado</div>'; return; }
-      dropdown.innerHTML = lista.map(c => {
-        const id = c.ID_CONDOMINIO_COND || c.id_condominio_cond;
+      // Constrói cada item via DOM API para evitar XSS: nome e id vêm diretamente
+      // da API Superlógica e não podem ser interpolados em innerHTML.
+      dropdown.innerHTML = '';
+      lista.forEach(c => {
+        const id   = c.ID_CONDOMINIO_COND || c.id_condominio_cond;
         const nome = c.ST_CONDOMINIO_COND || c.st_condominio_cond || 'Sem nome';
-        return `<div class="cond-option" onclick="selecionarCondominio('${id}', '${nome.replace(/'/g,"\'")}')">
-          <span class="cond-name">${nome}</span>
-          <span class="cond-id">ID ${id}</span>
-        </div>`;
-      }).join('');
+        const item = document.createElement('div');
+        item.className = 'cond-option';
+        // dataset é seguro: o browser não interpreta HTML em atributos data-*
+        item.dataset.id   = id;
+        item.dataset.nome = nome;
+        const spanNome = document.createElement('span');
+        spanNome.className = 'cond-name';
+        spanNome.textContent = nome;  // textContent neutraliza qualquer HTML
+        const spanId = document.createElement('span');
+        spanId.className = 'cond-id';
+        spanId.textContent = 'ID ' + id;
+        item.append(spanNome, spanId);
+        item.addEventListener('click', () => selecionarCondominio(item.dataset.id, item.dataset.nome));
+        dropdown.append(item);
+      });
     } catch(e) {
-      dropdown.innerHTML = `<div class="cond-loading" style="color:var(--danger)">Erro: ${e.message}</div>`;
+      dropdown.innerHTML = `<div class="cond-loading" style="color:var(--danger)">Erro: ${escHtml(e.message)}</div>`;
     }
   }, 350);
 }
 
+// O id aqui vem da API Superlógica, portanto é o ID numérico do Superlógica.
+// Gravamos o mesmo valor em id e id_superlogica para manter consistência
+// com o formato { id, nome, id_superlogica } usado globalmente.
 function selecionarCondominio(id, nome) {
   document.getElementById('cfg-cond-id').value = id;
   document.getElementById('cond-search-input').value = nome;
   document.getElementById('cond-dropdown').classList.remove('open');
-  document.getElementById('cond-selected-wrap').innerHTML =
-    `<div class="cond-selected-badge">
-      ✓ ${nome} <span style="color:var(--muted)">·</span> ID ${id}
-      <button onclick="limparCondominio()">×</button>
-    </div>`;
-  state.config.condId = id;
-  state.config.condNome = nome;
-  localStorage.setItem('sh_config', JSON.stringify(state.config));
-  atualizarDashCond();
+
+  // Badge construído via DOM API para evitar XSS: nome e id vêm da API Superlógica,
+  // mas usamos textContent como defesa em profundidade.
+  const wrap = document.getElementById('cond-selected-wrap');
+  wrap.innerHTML = '';
+  const badge = document.createElement('div');
+  badge.className = 'cond-selected-badge';
+  badge.append('✓ ');
+  const nomeNode = document.createTextNode(nome);
+  badge.append(nomeNode);
+  const sep = document.createElement('span');
+  sep.style.color = 'var(--muted)';
+  sep.textContent = ' · ';
+  badge.append(sep);
+  const idNode = document.createTextNode('ID ' + id);
+  badge.append(idNode);
+  const btnLimpar = document.createElement('button');
+  btnLimpar.textContent = '×';
+  btnLimpar.addEventListener('click', limparCondominio);
+  badge.append(btnLimpar);
+  wrap.append(badge);
+
+  // setCondominioAtivo sincroniza state.config, localStorage e banners
+  setCondominioAtivo({ id: id, nome: nome, id_superlogica: id });
   toast('Condomínio: ' + nome, 'ok');
 }
 
 function limparCondominio() {
+  // setCondominioAtivo(null) é chamado primeiro para garantir que window.condominioAtivo,
+  // localStorage.condominioAtivo, state.config e banners sejam zerados de forma sincronizada.
+  // Sem isso, o banner continuaria mostrando o cond antigo mesmo após o usuário clicar em "×".
+  setCondominioAtivo(null);
   document.getElementById('cfg-cond-id').value = '';
   document.getElementById('cond-search-input').value = '';
   document.getElementById('cond-selected-wrap').innerHTML = '';
-  state.config.condId = '';
-  state.config.condNome = '';
-  localStorage.setItem('sh_config', JSON.stringify(state.config));
 }
 
 // Fechar dropdown ao clicar fora
@@ -2905,7 +3360,7 @@ function anexarPdfPauta(input) {
       label.style.color = 'var(--gs-blue)';
     }
     try {
-      // Extrai texto do PDF no browser com pdf.js — sem IA
+      // Extrai texto do PDF no browser com pdf.js: sem IA
       const textoPdf = await extrairTextoPdf(e.target.result);
       input.dataset.pdfTexto = textoPdf;
       nomeEl.textContent = '📎 ' + file.name;
@@ -3147,6 +3602,8 @@ function limparConsumo() {
 
 async function enviarConsumo() {
   if (!state.config.appToken) { toast('Configure os tokens da API primeiro', 'err'); return; }
+  // Proxy obrigatório — sem ele buildUrl retorna null e fetch quebraria com TypeError
+  if (!state.config.proxy) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
   const validos = consumoItems.filter(c => c.unidade && c.leitura && c.leitura !== 'ilegível' && c.leitura !== 'erro');
   if (!validos.length) { toast('Preencha unidade e leitura para todos os medidores', 'err'); return; }
 
@@ -3169,8 +3626,8 @@ async function enviarConsumo() {
         ST_UNIDADE_UNI: item.unidade,
         VL_LEITURA: item.leitura,
       });
-      const url = buildUrl('/consumo/post', {});
-      const r = await fetch(url, { method: 'POST', headers: getHeaders(), body: body.toString() });
+      // Usa apiPost para centralizar o null-check de proxy e os headers
+      const r = await apiPost('/consumo/post', body.toString());
       if (r.ok) {
         ok++;
         addLog(logDiv, `Unidade ${item.unidade}: ✓ enviado`, 'ok');
@@ -3193,11 +3650,23 @@ async function enviarConsumo() {
   else toast(ok + ' enviadas, ' + err + ' com erro', 'warn');
 }
 
+// Helper global de escape HTML para uso em templates que precisam de innerHTML.
+// Previne XSS quando msg vem de res.text() da API ou de dados do usuário.
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function addLog(container, msg, type) {
   const now = new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const div = document.createElement('div');
   div.className = 'log-line';
-  div.innerHTML = `<span class="log-time">${now}</span><span class="log-${type}">${msg}</span>`;
+  // escHtml previne XSS: msg pode incluir res.text() da API sem sanitização prévia
+  div.innerHTML = `<span class="log-time">${escHtml(now)}</span><span class="log-${escHtml(type)}">${escHtml(msg)}</span>`;
   container.appendChild(div);
   container.scrollTop = container.scrollHeight;
 }
@@ -3249,6 +3718,32 @@ async function supaFetch(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+// Versão rica de supaFetch que retorna o erro real do Supabase em vez de engolir.
+// Usada nos fluxos onde precisamos exibir ao usuário a causa real da falha
+// (ex: RLS bloqueando insert, coluna inexistente, violação de constraint).
+// Não substitui supaFetch pois os outros callers dependem do retorno null atual.
+async function supaFetchRich(path, options = {}) {
+  try {
+    const res = await fetch(SUPA_URL + '/rest/v1/' + path, {
+      headers: {
+        'apikey': SUPA_KEY,
+        'Authorization': 'Bearer ' + SUPA_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': options.prefer || 'return=representation',
+        ...options.headers
+      },
+      ...options
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      return { ok: false, status: res.status, detail: text || 'Erro desconhecido do Supabase' };
+    }
+    return { ok: true, data: text ? JSON.parse(text) : null };
+  } catch (e) {
+    return { ok: false, status: 0, detail: e.message || 'Falha de rede ao conectar ao Supabase' };
+  }
+}
+
 async function cpCarregarDoSupabase() {
   try {
     const conds = await supaFetch('condominios?select=*');
@@ -3265,11 +3760,33 @@ async function cpCarregarDoSupabase() {
       ]);
       const prioridades = (demandas||[]).filter(d => d.tipo === 'prioridade');
       const demandasArr = (demandas||[]).filter(d => d.tipo === 'demanda');
-      cpCondominios.push({ id: c.id, nome: c.nome, sindico: c.sindico, criadoEm: c.criado_em, prioridades, demandas: demandasArr, laudos: laudos||[], historico: historico||[] });
+      // id_superlogica vem do registro do Supabase e é necessário para cpSelecionarCond
+      cpCondominios.push({ id: c.id, nome: c.nome, sindico: c.sindico, id_superlogica: c.id_superlogica || null, criadoEm: c.criado_em, prioridades, demandas: demandasArr, laudos: laudos||[], historico: historico||[] });
     }
     if (cpCondominios.length > 0) {
       cpRenderSidebar();
-      cpSelecionarCond(cpCondominios[0].id);
+      // Prefere o condomínio que já estava ativo globalmente.
+      // state.config.condId guarda o id_superlogica (número), então comparar direto
+      // com x.id (UUID) sempre falha. Usa getCondominioAtivo() que devolve o objeto
+      // completo { id: UUID, id_superlogica: número } e tenta bater pelos dois campos.
+      const condAtivo = getCondominioAtivo();
+      let idDestino = null;
+      if (condAtivo) {
+        // Busca primeiro pelo UUID Supabase (fluxo Dashboard / painel Condomínios)
+        const matchUuid = condAtivo.id && cpCondominios.find(x => x.id === condAtivo.id);
+        // Fallback pelo id_superlogica (fluxo painel Configurações, onde só o número é salvo)
+        const matchSup  = condAtivo.id_superlogica && cpCondominios.find(x => x.id_superlogica === condAtivo.id_superlogica);
+        const encontrado = matchUuid || matchSup;
+        if (encontrado) idDestino = encontrado.id;
+      }
+      if (!idDestino && cpCondominios.length > 0) idDestino = cpCondominios[0].id;
+      if (idDestino) cpSelecionarCond(idDestino);
+      // Garante que o ativo tem id_superlogica preenchido após carregamento do Supabase.
+      const ativoAtual = getCondominioAtivo();
+      const condSelecionado = cpCondominios.find(x => x.id === idDestino);
+      if (ativoAtual && !ativoAtual.id_superlogica && condSelecionado && condSelecionado.id_superlogica) {
+        setCondominioAtivo({ id: condSelecionado.id, nome: condSelecionado.nome, id_superlogica: condSelecionado.id_superlogica });
+      }
     }
   } catch(e) {
     console.error('Erro Supabase:', e);
@@ -3289,7 +3806,7 @@ async function cpSeedParaSupabase() {
 let cpCondominios = [];
 let cpCondAtivo = null;
 
-// Seed: Reserva dos Camarás — atualizado 22/04/2026
+// Seed: Reserva dos Camarás atualizado 22/04/2026
 const cpSeedCamaras = {
   id: 'camaras',
   nome: 'Reserva dos Camarás',
@@ -3350,7 +3867,7 @@ const cpSeedCamaras = {
 document.addEventListener('DOMContentLoaded', () => { cpCarregarDoSupabase(); });
 
 function cpSalvar() {
-  // Mantido para compatibilidade — dados primários no Supabase
+  // Mantido para compatibilidade: dados primários no Supabase
   try { localStorage.setItem('cp_condominios', JSON.stringify(cpCondominios)); } catch(e) {}
 }
 
@@ -3400,6 +3917,16 @@ function cpSelecionarCond(id) {
   tagSind.style.display = 'inline';
   document.getElementById('cp-tabs-bar').style.display = 'flex';
   document.getElementById('cp-btn-gerar').style.display = 'inline-block';
+  // Sincroniza condomínio ativo com o estado global para que importar
+  // despesas/unidades e demais funções usem o mesmo condomínio
+  if (c) {
+    // setCondominioAtivo atualiza state.config, localStorage e banners de uma vez
+    setCondominioAtivo({ id: c.id, nome: c.nome, id_superlogica: c.id_superlogica || null });
+    // Sincroniza o hidden do painel Configurações com o ID Superlógica (numérico),
+    // não o UUID Supabase, para que saveConfig não regrave UUID como condId.
+    const hiddenCp = document.getElementById('cfg-cond-id');
+    if (hiddenCp) hiddenCp.value = c.id_superlogica || '';
+  }
   cpRenderSidebar();
   cpAtualizarBadges(c);
   const firstTab = document.querySelector('.cp-tab-btn');
@@ -3414,16 +3941,65 @@ function cpAtualizarBadges(c) {
 function cpShowTab(id, btn) {
   document.querySelectorAll('.cp-tab-btn').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
-  const c = cpCondominios.find(x => x.id === cpCondAtivo);
   const el = document.getElementById('cp-content');
+  // demandas-ia usa state.config.condId, não cpCondAtivo: pode renderizar sem cond na sidebar
+  if (id === 'demandas-ia') {
+    // Salva texto atual do textarea antes de regerar o HTML (troca de aba destroi o DOM)
+    const taAtual = document.getElementById('dc-texto-bruto');
+    if (taAtual) dcTextoBrutoTemp = taAtual.value;
+    if (el) el.innerHTML = cpRenderDemandasIA();
+    // Restaura o texto que estava no textarea para não perder rascunho do usuário
+    const taNovo = document.getElementById('dc-texto-bruto');
+    if (taNovo && dcTextoBrutoTemp) taNovo.value = dcTextoBrutoTemp;
+    return;
+  }
+  const c = cpGetCondominioAtivo();
   if (!c || !el) return;
   if (id === 'visao')       el.innerHTML = cpRenderVisao(c);
-  if (id === 'prioridades') el.innerHTML = cpRenderDemGrid(c.prioridades || [], 'Prioridades do Síndico ' + c.sindico, 'Itens classificados como urgentes — plano de ação ativo');
-  if (id === 'demandas')    el.innerHTML = cpRenderDemGrid(c.demandas || [], 'Todas as Demandas', 'Itens levantados em reunião — ' + c.criadoEm);
+  if (id === 'prioridades') el.innerHTML = cpRenderDemGrid(c.prioridades || [], 'Prioridades do Síndico ' + c.sindico, 'Itens classificados como urgentes: plano de acao ativo');
+  if (id === 'demandas')    el.innerHTML = cpRenderDemGrid(c.demandas || [], 'Todas as Demandas', 'Itens levantados em reuniao: ' + c.criadoEm);
   if (id === 'laudos')      el.innerHTML = cpRenderLaudos(c);
   if (id === 'historico')   el.innerHTML = cpRenderHistorico(c);
   if (id === 'assinaturas') el.innerHTML = cpRenderAssinaturas(c);
   if (id === 'importar')    el.innerHTML = cpRenderImportar();
+}
+
+// Renderiza o conteúdo da aba Caixa de Entrada dentro do painel Condomínios.
+// Reutiliza os mesmos IDs (dc-texto-bruto, dc-btn-processar, etc.) que as funções
+// dcProcessarTextoIA e dcSalvarDemandas esperam encontrar no DOM.
+function cpRenderDemandasIA() {
+  const cond = (state.config.condId && state.config.condNome) ? state.config.condNome : null;
+  return `
+    <div style="padding:24px">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:12px">
+        ${cond
+          ? 'Condomínio ativo: <strong>' + dcEscape(cond) + '</strong>'
+          : 'Selecione um condomínio ativo no Dashboard antes de processar.'}
+      </div>
+      <div class="form-group">
+        <label>Cole o texto solto com as demandas</label>
+        <textarea id="dc-texto-bruto" rows="10"
+          placeholder="Ex: síndico ligou pedindo pra trocar lâmpadas queimadas do hall principal, virou urgência."
+          style="width:100%;font-family:var(--mono);font-size:13px;line-height:1.6;padding:14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);resize:vertical"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-primary" id="dc-btn-processar" onclick="dcProcessarTextoIA()">
+          <span>✨</span> Processar com IA
+        </button>
+      </div>
+      <div id="dc-extraidas-container" style="display:none;margin-top:28px">
+        <div class="card-header" style="margin-bottom:12px">
+          <span class="card-title">Demandas extraídas</span>
+          <span id="dc-extraidas-count" style="font-size:11px;color:var(--muted);font-family:var(--mono)"></span>
+        </div>
+        <div id="dc-extraidas-list" style="display:flex;flex-direction:column;gap:12px"></div>
+        <div style="display:flex;gap:8px;margin-top:16px">
+          <button class="btn btn-primary" onclick="dcSalvarDemandas()">Confirmar e salvar</button>
+          <button class="btn btn-ghost" onclick="dcDescartarPreview()">Descartar</button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function cpRenderVisao(c) {
@@ -3652,7 +4228,9 @@ async function cpImportarArquivoJSON(event) {
 }
 
 async function cpAtualizarStatus(demandaId, novoStatus) {
-  const c = cpCondAtivo || cpCondominios[0];
+  // Usa cpGetCondominioAtivo() que faz lookup correto no array pelo id string.
+  // cpCondAtivo é string, não objeto: acessar c.prioridades diretamente causava undefined.
+  const c = cpGetCondominioAtivo();
   if (!c) return;
   const item = [...(c.prioridades||[]), ...(c.demandas||[])].find(d => d.id === demandaId);
   if (!item) return;
@@ -3667,7 +4245,8 @@ async function cpAnexarFoto(demandaId, tipo, event) {
   const reader = new FileReader();
   reader.onload = async (e) => {
     const base64 = e.target.result;
-    const c = cpCondAtivo || cpCondominios[0];
+    // Usa cpGetCondominioAtivo() para obter o objeto; cpCondAtivo é apenas a string id.
+    const c = cpGetCondominioAtivo();
     if (!c) return;
     const item = [...(c.prioridades||[]), ...(c.demandas||[])].find(d => d.id === demandaId);
     if (!item) return;
@@ -3681,7 +4260,8 @@ async function cpAnexarFoto(demandaId, tipo, event) {
 }
 
 async function cpAplicarUpdate(data) {
-  const c = cpCondAtivo || cpCondominios[0];
+  // Usa cpGetCondominioAtivo() para obter o objeto; cpCondAtivo é apenas a string id.
+  const c = cpGetCondominioAtivo();
   if (!c) { alert('Nenhum condomínio ativo.'); return; }
   let atualizados = 0;
 
@@ -3729,28 +4309,6 @@ async function cpAplicarUpdate(data) {
   cpSelecionarCond(c.id);
 }
 
-function cpAbrirModal() {
-  document.getElementById('cp-modal').classList.add('open');
-  setTimeout(() => document.getElementById('cp-inp-nome').focus(), 50);
-}
-
-function cpFecharModal() {
-  document.getElementById('cp-modal').classList.remove('open');
-  document.getElementById('cp-inp-nome').value = '';
-  document.getElementById('cp-inp-sindico').value = '';
-}
-
-function cpSalvarCondominio() {
-  const nome = document.getElementById('cp-inp-nome').value.trim();
-  const sindico = document.getElementById('cp-inp-sindico').value.trim();
-  if (!nome || !sindico) return alert('Preencha todos os campos.');
-  const id = nome.toLowerCase().replace(/[^a-z0-9]/g,'').substring(0,20) + Date.now();
-  cpCondominios.push({ id, nome, sindico, criadoEm: new Date().toLocaleDateString('pt-BR'), laudos: [], historico: [], prioridades: [], demandas: [] });
-  cpSalvar();
-  cpFecharModal();
-  cpRenderSidebar();
-  cpSelecionarCond(id);
-}
 
 async function cpGerarApresentacao() {
   const c = cpCondominios.find(x => x.id === cpCondAtivo);
@@ -3814,29 +4372,18 @@ document.getElementById('cp-top-data').textContent = new Date().toLocaleDateStri
 cpRenderSidebar();
 
 // ============================================================
-// DEMANDAS DE CLIENTE — Caixa de Entrada (Etapa 1)
+// DEMANDAS DE CLIENTE: Caixa de Entrada (Etapa 1)
 // ============================================================
 let dcDemandasPreview = [];
+// Preserva o texto do textarea quando o usuário troca de aba e volta pra Caixa de Entrada
+let dcTextoBrutoTemp = '';
 
-async function dcCarregarCondominios() {
-  const sel = document.getElementById('dc-select-cond');
-  if (!sel) return;
-  const atual = sel.value;
-  try {
-    const conds = await supaFetch('condominios?select=id,nome&order=nome');
-    if (!conds) { toast('Erro ao carregar condomínios', 'err'); return; }
-    sel.innerHTML = '<option value="">— selecione —</option>' +
-      conds.map(c => `<option value="${dcEscape(c.id)}">${dcEscape(c.nome)}</option>`).join('');
-    if (atual) sel.value = atual;
-  } catch(e) {
-    toast('Erro ao carregar condomínios: ' + e.message, 'err');
-  }
-}
 
 async function dcProcessarTextoIA() {
   const texto = (document.getElementById('dc-texto-bruto').value || '').trim();
-  const condId = document.getElementById('dc-select-cond').value;
-  if (!condId) { toast('Selecione um condomínio antes', 'warn'); return; }
+  // Usa o condomínio ativo global em vez do select removido
+  const condId = state.config && state.config.condId;
+  if (!condId) { toast('Selecione um condomínio ativo no Dashboard', 'warn'); return; }
   if (!texto)  { toast('Cole o texto das demandas primeiro', 'warn'); return; }
 
   const btn = document.getElementById('dc-btn-processar');
@@ -3954,9 +4501,10 @@ function dcDescartarPreview() {
 }
 
 async function dcSalvarDemandas() {
-  const condId     = document.getElementById('dc-select-cond').value;
+  // Usa o condomínio ativo global em vez do select removido
+  const condId     = state.config && state.config.condId;
   const textoBruto = (document.getElementById('dc-texto-bruto').value || '').trim();
-  if (!condId) { toast('Selecione um condomínio', 'warn'); return; }
+  if (!condId) { toast('Selecione um condomínio ativo no Dashboard', 'warn'); return; }
   if (!dcDemandasPreview.length) { toast('Nada para salvar', 'warn'); return; }
 
   // Próximo num: max(num)+1 do condomínio. Inclui prioridades e demandas (mesma tabela).
@@ -4003,16 +4551,13 @@ async function dcSalvarDemandas() {
   }
 }
 
-// Auto-select Camarás when panel is opened
+// Auto-seleciona condomínio na sidebar quando o painel Condomínios é aberto
 const _origShowPanel = showPanel;
 showPanel = function(name) {
   _origShowPanel(name);
   if (name === 'condominios') {
     cpRenderSidebar();
     if (!cpCondAtivo && cpCondominios.length) cpSelecionarCond(cpCondominios[0].id);
-  }
-  if (name === 'demandas-cliente') {
-    dcCarregarCondominios();
   }
 };
 </script>
@@ -4047,7 +4592,7 @@ function gerarRelatorioSindico() {
   if (!c) { alert('Nenhum condomínio selecionado.'); return; }
   const hoje = new Date().toLocaleDateString('pt-BR');
 
-  // Deduplica — usa só demandas, remove duplicatas por título
+  // Deduplica: usa só demandas, remove duplicatas por título
   const todasRaw = [...(c.demandas||[]), ...(c.prioridades||[])];
   const vistas = new Set();
   const todas = todasRaw.filter(d => {
