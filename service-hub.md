@@ -57,7 +57,7 @@ Cada módulo tem um item na sidebar e um `div.panel` com id `panel-<slug>`. Regi
 | Módulo | Status | Prefix JS |
 |---|---|---|
 | Dashboard | ok | — |
-| Importar Despesas / Unidades (Superlógica) | ok | — |
+| Importar Despesas / Unidades (Superlógica) | ok (Proprietário + Inquilino + Dependente desde 2026-04-30) | — |
 | Boletos / Conciliação / NF | em breve | — |
 | Condomínios | ok | `cp*` |
 | Atas Condominiais | ok | — |
@@ -79,6 +79,24 @@ Cada módulo tem um item na sidebar e um `div.panel` com id `panel-<slug>`. Regi
 - Tabs reusam `setTab(el, tabId)` existente — basta usar IDs começando com `tab-`.
 - `supaFetch(path, options)` devolve `null` em erro **e** em sucesso com `return=minimal`. Não dá pra distinguir falha por item.
 - Commits em `main` historicamente com mensagens terse. Features novas vão por PR.
+
+## Importação unificada de unidades
+
+Suporte a múltiplos tipos de pessoa por unidade implementado em 2026-04-30.
+
+- Planilha de 26 colunas (A a Z), 1 linha por pessoa, agrupada por Unidade+Bloco no parser
+- Tipo de pessoa na coluna A: `Proprietário`, `Inquilino` ou `Dependente`
+- API exige data em formato americano (`mm/dd/aaaa`) e UF como código numérico (8=ES, 25=SP, 19=RJ, 11=MG, 5=BA)
+- `ID_TIPORESP_TRES` e `ID_LABEL_TRES` definem o tipo no payload: 2 = Proprietário, 7 = Inquilino, 4 = Dependente
+- Endpoint único para todos os tipos: `POST /v2/condor/unidades/post?ID_CONDOMINIO_COND={id}`
+- Fluxo por unidade: POST vazio cria a unidade, PUT popula Proprietário, N POSTs sequenciais adicionam Inquilinos e Dependentes
+- Campos opcionais vazios são omitidos do payload (helper `omitirVazios`)
+- Detector automático `detectarFormatoPlanilhaUnificada` preserva compatibilidade com o formato antigo de 30+ colunas
+- Validado em produção em 2026-04-30 com status 200 para Inquilino e Dependente no cond 167, unidade A-0202
+
+## Update Log
+
+- 2026-04-30 | Feature Inquilino e Dependente validada localmente com unidade real 1102 A2 (Villagio Residencial), pronta pra produção. Detector de formato de planilha + parser unificado de 26 colunas + 2 builders de payload (Inquilino tipoResp 7, Dependente tipoResp 4) + 7 helpers de conversão (data BR para US, UF para codigo numerico, genero, tipo telefone, recebe cobranca, omitir vazios). 8 subagentes aprovaram.
 
 ## Observações conhecidas (não corrigir sem contexto)
 

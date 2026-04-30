@@ -93,7 +93,7 @@ O Claude Code faz prompt caching automaticamente para o conteúdo do CLAUDE.md e
 
 ## Estado atual do arquivo principal
 
-Em 2026-04-29 a revisão profunda pré SaaS deixou public/index.html com 4967 linhas, 3 fixes de segurança aplicados em toast, cpRenderSidebar e dcSalvarDemandas.
+Em 2026-04-30 a entrega de Inquilino e Dependente deixou public/index.html com 5338 linhas (era 4967, +371 linhas). MD5: dd9df99169721ff1c834f70f8fe57004. A função enviarUmaUnidade agora encadeia POST de unidade vazia + PUT do Proprietário + N POSTs sequenciais para contatos extras (Inquilino e Dependente), contabilizando inqOk/inqFail/depOk/depFail separadamente. Versão anterior (2026-04-29): 4967 linhas, 3 fixes de segurança em toast, cpRenderSidebar e dcSalvarDemandas.
 
 ## Quando estiver em dúvida
 

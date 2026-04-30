@@ -1,5 +1,45 @@
 # Changelog Service Hub
 
+## 30/04/2026 — Suporte a Inquilino e Dependente na importação de unidades
+
+### Adicionado
+- Parser unificado `processUnidadesDataUnificada`: lê planilha de 26 colunas (1 linha por pessoa), agrupa por Unidade+Bloco, separa campos do Proprietário em `prop_*` e empilha Inquilinos e Dependentes em `contatos_extras[]`
+- Detector automático de formato `detectarFormatoPlanilhaUnificada`: distingue formato antigo Superlógica (30+ colunas) do novo formato unificado de 26 colunas sem quebrar importações existentes
+- 9 helpers novos: `detectarFormatoPlanilhaUnificada`, `dataBRtoUS`, `dataBRtoUSComHora`, `ufParaCodigo`, `generoParaCodigo`, `tipoTelefoneParaCodigo`, `recebeCobrancaParaCodigo`, `omitirVazios`, `buildPayloadContatoExtra`
+- Helper de envio `enviarContatoExtra`: POST por contato extra com tratamento de erro de rede e parse defensivo de JSON
+- Integração no `enviarUmaUnidade`: após PUT do Proprietário, itera `contatos_extras` com `for...of` sequencial e contabiliza `inqOk`/`inqFail`/`depOk`/`depFail` por unidade
+- Conversão automática de datas de `dd/mm/aaaa` para `mm/dd/aaaa` (formato americano exigido pela API Superlógica)
+- Conversão automática de UF para código numérico (8=ES, 25=SP, 19=RJ, 11=MG, 5=BA)
+- Estrutura dupla de telefone preservada: `TELEFONES[0]` + `ST_TELEFONE_CON` conforme payload validado em produção
+- Avisos via toast warn quando UF não está mapeada ou Proprietário duplicado é detectado no processFile
+
+### Validado
+- Arquiteto APROVOU o plano
+- Programador implementou em 3 rodadas (V1, V2 com correções, V3 com ajuste de ressalva)
+- Revisor APROVOU COM RESSALVAS na V2 e APROVADO em V3 (1 ressalva resolvida)
+- Auditor de segurança APROVOU na V2: zero violações novas, zero tokens vazados, zero hífens narrativos, zero menções indevidas ao Grupo Service
+- Validador APROVADO 47/47 checks: payload gerado comparado byte a byte com payload validado em produção em 2026-04-30
+
+### Métricas
+- `public/index.html`: 4967 -> 5338 linhas (+371 linhas)
+- MD5 final: `dd9df99169721ff1c834f70f8fe57004`
+- Backup blindado preservado em `~/Downloads/service-hub_BACKUP_20260430_143856.html`
+
+### Arquivos modificados
+- `public/index.html` (modificado, 4967 a 5338 linhas)
+- `tarefas/concluidas/inquilino-dependente.md` (movido de em-andamento)
+
+### Validação local em 30/04/2026
+- Planilha: `teste_unidade_real_1102_A2.xlsx`
+- Cond 167 Residencial Teste, unidade 1102 A2 (Villagio Residencial)
+- Pessoas: Paloma (proprietária), André (inquilino), Renata (dependente)
+- Resultado do log: POST OK, PUT OK, INQ OK, DEP OK, RES inq 1 ok dep 1 ok
+- Feature aprovada pra produção pelo Matheus
+
+Implementado por: subagente programador
+
+---
+
 ## 29/04/2026 — Revisão profunda pré SaaS, 3 fixes de XSS e bug lógico, deploy aprovado
 
 ### Adicionado

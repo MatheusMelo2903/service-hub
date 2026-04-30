@@ -2205,20 +2205,22 @@ function processFile(file, type) {
 
     if (type === 'unidades') {
       // Tenta o índice fixo 3 (linha 4 da planilha do Superlogica).
-      // Fallback: varre as primeiras 10 linhas procurando "unidade" na coluna 0.
+      // Fallback: varre as primeiras 10 linhas procurando "unidade" ou "tipo" na coluna 0.
+      // "tipo" é o cabeçalho da planilha unificada (26 colunas A-Z) que começa na linha 1.
       let headerIdx = 3;
       const headerRow = allRows[headerIdx] || null;
       const col0 = headerRow ? String(headerRow[0] || '').toLowerCase() : '';
-      if (!col0.includes('unidade')) {
+      const col0Valid = col0.includes('unidade') || col0 === 'tipo';
+      if (!col0Valid) {
         let achou = false;
         for (let i = 0; i < Math.min(10, allRows.length); i++) {
           const row = allRows[i] || [];
           const c0 = String(row[0] || '').toLowerCase();
-          if (c0.includes('unidade')) { headerIdx = i; achou = true; break; }
+          if (c0.includes('unidade') || c0 === 'tipo') { headerIdx = i; achou = true; break; }
         }
         // Planilha curta demais ou sem linha de cabeçalho reconhecível
         if (!achou && !headerRow) {
-          toast('Planilha inválida: cabeçalho não encontrado.', 'err');
+          toast('Planilha inválida: cabecalho nao encontrado.', 'err');
           return;
         }
       }
@@ -2227,12 +2229,22 @@ function processFile(file, type) {
       const data_rows = allRows.slice(headerIdx + 1).filter(r =>
         r && r[0] && String(r[0]).trim() !== '' && String(r[0]).trim() !== 'Unidade'
       );
-      const processed = processUnidadesData(headers, data_rows);
+      // Seleciona o parser conforme o formato detectado nos cabeçalhos.
+      // Formato unificado (26 colunas A-Z): usa o novo parser multi-tipo.
+      // Formato antigo (planilha Superlógica 30+ colunas): usa o parser original.
+      const formato = detectarFormatoPlanilhaUnificada(headers);
+      const processed = (formato === 'unificado')
+        ? processUnidadesDataUnificada(headers, data_rows)
+        : processUnidadesData(headers, data_rows);
       state.unidades.headers = headers;
       state.unidades.raw = data_rows;
       state.unidades.processed = processed;
       renderPreviewUnidades(processed, file.name);
       toast(processed.length + ' unidades detectadas e normalizadas de "' + file.name + '"', 'ok');
+      // Exibe avisos não fatais do parser (UF desconhecida, proprietário duplicado) sem interromper
+      if (processed.avisos && processed.avisos.length) {
+        toast(processed.avisos.join(' | '), 'warn');
+      }
     } else {
       const headers = allRows[0].map(h => String(h||'').trim());
       const data_rows = allRows.slice(1).filter(r => r.some(c => c !== '' && c !== null && c !== undefined));
@@ -2243,6 +2255,230 @@ function processFile(file, type) {
     }
   };
   reader.readAsArrayBuffer(file);
+}
+
+// ============================================================
+// HELPERS DA PLANILHA UNIFICADA (Bloco 1)
+// Usados exclusivamente por detectarFormatoPlanilhaUnificada e
+// processUnidadesDataUnificada para interpretar o novo formato 26 colunas.
+// ============================================================
+
+// Detecta se a planilha está no formato unificado (26 colunas A-Z) ou no
+// formato antigo do Superlógica (30+ colunas por posição fixa).
+// Heurística: presença de "Tipo" na col A + "Nome" na col F + "Data Nascimento"
+// em qualquer cabeçalho já é suficiente para distinguir os dois formatos.
+function detectarFormatoPlanilhaUnificada(headers) {
+  if (!headers || headers.length < 6) return 'antigo';
+  var h = headers.map(function(s) { return String(s || '').trim().toLowerCase(); });
+  var temTipo = h[0] === 'tipo';
+  var temNome = h[5] === 'nome';
+  var temDataNasc = h.some(function(s) { return s.indexOf('nascimento') !== -1; });
+  return (temTipo && temNome && temDataNasc) ? 'unificado' : 'antigo';
+}
+
+// Converte data no formato dd/mm/aaaa para mm/dd/yyyy.
+// A API do Superlógica exige formato americano m/d/Y, portanto mês vem antes do dia.
+// m[1]=dia, m[2]=mes, m[3]=ano. A inversão abaixo coloca mes/dia/ano.
+function dataBRtoUS(str) {
+  if (!str) return '';
+  var s = String(str).trim();
+  var m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return '';
+  return m[2].padStart(2, '0') + '/' + m[1].padStart(2, '0') + '/' + m[3];
+}
+
+// Igual a dataBRtoUS mas com sufixo " 00:00:00", exigido pelo campo DT_ENTRADA_RES.
+function dataBRtoUSComHora(str) {
+  var d = dataBRtoUS(str);
+  return d ? d + ' 00:00:00' : '';
+}
+
+// Tabela de UF conhecidas mapeadas para código numérico do Superlógica.
+// Somente os estados confirmados em produção. Outros geram aviso para o operador
+// poder corrigir a planilha antes de reenviar.
+var UF_CODIGOS = {
+  'AC':'1','AL':'2','AP':'4','AM':'3','BA':'5','CE':'6','DF':'7',
+  'ES':'8','GO':'9','MA':'10','MT':'13','MS':'12','MG':'11','PA':'14',
+  'PB':'15','PR':'16','PE':'17','PI':'18','RJ':'19','RN':'20',
+  'RS':'23','RO':'21','RR':'22','SC':'24','SP':'25','SE':'26','TO':'27'
+};
+
+// Converte sigla de UF para código numérico do Superlógica.
+// Chama logFn com aviso se a sigla não for reconhecida.
+function ufParaCodigo(sigla, logFn) {
+  if (!sigla) return '';
+  var uf = String(sigla).trim().toUpperCase();
+  var cod = UF_CODIGOS[uf];
+  if (!cod && typeof logFn === 'function') {
+    logFn('UF nao reconhecida: "' + uf + '". Verifique a planilha e ajuste o mapeamento se necessario.');
+  }
+  return cod || '';
+}
+
+// Gênero: M → '1', F → '2', qualquer outro (vazio, I etc.) → '0' (não informado).
+function generoParaCodigo(g) {
+  var s = String(g || '').trim().toUpperCase();
+  if (s === 'M') return '1';
+  if (s === 'F') return '2';
+  return '0';
+}
+
+// Tipo de telefone: 1 fixo, 2 celular, 3 comercial. Default celular (2).
+function tipoTelefoneParaCodigo(t) {
+  var s = String(t || '').trim();
+  if (s === '1') return '1';
+  if (s === '3') return '3';
+  return '2';
+}
+
+// Recebe cobrança: "Sim" → '2', "Não"/"Nao" → '1', ambíguo → '' (campo omitido).
+function recebeCobrancaParaCodigo(s) {
+  var v = String(s || '').trim().toLowerCase();
+  if (v === 'sim' || v === 's') return '2';
+  if (v === 'não' || v === 'nao' || v === 'n') return '1';
+  return '';
+}
+
+// Remove keys cujo valor é string vazia, null ou undefined.
+// Usado para montar payloads sem campos opcionais vazios.
+function omitirVazios(obj) {
+  var out = {};
+  Object.keys(obj).forEach(function(k) {
+    var v = obj[k];
+    if (v !== null && v !== undefined && v !== '') out[k] = v;
+  });
+  return out;
+}
+
+// Parser para a planilha unificada (26 colunas A-Z).
+// Cada linha representa UMA pessoa (Proprietário, Inquilino ou Dependente).
+// Agrupa por unidade+bloco e devolve array no mesmo shape de processUnidadesData,
+// com campo extra contatos_extras[] contendo inquilinos e dependentes.
+// Avisos não fatais (UF desconhecida, proprietário duplicado) ficam em array.avisos
+// para que processFile possa exibi-los via toast sem interromper a importação.
+function processUnidadesDataUnificada(headers, rows) {
+  // Acumula avisos não fatais gerados durante o parse
+  var avisos = [];
+  // Limpeza básica de valor de célula
+  var cleanVal = function(v) {
+    if (v === null || v === undefined) return '';
+    var s = String(v).trim();
+    if (!s) return '';
+    var lower = s.toLowerCase();
+    if (['nan', '0', '0.0', 'cep inválido', 'cep invalido', 'inválido', 'invalido'].indexOf(lower) !== -1) return '';
+    return s;
+  };
+  var cleanDigits = function(v) { return cleanVal(v).replace(/\D/g, ''); };
+  var cleanFracao = function(v) {
+    if (v === null || v === undefined) return '';
+    var s = String(v).trim().replace(',', '.');
+    if (!s) return '';
+    var n = parseFloat(s);
+    if (!isFinite(n) || n <= 0) return '';
+    return String(n);
+  };
+
+  // Mapas de índice por letra de coluna (A=0 ... Z=25)
+  // A=Tipo, B=Unidade, C=Bloco, D=Fração, E=Metragem, F=Nome, G=CPF, H=CNPJ,
+  // I=RG, J=Data Nascimento, K=Gênero, L=Email, M=DDI, N=Telefone,
+  // O=Tipo Telefone, P=CEP, Q=Endereço, R=Número, S=Complemento, T=Bairro,
+  // U=Cidade, V=Estado, W=Data Entrada, X=Data Saída, Y=Recebe Cobrança, Z=Obs
+  var COL = {
+    TIPO:0, UNIDADE:1, BLOCO:2, FRACAO:3, METRAGEM:4, NOME:5,
+    CPF:6, CNPJ:7, RG:8, DT_NASC:9, GENERO:10, EMAIL:11,
+    DDI:12, TELEFONE:13, TIPO_TEL:14, CEP:15, ENDERECO:16,
+    NUMERO:17, COMPLEMENTO:18, BAIRRO:19, CIDADE:20, ESTADO:21,
+    DT_ENTRADA:22, DT_SAIDA:23, RECEBE_COB:24, OBS:25
+  };
+
+  // Agrupa linhas por chave "unidade|bloco" para montar o objeto final
+  var grupos = {};
+  var ordemGrupos = [];
+
+  rows.forEach(function(row, ri) {
+    if (!row || row.length === 0) return;
+    var tipo = cleanVal(row[COL.TIPO]).toLowerCase();
+    var unidade = cleanVal(row[COL.UNIDADE]);
+    var bloco = cleanVal(row[COL.BLOCO]);
+    if (!unidade) return;
+
+    var chave = unidade + '|' + bloco;
+    if (!grupos[chave]) {
+      grupos[chave] = { _linha: ri + 2, _unidadeRaw: unidade, ST_UNIDADE_UNI: unidade, ST_BLOCO_UNI: bloco, contatos_extras: [] };
+      ordemGrupos.push(chave);
+    }
+    var g = grupos[chave];
+
+    // Dados de endereço e telefone compartilhados entre todos os tipos
+    var telefone = cleanDigits(row[COL.TELEFONE]);
+    var ddi = cleanVal(row[COL.DDI]) || (telefone ? '55' : '');
+    var tipoTel = telefone ? tipoTelefoneParaCodigo(cleanVal(row[COL.TIPO_TEL])) : '';
+
+    if (tipo === 'proprietário' || tipo === 'proprietario') {
+      // Proprietário: popula campos prop_* no grupo (uma unidade tem exatamente 1).
+      // Se já existe prop_nome preenchido, esta é uma segunda linha de Proprietário
+      // para a mesma unidade. Emite aviso e descarta para comportamento determinístico.
+      if (g.prop_nome) {
+        avisos.push('Unidade ' + unidade + ' bloco ' + bloco + ' tem mais de uma linha de Proprietario, mantendo a primeira');
+        return;
+      }
+      g.prop_nome        = cleanVal(row[COL.NOME]);
+      g.prop_cpf         = cleanVal(row[COL.CPF]);
+      g.prop_rg          = cleanVal(row[COL.RG]);
+      g.prop_email       = cleanVal(row[COL.EMAIL]);
+      g.prop_fone        = telefone;
+      g.prop_cel         = '';
+      g.prop_cep         = cleanDigits(row[COL.CEP]);
+      g.prop_endereco    = cleanVal(row[COL.ENDERECO]);
+      g.prop_numero      = cleanVal(row[COL.NUMERO]);
+      g.prop_bairro      = cleanVal(row[COL.BAIRRO]);
+      g.prop_complemento = cleanVal(row[COL.COMPLEMENTO]);
+      g.prop_cidade      = cleanVal(row[COL.CIDADE]);
+      g.prop_estado      = cleanVal(row[COL.ESTADO]);
+      g.prop_fracao      = cleanFracao(row[COL.FRACAO]);
+    } else if (tipo === 'inquilino' || tipo === 'dependente') {
+      // Inquilino (ID_TIPORESP_TRES=7) e Dependente (ID_TIPORESP_TRES=4)
+      var tipoResp = (tipo === 'inquilino') ? '7' : '4';
+      var dtEntradaBruta = cleanVal(row[COL.DT_ENTRADA]);
+      // Se Inquilino e data de entrada vazia, default para hoje
+      if (!dtEntradaBruta && tipo === 'inquilino') {
+        var hj = new Date();
+        var mm = String(hj.getMonth() + 1).padStart(2, '0');
+        var dd = String(hj.getDate()).padStart(2, '0');
+        var yyyy = hj.getFullYear();
+        dtEntradaBruta = dd + '/' + mm + '/' + yyyy;
+      }
+      g.contatos_extras.push({
+        tipo: tipo,
+        tipoResp: tipoResp,
+        nome: cleanVal(row[COL.NOME]),
+        cpf: cleanVal(row[COL.CPF]),
+        cnpj: cleanVal(row[COL.CNPJ]),
+        rg: cleanVal(row[COL.RG]),
+        email: cleanVal(row[COL.EMAIL]),
+        dtNasc: cleanVal(row[COL.DT_NASC]),
+        genero: generoParaCodigo(cleanVal(row[COL.GENERO])),
+        telefone: telefone,
+        ddi: ddi,
+        tipoTel: tipoTel,
+        cep: cleanDigits(row[COL.CEP]),
+        endereco: cleanVal(row[COL.ENDERECO]),
+        numero: cleanVal(row[COL.NUMERO]),
+        complemento: cleanVal(row[COL.COMPLEMENTO]),
+        bairro: cleanVal(row[COL.BAIRRO]),
+        cidade: cleanVal(row[COL.CIDADE]),
+        estado: ufParaCodigo(cleanVal(row[COL.ESTADO]), function(msg) { avisos.push(msg); }),
+        dtEntrada: dtEntradaBruta,
+        recebeCobranca: recebeCobrancaParaCodigo(cleanVal(row[COL.RECEBE_COB]))
+      });
+    }
+  });
+
+  // Converte mapa ordenado em array final.
+  // Anexa avisos como propriedade do array para que processFile possa exibi-los.
+  var resultado = ordemGrupos.map(function(chave) { return grupos[chave]; });
+  resultado.avisos = avisos;
+  return resultado;
 }
 
 // ============================================================
@@ -2685,6 +2921,7 @@ async function enviarUnidades() {
   logDiv.appendChild(hdr);
 
   let postOk = 0, postFail = 0, putOk = 0, putFail = 0, done = 0;
+  let inqOk = 0, inqFail = 0, depOk = 0, depFail = 0;
   const erros = [];
   const BATCH = 10; // 10 unidades simultâneas
 
@@ -2783,7 +3020,28 @@ async function enviarUnidades() {
   }
 
   addLog(logDiv, '[PUT  ' + idxPad + '/' + totalPad + '] OK ' + esc(u._unidadeRaw) + (u.prop_nome ? ' — ' + esc(u.prop_nome) : ''), 'ok');
-  return { idUnidade, idContato };
+
+  // PASSO 3: envia inquilinos e dependentes desta unidade sequencialmente.
+  // Só executa se a planilha unificada tiver contatos_extras populados.
+  let localInqOk = 0, localInqFail = 0, localDepOk = 0, localDepFail = 0;
+  if (Array.isArray(u.contatos_extras) && u.contatos_extras.length > 0) {
+    for (const contato of u.contatos_extras) {
+      const res = await enviarContatoExtra(condId, idUnidade, contato, logDiv, idxPad + '/' + totalPad);
+      const tipoLabel = contato.tipo === 'inquilino' ? 'INQ' : 'DEP';
+      const nomeLabel = contato.nome ? ' ' + esc(contato.nome) : '';
+      if (res.ok) {
+        addLog(logDiv, '[' + tipoLabel + '  ' + idxPad + '/' + totalPad + '] OK ' + esc(u._unidadeRaw) + nomeLabel + ' ' + esc(res.msg), 'ok');
+        if (contato.tipo === 'inquilino') localInqOk++; else localDepOk++;
+      } else {
+        addLog(logDiv, '[' + tipoLabel + '  ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + nomeLabel + ' ' + esc(res.msg), 'err');
+        if (contato.tipo === 'inquilino') localInqFail++; else localDepFail++;
+      }
+    }
+    // Resumo por unidade para facilitar leitura do log
+    addLog(logDiv, '[RES  ' + idxPad + '/' + totalPad + '] ' + esc(u._unidadeRaw) + ' inq ok ' + localInqOk + ' fail ' + localInqFail + ' dep ok ' + localDepOk + ' fail ' + localDepFail, 'info');
+  }
+
+  return { idUnidade, idContato, inqOk: localInqOk, inqFail: localInqFail, depOk: localDepOk, depFail: localDepFail };
   }
 
 
@@ -2805,6 +3063,13 @@ async function enviarUnidades() {
       if (s.status === 'fulfilled') {
         postOk++;
         putOk++;
+        // Acumula contadores de inquilinos e dependentes retornados pela unidade
+        if (s.value) {
+          inqOk  += s.value.inqOk  || 0;
+          inqFail += s.value.inqFail || 0;
+          depOk  += s.value.depOk  || 0;
+          depFail += s.value.depFail || 0;
+        }
         return;
       }
       const msg = (s.reason && s.reason.message) ? s.reason.message : String(s.reason);
@@ -2825,7 +3090,7 @@ async function enviarUnidades() {
     const pct = Math.round((done / processed.length) * 100);
     progressBar.style.width = pct + '%';
     if (progressTexto) {
-      progressTexto.textContent = 'POST ' + postOk + '/' + done + ' ok ' + postFail + ' fail · PUT ' + putOk + '/' + done + ' ok ' + putFail + ' fail · total ' + done + '/' + processed.length;
+      progressTexto.textContent = 'POST ' + postOk + '/' + done + ' ok ' + postFail + ' fail · PUT ' + putOk + '/' + done + ' ok ' + putFail + ' fail · Inq ' + inqOk + ' ok ' + inqFail + ' fail · Dep ' + depOk + ' ok ' + depFail + ' fail · total ' + done + '/' + processed.length;
     }
 
     // Pausa minima entre lotes para nao sobrecarregar
@@ -2839,21 +3104,23 @@ async function enviarUnidades() {
   if (btnEnviar) btnEnviar.disabled = false;
   if (btnParar) btnParar.style.display = 'none';
   progressBar.style.width = '100%';
-  if (progressTexto) progressTexto.textContent = 'POST ' + postOk + '/' + done + ' ok ' + postFail + ' fail · PUT ' + putOk + '/' + done + ' ok ' + putFail + ' fail · total ' + done + '/' + processed.length;
+  if (progressTexto) progressTexto.textContent = 'POST ' + postOk + '/' + done + ' ok ' + postFail + ' fail · PUT ' + putOk + '/' + done + ' ok ' + putFail + ' fail · Inq ' + inqOk + ' ok ' + inqFail + ' fail · Dep ' + depOk + ' ok ' + depFail + ' fail · total ' + done + '/' + processed.length;
 
   const totalErr = postFail + putFail;
+  const totalInqDep = inqOk + inqFail + depOk + depFail;
 
-  // Status final permanente (mesmo padrao visual de antes, agora com 4 contadores)
+  // Status final permanente com contadores de Inq/Dep quando houver
   statusFinal.style.display = 'block';
+  var inqDepResumo = totalInqDep > 0 ? (' Inq ok ' + inqOk + ' fail ' + inqFail + ', Dep ok ' + depOk + ' fail ' + depFail + '.') : '';
   if (parou) {
     statusFinal.className = 'uni-status warn';
-    statusFinal.innerHTML = '<span>⏹</span><div><strong>Importação interrompida</strong><br>POST ok ' + postOk + ', POST fail ' + postFail + ', PUT ok ' + putOk + ', PUT fail ' + putFail + '.</div>';
+    statusFinal.innerHTML = '<span>⏹</span><div><strong>Importação interrompida</strong><br>POST ok ' + postOk + ', POST fail ' + postFail + ', PUT ok ' + putOk + ', PUT fail ' + putFail + '.' + inqDepResumo + '</div>';
   } else if (totalErr === 0) {
     statusFinal.className = 'uni-status success';
-    statusFinal.innerHTML = '<span>✓</span><div><strong>' + putOk + ' unidades importadas com sucesso!</strong><br>POST ok ' + postOk + ', PUT ok ' + putOk + '. Todos os dados foram enviados para o Superlógica.</div>';
+    statusFinal.innerHTML = '<span>✓</span><div><strong>' + putOk + ' unidades importadas com sucesso!</strong><br>POST ok ' + postOk + ', PUT ok ' + putOk + '.' + inqDepResumo + ' Todos os dados foram enviados para o Superlógica.</div>';
   } else {
     statusFinal.className = 'uni-status error';
-    statusFinal.innerHTML = '<span>⚠</span><div><strong>' + putOk + ' criadas, ' + totalErr + ' com erro</strong><br>POST ok ' + postOk + ', POST fail ' + postFail + ', PUT ok ' + putOk + ', PUT fail ' + putFail + '. Veja a tabela e o log para detalhes.</div>';
+    statusFinal.innerHTML = '<span>⚠</span><div><strong>' + putOk + ' criadas, ' + totalErr + ' com erro</strong><br>POST ok ' + postOk + ', POST fail ' + postFail + ', PUT ok ' + putOk + ', PUT fail ' + putFail + '.' + inqDepResumo + ' Veja a tabela e o log para detalhes.</div>';
   }
 
   // Tabela de erros (DOM API, sem innerHTML em dado de planilha; preserva o padrao XSS-safe do pacote anterior)
@@ -2943,6 +3210,110 @@ async function apiPost(path, body) {
   // Aborta antes de tentar fetch(null), o que lançaria TypeError não tratado
   if (!url) { toast('Configure o proxy nas Configuracoes', 'err'); throw new Error('Proxy nao configurado'); }
   return fetch(url, { method: 'POST', headers: getHeaders(), body });
+}
+
+// ============================================================
+// BUILDERS E SENDER DE CONTATO EXTRA (Inquilino e Dependente)
+// Bloco 2: funções que montam e enviam o payload POST para criar
+// inquilinos e dependentes em uma unidade já existente no Superlógica.
+// ============================================================
+
+// Monta URLSearchParams completo para criação de um contato extra (inquilino ou dependente).
+// O payload segue exatamente a estrutura validada em produção em 2026-04-30.
+// Campos opcionais sem valor são filtrados por omitirVazios para manter o payload enxuto.
+// Campos "vazio mas presente" (exigidos pela API mesmo sem valor) são inseridos diretamente
+// no URLSearchParams após a filtragem, nunca passando por omitirVazios.
+function buildPayloadContatoExtra(idUnidade, condId, dados, tipo) {
+  // tipo: 'inquilino' significa tipoResp '7', 'dependente' significa tipoResp '4'
+  var tipoResp = dados.tipoResp || (tipo === 'inquilino' ? '7' : '4');
+
+  // Data de entrada: formato m/d/Y + " 00:00:00". Default hoje se Inquilino.
+  var dtEntrada = dataBRtoUSComHora(dados.dtEntrada);
+  if (!dtEntrada && tipo === 'inquilino') {
+    var hj = new Date();
+    dtEntrada = (hj.getMonth() + 1) + '/' + hj.getDate() + '/' + hj.getFullYear() + ' 00:00:00';
+  }
+
+  // Telefone: DDI e tipo somente quando há número, para evitar campos semi-preenchidos.
+  var tel = dados.telefone ? String(dados.telefone).replace(/\D/g, '') : '';
+  var ddi = tel ? (dados.ddi || '55') : '';
+  var tipoTel = tel ? (dados.tipoTel || '2') : '';
+
+  // Campos opcionais: construídos como objeto e filtrados por omitirVazios.
+  // Campos com valor real chegam no URLSearchParams; campos sem valor são omitidos.
+  var opcionais = omitirVazios({
+    'contatos[0][FL_ENTREGACOBRANCA_RESP]': dados.recebeCobranca || '',
+    'contatos[0][FL_SEXO_CON]':            dados.genero || '0',
+    'contatos[0][TELEFONES][0][DDI]':      ddi,
+    'contatos[0][TELEFONES][0][NUMERO]':   tel,
+    'contatos[0][TELEFONES][0][TIPO_TELEFONE]': tipoTel,
+    'contatos[0][ST_NOME_CON]':            dados.nome || '',
+    'contatos[0][ST_EMAIL_CON]':           dados.email || '',
+    'contatos[0][ST_BAIRRO_CON]':          dados.bairro || '',
+    'contatos[0][ST_CEP_CON]':             dados.cep || '',
+    'contatos[0][ST_CIDADE_CON]':          dados.cidade || '',
+    'contatos[0][ST_COMPLEMENTO_CON]':     dados.complemento || '',
+    'contatos[0][ST_CPF_CON]':             dados.cpf || '',
+    'contatos[0][ST_ENDERECO_CON]':        dados.endereco || '',
+    'contatos[0][ST_NUMERO_CON]':          dados.numero || '',
+    'contatos[0][ST_ESTADO_CON]':          dados.estado || '',
+    'contatos[0][ST_CGC_CON]':             dados.cnpj || '',
+  });
+
+  // Monta URLSearchParams a partir dos campos opcionais filtrados
+  var p = new URLSearchParams(opcionais);
+
+  // Campos obrigatórios raiz
+  p.set('ID_UNIDADE_UNI', idUnidade);
+  p.set('ID_CONDOMINIO_COND', condId);
+  p.set('contatos[0][ID_UNIDADE_UNI]', idUnidade);
+  p.set('contatos[0][ID_TIPORESP_TRES]', tipoResp);
+  p.set('contatos[0][ID_LABEL_TRES]', tipoResp);
+  p.set('contatos[0][ID_CODIGO_TFOR]', '1');
+  p.set('contatos[0][ID_TIPOCONTATO_TCON]', '1');     // 1 = morador (nao proprietario)
+
+  // Campos "vazio mas presente": a API exige a chave mesmo sem valor
+  p.set('contatos[0][ID_CONTATO_CON]', '');           // vazio = criar novo
+  p.set('contatos[0][ID_CONDOMINIO_COND]', '');       // vazio mas presente
+  p.set('contatos[0][DT_ENTRADA_RES]', dtEntrada);
+  p.set('contatos[0][DT_NASCIMENTO_CON]', dataBRtoUS(dados.dtNasc) || '');
+  p.set('contatos[0][ST_TELEFONE_CON]', tel);         // vazio mas presente
+  p.set('contatos[0][ST_FAX_CON]', '');               // vazio mas presente
+  p.set('contatos[0][TELEFONES][0][ST_CODIGO_TDDI]', '');
+
+  return p;
+}
+
+// Envia um contato extra (inquilino ou dependente) para uma unidade já criada.
+// Usa fetch direto pois apiPost não aceita query string no endpoint.
+// Retorna objeto { ok: bool, msg: string } para acumulação de contadores.
+async function enviarContatoExtra(condId, idUnidade, contato, logDiv, contexto) {
+  const proxy = getProxy();
+  if (!proxy) {
+    return { ok: false, msg: 'Proxy nao configurado' };
+  }
+  const url = proxy + '/v2/condor/unidades/post?ID_CONDOMINIO_COND=' + encodeURIComponent(condId);
+  const payload = buildPayloadContatoExtra(idUnidade, condId, contato, contato.tipo);
+  let resp;
+  try {
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: getHeaders(),
+      body: payload.toString()
+    });
+  } catch (e) {
+    return { ok: false, msg: 'rede ' + e.message };
+  }
+  let dados = null;
+  try { dados = await resp.json(); } catch (_) {}
+  // API responde array; sucesso quando data[0].status === '200' (mesmo padrão do PUT)
+  const statusItem = Array.isArray(dados) ? (dados[0] && dados[0].status) : (dados && dados.status);
+  if (String(statusItem) === '200' || statusItem === 200) {
+    const msgOk = (Array.isArray(dados) && dados[0] && dados[0].msg) ? dados[0].msg : 'ok';
+    return { ok: true, msg: msgOk };
+  }
+  const msgErr = dados ? JSON.stringify(dados).slice(0, 200) : ('HTTP ' + (resp && resp.status));
+  return { ok: false, msg: msgErr };
 }
 
 // ============================================================

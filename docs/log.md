@@ -4,6 +4,17 @@ Registro cronológico de tarefas concluídas. Entrada mais recente no topo.
 
 ---
 
+## 2026-04-30 — Suporte a Inquilino e Dependente na importação de unidades
+
+A entrega estende o módulo Importar Unidades para processar 3 tipos de pessoa por unidade usando o endpoint POST `/v2/condor/unidades/post?ID_CONDOMINIO_COND={id}`. O formato de planilha suportado passa a ter duas variantes detectadas automaticamente: o formato antigo Superlógica (30+ colunas) e o novo formato unificado de 26 colunas onde cada linha representa uma pessoa (Proprietário, Inquilino ou Dependente). O parser `processUnidadesDataUnificada` agrupa as linhas por Unidade+Bloco, extrai os dados do Proprietário em campos `prop_*` e empilha os demais em `contatos_extras[]`. A função `enviarUmaUnidade` encadeia POST de unidade vazia + PUT do Proprietário + N POSTs sequenciais para contatos extras, contabilizando `inqOk`/`inqFail`/`depOk`/`depFail` separadamente. Datas são convertidas de `dd/mm/aaaa` para `mm/dd/aaaa` e UF de sigla para código numérico conforme exigido pela API.
+
+O validador aprovou 47/47 checks com comparação byte a byte do payload gerado contra o payload validado em produção. Auditor de segurança confirmou zero violações novas. Revisor aprovou na V3 após 1 ressalva resolvida.
+
+Arquivos alterados: `public/index.html` (4967 -> 5338 linhas, MD5 dd9df99169721ff1c834f70f8fe57004), `CHANGELOG.md` (entrada adicionada), `docs/log.md` (este arquivo), `CLAUDE.md` (contagem de linhas atualizada), `service-hub.md` (seção de importação unificada adicionada), `tarefas/concluidas/inquilino-dependente.md` (movido de em-andamento)
+Implementado por: subagente programador
+
+---
+
 ## 2026-04-29 — Revisão profunda pré SaaS, pipeline completo de 8 etapas com 3 fixes deployados
 
 A Etapa 0 do pipeline revelou uma divergência de 28 commits entre o remoto e o estado local, além de dois arquivos .bak (public/index.html.bak-antes-fracao e public/index.html.bak-pre-fix-uf) servidos publicamente via Railway com HTTP 200. Os arquivos foram movidos para /backups/ e um push imediato fechou a janela de exposição. A publishable key do Supabase que estava neles foi registrada como risco residual e auditoria de RLS ficou como pendência prioritária.
