@@ -941,6 +941,9 @@
     </div>
 
     <div class="nav-section">Gestão</div>
+    <div class="nav-item" onclick="showPanel('prestacao')">
+      <span class="nav-icon">📊</span> Prestação de Contas
+    </div>
     <div class="nav-item" onclick="showPanel('atas')">
       <span class="nav-icon">✎</span> Atas Condominiais
     </div>
@@ -1239,6 +1242,95 @@
 
 
     <!-- ATAS CONDOMINIAIS -->
+    <div class="panel" id="panel-prestacao">
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Identificação do condomínio</span>
+        </div>
+
+        <div id="prest-modo-busca">
+          <div class="form-group" style="position:relative">
+            <label>Condomínio</label>
+            <input type="text" id="prest-cond-search" placeholder="Comece a digitar para buscar..." autocomplete="off"
+                   oninput="prestacaoFiltrarCondominios(this.value)"
+                   onfocus="prestacaoFiltrarCondominios(this.value)">
+            <div class="cond-dropdown" id="prest-cond-dropdown"></div>
+          </div>
+        </div>
+
+        <div id="prest-modo-livre" style="display:none">
+          <div class="form-group" style="margin:0">
+            <label>Nome do condomínio</label>
+            <input type="text" id="prest-cond-nome-livre" placeholder="Nome completo"
+                   oninput="prestacaoState.condNome=this.value;prestacaoAtualizarBotao()">
+          </div>
+          <div style="margin-top:8px">
+            <button class="btn btn-ghost" onclick="prestacaoVoltarLista()" style="font-size:12px;padding:6px 12px">Voltar à busca</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+          <div class="form-group" style="margin:0">
+            <label>Período de referência</label>
+            <input type="text" id="prest-periodo" placeholder="ex: Janeiro a Dezembro 2025 ou 2024"
+                   oninput="prestacaoState.periodo=this.value">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Data da apresentação</label>
+            <input type="date" id="prest-data-apresentacao"
+                   oninput="prestacaoState.dataApresentacao=this.value">
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Arquivos de referência</span>
+        </div>
+
+        <div class="dropzone" id="prest-dropzone"
+             ondragover="handleDrag(event, this)"
+             ondragleave="handleDragLeave(this)"
+             ondrop="prestacaoAdicionarArquivosDrop(event)">
+          <input type="file" id="prest-file-input" multiple
+                 accept=".pdf,.xlsx,.xls,.csv,.docx,.doc,.txt,.png,.jpg,.jpeg,.tiff,.tif,.webp"
+                 onchange="prestacaoAdicionarArquivos(event)">
+          <div class="drop-icon">⊡</div>
+          <div class="drop-title">Arraste os arquivos aqui</div>
+          <div class="drop-sub">ou clique para selecionar · pdf, xlsx, xls, csv, docx, doc, txt, png, jpg, jpeg, tiff, tif, webp</div>
+        </div>
+
+        <div id="prest-files-list" style="margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
+
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);font-family:var(--mono)">
+          Geralmente são relatórios W011A e W015A do Superlógica. Atas, fotos e comprovantes podem entrar em casos excepcionais.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Geração</span>
+        </div>
+
+        <div class="form-group">
+          <label>Observações adicionais (opcional)</label>
+          <textarea id="prest-observacoes" rows="4"
+                    placeholder="ex: ressaltar economia em energia, destacar obras concluídas em 2024"
+                    style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;color:var(--text);font-family:var(--mono);font-size:13px;resize:vertical;outline:none"
+                    oninput="prestacaoAtualizarObservacoes(this.value)"></textarea>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="prest-btn-gerar" class="btn btn-primary" onclick="prestacaoGerar()" disabled>
+            📊 Gerar prestação de contas
+          </button>
+          <button class="btn btn-ghost" onclick="prestacaoLimparTudo()">Limpar tudo</button>
+        </div>
+      </div>
+
+    </div>
+
     <div class="panel" id="panel-atas">
       <div class="card">
         <div class="card-header">
@@ -1914,6 +2006,7 @@ const PAGE_META = {
   nf:            { title: 'Notas Fiscais', sub: 'em breve' },
   tarefas:       { title: 'Tarefas', sub: 'em breve' },
   configuracoes: { title: 'Configurações', sub: 'credenciais e preferências' },
+  prestacao:     { title: 'Prestação de Contas', sub: 'gerar apresentação financeira anual' },
   atas:          { title: 'Atas Condominiais', sub: 'geração automática com IA' },
   consumo:       { title: 'Leitura de Consumo', sub: 'fotos de medidores → Superlógica' },
 };
@@ -1936,6 +2029,9 @@ function showPanel(name) {
   // reordenação de scripts — o override chama _origShowPanel que executa este código.
   if (['despesas','unidades','boletos','financeiro'].includes(name)) {
     renderBannerCondAtivo(name);
+  }
+  if (name === 'prestacao') {
+    prestacaoInit();
   }
 }
 
@@ -4059,6 +4155,245 @@ async function supaFetchRich(path, options = {}) {
     return { ok: false, status: 0, detail: e.message || 'Falha de rede ao conectar ao Supabase' };
   }
 }
+
+// ============================================================
+// PRESTACAO DE CONTAS
+// Cache de condominios populado via supaFetch ao abrir o painel.
+// Busca filtravel client side. Modo livre permite condominio nao cadastrado.
+// ============================================================
+
+let prestacaoState = {
+  condominios: null,
+  arquivos: [],
+  condId: null,
+  condNome: '',
+  periodo: '',
+  dataApresentacao: '',
+  observacoes: ''
+};
+
+// Roda na primeira vez que o painel Prestacao de Contas e mostrado.
+// Puxa lista de condominios do Supabase e seta data de hoje no campo de apresentacao.
+async function prestacaoInit() {
+  if (prestacaoState.condominios !== null) return;
+  prestacaoState.condominios = [];
+  try {
+    const r = await supaFetch('condominios?select=id,nome,id_superlogica&order=nome.asc');
+    if (Array.isArray(r)) prestacaoState.condominios = r;
+  } catch (e) {
+  }
+  var hoje = new Date();
+  var iso = hoje.getFullYear() + '-' +
+            String(hoje.getMonth() + 1).padStart(2, '0') + '-' +
+            String(hoje.getDate()).padStart(2, '0');
+  var dataInput = document.getElementById('prest-data-apresentacao');
+  if (dataInput && !dataInput.value) {
+    dataInput.value = iso;
+    prestacaoState.dataApresentacao = iso;
+  }
+}
+
+// Filtra a lista cached pelo texto digitado e re renderiza o dropdown.
+// Sempre adiciona "Outro condominio nao cadastrado" como ultimo item.
+function prestacaoFiltrarCondominios(query) {
+  var dd = document.getElementById('prest-cond-dropdown');
+  if (!dd) return;
+  var lista = Array.isArray(prestacaoState.condominios) ? prestacaoState.condominios : [];
+  var q = (query || '').trim().toLowerCase();
+  var filtrados = q.length === 0
+    ? lista.slice(0, 15)
+    : lista.filter(function(c) { return c && c.nome && c.nome.toLowerCase().indexOf(q) !== -1; }).slice(0, 15);
+  var esc = function(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+  var html = '';
+  if (filtrados.length === 0) {
+    html += '<div class="cond-option" style="opacity:.7;cursor:default">Nenhum condomínio encontrado</div>';
+  } else {
+    html += filtrados.map(function(c) {
+      var id = esc(c.id);
+      var nome = esc(c.nome);
+      var idSup = c.id_superlogica != null ? esc(c.id_superlogica) : '';
+      return '<div class="cond-option" data-id="' + id + '" data-nome="' + nome + '">'
+        + '<span class="cond-name">' + nome + '</span>'
+        + (idSup ? '<span class="cond-id">' + idSup + '</span>' : '')
+        + '</div>';
+    }).join('');
+  }
+  html += '<div class="cond-option" data-acao="outro" style="border-top:1px dashed var(--border2);font-style:italic">'
+        + '<span class="cond-name">Outro condomínio não cadastrado</span></div>';
+  dd.innerHTML = html;
+  dd.classList.add('open');
+  if (!dd._listenerAdded) {
+    dd.addEventListener('click', function(ev) {
+      var opt = ev.target.closest('.cond-option');
+      if (!opt) return;
+      if (opt.dataset.acao === 'outro') {
+        prestacaoUsarOutro();
+        return;
+      }
+      if (!opt.dataset.id) return;
+      prestacaoSelecionarCondominio(opt.dataset.id, opt.dataset.nome);
+    });
+    dd._listenerAdded = true;
+  }
+}
+
+// Seleciona um condominio do dropdown e fecha o popup.
+function prestacaoSelecionarCondominio(id, nome) {
+  var inp = document.getElementById('prest-cond-search');
+  if (inp) inp.value = nome;
+  var dd = document.getElementById('prest-cond-dropdown');
+  if (dd) { dd.classList.remove('open'); dd.innerHTML = ''; }
+  prestacaoState.condId = id;
+  prestacaoState.condNome = nome;
+  prestacaoAtualizarBotao();
+}
+
+// Troca a UI do Card 1 para o modo livre (condominio sem cadastro).
+function prestacaoUsarOutro() {
+  var dd = document.getElementById('prest-cond-dropdown');
+  if (dd) { dd.classList.remove('open'); dd.innerHTML = ''; }
+  document.getElementById('prest-modo-busca').style.display = 'none';
+  document.getElementById('prest-modo-livre').style.display = 'block';
+  prestacaoState.condId = null;
+  prestacaoState.condNome = '';
+  var nomeLivre = document.getElementById('prest-cond-nome-livre');
+  if (nomeLivre) { nomeLivre.value = ''; nomeLivre.focus(); }
+  prestacaoAtualizarBotao();
+}
+
+// Volta do modo livre para a busca normal.
+function prestacaoVoltarLista() {
+  document.getElementById('prest-modo-livre').style.display = 'none';
+  document.getElementById('prest-modo-busca').style.display = 'block';
+  prestacaoState.condId = null;
+  prestacaoState.condNome = '';
+  var inp = document.getElementById('prest-cond-search');
+  if (inp) { inp.value = ''; inp.focus(); }
+  prestacaoAtualizarBotao();
+}
+
+// Adiciona arquivos selecionados via input file.
+function prestacaoAdicionarArquivos(event) {
+  var arquivos = Array.from(event.target.files || []);
+  arquivos.forEach(function(f) { prestacaoState.arquivos.push(f); });
+  event.target.value = '';
+  prestacaoRenderizarListaArquivos();
+  prestacaoAtualizarBotao();
+}
+
+// Adiciona arquivos via drop na dropzone.
+function prestacaoAdicionarArquivosDrop(event) {
+  event.preventDefault();
+  handleDragLeave(event.currentTarget);
+  var arquivos = Array.from(event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files : []);
+  arquivos.forEach(function(f) { prestacaoState.arquivos.push(f); });
+  prestacaoRenderizarListaArquivos();
+  prestacaoAtualizarBotao();
+}
+
+// Remove um arquivo da lista pelo indice.
+function prestacaoRemoverArquivo(idx) {
+  if (idx < 0 || idx >= prestacaoState.arquivos.length) return;
+  prestacaoState.arquivos.splice(idx, 1);
+  prestacaoRenderizarListaArquivos();
+  prestacaoAtualizarBotao();
+}
+
+// Renderiza a lista de arquivos anexados abaixo da dropzone.
+function prestacaoRenderizarListaArquivos() {
+  var box = document.getElementById('prest-files-list');
+  if (!box) return;
+  if (!prestacaoState.arquivos.length) {
+    box.innerHTML = '';
+    return;
+  }
+  var esc = function(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+  box.innerHTML = prestacaoState.arquivos.map(function(f, i) {
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:12px;font-family:var(--mono)">'
+      + '<span style="flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.name) + '</span>'
+      + '<span style="color:var(--muted)">' + prestacaoFormatarTamanho(f.size) + '</span>'
+      + '<button onclick="prestacaoRemoverArquivo(' + i + ')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 6px" title="Remover">✕</button>'
+      + '</div>';
+  }).join('');
+}
+
+// Atualiza o campo de observacoes no state.
+function prestacaoAtualizarObservacoes(valor) {
+  prestacaoState.observacoes = valor || '';
+}
+
+// Habilita o botao Gerar quando ha condominio (cadastrado OU livre com nome) e pelo menos 1 arquivo.
+function prestacaoAtualizarBotao() {
+  var btn = document.getElementById('prest-btn-gerar');
+  if (!btn) return;
+  var temCond = !!(prestacaoState.condId || (prestacaoState.condNome && prestacaoState.condNome.trim().length > 0));
+  var temArquivo = prestacaoState.arquivos.length > 0;
+  btn.disabled = !(temCond && temArquivo);
+}
+
+// Limpa todos os campos do painel e reseta state (preserva o cache de condominios).
+function prestacaoLimparTudo() {
+  prestacaoState.arquivos = [];
+  prestacaoState.condId = null;
+  prestacaoState.condNome = '';
+  prestacaoState.periodo = '';
+  prestacaoState.dataApresentacao = '';
+  prestacaoState.observacoes = '';
+  document.getElementById('prest-modo-livre').style.display = 'none';
+  document.getElementById('prest-modo-busca').style.display = 'block';
+  var inp = document.getElementById('prest-cond-search');
+  if (inp) inp.value = '';
+  var nomeLivre = document.getElementById('prest-cond-nome-livre');
+  if (nomeLivre) nomeLivre.value = '';
+  var per = document.getElementById('prest-periodo');
+  if (per) per.value = '';
+  var dat = document.getElementById('prest-data-apresentacao');
+  if (dat) dat.value = '';
+  var obs = document.getElementById('prest-observacoes');
+  if (obs) obs.value = '';
+  prestacaoRenderizarListaArquivos();
+  prestacaoAtualizarBotao();
+  prestacaoInit();
+}
+
+// Helper de formatacao de tamanho de arquivo.
+function prestacaoFormatarTamanho(bytes) {
+  if (bytes == null) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+}
+
+// Handler do botao Gerar. No B3 apenas loga o state. Logica real entra no B4 e B5.
+function prestacaoGerar() {
+  console.log('[prestacao] state ao gerar:', JSON.parse(JSON.stringify({
+    condId: prestacaoState.condId,
+    condNome: prestacaoState.condNome,
+    periodo: prestacaoState.periodo,
+    dataApresentacao: prestacaoState.dataApresentacao,
+    observacoes: prestacaoState.observacoes,
+    arquivos: prestacaoState.arquivos.map(function(f) { return { name: f.name, size: f.size, type: f.type }; })
+  })));
+  toast('B3 ok. Logica de geracao entra no B4 e B5.', 'ok');
+}
+
+// Fecha o dropdown de condominios quando o usuario clica fora do Card 1.
+document.addEventListener('click', function(ev) {
+  var dd = document.getElementById('prest-cond-dropdown');
+  if (!dd || !dd.classList.contains('open')) return;
+  var inp = document.getElementById('prest-cond-search');
+  if (ev.target === inp) return;
+  if (dd.contains(ev.target)) return;
+  dd.classList.remove('open');
+});
 
 </script>
 </body>
