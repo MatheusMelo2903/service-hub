@@ -1326,8 +1326,14 @@
         .cp-modal-box h3 { font-family:var(--sans); font-size:15px; margin-bottom:18px; }
         .cp-modal-field { margin-bottom:12px; }
         .cp-modal-field label { font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:4px; font-family:var(--mono); }
-        .cp-modal-field input { width:100%; padding:8px 12px; background:var(--bg3); border:1.5px solid var(--border2); border-radius:8px; font-family:var(--mono); font-size:12px; color:var(--text); outline:none; transition:border-color 0.15s; }
-        .cp-modal-field input:focus { border-color:var(--gs-blue); }
+        .cp-modal-field input, .cp-modal-field select { width:100%; padding:8px 12px; background:var(--bg3); border:1.5px solid var(--border2); border-radius:8px; font-family:var(--mono); font-size:12px; color:var(--text); outline:none; transition:border-color 0.15s; }
+        .cp-modal-field input:focus, .cp-modal-field select:focus { border-color:var(--gs-blue); }
+        .cp-modal-details { margin-top:14px; margin-bottom:4px; }
+        .cp-modal-details summary { cursor:pointer; font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; font-family:var(--mono); padding:6px 0; list-style:none; user-select:none; }
+        .cp-modal-details summary::-webkit-details-marker { display:none; }
+        .cp-modal-details summary::before { content:'▸ '; display:inline-block; }
+        .cp-modal-details[open] summary::before { content:'▾ '; }
+        .cp-modal-details > .cp-modal-field:first-of-type { margin-top:8px; }
         .cp-modal-btns { display:flex; gap:8px; justify-content:flex-end; margin-top:18px; }
         .cp-btn-cancel { padding:8px 16px; border-radius:8px; border:1px solid var(--border2); background:var(--bg3); color:var(--text); cursor:pointer; font-size:12px; font-weight:600; font-family:var(--mono); }
         .cp-btn-ok { padding:8px 16px; border-radius:8px; border:none; background:var(--gs-blue); color:#0e0e0f; cursor:pointer; font-size:12px; font-weight:700; font-family:var(--mono); }
@@ -1382,10 +1388,11 @@
         </div>
       </div>
 
-      <!-- MODAL NOVO CONDOMÍNIO -->
+      <!-- MODAL NOVO/EDITAR CONDOMÍNIO -->
       <div class="cp-modal-overlay" id="cp-modal">
-        <div class="cp-modal-box">
-          <h3>Adicionar Condomínio</h3>
+        <div class="cp-modal-box" style="width:460px">
+          <h3 id="cp-modal-title">Adicionar Condomínio</h3>
+          <input type="hidden" id="cp-inp-edit-id">
           <div class="cp-modal-field">
             <label>Nome do Condomínio</label>
             <input type="text" id="cp-inp-nome" placeholder="Ex: Reserva dos Camarás">
@@ -1394,9 +1401,42 @@
             <label>Nome do Síndico</label>
             <input type="text" id="cp-inp-sindico" placeholder="Ex: Paulo">
           </div>
+          <details class="cp-modal-details" id="cp-modal-rel">
+            <summary>Configuração de relatório (opcional)</summary>
+            <div class="cp-modal-field">
+              <label>Telefone do Síndico</label>
+              <input type="text" id="cp-inp-telefone" placeholder="(11) 99999-9999">
+            </div>
+            <div class="cp-modal-field">
+              <label>E-mail do Síndico</label>
+              <input type="email" id="cp-inp-email" placeholder="sindico@exemplo.com">
+            </div>
+            <div class="cp-modal-field">
+              <label>Frequência do relatório</label>
+              <select id="cp-inp-frequencia">
+                <option value="">—</option>
+                <option value="semanal">Semanal</option>
+                <option value="quinzenal">Quinzenal</option>
+                <option value="mensal">Mensal</option>
+              </select>
+            </div>
+            <div class="cp-modal-field">
+              <label>Dia da atualização semanal</label>
+              <select id="cp-inp-dia">
+                <option value="">—</option>
+                <option value="0">Domingo</option>
+                <option value="1">Segunda</option>
+                <option value="2">Terça</option>
+                <option value="3">Quarta</option>
+                <option value="4">Quinta</option>
+                <option value="5">Sexta</option>
+                <option value="6">Sábado</option>
+              </select>
+            </div>
+          </details>
           <div class="cp-modal-btns">
             <button class="cp-btn-cancel" onclick="cpFecharModal()">Cancelar</button>
-            <button class="cp-btn-ok" onclick="cpSalvarCondominio()">Adicionar</button>
+            <button class="cp-btn-ok" id="cp-btn-salvar" onclick="cpSalvarCondominio()">Adicionar</button>
           </div>
         </div>
       </div>
@@ -3740,31 +3780,86 @@ async function cpAplicarUpdate(data) {
   cpSelecionarCond(c.id);
 }
 
-function cpAbrirModal() {
-  document.getElementById('cp-modal').classList.add('open');
+async function cpAbrirModal(condId) {
+  const modal = document.getElementById('cp-modal');
+  modal.classList.add('open');
+  document.getElementById('cp-inp-edit-id').value = condId || '';
+  const title = document.getElementById('cp-modal-title');
+  const btn = document.getElementById('cp-btn-salvar');
+  const det = document.getElementById('cp-modal-rel');
+  // Zera antes de preencher, evita ghost value de uma abertura anterior.
+  ['nome','sindico','telefone','email','frequencia','dia'].forEach(k => { document.getElementById('cp-inp-' + k).value = ''; });
+  if (condId) {
+    title.textContent = 'Editar Cliente';
+    btn.textContent = 'Salvar';
+    det.open = true;
+    // Busca fresh no Supabase — cpCondominios só guarda os campos antigos, os 4 novos vivem direto no banco.
+    const rows = await supaFetch('condominios?id=eq.' + encodeURIComponent(condId) + '&select=*');
+    const c = (rows && rows[0]) || null;
+    if (c) {
+      document.getElementById('cp-inp-nome').value = c.nome || '';
+      document.getElementById('cp-inp-sindico').value = c.sindico || '';
+      document.getElementById('cp-inp-telefone').value = c.sindico_telefone || '';
+      document.getElementById('cp-inp-email').value = c.sindico_email || '';
+      document.getElementById('cp-inp-frequencia').value = c.frequencia_relatorio || '';
+      document.getElementById('cp-inp-dia').value = (c.dia_atualizacao_semanal != null ? String(c.dia_atualizacao_semanal) : '');
+    }
+  } else {
+    title.textContent = 'Adicionar Condomínio';
+    btn.textContent = 'Adicionar';
+    det.open = false;
+  }
   setTimeout(() => document.getElementById('cp-inp-nome').focus(), 50);
 }
 
 function cpFecharModal() {
   document.getElementById('cp-modal').classList.remove('open');
-  document.getElementById('cp-inp-nome').value = '';
-  document.getElementById('cp-inp-sindico').value = '';
+  ['edit-id','nome','sindico','telefone','email','frequencia','dia'].forEach(k => { document.getElementById('cp-inp-' + k).value = ''; });
 }
 
 async function cpSalvarCondominio() {
-  const nome = document.getElementById('cp-inp-nome').value.trim();
-  const sindico = document.getElementById('cp-inp-sindico').value.trim();
-  if (!nome || !sindico) return alert('Preencha todos os campos.');
+  const editId    = document.getElementById('cp-inp-edit-id').value;
+  const nome      = document.getElementById('cp-inp-nome').value.trim();
+  const sindico   = document.getElementById('cp-inp-sindico').value.trim();
+  if (!nome || !sindico) return alert('Preencha nome e síndico.');
+  const telefone   = document.getElementById('cp-inp-telefone').value.trim();
+  const email      = document.getElementById('cp-inp-email').value.trim();
+  const frequencia = document.getElementById('cp-inp-frequencia').value;
+  const diaRaw     = document.getElementById('cp-inp-dia').value;
+  const dia        = diaRaw === '' ? null : parseInt(diaRaw, 10);
+
+  const camposRel = {
+    sindico_telefone:        telefone || null,
+    sindico_email:           email || null,
+    frequencia_relatorio:    frequencia || null,
+    dia_atualizacao_semanal: dia
+  };
+
+  if (editId) {
+    const updated = await supaFetch('condominios?id=eq.' + encodeURIComponent(editId),
+      { method: 'PATCH', body: JSON.stringify({ nome, sindico, ...camposRel }) });
+    if (!updated) { toast('Erro ao atualizar cliente', 'err'); return; }
+    const c = cpCondominios.find(x => x.id === editId);
+    if (c) { c.nome = nome; c.sindico = sindico; }
+    cpSalvar();
+    cpFecharModal();
+    cpRenderSidebar();
+    toast('Cliente atualizado', 'ok');
+    if (typeof dclCarregarClientes === 'function') dclCarregarClientes();
+    return;
+  }
+
   const id = nome.toLowerCase().replace(/[^a-z0-9]/g,'').substring(0,20) + Date.now();
   const criadoEm = new Date().toLocaleDateString('pt-BR');
-  // Sem prefer:return=minimal — devolve a linha em sucesso e null em erro.
-  const inserted = await supaFetch('condominios', { method: 'POST', body: JSON.stringify({ id, nome, sindico, criado_em: criadoEm }) });
+  const inserted = await supaFetch('condominios',
+    { method: 'POST', body: JSON.stringify({ id, nome, sindico, criado_em: criadoEm, ...camposRel }) });
   if (!inserted) { toast('Erro ao salvar condomínio no Supabase', 'err'); return; }
   cpCondominios.push({ id, nome, sindico, criadoEm, laudos: [], historico: [], prioridades: [], demandas: [] });
   cpSalvar();
   cpFecharModal();
   cpRenderSidebar();
   cpSelecionarCond(id);
+  if (typeof dclCarregarClientes === 'function') dclCarregarClientes();
 }
 
 async function cpGerarApresentacao() {
