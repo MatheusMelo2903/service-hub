@@ -4372,17 +4372,166 @@ function prestacaoFormatarTamanho(bytes) {
   return (bytes / 1024 / 1024).toFixed(2) + ' MB';
 }
 
-// Handler do botao Gerar. No B3 apenas loga o state. Logica real entra no B4 e B5.
-function prestacaoGerar() {
-  console.log('[prestacao] state ao gerar:', JSON.parse(JSON.stringify({
-    condId: prestacaoState.condId,
-    condNome: prestacaoState.condNome,
-    periodo: prestacaoState.periodo,
-    dataApresentacao: prestacaoState.dataApresentacao,
-    observacoes: prestacaoState.observacoes,
-    arquivos: prestacaoState.arquivos.map(function(f) { return { name: f.name, size: f.size, type: f.type }; })
-  })));
-  toast('B3 ok. Logica de geracao entra no B4 e B5.', 'ok');
+// Stub do segundo handler. Sera substituido na implementacao do B5,
+// que recebe prestacaoState.dadosExtraidos e monta o pptx via PptxGenJS.
+function prestacaoGerarPptx() {
+  toast('Geracao de pptx sera implementada no proximo bloco.', 'info');
+}
+
+// Le um arquivo do prestacaoState e devolve um content block do Anthropic.
+// PDFs viram bloco document base64, imagens viram bloco image base64,
+// qualquer outro tipo e lido como texto via FileReader.readAsText e enviado como bloco text.
+function prestacaoArquivoParaBloco(file) {
+  return new Promise(function(resolve, reject) {
+    var nome = file && file.name ? file.name : 'sem_nome';
+    var ehPdf = (file.type === 'application/pdf') || /\.pdf$/i.test(nome);
+    var ehImagem = (file.type || '').indexOf('image/') === 0;
+    var reader = new FileReader();
+    reader.onerror = function() { reject(new Error('Falha ao ler ' + nome)); };
+    if (ehPdf || ehImagem) {
+      reader.onload = function() {
+        var dataUrl = String(reader.result || '');
+        var b64 = dataUrl.split(',')[1] || '';
+        if (ehPdf) {
+          resolve({
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: b64 },
+            title: nome
+          });
+        } else {
+          var media = file.type || 'image/png';
+          resolve({
+            type: 'image',
+            source: { type: 'base64', media_type: media, data: b64 }
+          });
+        }
+      };
+      reader.readAsDataURL(file);
+    } else {
+      reader.onload = function() {
+        var texto = String(reader.result || '');
+        resolve({
+          type: 'text',
+          text: 'Arquivo: ' + nome + '\n\n' + texto
+        });
+      };
+      reader.readAsText(file);
+    }
+  });
+}
+
+// Handler principal do botao Gerar.
+// Le todos os arquivos do prestacaoState, monta payload Anthropic com instrucoes
+// para extrair a estrutura JSON da prestacao de contas e envia para o proxy
+// /api/claude/messages. Em sucesso salva em prestacaoState.dadosExtraidos, loga
+// no console e troca o botao para acionar prestacaoGerarPptx (B5). Em erro,
+// restaura o botao original e mostra toast com a mensagem.
+async function prestacaoGerar() {
+  var btn = document.getElementById('prest-btn-gerar');
+  if (!btn) return;
+  var textoOriginal = btn.textContent;
+  var onclickOriginal = btn.onclick;
+  btn.disabled = true;
+  btn.textContent = 'Lendo arquivos...';
+  try {
+    if (!prestacaoState.arquivos || prestacaoState.arquivos.length === 0) {
+      throw new Error('Nenhum arquivo carregado.');
+    }
+    var blocos = [];
+    for (var i = 0; i < prestacaoState.arquivos.length; i++) {
+      btn.textContent = 'Lendo arquivo ' + (i + 1) + ' de ' + prestacaoState.arquivos.length + '...';
+      var bloco = await prestacaoArquivoParaBloco(prestacaoState.arquivos[i]);
+      blocos.push(bloco);
+    }
+    btn.textContent = 'Consultando IA...';
+
+    // System prompt orienta o modelo a devolver JSON estruturado seguindo o
+    // padrao da skill powerpoint prestacao contas, com base nos relatorios
+    // W011A (despesas por categoria) e W015A (extrato bancario) do Superlogica.
+    var systemPrompt = [
+      'Voce e um assistente especializado em montar prestacao de contas condominial em formato pptx.',
+      'O usuario vai fornecer relatorios do Superlogica, em especial W011A (despesas por categoria) e W015A (extrato bancario com receitas e saldos).',
+      'Sua tarefa e extrair os dados em JSON estruturado para alimentar a skill powerpoint prestacao contas.',
+      'Devolva SEMPRE um unico bloco JSON valido, dentro de cercas tripla com a tag json (```json ... ```), sem texto antes nem depois.',
+      'Estrutura obrigatoria do JSON:',
+      '{',
+      '  "cabecalho": { "condominio": string, "periodo": string, "dataApresentacao": string },',
+      '  "blocosTemporais": [ { "rotulo": string, "inicio": string, "fim": string } ],',
+      '  "despesasPorCategoria": [ { "categoria": string, "valor": number, "percentual": number } ],',
+      '  "receitas": [ { "descricao": string, "valor": number } ],',
+      '  "saldo": { "inicial": number, "final": number, "movimentacao": number },',
+      '  "observacoes": [ string ],',
+      '  "slidesSugeridos": [ { "titulo": string, "tipo": string, "conteudo": string } ]',
+      '}',
+      'Use numeros decimais com ponto (nunca virgula) e datas em formato ISO 8601.',
+      'Se algum campo nao puder ser extraido com seguranca, devolva null nele em vez de inventar.'
+    ].join('\n');
+
+    var contextoUsuario = [];
+    contextoUsuario.push({
+      type: 'text',
+      text:
+        'Condominio: ' + (prestacaoState.condNome || 'nao informado') + '\n' +
+        'Periodo: ' + (prestacaoState.periodo || 'nao informado') + '\n' +
+        'Data da apresentacao: ' + (prestacaoState.dataApresentacao || 'nao informada') + '\n' +
+        'Observacoes adicionais: ' + (prestacaoState.observacoes || 'nenhuma') + '\n\n' +
+        'A seguir vao os arquivos da prestacao de contas. Extraia o JSON conforme as instrucoes do system prompt.'
+    });
+    for (var j = 0; j < blocos.length; j++) contextoUsuario.push(blocos[j]);
+
+    var payload = {
+      model: 'claude-sonnet-4-5-20250929',
+      max_tokens: 16000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: contextoUsuario }]
+    };
+
+    var resp = await fetch('/api/claude/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!resp.ok) {
+      var erroTxt = await resp.text();
+      throw new Error('Falha na API (' + resp.status + '): ' + erroTxt.slice(0, 200));
+    }
+    var data = await resp.json();
+    var primeiroBloco = (data && Array.isArray(data.content))
+      ? data.content.find(function(b) { return b && b.type === 'text'; })
+      : null;
+    var textoResposta = primeiroBloco && primeiroBloco.text ? primeiroBloco.text : '';
+    if (!textoResposta) throw new Error('Resposta da IA sem bloco de texto.');
+
+    // Extracao do JSON: tenta cercas ```json primeiro, depois cercas genericas, depois parse direto.
+    var jsonStr = '';
+    var matchJson = textoResposta.match(/```json\s*([\s\S]*?)```/i);
+    if (matchJson && matchJson[1]) {
+      jsonStr = matchJson[1].trim();
+    } else {
+      var matchGen = textoResposta.match(/```\s*([\s\S]*?)```/);
+      jsonStr = matchGen && matchGen[1] ? matchGen[1].trim() : textoResposta.trim();
+    }
+    var dados;
+    try {
+      dados = JSON.parse(jsonStr);
+    } catch (e) {
+      console.error('[prestacao] resposta bruta nao parseavel:', textoResposta);
+      throw new Error('JSON invalido na resposta da IA.');
+    }
+    prestacaoState.dadosExtraidos = dados;
+    console.log('[prestacao] dados extraidos:', dados);
+
+    btn.disabled = false;
+    btn.textContent = 'Dados extraidos. Gerar pptx';
+    btn.onclick = prestacaoGerarPptx;
+    toast('Extracao concluida. Veja prestacaoState.dadosExtraidos no console.', 'ok');
+  } catch (err) {
+    console.error('[prestacao] erro ao gerar:', err);
+    btn.disabled = false;
+    btn.textContent = textoOriginal || 'Gerar prestacao de contas';
+    if (onclickOriginal) btn.onclick = onclickOriginal;
+    toast('Erro: ' + (err && err.message ? err.message : String(err)), 'err');
+  }
 }
 
 // Fecha o dropdown de condominios quando o usuario clica fora do Card 1.
