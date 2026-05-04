@@ -21,3 +21,6 @@ backups/
 
 # CLI Supabase local
 supabase/
+
+# Variaveis de ambiente
+.env*
