@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0a0c0f">
+<title>Service Hub · Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<style>
+  :root {
+    --bg: #0a0c0f;
+    --bg2: #11141a;
+    --bg3: #181d25;
+    --line: #222830;
+    --ink: #e8ecf0;
+    --dim: #5c6470;
+    --dim2: #8892a0;
+    --f0: #ef5b5b;
+    --f1: #3ecf8e;
+    --f2: #4d9fff;
+    --f3: #a78bfa;
+    --pend: #3a3f48;
+    --pend-t: #6b7280;
+    --prog: #f59e0b;
+    --prog-t: #fbbf24;
+    --done: #10b981;
+    --done-t: #34d399;
+    --r: 14px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    overscroll-behavior: none;
+  }
+
+  /* SETUP MODAL */
+  #setup-modal {
+    position: fixed; inset: 0; background: var(--bg);
+    z-index: 1000; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 28px 20px; gap: 20px;
+  }
+  #setup-modal h2 { font-size: 22px; font-weight: 700; text-align: center; }
+  #setup-modal p { font-size: 14px; color: var(--dim2); text-align: center; line-height: 1.6; }
+  .sql-box {
+    background: var(--bg3); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px; width: 100%; max-width: 500px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--f1);
+    line-height: 1.6; white-space: pre-wrap; word-break: break-all;
+    max-height: 220px; overflow-y: auto;
+  }
+  .btn-primary {
+    background: var(--f1); color: #000; font-family: 'Syne', sans-serif;
+    font-weight: 700; font-size: 15px; border: none; border-radius: 50px;
+    padding: 14px 32px; cursor: pointer; width: 100%; max-width: 320px;
+    transition: opacity .2s;
+  }
+  .btn-primary:active { opacity: .8; }
+
+  /* USER SELECT MODAL */
+  #user-modal {
+    position: fixed; inset: 0; background: rgba(10,12,15,.95);
+    z-index: 900; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 20px; padding: 28px;
+  }
+  #user-modal h2 { font-size: 24px; font-weight: 800; }
+  #user-modal p { font-size: 14px; color: var(--dim2); text-align: center; }
+  .user-cards { display: flex; flex-direction: column; gap: 14px; width: 100%; max-width: 360px; }
+  .user-card {
+    background: var(--bg2); border: 1px solid var(--line); border-radius: var(--r);
+    padding: 20px 22px; cursor: pointer; transition: all .2s; display: flex; align-items: center; gap: 16px;
+  }
+  .user-card:active { scale: .97; }
+  .user-avatar {
+    width: 46px; height: 46px; border-radius: 50%; display: flex; align-items: center;
+    justify-content: center; font-size: 18px; font-weight: 800; flex-shrink: 0;
+  }
+  .user-card .u-name { font-weight: 700; font-size: 16px; }
+  .user-card .u-role { font-size: 12px; color: var(--dim2); margin-top: 3px; }
+
+  /* MAIN APP */
+  #app { display: none; padding-bottom: 100px; }
+
+  /* STICKY HEADER */
+  .app-header {
+    position: sticky; top: 0; z-index: 100;
+    background: rgba(10,12,15,.92); backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--line);
+    padding: 16px 20px 14px;
+  }
+  .header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .app-title { font-size: 13px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--dim2); }
+  .user-pill {
+    display: flex; align-items: center; gap: 8px; background: var(--bg3);
+    border: 1px solid var(--line); border-radius: 50px; padding: 6px 12px 6px 8px;
+    cursor: pointer;
+  }
+  .user-pill .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .user-pill span { font-size: 12px; font-weight: 600; }
+  .overall-progress { }
+  .progress-label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .progress-label .pl-text { font-size: 12px; color: var(--dim2); }
+  .progress-label .pl-num { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500; color: var(--ink); }
+  .progress-track { height: 6px; background: var(--bg3); border-radius: 99px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 99px; transition: width .6s cubic-bezier(.4,0,.2,1); background: linear-gradient(90deg, var(--f1), var(--f2)); }
+
+  /* SYNC INDICATOR */
+  .sync-bar {
+    display: flex; align-items: center; gap: 8px; padding: 8px 20px;
+    font-size: 11px; color: var(--dim2); border-bottom: 1px solid var(--line);
+    background: var(--bg);
+  }
+  .sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--f1); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  .sync-bar.updating .sync-dot { background: var(--prog); animation: none; }
+
+  /* CONTENT */
+  .content { padding: 20px 16px 0; }
+
+  /* PHASE CARD */
+  .phase-card {
+    background: var(--bg2); border: 1px solid var(--line);
+    border-radius: 18px; margin-bottom: 16px; overflow: hidden;
+  }
+  .phase-header {
+    padding: 18px 18px 14px; border-bottom: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .phase-top { display: flex; align-items: center; gap: 12px; }
+  .phase-badge {
+    padding: 5px 12px; border-radius: 50px; font-size: 11px; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase;
+  }
+  .phase-month { font-size: 11px; color: var(--dim2); font-family: 'JetBrains Mono', monospace; }
+  .phase-name { font-size: 18px; font-weight: 800; line-height: 1.2; }
+  .phase-progress { }
+  .phase-prog-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+  .phase-prog-label { font-size: 11px; color: var(--dim2); }
+  .phase-prog-num { font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+  .phase-track { height: 4px; background: var(--bg3); border-radius: 99px; overflow: hidden; }
+  .phase-fill { height: 100%; border-radius: 99px; transition: width .5s ease; }
+
+  /* TASKS */
+  .tasks { padding: 6px 0; }
+  .task {
+    display: flex; align-items: flex-start; gap: 14px;
+    padding: 14px 18px; border-bottom: 1px solid var(--line);
+    cursor: pointer; transition: background .15s; position: relative;
+    -webkit-user-select: none; user-select: none;
+  }
+  .task:last-child { border-bottom: none; }
+  .task:active { background: rgba(255,255,255,.03); }
+  .task-status-btn {
+    width: 26px; height: 26px; border-radius: 8px; flex-shrink: 0; margin-top: 1px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; transition: all .2s;
+  }
+  .task-body { flex: 1; min-width: 0; }
+  .task-title { font-size: 14px; font-weight: 600; line-height: 1.3; }
+  .task-meta { display: flex; align-items: center; gap: 8px; margin-top: 5px; flex-wrap: wrap; }
+  .task-resp { font-size: 11px; color: var(--dim2); }
+  .task-updated { font-size: 11px; color: var(--dim); font-family: 'JetBrains Mono', monospace; }
+
+  /* status colors */
+  .s-pendente .task-status-btn { background: var(--pend); color: var(--pend-t); }
+  .s-pendente .task-title { color: var(--dim2); }
+  .s-em_andamento .task-status-btn { background: rgba(245,158,11,.2); color: var(--prog-t); }
+  .s-em_andamento .task-title { color: var(--ink); }
+  .s-concluido .task-status-btn { background: rgba(16,185,129,.2); color: var(--done-t); }
+  .s-concluido .task-title { color: var(--dim2); text-decoration: line-through; text-decoration-color: var(--dim); }
+
+  /* TOAST */
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(100px);
+    background: var(--bg3); border: 1px solid var(--line); border-radius: 50px;
+    padding: 12px 22px; font-size: 13px; font-weight: 600;
+    transition: transform .3s cubic-bezier(.4,0,.2,1); z-index: 500;
+    white-space: nowrap; pointer-events: none;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+
+  /* BOTTOM NAV */
+  .bottom-nav {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: rgba(10,12,15,.95); backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid var(--line);
+    padding: 10px 20px max(env(safe-area-inset-bottom), 10px);
+    display: flex; justify-content: space-around; align-items: center;
+  }
+  .nav-item {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    font-size: 10px; color: var(--dim2); font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; cursor: pointer; padding: 4px 12px;
+    transition: color .2s;
+  }
+  .nav-item.active { color: var(--ink); }
+  .nav-icon { font-size: 20px; line-height: 1; }
+
+  /* LOADING */
+  #loading {
+    position: fixed; inset: 0; background: var(--bg);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+    z-index: 800;
+  }
+  .spinner {
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 3px solid var(--line); border-top-color: var(--f1);
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading p { font-size: 13px; color: var(--dim2); }
+
+  /* RIPPLE */
+  .ripple { position: absolute; border-radius: 50%; pointer-events: none; animation: ripple .4s linear; }
+  @keyframes ripple { from{transform:scale(0);opacity:.3} to{transform:scale(2.5);opacity:0} }
+
+  /* PHASE FILTER */
+  .phase-filter {
+    display: flex; gap: 8px; padding: 14px 16px; overflow-x: auto;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .phase-filter::-webkit-scrollbar { display: none; }
+  .filter-btn {
+    padding: 7px 14px; border-radius: 50px; font-size: 12px; font-weight: 700;
+    border: 1px solid var(--line); background: transparent; color: var(--dim2);
+    cursor: pointer; white-space: nowrap; transition: all .2s; font-family: 'Syne', sans-serif;
+  }
+  .filter-btn.active { border-color: transparent; color: #000; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loading">
+  <div style="font-size:28px">📋</div>
+  <div class="spinner"></div>
+  <p>Conectando...</p>
+</div>
+
+<!-- SETUP MODAL -->
+<div id="setup-modal" class="hidden">
+  <div style="font-size:32px">⚙️</div>
+  <h2>Configuração rápida</h2>
+  <p>Rode este SQL no Supabase Studio antes de continuar.<br>Menu: <strong>SQL Editor → New query</strong></p>
+  <div class="sql-box" id="sql-display"></div>
+  <button class="btn-primary" onclick="checkTableAgain()">Já rodei o SQL</button>
+  <p style="font-size:12px">Acesse: supabase.com → seu projeto → SQL Editor</p>
+</div>
+
+<!-- USER MODAL -->
+<div id="user-modal" class="hidden">
+  <div style="font-size:32px">👋</div>
+  <h2>Quem é você?</h2>
+  <p>Salvo no aparelho. Muda depois tocando no canto superior.</p>
+  <div class="user-cards">
+    <div class="user-card" onclick="setUser('mateus')">
+      <div class="user-avatar" style="background:rgba(77,159,255,.2);color:#4d9fff">M</div>
+      <div>
+        <div class="u-name">Mateus Melo</div>
+        <div class="u-role">Dev técnico</div>
+      </div>
+    </div>
+    <div class="user-card" onclick="setUser('matheus')">
+      <div class="user-avatar" style="background:rgba(167,139,250,.2);color:#a78bfa">M</div>
+      <div>
+        <div class="u-name">Matheus de Melo</div>
+        <div class="u-role">Comercial + Planejamento</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app">
+  <div class="app-header">
+    <div class="header-top">
+      <div class="app-title">Service Hub</div>
+      <div class="user-pill" onclick="showUserModal()">
+        <div class="dot" id="user-dot"></div>
+        <span id="user-name-label">...</span>
+      </div>
+    </div>
+    <div class="overall-progress">
+      <div class="progress-label">
+        <span class="pl-text">Progresso geral</span>
+        <span class="pl-num" id="overall-pct">0%</span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="overall-bar" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <div class="sync-bar" id="sync-bar">
+    <div class="sync-dot" id="sync-dot"></div>
+    <span id="sync-label">Conectado · atualizações em tempo real</span>
+  </div>
+
+  <div class="phase-filter" id="phase-filter">
+    <button class="filter-btn active" data-phase="all" onclick="filterPhase(this,'all')" style="background:var(--bg3);border-color:var(--line);color:var(--ink)">Tudo</button>
+    <button class="filter-btn" data-phase="0" onclick="filterPhase(this,0)">F0 · Segurança</button>
+    <button class="filter-btn" data-phase="1" onclick="filterPhase(this,1)">F1 · Produto</button>
+    <button class="filter-btn" data-phase="2" onclick="filterPhase(this,2)">F2 · Pagantes</button>
+    <button class="filter-btn" data-phase="3" onclick="filterPhase(this,3)">F3 · Venda</button>
+  </div>
+
+  <div class="content" id="content"></div>
+</div>
+
+<div id="toast">✓ Atualizado</div>
+
+<script>
+const SUPABASE_URL = 'https://mtucxdfepkwsfnqpfydb.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im10dWN4ZGZlcGt3c2ZucXBmeWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4ODcyNzUsImV4cCI6MjA5MjQ2MzI3NX0.0yrWuSuQZO0oEG9LFYVmfa0uUjcT6qJLpi47EAhsUoI';
+const TABLE = 'hub_progresso';
+
+const SETUP_SQL = `-- Rodar no Supabase SQL Editor
+
+CREATE TABLE IF NOT EXISTS hub_progresso (
+  id text PRIMARY KEY,
+  fase integer NOT NULL,
+  etapa integer NOT NULL,
+  titulo text NOT NULL,
+  responsavel text,
+  status text DEFAULT 'pendente',
+  atualizado_por text,
+  atualizado_em timestamptz DEFAULT now()
+);
+
+ALTER TABLE hub_progresso ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "acesso_publico" ON hub_progresso
+  FOR ALL USING (true) WITH CHECK (true);
+
+ALTER PUBLICATION supabase_realtime ADD TABLE hub_progresso;`;
+
+const PHASES = [
+  {
+    id: 0, name: 'Fechar as brechas', period: 'Mês 1 a 2',
+    color: '#ef5b5b', colorVar: '--f0',
+    tasks: [
+      { id: 'f0t1', titulo: 'Auditar proteção do banco (RLS)', responsavel: 'Mateus' },
+      { id: 'f0t2', titulo: 'Tirar chave da IA do navegador', responsavel: 'Mateus' },
+      { id: 'f0t3', titulo: 'Confirmar senhas e chaves que vazaram', responsavel: 'Mateus' },
+      { id: 'f0t4', titulo: 'Desenhar estrutura Open API no papel', responsavel: 'Ambos' },
+      { id: 'f0t5', titulo: 'Subir esqueleto do sistema novo (Next.js)', responsavel: 'Mateus' },
+    ]
+  },
+  {
+    id: 1, name: 'Produto real', period: 'Mês 3 a 6',
+    color: '#3ecf8e', colorVar: '--f1',
+    tasks: [
+      { id: 'f1t1', titulo: 'Migrar primeira funcionalidade pro sistema novo', responsavel: 'Mateus' },
+      { id: 'f1t2', titulo: 'Empacotar IA como produto com identidade', responsavel: 'Ambos' },
+      { id: 'f1t3', titulo: 'Corrigir bug 403 na busca de condomínios', responsavel: 'Mateus' },
+      { id: 'f1t4', titulo: 'Fechar Demandas de Cliente Etapas 2 e 3', responsavel: 'Mateus' },
+      { id: 'f1t5', titulo: 'Definir o que o cliente paga e por quanto', responsavel: 'Matheus de Melo' },
+    ]
+  },
+  {
+    id: 2, name: 'Primeiros pagantes', period: 'Mês 7 a 11',
+    color: '#4d9fff', colorVar: '--f2',
+    tasks: [
+      { id: 'f2t1', titulo: 'Login e separação por empresa (multi-tenant)', responsavel: 'Mateus' },
+      { id: 'f2t2', titulo: 'Cobrança automática mensal', responsavel: 'Mateus' },
+      { id: 'f2t3', titulo: 'Onboarding: cliente entra sem ajuda de vocês', responsavel: 'Mateus' },
+      { id: 'f2t4', titulo: 'LGPD: política de privacidade e termos', responsavel: 'Ambos' },
+      { id: 'f2t5', titulo: 'Fechar os primeiros 2 a 3 clientes pagantes', responsavel: 'Matheus de Melo' },
+    ]
+  },
+  {
+    id: 3, name: 'Preparar a venda', period: 'Mês 12 a 18',
+    color: '#a78bfa', colorVar: '--f3',
+    tasks: [
+      { id: 'f3t1', titulo: 'Crescer para 8 a 15 clientes pagantes', responsavel: 'Matheus de Melo' },
+      { id: 'f3t2', titulo: 'Montar métricas de venda (MRR, churn, CAC)', responsavel: 'Ambos' },
+      { id: 'f3t3', titulo: 'Documentar código para due diligence', responsavel: 'Mateus' },
+      { id: 'f3t4', titulo: 'Conectar segundo ERP (se cliente pagar)', responsavel: 'Mateus' },
+      { id: 'f3t5', titulo: 'Montar material de venda da empresa', responsavel: 'Matheus de Melo' },
+    ]
+  }
+];
+
+const STATUS_CYCLE = ['pendente', 'em_andamento', 'concluido'];
+const STATUS_ICONS = { pendente: '○', em_andamento: '◑', concluido: '●' };
+const STATUS_LABELS = { pendente: 'Pendente', em_andamento: 'Em andamento', concluido: 'Concluído' };
+
+let supabase, currentUser = null, taskData = {}, activeFilter = 'all', channel = null;
+
+// Init
+async function init() {
+  try {
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    document.getElementById('sql-display').textContent = SETUP_SQL;
+
+    // Check user
+    const saved = localStorage.getItem('hub_user');
+    if (!saved) {
+      hide('loading'); show('user-modal'); return;
+    }
+    currentUser = JSON.parse(saved);
+    updateUserUI();
+
+    await loadData();
+  } catch(e) {
+    console.error(e);
+    hide('loading');
+    showSetup();
+  }
+}
+
+async function loadData() {
+  try {
+    const { data, error } = await supabase.from(TABLE).select('*');
+    if (error) {
+      if (error.code === '42P01' || error.message?.includes('does not exist')) {
+        hide('loading'); showSetup(); return;
+      }
+      throw error;
+    }
+
+    // Build task map
+    taskData = {};
+    data.forEach(r => { taskData[r.id] = r; });
+
+    // Seed missing tasks
+    const allTaskIds = PHASES.flatMap(p => p.tasks.map(t => t.id));
+    const missing = allTaskIds.filter(id => !taskData[id]);
+    if (missing.length > 0) {
+      const toInsert = PHASES.flatMap(p =>
+        p.tasks.filter(t => missing.includes(t.id)).map(t => ({
+          id: t.id, fase: p.id, etapa: parseInt(t.id.slice(-1)),
+          titulo: t.titulo, responsavel: t.responsavel,
+          status: 'pendente', atualizado_por: null, atualizado_em: new Date().toISOString()
+        }))
+      );
+      if (toInsert.length > 0) {
+        await supabase.from(TABLE).upsert(toInsert);
+        toInsert.forEach(r => { taskData[r.id] = r; });
+      }
+    }
+
+    renderApp();
+    subscribeRealtime();
+    hide('loading'); show('app');
+  } catch(e) {
+    console.error(e);
+    hide('loading'); showSetup();
+  }
+}
+
+function renderApp() {
+  updateOverallProgress();
+  renderContent();
+}
+
+function renderContent() {
+  const content = document.getElementById('content');
+  const phases = activeFilter === 'all' ? PHASES : PHASES.filter(p => p.id === activeFilter);
+
+  content.innerHTML = phases.map(phase => {
+    const tasks = phase.tasks;
+    const done = tasks.filter(t => taskData[t.id]?.status === 'concluido').length;
+    const pct = Math.round((done / tasks.length) * 100);
+
+    return `
+    <div class="phase-card" id="phase-${phase.id}">
+      <div class="phase-header">
+        <div class="phase-top">
+          <span class="phase-badge" style="background:${phase.color}22;color:${phase.color}">F${phase.id}</span>
+          <span class="phase-month">${phase.period}</span>
+        </div>
+        <div class="phase-name">${phase.name}</div>
+        <div class="phase-progress">
+          <div class="phase-prog-row">
+            <span class="phase-prog-label">${done} de ${tasks.length} concluídas</span>
+            <span class="phase-prog-num" style="color:${phase.color}">${pct}%</span>
+          </div>
+          <div class="phase-track">
+            <div class="phase-fill" style="width:${pct}%;background:${phase.color}"></div>
+          </div>
+        </div>
+      </div>
+      <div class="tasks">
+        ${tasks.map(t => renderTask(t, phase)).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderTask(taskDef, phase) {
+  const data = taskData[taskDef.id] || { status: 'pendente' };
+  const status = data.status || 'pendente';
+  const icon = STATUS_ICONS[status];
+  const updatedBy = data.atualizado_por;
+  const updatedAt = data.atualizado_em ? formatTime(data.atualizado_em) : '';
+
+  return `
+  <div class="task s-${status}" id="task-${taskDef.id}" onclick="cycleStatus('${taskDef.id}', event)">
+    <div class="task-status-btn">${icon}</div>
+    <div class="task-body">
+      <div class="task-title">${taskDef.titulo}</div>
+      <div class="task-meta">
+        <span class="task-resp">${taskDef.responsavel}</span>
+        ${updatedBy ? `<span class="task-updated">· ${updatedBy} ${updatedAt}</span>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+async function cycleStatus(taskId, e) {
+  // ripple
+  const el = document.getElementById('task-' + taskId);
+  const rect = el.getBoundingClientRect();
+  const rip = document.createElement('div');
+  rip.className = 'ripple';
+  const size = Math.max(rect.width, rect.height);
+  rip.style.cssText = `width:${size}px;height:${size}px;left:${e.clientX-rect.left-size/2}px;top:${e.clientY-rect.top-size/2}px;background:rgba(255,255,255,.15)`;
+  el.style.position = 'relative'; el.style.overflow = 'hidden';
+  el.appendChild(rip);
+  setTimeout(() => rip.remove(), 400);
+
+  const cur = taskData[taskId]?.status || 'pendente';
+  const idx = STATUS_CYCLE.indexOf(cur);
+  const next = STATUS_CYCLE[(idx + 1) % STATUS_CYCLE.length];
+  const userName = currentUser?.name || 'Desconhecido';
+  const now = new Date().toISOString();
+
+  // Optimistic update
+  if (!taskData[taskId]) taskData[taskId] = { id: taskId };
+  taskData[taskId].status = next;
+  taskData[taskId].atualizado_por = userName;
+  taskData[taskId].atualizado_em = now;
+
+  updateTaskEl(taskId);
+  updateOverallProgress();
+  updatePhaseProgress(taskId);
+
+  setSyncing(true);
+  const { error } = await supabase.from(TABLE).upsert({
+    id: taskId,
+    status: next,
+    atualizado_por: userName,
+    atualizado_em: now
+  });
+  setSyncing(false);
+
+  if (error) { showToast('Erro ao salvar :('); console.error(error); }
+  else { showToast(next === 'concluido' ? '✓ Concluído!' : next === 'em_andamento' ? '◑ Em andamento' : '○ Resetado'); }
+}
+
+function updateTaskEl(taskId) {
+  // Find which phase this task belongs to
+  for (const phase of PHASES) {
+    const taskDef = phase.tasks.find(t => t.id === taskId);
+    if (taskDef) {
+      const el = document.getElementById('task-' + taskId);
+      if (el) {
+        const data = taskData[taskId] || { status: 'pendente' };
+        const status = data.status;
+        el.className = `task s-${status}`;
+        el.querySelector('.task-status-btn').textContent = STATUS_ICONS[status];
+        const updatedBy = data.atualizado_por;
+        const updatedAt = data.atualizado_em ? formatTime(data.atualizado_em) : '';
+        el.querySelector('.task-meta').innerHTML = `
+          <span class="task-resp">${taskDef.responsavel}</span>
+          ${updatedBy ? `<span class="task-updated">· ${updatedBy} ${updatedAt}</span>` : ''}`;
+      }
+      break;
+    }
+  }
+}
+
+function updatePhaseProgress(taskId) {
+  for (const phase of PHASES) {
+    if (phase.tasks.some(t => t.id === taskId)) {
+      const done = phase.tasks.filter(t => taskData[t.id]?.status === 'concluido').length;
+      const pct = Math.round((done / phase.tasks.length) * 100);
+      const fill = document.querySelector(`#phase-${phase.id} .phase-fill`);
+      const num = document.querySelector(`#phase-${phase.id} .phase-prog-num`);
+      const label = document.querySelector(`#phase-${phase.id} .phase-prog-label`);
+      if (fill) fill.style.width = pct + '%';
+      if (num) num.textContent = pct + '%';
+      if (label) label.textContent = `${done} de ${phase.tasks.length} concluídas`;
+      break;
+    }
+  }
+}
+
+function updateOverallProgress() {
+  const all = PHASES.flatMap(p => p.tasks);
+  const done = all.filter(t => taskData[t.id]?.status === 'concluido').length;
+  const pct = Math.round((done / all.length) * 100);
+  document.getElementById('overall-pct').textContent = pct + '%';
+  document.getElementById('overall-bar').style.width = pct + '%';
+}
+
+function subscribeRealtime() {
+  if (channel) supabase.removeChannel(channel);
+  channel = supabase.channel('hub_tracker')
+    .on('postgres_changes', { event: '*', schema: 'public', table: TABLE }, payload => {
+      const r = payload.new;
+      if (!r || !r.id) return;
+      if (!taskData[r.id]) taskData[r.id] = {};
+      Object.assign(taskData[r.id], r);
+      updateTaskEl(r.id);
+      updateOverallProgress();
+      updatePhaseProgress(r.id);
+      const label = document.getElementById('sync-label');
+      if (label) label.textContent = `Atualizado por ${r.atualizado_por || 'alguém'} agora`;
+      setTimeout(() => { if (label) label.textContent = 'Conectado · atualizações em tempo real'; }, 3000);
+    })
+    .subscribe();
+}
+
+function filterPhase(btn, phase) {
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    b.classList.remove('active');
+    b.style.background = ''; b.style.borderColor = ''; b.style.color = '';
+  });
+  btn.classList.add('active');
+  if (phase === 'all') {
+    btn.style.background = 'var(--bg3)'; btn.style.color = 'var(--ink)';
+  } else {
+    const p = PHASES[phase];
+    btn.style.background = p.color + '22';
+    btn.style.borderColor = p.color + '66';
+    btn.style.color = p.color;
+  }
+  activeFilter = phase;
+  renderContent();
+}
+
+function setUser(key) {
+  const users = {
+    mateus: { key: 'mateus', name: 'Mateus', color: '#4d9fff' },
+    matheus: { key: 'matheus', name: 'Matheus de Melo', color: '#a78bfa' }
+  };
+  currentUser = users[key];
+  localStorage.setItem('hub_user', JSON.stringify(currentUser));
+  hide('user-modal');
+  updateUserUI();
+  if (!document.getElementById('app').style.display || document.getElementById('app').style.display === 'none') {
+    show('loading');
+    loadData();
+  }
+}
+
+function showUserModal() { show('user-modal'); }
+
+function updateUserUI() {
+  if (!currentUser) return;
+  document.getElementById('user-dot').style.background = currentUser.color;
+  document.getElementById('user-name-label').textContent = currentUser.name;
+}
+
+function setSyncing(v) {
+  const bar = document.getElementById('sync-bar');
+  if (v) bar.classList.add('updating');
+  else bar.classList.remove('updating');
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+function showSetup() {
+  hide('loading'); hide('user-modal'); hide('app');
+  show('setup-modal');
+}
+
+async function checkTableAgain() {
+  show('loading'); hide('setup-modal');
+  await loadData();
+}
+
+function formatTime(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = Math.floor((now - d) / 1000);
+  if (diff < 60) return 'agora';
+  if (diff < 3600) return `${Math.floor(diff/60)}min`;
+  if (diff < 86400) return `${Math.floor(diff/3600)}h`;
+  return d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' });
+}
+
+function show(id) { document.getElementById(id).classList.remove('hidden'); document.getElementById(id).style.display = ''; }
+function hide(id) { document.getElementById(id).style.display = 'none'; }
+
+window.addEventListener('load', init);
+</script>
+</body>
+</html>
