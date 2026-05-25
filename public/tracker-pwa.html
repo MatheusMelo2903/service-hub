@@ -312,8 +312,12 @@ html, body {
 <div id="toast"></div>
 
 <script>
-const URL  = 'https://mtucxdfepkwsfnqpfydb.supabase.co';
-const KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im10dWN4ZGZlcGt3c2ZucXBmeWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4ODcyNzUsImV4cCI6MjA5MjQ2MzI3NX0.0yrWuSuQZO0oEG9LFYVmfa0uUjcT6qJLpi47EAhsUoI';
+// Atenção: NÃO renomear de volta para `URL` ou `KEY` — `const URL` em script não-module
+// é visível por outros scripts da página (Script Record compartilhado) e shadowa o
+// construtor global URL que o SDK do Supabase usa em `new URL(supabaseUrl)`,
+// causando o erro "Invalid supabaseUrl: Provided URL is malformed".
+const SUPABASE_URL = 'https://mtucxdfepkwsfnqpfydb.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im10dWN4ZGZlcGt3c2ZucXBmeWRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4ODcyNzUsImV4cCI6MjA5MjQ2MzI3NX0.0yrWuSuQZO0oEG9LFYVmfa0uUjcT6qJLpi47EAhsUoI';
 const TBL  = 'hub_progresso';
 
 const PHASES = [
@@ -373,8 +377,8 @@ function dbg(msg, obj) {
 
 async function boot() {
   try {
-    sb = window.supabase.createClient(URL, KEY, {
-      global: { headers: { Authorization: 'Bearer ' + KEY, apikey: KEY } }
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      global: { headers: { Authorization: 'Bearer ' + SUPABASE_KEY, apikey: SUPABASE_KEY } }
     });
     const saved = localStorage.getItem('sh_user');
     if (!saved) { hide('loading'); show('user-modal'); return; }
