@@ -6,6 +6,7 @@
 <title>Service Hub · Grupo Service</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
 <style>
   :root {
     --bg: #F4F6F9;
@@ -902,6 +903,51 @@
     margin-top: 6px;
   }
   .consumo-input-leitura:focus { border-color: var(--gs-blue); }
+
+  /* Modal de revisao da prestacao de contas (B5). Layout em 2 colunas:
+     edicao das secoes a esquerda e preview de slides a direita. */
+  .prestacao-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999; }
+  .prestacao-modal-overlay { position: absolute; inset: 0; background: rgba(10, 23, 51, 0.6); }
+  .prestacao-modal-conteudo { position: absolute; top: 5%; left: 5%; right: 5%; bottom: 5%; background: white; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+  .prestacao-modal-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid #e2e8f0; background: #f7f9fc; }
+  .prestacao-modal-header h2 { margin: 0; font-size: 18px; color: #143A87; }
+  .prestacao-modal-fechar { background: transparent; border: none; font-size: 20px; cursor: pointer; color: #5b6a88; padding: 4px 8px; }
+  .prestacao-modal-validacao { padding: 0 24px; }
+  .prestacao-modal-validacao:empty { display: none; }
+  .prestacao-validacao-bloco { margin: 12px 0; padding: 12px 16px; border-radius: 8px; font-size: 13px; }
+  .prestacao-validacao-bloco.ok { background: #e6f5ec; color: #1e5734; border-left: 4px solid #228B54; }
+  .prestacao-validacao-bloco.aviso { background: #fff3e0; color: #8b5a00; border-left: 4px solid #E88B1A; }
+  .prestacao-validacao-bloco.erro { background: #fdecec; color: #8a1f1f; border-left: 4px solid #C03B3B; }
+  .prestacao-validacao-bloco strong { display: block; margin-bottom: 4px; }
+  .prestacao-validacao-bloco .det { display: block; margin-top: 4px; opacity: 0.85; font-size: 12px; }
+  .prestacao-modal-corpo { flex: 1; display: flex; overflow: hidden; }
+  .prestacao-modal-coluna-edicao { width: 50%; padding: 16px 24px; overflow-y: auto; border-right: 1px solid #e2e8f0; }
+  .prestacao-modal-coluna-edicao details { margin-bottom: 12px; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; background: #fbfcfe; }
+  .prestacao-modal-coluna-edicao summary { cursor: pointer; font-weight: 600; color: #143A87; padding: 4px 0; user-select: none; }
+  .prestacao-modal-coluna-edicao input[type="text"], .prestacao-modal-coluna-edicao input[type="number"], .prestacao-modal-coluna-edicao textarea { width: 100%; padding: 6px 8px; border: 1px solid #d4dce8; border-radius: 4px; font-size: 13px; font-family: inherit; box-sizing: border-box; margin-top: 4px; }
+  .prestacao-modal-coluna-edicao label { display: block; font-size: 11px; color: #5b6a88; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 10px; font-weight: 600; }
+  .prestacao-modal-coluna-preview { width: 50%; padding: 16px 24px; overflow-y: auto; background: #f7f9fc; }
+  .prestacao-preview-titulo { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #5b6a88; font-weight: 600; margin-bottom: 12px; }
+  .prestacao-preview-lista { display: flex; flex-direction: column; gap: 12px; }
+  .prestacao-slide-mini { background: white; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+  .prestacao-slide-mini.dark { background: #0A1733; color: white; }
+  .prestacao-slide-mini-numero { font-size: 10px; color: #8b9ab8; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px; }
+  .prestacao-slide-mini.dark .prestacao-slide-mini-numero { color: #7FB5E3; }
+  .prestacao-slide-mini-titulo { font-size: 14px; font-weight: 700; color: #143A87; margin-bottom: 6px; }
+  .prestacao-slide-mini.dark .prestacao-slide-mini-titulo { color: white; }
+  .prestacao-slide-mini-titulo span { color: #2E7BC7; }
+  .prestacao-slide-mini-corpo { font-size: 12px; color: #3e5676; line-height: 1.5; }
+  .prestacao-slide-mini.dark .prestacao-slide-mini-corpo { color: #7FB5E3; }
+  .prestacao-slide-mini-kpis { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .prestacao-slide-mini-kpi { background: #143A87; color: white; padding: 8px 10px; border-radius: 4px; font-size: 11px; flex: 1; min-width: 80px; }
+  .prestacao-slide-mini-kpi b { display: block; font-size: 14px; margin-top: 2px; }
+  .prestacao-slide-mini-bars { display: flex; align-items: flex-end; gap: 2px; height: 40px; margin-top: 8px; }
+  .prestacao-slide-mini-bar { flex: 1; background: #2E7BC7; border-radius: 2px 2px 0 0; min-height: 2px; }
+  .prestacao-slide-mini.dark .prestacao-slide-mini-bar { background: white; }
+  .prestacao-slide-mini-bar-label { font-size: 8px; text-align: center; color: #8b9ab8; margin-top: 2px; }
+  .prestacao-modal-footer { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 24px; border-top: 1px solid #e2e8f0; background: #f7f9fc; }
+  .btn-urgencia { background: #C03B3B; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  .btn-urgencia:hover { background: #a02f2f; }
 </style>
 </head>
 <body>
@@ -940,8 +986,8 @@
     </div>
 
     <div class="nav-section">Gestão</div>
-    <div class="nav-item" onclick="showPanel('condominios')">
-      <span class="nav-icon">🏢</span> Condomínios
+    <div class="nav-item" onclick="showPanel('prestacao')">
+      <span class="nav-icon">📊</span> Prestação de Contas
     </div>
     <div class="nav-item" onclick="showPanel('atas')">
       <span class="nav-icon">✎</span> Atas Condominiais
@@ -1228,199 +1274,6 @@
       </div>
     </div>
 
-    <div class="panel" id="panel-condominios">
-      <!-- ===== CONDOMÍNIOS PANEL ===== -->
-      <style>
-        /* COND PANEL: estilos isolados com prefixo .cp- */
-        .cp-wrap { display:flex; height:calc(100vh - 120px); gap:0; margin: -20px -28px; overflow:hidden; }
-        .cp-sidebar { width:240px; background:var(--gs-dark); border-right:1px solid var(--border); display:flex; flex-direction:column; flex-shrink:0; overflow:hidden; }
-        .cp-sidebar-sec { padding:14px 12px 6px; font-size:10px; font-family:var(--mono); color:rgba(255,255,255,0.35); text-transform:uppercase; letter-spacing:1.5px; }
-        .cp-cond-list { flex:1; overflow-y:auto; padding:0 10px 10px; }
-        .cp-cond-item { display:flex; align-items:center; gap:8px; padding:9px 10px; border-radius:8px; cursor:pointer; margin-bottom:3px; transition:all 0.15s; color:rgba(255,255,255,0.55); font-size:13px; font-family:var(--sans); }
-        .cp-cond-item:hover { background:rgba(255,255,255,0.07); color:rgba(255,255,255,0.85); }
-        .cp-cond-item.active { background:var(--gs-blue-light); color:var(--gs-blue); }
-        .cp-cond-avatar { width:30px; height:30px; border-radius:7px; background:rgba(255,255,255,0.1); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0; font-family:var(--mono); color:var(--muted); }
-        .cp-cond-item.active .cp-cond-avatar { background:rgba(59,154,199,0.12); color:var(--gs-blue); }
-        .cp-cond-name { font-weight:500; flex:1; }
-        .cp-dot { width:5px; height:5px; border-radius:50%; background:rgba(255,255,255,0.15); flex-shrink:0; }
-        .cp-cond-item.active .cp-dot { background:var(--gs-blue); }
-        /* MAIN */
-        .cp-main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-        .cp-topbar { background:var(--bg2); border-bottom:1px solid var(--border); padding:0 22px; display:flex; align-items:center; justify-content:space-between; height:54px; flex-shrink:0; }
-        .cp-top-title { font-size:15px; font-weight:700; font-family:var(--sans); }
-        .cp-top-sub { font-size:11px; color:var(--muted); font-family:var(--mono); margin-top:1px; }
-        .cp-top-right { display:flex; align-items:center; gap:8px; }
-        .cp-tag-sind { background:rgba(59,154,199,0.1); color:var(--gs-blue); padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; font-family:var(--mono); border:1px solid rgba(59,154,199,0.2); }
-        .cp-tag-data { font-size:11px; color:var(--muted); font-family:var(--mono); }
-        .cp-btn-gerar { padding:7px 14px; background:var(--bg3); color:var(--text); border:1px solid var(--border2); border-radius:8px; font-family:var(--mono); font-size:11px; font-weight:600; cursor:pointer; transition:all 0.15s; white-space:nowrap; }
-        .cp-btn-gerar:hover { background:rgba(59,154,199,0.1); color:var(--gs-blue); border-color:rgba(59,154,199,0.3); }
-        .cp-btn-gerar:disabled { opacity:0.4; cursor:not-allowed; }
-        /* TABS BAR */
-        .cp-tabs-bar { background:var(--bg2); border-bottom:1px solid var(--border); padding:0 22px; display:flex; gap:0; overflow-x:auto; flex-shrink:0; }
-        .cp-tab-btn { padding:11px 16px; background:none; border:none; border-bottom:2px solid transparent; color:var(--muted); font-family:var(--mono); font-size:11px; font-weight:500; cursor:pointer; white-space:nowrap; display:flex; align-items:center; gap:5px; transition:all 0.15s; }
-        .cp-tab-btn:hover { color:var(--text); }
-        .cp-tab-btn.active { color:var(--gs-blue); border-bottom-color:var(--gs-blue); }
-        .cp-badge { background:var(--gs-blue-light); color:var(--gs-blue); font-size:10px; font-weight:700; padding:1px 5px; border-radius:8px; font-family:var(--mono); }
-        /* CONTENT */
-        .cp-content { padding:20px 22px; flex:1; overflow-y:auto; }
-        /* STATS */
-        .cp-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:18px; }
-        .cp-stat { background:var(--bg2); border-radius:10px; padding:14px 16px; border-top:3px solid var(--border2); }
-        .cp-stat.verm { border-top-color:#ff5c5c; }
-        .cp-stat.amar { border-top-color:#ffcc5c; }
-        .cp-stat.verd { border-top-color:#5cffa0; }
-        .cp-stat.azul { border-top-color:#5cc8ff; }
-        .cp-stat-lbl { font-size:10px; color:var(--muted); font-family:var(--mono); text-transform:uppercase; letter-spacing:0.5px; }
-        .cp-stat-num { font-size:30px; font-weight:300; margin:5px 0 2px; }
-        .cp-stat-sub { font-size:10px; color:var(--muted); font-family:var(--mono); }
-        /* PROGRESS */
-        .cp-prog { background:var(--bg2); border-radius:10px; padding:14px 18px; margin-bottom:18px; }
-        .cp-prog-labels { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); font-family:var(--mono); margin-bottom:7px; }
-        .cp-prog-track { height:6px; background:var(--bg3); border-radius:3px; overflow:hidden; }
-        .cp-prog-fill { height:100%; background:linear-gradient(90deg,var(--gs-blue),#5cffa0); border-radius:3px; transition:width 0.6s; }
-        /* SECTION HEADER */
-        .cp-sec-hdr { margin-bottom:12px; }
-        .cp-sec-title { font-size:14px; font-weight:700; font-family:var(--sans); }
-        .cp-sec-sub { font-size:11px; color:var(--muted); font-family:var(--mono); margin-top:2px; }
-        /* TABLE */
-        .cp-table-card { background:var(--bg2); border-radius:10px; overflow:hidden; margin-bottom:18px; border:1px solid var(--border); }
-        .cp-table-card table { width:100%; border-collapse:collapse; }
-        .cp-table-card thead tr { background:var(--bg3); }
-        .cp-table-card thead th { padding:9px 14px; text-align:left; font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; font-family:var(--mono); }
-        .cp-table-card tbody tr { border-bottom:1px solid var(--border); transition:background 0.1s; }
-        .cp-table-card tbody tr:last-child { border-bottom:none; }
-        .cp-table-card tbody tr:hover { background:var(--bg3); }
-        .cp-table-card tbody td { padding:10px 14px; font-size:12px; vertical-align:middle; }
-        .cp-table-card td.nome { font-weight:600; }
-        /* BADGES */
-        .cp-badge-verde { display:inline-block; padding:2px 8px; border-radius:20px; font-size:10px; font-weight:600; background:rgba(92,255,160,0.1); color:#5cffa0; font-family:var(--mono); }
-        .cp-badge-amar  { display:inline-block; padding:2px 8px; border-radius:20px; font-size:10px; font-weight:600; background:rgba(255,204,92,0.1); color:#ffcc5c; font-family:var(--mono); }
-        .cp-badge-verm  { display:inline-block; padding:2px 8px; border-radius:20px; font-size:10px; font-weight:600; background:rgba(255,92,92,0.1); color:#ff5c5c; font-family:var(--mono); }
-        .cp-badge-alta  { display:inline-block; padding:2px 8px; border-radius:20px; font-size:10px; font-weight:600; background:rgba(255,92,92,0.1); color:#ff5c5c; font-family:var(--mono); }
-        .cp-badge-media { display:inline-block; padding:2px 8px; border-radius:20px; font-size:10px; font-weight:600; background:rgba(255,204,92,0.1); color:#ffcc5c; font-family:var(--mono); }
-        .cp-badge-baixa { display:inline-block; padding:2px 8px; border-radius:20px; font-size:10px; font-weight:600; background:rgba(92,255,160,0.1); color:#5cffa0; font-family:var(--mono); }
-        /* DEMAND CARDS */
-        .cp-dem-grid { display:flex; flex-direction:column; gap:8px; }
-        .cp-dem-card { background:var(--bg2); border-radius:10px; border-left:4px solid var(--border2); overflow:hidden; transition:border-color 0.15s; }
-        .cp-dem-card.cp-alta  { border-left-color:#ff5c5c; }
-        .cp-dem-card.cp-media { border-left-color:#ffcc5c; }
-        .cp-dem-card.cp-baixa { border-left-color:#5cffa0; }
-        .cp-dem-card.cp-conc  { opacity:0.5; }
-        .cp-dem-top { padding:12px 16px; display:flex; align-items:flex-start; gap:10px; cursor:pointer; }
-        .cp-dem-num { width:24px; height:24px; border-radius:50%; background:var(--bg3); color:var(--muted); font-size:10px; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; font-family:var(--mono); }
-        .cp-dem-info { flex:1; }
-        .cp-dem-titulo { font-size:12px; font-weight:600; margin-bottom:3px; }
-        .cp-dem-sit { font-size:11px; color:var(--muted); line-height:1.4; }
-        .cp-dem-badges { display:flex; gap:4px; margin-top:6px; flex-wrap:wrap; }
-        .cp-dem-meta { text-align:right; font-size:10px; color:var(--muted); flex-shrink:0; font-family:var(--mono); }
-        .cp-dem-meta strong { display:block; font-size:11px; color:var(--text); margin-bottom:1px; }
-        .cp-dem-body { border-top:1px solid var(--border); padding:12px 16px; display:none; background:var(--bg3); }
-        .cp-dem-body.open { display:block; }
-        .cp-dem-body-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-        .cp-dem-field label { font-size:9px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; font-weight:600; margin-bottom:2px; display:block; font-family:var(--mono); }
-        .cp-dem-field p { font-size:11px; color:var(--text); line-height:1.4; }
-        /* TIMELINE */
-        .cp-tl { background:var(--bg2); border-radius:10px; padding:16px; border:1px solid var(--border); }
-        .cp-tl-item { display:flex; gap:12px; padding:9px 0; border-bottom:1px solid var(--border); }
-        .cp-tl-item:last-child { border-bottom:none; }
-        .cp-tl-dot { width:8px; height:8px; border-radius:50%; background:#5cc8ff; flex-shrink:0; margin-top:4px; }
-        .cp-tl-dot.g { background:#5cffa0; }
-        .cp-tl-dot.a { background:#ffcc5c; }
-        .cp-tl-data { font-size:10px; color:var(--muted); margin-bottom:1px; font-family:var(--mono); }
-        .cp-tl-txt { font-size:12px; color:var(--text); line-height:1.4; }
-        /* LAUDOS */
-        .cp-laudos-lista { display:flex; flex-direction:column; gap:10px; }
-        .cp-laudo-card { background:var(--bg2); border-radius:10px; border-left:5px solid var(--border2); border:1px solid var(--border); overflow:hidden; }
-        .cp-laudo-card.conc { border-left:5px solid #5cffa0; }
-        .cp-laudo-card.and  { border-left:5px solid #ffcc5c; }
-        .cp-laudo-card.pend { border-left:5px solid #ff5c5c; }
-        .cp-laudo-top { padding:14px 18px; display:flex; align-items:center; gap:12px; }
-        .cp-laudo-ico { font-size:24px; flex-shrink:0; }
-        .cp-laudo-info { flex:1; }
-        .cp-laudo-nome { font-size:13px; font-weight:600; margin-bottom:5px; }
-        .cp-laudo-meta { display:flex; flex-wrap:wrap; gap:7px; align-items:center; }
-        .cp-lm { font-size:11px; color:var(--muted); font-family:var(--mono); }
-        .cp-laudo-acoes { display:flex; gap:6px; align-items:center; flex-shrink:0; }
-        .cp-btn-upload { padding:6px 12px; background:rgba(92,200,255,0.15); color:#5cc8ff; border:1px solid rgba(92,200,255,0.3); border-radius:7px; font-size:11px; font-weight:600; cursor:pointer; transition:all 0.15s; font-family:var(--mono); }
-        .cp-btn-ver { padding:6px 12px; background:rgba(92,255,160,0.15); color:#5cffa0; border:1px solid rgba(92,255,160,0.3); border-radius:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:var(--mono); }
-        .cp-btn-rem { padding:6px 8px; background:rgba(255,92,92,0.1); color:#ff5c5c; border:1px solid rgba(255,92,92,0.2); border-radius:7px; font-size:12px; cursor:pointer; }
-        .cp-pdf-info { padding:8px 18px; background:rgba(92,255,160,0.06); border-top:1px solid var(--border); font-size:11px; color:#5cffa0; font-family:var(--mono); }
-        /* PDF VIEWER */
-        .cp-pdf-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:500; align-items:center; justify-content:center; padding:20px; }
-        .cp-pdf-overlay.open { display:flex; }
-        .cp-pdf-box { width:100%; max-width:900px; height:90vh; background:var(--bg2); border-radius:12px; overflow:hidden; display:flex; flex-direction:column; border:1px solid var(--border2); }
-        .cp-pdf-header { padding:12px 18px; background:var(--bg3); color:var(--text); display:flex; align-items:center; justify-content:space-between; font-size:13px; font-weight:600; border-bottom:1px solid var(--border); }
-        .cp-pdf-close { padding:5px 12px; background:rgba(255,255,255,0.08); border:1px solid var(--border2); border-radius:6px; color:var(--text); font-size:11px; font-weight:600; cursor:pointer; font-family:var(--mono); }
-        /* EMPTY STATE */
-        .cp-empty { background:var(--bg2); border-radius:10px; padding:50px; text-align:center; border:1px solid var(--border); }
-        .cp-empty .ico { font-size:40px; margin-bottom:12px; }
-        .cp-empty h3 { font-size:16px; margin-bottom:6px; }
-        .cp-empty p { font-size:12px; color:var(--muted); font-family:var(--mono); }
-        /* ASSIN EMPTY */
-        .cp-assin-empty { background:var(--bg2); border-radius:10px; padding:40px; text-align:center; border:2px dashed var(--border2); }
-        .cp-assin-empty .ico { font-size:36px; margin-bottom:10px; }
-        .cp-assin-empty strong { display:block; font-size:14px; margin-bottom:5px; }
-        .cp-assin-empty p { font-size:11px; color:var(--muted); font-family:var(--mono); }
-      </style>
-
-      <div class="cp-wrap">
-        <!-- SIDEBAR CONDOMÍNIOS -->
-        <div class="cp-sidebar">
-          <div class="cp-sidebar-sec">Condomínios</div>
-          <div class="cp-cond-list" id="cp-cond-list"></div>
-        </div>
-
-        <!-- MAIN AREA -->
-        <div class="cp-main">
-          <div class="cp-topbar">
-            <div>
-              <div class="cp-top-title" id="cp-top-nome">Selecione um condomínio</div>
-              <div class="cp-top-sub" id="cp-top-sub">gestão de demandas · Virtual Service</div>
-            </div>
-            <div class="cp-top-right">
-              <span class="cp-tag-sind" id="cp-top-sind" style="display:none"></span>
-              <span class="cp-tag-data" id="cp-top-data"></span>
-              <button class="cp-btn-gerar" id="cp-btn-gerar" style="display:none" onclick="cpGerarApresentacao()">📊 Gerar Apresentação</button>
-            </div>
-          </div>
-
-          <div class="cp-tabs-bar" id="cp-tabs-bar" style="display:none">
-            <button class="cp-tab-btn active" onclick="cpShowTab('visao', this)">📊 Visão Geral</button>
-            <button class="cp-tab-btn" onclick="cpShowTab('prioridades', this)">🔴 Prioridades <span class="cp-badge" id="cp-badge-prio">0</span></button>
-            <button class="cp-tab-btn" onclick="cpShowTab('demandas', this)">📋 Demandas <span class="cp-badge" id="cp-badge-dem">0</span></button>
-            <button class="cp-tab-btn" onclick="cpShowTab('laudos', this)">📄 Laudos</button>
-            <button class="cp-tab-btn" onclick="cpShowTab('historico', this)">📅 Histórico</button>
-            <button class="cp-tab-btn" onclick="cpShowTab('assinaturas', this)">✍️ Assinaturas</button>
-            <button class="cp-tab-btn" onclick="gerarRelatorioSindico()" style="background:rgba(92,255,160,0.15);color:#5cffa0;border:1px solid rgba(92,255,160,0.3);">📄 Relatório Síndico</button>
-            <button class="cp-tab-btn" onclick="gerarRelatorioInterno()" style="background:rgba(255,209,102,0.15);color:#ffd166;border:1px solid rgba(255,209,102,0.3);">🔒 Relatório Interno</button>
-            <button class="cp-tab-btn" onclick="cpShowTab('demandas-ia', this)">📥 Caixa de Entrada</button>
-            <button class="cp-tab-btn" onclick="cpShowTab('importar', this)" style="background:rgba(92,160,255,0.15);color:#5ca0ff;border:1px solid rgba(92,160,255,0.3);">⬆️ Importar Update</button>
-          </div>
-
-          <div class="cp-content" id="cp-content">
-            <div class="cp-empty">
-              <div class="ico">🏢</div>
-              <h3>Nenhum condomínio selecionado</h3>
-              <p>Selecione um condomínio na barra lateral ou adicione um novo para começar.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-
-      <!-- PDF VIEWER -->
-      <div class="cp-pdf-overlay" id="cp-pdf-overlay" onclick="cpFecharPdf(event)">
-        <div class="cp-pdf-box">
-          <div class="cp-pdf-header">
-            <span id="cp-pdf-title">Laudo</span>
-            <button onclick="cpFecharPdfBtn()" class="cp-pdf-close">✕ Fechar</button>
-          </div>
-          <iframe id="cp-pdf-frame" src="" style="width:100%;height:calc(100% - 46px);border:none;"></iframe>
-        </div>
-      </div>
-
-    </div>
-    <!-- ===== /CONDOMÍNIOS PANEL ===== -->
 
     <div class="panel" id="panel-tarefas">
       <div class="card">
@@ -1434,6 +1287,95 @@
 
 
     <!-- ATAS CONDOMINIAIS -->
+    <div class="panel" id="panel-prestacao">
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Identificação do condomínio</span>
+        </div>
+
+        <div id="prest-modo-busca">
+          <div class="form-group" style="position:relative">
+            <label>Condomínio</label>
+            <input type="text" id="prest-cond-search" placeholder="Comece a digitar para buscar..." autocomplete="off"
+                   oninput="prestacaoFiltrarCondominios(this.value)"
+                   onfocus="prestacaoFiltrarCondominios(this.value)">
+            <div class="cond-dropdown" id="prest-cond-dropdown"></div>
+          </div>
+        </div>
+
+        <div id="prest-modo-livre" style="display:none">
+          <div class="form-group" style="margin:0">
+            <label>Nome do condomínio</label>
+            <input type="text" id="prest-cond-nome-livre" placeholder="Nome completo"
+                   oninput="prestacaoState.condNome=this.value;prestacaoAtualizarBotao()">
+          </div>
+          <div style="margin-top:8px">
+            <button class="btn btn-ghost" onclick="prestacaoVoltarLista()" style="font-size:12px;padding:6px 12px">Voltar à busca</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+          <div class="form-group" style="margin:0">
+            <label>Período de referência</label>
+            <input type="text" id="prest-periodo" placeholder="ex: Janeiro a Dezembro 2025 ou 2024"
+                   oninput="prestacaoState.periodo=this.value">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Data da apresentação</label>
+            <input type="date" id="prest-data-apresentacao"
+                   oninput="prestacaoState.dataApresentacao=this.value">
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Arquivos de referência</span>
+        </div>
+
+        <div class="dropzone" id="prest-dropzone"
+             ondragover="handleDrag(event, this)"
+             ondragleave="handleDragLeave(this)"
+             ondrop="prestacaoAdicionarArquivosDrop(event)">
+          <input type="file" id="prest-file-input" multiple
+                 accept=".pdf,.xlsx,.xls,.csv,.docx,.doc,.txt,.png,.jpg,.jpeg,.tiff,.tif,.webp"
+                 onchange="prestacaoAdicionarArquivos(event)">
+          <div class="drop-icon">⊡</div>
+          <div class="drop-title">Arraste os arquivos aqui</div>
+          <div class="drop-sub">ou clique para selecionar · pdf, xlsx, xls, csv, docx, doc, txt, png, jpg, jpeg, tiff, tif, webp</div>
+        </div>
+
+        <div id="prest-files-list" style="margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
+
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);font-family:var(--mono)">
+          Geralmente são relatórios W011A e W015A do Superlógica. Atas, fotos e comprovantes podem entrar em casos excepcionais.
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Geração</span>
+        </div>
+
+        <div class="form-group">
+          <label>Observações adicionais (opcional)</label>
+          <textarea id="prest-observacoes" rows="4"
+                    placeholder="ex: ressaltar economia em energia, destacar obras concluídas em 2024"
+                    style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;color:var(--text);font-family:var(--mono);font-size:13px;resize:vertical;outline:none"
+                    oninput="prestacaoAtualizarObservacoes(this.value)"></textarea>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button id="prest-btn-gerar" class="btn btn-primary" onclick="prestacaoGerar()" disabled>
+            📊 Gerar prestação de contas
+          </button>
+          <button class="btn btn-ghost" onclick="prestacaoLimparTudo()">Limpar tudo</button>
+        </div>
+      </div>
+
+    </div>
+
     <div class="panel" id="panel-atas">
       <div class="card">
         <div class="card-header">
@@ -2109,8 +2051,8 @@ const PAGE_META = {
   nf:            { title: 'Notas Fiscais', sub: 'em breve' },
   tarefas:       { title: 'Tarefas', sub: 'em breve' },
   configuracoes: { title: 'Configurações', sub: 'credenciais e preferências' },
+  prestacao:     { title: 'Prestação de Contas', sub: 'gerar apresentação financeira anual' },
   atas:          { title: 'Atas Condominiais', sub: 'geração automática com IA' },
-  condominios:   { title: 'Condomínios', sub: 'gestão de demandas por condomínio' },
   consumo:       { title: 'Leitura de Consumo', sub: 'fotos de medidores → Superlógica' },
 };
 
@@ -2132,6 +2074,9 @@ function showPanel(name) {
   // reordenação de scripts — o override chama _origShowPanel que executa este código.
   if (['despesas','unidades','boletos','financeiro'].includes(name)) {
     renderBannerCondAtivo(name);
+  }
+  if (name === 'prestacao') {
+    prestacaoInit();
   }
 }
 
@@ -3530,8 +3475,8 @@ function atualizarDashCond() {
   }
 }
 
-// Busca condomínio no modal do Dashboard: primeiro em cpCondominios (memória), depois Supabase.
-// Não chama Superlógica/proxy para não expor tokens no frontend.
+// Busca condominio no modal do Dashboard direto no Supabase via supaFetch.
+// Nao chama Superlogica/proxy para nao expor tokens no frontend.
 async function searchCondominioDash(query) {
   const dd = document.getElementById('dash-modal-cond-dropdown');
   if (!dd) return;
@@ -3549,25 +3494,13 @@ async function searchCondominioDash(query) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+  // Busca direto no Supabase. Erro silencioso resulta em "Nenhum condominio encontrado" na UI.
   let resultados = [];
-
-  // 1) Busca local em cpCondominios (array em memória carregado do Supabase)
-  if (typeof cpCondominios !== 'undefined' && Array.isArray(cpCondominios)) {
-    const ql = q.toLowerCase();
-    resultados = cpCondominios
-      .filter(c => c && c.nome && c.nome.toLowerCase().includes(ql))
-      .map(c => ({ id: c.id, nome: c.nome, id_superlogica: c.id_superlogica || null }));
-  }
-
-  // 2) Fallback: consulta Supabase quando memória não tem resultados
-  if (resultados.length === 0) {
-    try {
-      const supaQ = encodeURIComponent('*' + q + '*');
-      const r = await supaFetch('condominios?select=id,nome,id_superlogica&nome=ilike.' + supaQ + '&order=nome.asc&limit=15');
-      if (Array.isArray(r)) resultados = r;
-    } catch (e) {
-      // Erro silencioso: array vazio já resulta em "Nenhum condomínio encontrado" na UI
-    }
+  try {
+    const supaQ = encodeURIComponent('*' + q + '*');
+    const r = await supaFetch('condominios?select=id,nome,id_superlogica&nome=ilike.' + supaQ + '&order=nome.asc&limit=15');
+    if (Array.isArray(r)) resultados = r;
+  } catch (e) {
   }
 
   if (resultados.length === 0) {
@@ -3580,7 +3513,7 @@ async function searchCondominioDash(query) {
     const id = esc(c.id);
     const nome = esc(c.nome);
     const idSup = c.id_superlogica != null ? esc(c.id_superlogica) : '';
-    return '<div class="cond-option" data-id="' + id + '" data-nome="' + nome + '">'
+    return '<div class="cond-option" data-id="' + id + '" data-nome="' + nome + '" data-id-superlogica="' + idSup + '">'
       + '<span class="cond-name">' + nome + '</span>'
       + (idSup ? '<span class="cond-id">' + idSup + '</span>' : '')
       + '</div>';
@@ -3592,7 +3525,7 @@ async function searchCondominioDash(query) {
     dd.addEventListener('click', function (ev) {
       const opt = ev.target.closest('.cond-option');
       if (!opt || !opt.dataset.id) return;
-      selecionarCondominioDash(opt.dataset.id, opt.dataset.nome);
+      selecionarCondominioDash(opt.dataset.id, opt.dataset.nome, opt.dataset.idSuperlogica || null);
     });
     dd._listenerAdded = true;
   }
@@ -3601,20 +3534,14 @@ async function searchCondominioDash(query) {
 // Seleciona condomínio via modal do Dashboard e fecha o modal em seguida.
 // NÃO chama selecionarCondominio para não disparar efeitos colaterais
 // do painel Configurações (cfg-cond-id, cond-search-input, cond-selected-wrap).
-function selecionarCondominioDash(id, nome) {
+function selecionarCondominioDash(id, nome, idSup) {
   var dd = document.getElementById('dash-modal-cond-dropdown');
   if (dd) { dd.classList.remove('open'); dd.innerHTML = ''; }
   var inp = document.getElementById('dash-modal-cond-search');
   if (inp) inp.value = nome;
-  // Busca objeto completo em cpCondominios para obter id_superlogica
-  var idSup = null;
-  if (typeof cpCondominios !== 'undefined' && Array.isArray(cpCondominios)) {
-    var encontrado = cpCondominios.find(function(x) { return x.id === id; });
-    if (encontrado) idSup = encontrado.id_superlogica || null;
-  }
   // setCondominioAtivo sincroniza state.config, localStorage e banners.
-  // Importante: state.config.condId recebe id_superlogica (numérico) dentro de setCondominioAtivo.
-  setCondominioAtivo({ id: id, nome: nome, id_superlogica: idSup });
+  // Importante: state.config.condId recebe id_superlogica (numerico) dentro de setCondominioAtivo.
+  setCondominioAtivo({ id: id, nome: nome, id_superlogica: idSup ? Number(idSup) : null });
   // Sincroniza o hidden do painel Configurações com o ID Superlógica (numérico),
   // não o UUID Supabase, para que saveConfig não regrave UUID como condId.
   var hiddenDash = document.getElementById('cfg-cond-id');
@@ -3665,8 +3592,7 @@ function dashModalSetTab(aba) {
   document.getElementById('dash-modal-btn-salvar').style.display = aba === 'cadastrar' ? '' : 'none';
 }
 
-// Valida campos, faz POST no Supabase, adiciona em cpCondominios em memória
-// e auto-seleciona o condomínio recém-cadastrado como ativo no Dashboard.
+// Valida campos, faz POST no Supabase e auto seleciona o condominio recem cadastrado como ativo no Dashboard.
 async function dashSalvarNovoCondominio() {
   const nome = (document.getElementById('dash-modal-nome-cond').value || '').trim();
   const idSupRaw = (document.getElementById('dash-modal-id-superlogica').value || '').trim();
@@ -3696,19 +3622,6 @@ async function dashSalvarNovoCondominio() {
     return;
   }
   const novo = Array.isArray(dados) ? dados[0] : dados;
-  // Adiciona em memória para que a busca local já reflita o novo registro
-  if (typeof cpCondominios !== 'undefined' && Array.isArray(cpCondominios)) {
-    cpCondominios.push({
-      id: novo.id,
-      nome: novo.nome,
-      sindico: novo.sindico || '',
-      id_superlogica: novo.id_superlogica != null ? novo.id_superlogica : idSuperlogica,
-      prioridades: [],
-      demandas: [],
-      laudos: [],
-      historico: []
-    });
-  }
   // Auto-selecionar como condomínio ativo usando setCondominioAtivo
   // para garantir sincronização com localStorage, state.config e banners
   const idSupFinal = novo.id_superlogica != null ? novo.id_superlogica : idSuperlogica;
@@ -4288,1051 +4201,1749 @@ async function supaFetchRich(path, options = {}) {
   }
 }
 
-async function cpCarregarDoSupabase() {
-  try {
-    const conds = await supaFetch('condominios?select=*');
-    if (!conds || conds.length === 0) {
-      await cpSeedParaSupabase();
-      return await cpCarregarDoSupabase();
-    }
-    cpCondominios = [];
-    for (const c of conds) {
-      const [demandas, laudos, historico] = await Promise.all([
-        supaFetch('demandas?condominio_id=eq.' + c.id + '&order=num'),
-        supaFetch('laudos?condominio_id=eq.' + c.id),
-        supaFetch('historico?condominio_id=eq.' + c.id + '&order=id.desc')
-      ]);
-      const prioridades = (demandas||[]).filter(d => d.tipo === 'prioridade');
-      const demandasArr = (demandas||[]).filter(d => d.tipo === 'demanda');
-      // id_superlogica vem do registro do Supabase e é necessário para cpSelecionarCond
-      cpCondominios.push({ id: c.id, nome: c.nome, sindico: c.sindico, id_superlogica: c.id_superlogica || null, criadoEm: c.criado_em, prioridades, demandas: demandasArr, laudos: laudos||[], historico: historico||[] });
-    }
-    if (cpCondominios.length > 0) {
-      cpRenderSidebar();
-      // Prefere o condomínio que já estava ativo globalmente.
-      // state.config.condId guarda o id_superlogica (número), então comparar direto
-      // com x.id (UUID) sempre falha. Usa getCondominioAtivo() que devolve o objeto
-      // completo { id: UUID, id_superlogica: número } e tenta bater pelos dois campos.
-      const condAtivo = getCondominioAtivo();
-      let idDestino = null;
-      if (condAtivo) {
-        // Busca primeiro pelo UUID Supabase (fluxo Dashboard / painel Condomínios)
-        const matchUuid = condAtivo.id && cpCondominios.find(x => x.id === condAtivo.id);
-        // Fallback pelo id_superlogica (fluxo painel Configurações, onde só o número é salvo)
-        const matchSup  = condAtivo.id_superlogica && cpCondominios.find(x => x.id_superlogica === condAtivo.id_superlogica);
-        const encontrado = matchUuid || matchSup;
-        if (encontrado) idDestino = encontrado.id;
-      }
-      if (!idDestino && cpCondominios.length > 0) idDestino = cpCondominios[0].id;
-      if (idDestino) cpSelecionarCond(idDestino);
-      // Garante que o ativo tem id_superlogica preenchido após carregamento do Supabase.
-      const ativoAtual = getCondominioAtivo();
-      const condSelecionado = cpCondominios.find(x => x.id === idDestino);
-      if (ativoAtual && !ativoAtual.id_superlogica && condSelecionado && condSelecionado.id_superlogica) {
-        setCondominioAtivo({ id: condSelecionado.id, nome: condSelecionado.nome, id_superlogica: condSelecionado.id_superlogica });
-      }
-    }
-  } catch(e) {
-    console.error('Erro Supabase:', e);
-    cpCondominios = JSON.parse(localStorage.getItem('cp_condominios') || '[]');
-  }
-}
+// ============================================================
+// PRESTACAO DE CONTAS
+// Cache de condominios populado via supaFetch ao abrir o painel.
+// Busca filtravel client side. Modo livre permite condominio nao cadastrado.
+// ============================================================
 
-async function cpSeedParaSupabase() {
-  const c = cpSeedCamaras;
-  await supaFetch('condominios', { method: 'POST', prefer: 'return=minimal', body: JSON.stringify({ id: c.id, nome: c.nome, sindico: c.sindico, criado_em: c.criadoEm }) });
-  const todas = [...(c.prioridades||[]).map(d => ({...d, tipo:'prioridade', condominio_id: c.id})), ...(c.demandas||[]).map(d => ({...d, tipo:'demanda', condominio_id: c.id}))];
-  for (const d of todas) await supaFetch('demandas', { method: 'POST', prefer: 'return=minimal', body: JSON.stringify(d) });
-  for (const l of (c.laudos||[])) await supaFetch('laudos', { method: 'POST', prefer: 'return=minimal', body: JSON.stringify({...l, condominio_id: c.id}) });
-  for (const h of (c.historico||[])) await supaFetch('historico', { method: 'POST', prefer: 'return=minimal', body: JSON.stringify({...h, condominio_id: c.id}) });
-}
-
-let cpCondominios = [];
-let cpCondAtivo = null;
-
-// Seed: Reserva dos Camarás atualizado 22/04/2026
-const cpSeedCamaras = {
-  id: 'camaras',
-  nome: 'Reserva dos Camarás',
-  sindico: 'Paulo',
-  criadoEm: '09/04/2026',
-  laudos: [
-    { nome: 'Laudo — Portão Pedestre', status: 'Concluído', tecnico: 'Virtual Service', dataVistoria: '—', dataLaudo: '10/04/2026', enviado: true },
-    { nome: 'Laudo — Antena Coletiva', status: 'Concluído', tecnico: 'Técnico externo', dataVistoria: 'Abril/2026', dataLaudo: 'Abril/2026', enviado: true },
-    { nome: 'Laudo — Motor do Portão de Veículos', status: 'Concluído', tecnico: 'Virtual Service', dataVistoria: '17/04/2026', dataLaudo: '17/04/2026', enviado: true },
-    { nome: 'Laudo — Interfone', status: 'Pendente', tecnico: 'A definir', dataVistoria: 'A definir', dataLaudo: 'A definir', enviado: false }
-  ],
-  historico: [
-    { data: '22/04/2026', cor: 'a', txt: 'Novas demandas levantadas pelo síndico Paulo. 19 itens registrados e classificados no plano de ação.' },
-    { data: '17/04/2026', cor: 'g', txt: 'Motor do portão de veículos substituído. Barreiras de fecho duplo Intelbras, caixa nova vedada, cremalheira em peça única e ímãs substituídos. Laudo e fotos enviados ao síndico Paulo.' },
-    { data: '16/04/2026', cor: 'g', txt: 'Substituição dos 5 leitores faciais concluída. Instalados na pedestre e portaria — em pleno funcionamento.' },
-    { data: 'Abril/2026', cor: 'g', txt: 'Laudo técnico da antena coletiva concluído e enviado ao síndico Paulo. Proposta de solução entregue. Aguardando fechamento pelo condomínio.' },
-    { data: '10/04/2026', cor: 'g', txt: 'Laudo técnico do portão pedestre concluído e enviado ao síndico Paulo.' },
-    { data: '09/04/2026', cor: 'a', txt: 'Substituição dos 5 leitores faciais: equipamentos adquiridos e recebidos. Aguardando instalação.' },
-    { data: '09/04/2026', cor: '', txt: 'Reunião condominial realizada com síndico Paulo. Levantamento de 18 demandas. 6 prioridades definidas. Plano de ação estruturado e enviado.' }
-  ],
-  prioridades: [
-    { id:'p1', num:1, prio:'Alta', status:'Em andamento', titulo:'Câmera da Administração', sit:'6 câmeras analógicas HD ativas e operando no máximo. Verificação de integração com nuvem em andamento.', acao:'Confirmar integração com nuvem e apresentar posição formal ao síndico. Síndico solicitou indicação de câmeras Full HD para administração e portaria.', resp:'Matheus / Equipe Técnica', prazo:'A definir', metrica:'Posição formal sobre nuvem entregue ao síndico' },
-    { id:'p2', num:2, prio:'Alta', status:'Aguardando síndico', titulo:'Câmera do Elevador', sit:'Norma técnica verificada — não existe norma que exija câmera sem fio em elevadores. Câmeras estão no padrão original entregue pelo condomínio.', acao:'Se síndico quiser trocar câmera, deve adquirir o equipamento. Virtual Service realiza a instalação.', resp:'Síndico', prazo:'A definir', metrica:'Decisão do síndico sobre troca' },
-    { id:'p3', num:3, prio:'Média', status:'Pendente', titulo:'Reconfiguração do Mosaico', sit:'Visita realizada e ajustes parciais feitos. Síndico ainda não aprovou — quer mais alterações. Limitação: software em versão gratuita.', acao:'Agendar nova visita técnica para ajustes finais conforme aprovação do síndico.', resp:'Equipe Técnica', prazo:'A definir', metrica:'Mosaico validado e aprovado pelo síndico' },
-    { id:'p4', num:4, prio:'Média', status:'Concluído', titulo:'Indicação de Monitores para Portaria', sit:'✅ Indicações entregues: LG 32" HD, Samsung 32" HD, Philco 32" Roku, Monitor Gamer Samsung 27" FHD.', acao:'Aguardando decisão de compra pelo síndico.', resp:'Síndico', prazo:'Concluído', metrica:'Indicação formal entregue' },
-    { id:'p5', num:5, prio:'Alta', status:'Concluído', titulo:'Fotos de Cadastro não Sobem ao Sistema', sit:'✅ Resolvido. Era erro de operação — necessário redirecionar G.Cam para Webcam antes do cadastro. Procedimento documentado.', acao:'Concluído. Procedimento repassado à equipe da portaria.', resp:'Equipe Técnica', prazo:'Concluído', metrica:'Procedimento documentado e operação normalizada' },
-    { id:'p6', num:6, prio:'Alta', status:'Concluído', titulo:'Substituição dos 5 Leitores Faciais', sit:'✅ Concluído em 16/04/2026. 5 leitores instalados na pedestre, portaria e catraca. Sincronização de faces realizada.', acao:'Executado pela equipe de instalação em 16/04/2026.', resp:'Equipe de Instalação', prazo:'16/04/2026', metrica:'5 leitores instalados e funcionando' }
-  ],
-  demandas: [
-    { id:'d1',  num:1,  prio:'Alta',   status:'Em andamento',      titulo:'Câmera da Administração — Nuvem e Qualidade',           sit:'6 câmeras analógicas HD ativas. Verificação de integração com nuvem em andamento. Síndico quer câmeras Full HD.',           acao:'Verificar nuvem e apresentar posição formal. Indicar câmeras Full HD.',          resp:'Matheus / Equipe Técnica', prazo:'A definir', metrica:'Posição formal entregue ao síndico' },
-    { id:'d2',  num:2,  prio:'Alta',   status:'Aguardando síndico', titulo:'Câmera do Elevador',                                    sit:'Norma inexistente confirmada. Câmeras no padrão original do condomínio — não instaladas pela V8.',                          acao:'Síndico adquire câmera. Virtual Service instala.',                               resp:'Síndico',                  prazo:'A definir', metrica:'Decisão do síndico' },
-    { id:'d3',  num:3,  prio:'Média',  status:'Pendente',           titulo:'Reconfiguração do Mosaico de Câmeras',                  sit:'Visita feita, ajustes parciais. Síndico quer mais alterações. Software tem limitações na versão gratuita.',                acao:'Agendar nova visita para ajustes finais.',                                       resp:'Equipe Técnica',           prazo:'A definir', metrica:'Mosaico aprovado pelo síndico' },
-    { id:'d4',  num:4,  prio:'Média',  status:'Concluído',          titulo:'Monitores para Portaria — Indicação',                   sit:'✅ 4 opções indicadas ao síndico.',                                                                                        acao:'Aguardando decisão de compra.',                                                  resp:'Síndico',                  prazo:'Concluído', metrica:'Indicação entregue' },
-    { id:'d5',  num:5,  prio:'Alta',   status:'Concluído',          titulo:'Fotos de Cadastro — Resolvido',                         sit:'✅ Erro de operação resolvido. Procedimento documentado em 3 passos.',                                                      acao:'Concluído.',                                                                     resp:'Equipe Técnica',           prazo:'Concluído', metrica:'Operação normalizada' },
-    { id:'d6',  num:6,  prio:'Alta',   status:'Concluído',          titulo:'Leitores Faciais — Substituição (5 unidades)',           sit:'✅ Concluído em 16/04/2026. 5 leitores instalados e sincronizados.',                                                       acao:'Executado em 16/04/2026.',                                                       resp:'Equipe de Instalação',     prazo:'16/04/2026', metrica:'5 leitores funcionando' },
-    { id:'d7',  num:7,  prio:'Alta',   status:'Aguardando síndico', titulo:'Antena Coletiva',                                       sit:'Perito enviado, laudo gerado, proposta entregue ao síndico. Virtual Service cumpriu sua parte.',                           acao:'Síndico deve fechar contrato com técnico indicado. Custo é do condomínio.',      resp:'Síndico',                  prazo:'A definir', metrica:'Síndico fechar com técnico' },
-    { id:'d8',  num:8,  prio:'Média',  status:'Concluído',          titulo:'Motor do Portão de Veículos',                           sit:'✅ Concluído em 17/04/2026. Motor novo, barreiras Intelbras, cremalheira em peça única, ímãs substituídos. Custo absorvido pela Virtual Service como parceria.', acao:'Executado. Laudo e fotos enviados ao síndico.',              resp:'Virtual Service',          prazo:'17/04/2026', metrica:'Motor instalado e funcionando' },
-    { id:'d9',  num:9,  prio:'Média',  status:'Pendente',           titulo:'Laudo do Interfone',                                    sit:'Laudo ainda não realizado. Aguardando agendamento com técnico especializado.',                                             acao:'Matheus agendar visita técnica para laudo.',                                     resp:'Matheus',                  prazo:'A definir', metrica:'Laudo concluído e enviado ao síndico' },
-    { id:'d10', num:10, prio:'Média',  status:'Pendente',           titulo:'Instalação do Motor de Bike',                           sit:'Motor já existe no condomínio. Apenas não foi instalado ainda.',                                                          acao:'Agendar instalação com equipe do Fábio.',                                        resp:'Fábio / Equipe Técnica',   prazo:'A definir', metrica:'Motor instalado e funcionando' },
-    { id:'d11', num:11, prio:'Média',  status:'Pendente',           titulo:'Readequação do Motor de Pedestres',                     sit:'Motor instalado e funcionando. Síndico quer realocar motor e cremalheira para dentro do condomínio por segurança.',     acao:'Alinhar com Fábio e Adriano para execução.',                                     resp:'Fábio / Adriano',          prazo:'A definir', metrica:'Motor realocado e aprovado pelo síndico' },
-    { id:'d12', num:12, prio:'Alta',   status:'Pendente',           titulo:'Ajuste de Velocidade Facial x Catraca',                 sit:'Leitor facial libera mais rápido do que a catraca processa. Risco de travamento no fluxo.',                             acao:'Alinhar ajuste com Fábio e equipe técnica.',                                     resp:'Fábio / Equipe Técnica',   prazo:'A definir', metrica:'Sincronismo ajustado e validado' },
-    { id:'d13', num:13, prio:'Média',  status:'Pendente',           titulo:'Nova Catraca + Portão para Cadeirantes',                sit:'Síndico quer nova catraca na entrada de bike para separar fluxo. Portão magnético para cadeirantes ao lado.',            acao:'Visita técnica para estudo de viabilidade e elaboração de projeto.',              resp:'Matheus / Equipe Técnica', prazo:'A definir', metrica:'Projeto elaborado e apresentado ao síndico' },
-    { id:'d14', num:14, prio:'Média',  status:'Pendente',           titulo:'Realocação dos Totens de Veículos',                     sit:'Reposicionamento programado para corrigir inversão de mão de direção e problemas com sol e chuva.',                     acao:'Agendar execução com equipe técnica.',                                           resp:'Equipe Técnica',           prazo:'A definir', metrica:'Totens realocados e aprovados' },
-    { id:'d15', num:15, prio:'Alta',   status:'Pendente',           titulo:'Leitura de Placa na Entrada de Veículos (LPR)',         sit:'Síndico quer segundo mecanismo de verificação além do facial. LPR não está no escopo atual.',                           acao:'Estudar viabilidade no sistema Intelbras. Elaborar proposta e aditivo contratual.',resp:'Matheus',                 prazo:'A definir', metrica:'Proposta entregue ao síndico' },
-    { id:'d16', num:16, prio:'Baixa',  status:'Pendente',           titulo:'Eclusa/Clausura com Catraca',                           sit:'Síndico mencionou possibilidade mas não ficou claro o escopo exato.',                                                     acao:'Alinhar com síndico o que ele quer exatamente. Avaliar viabilidade.',            resp:'Matheus',                  prazo:'A definir', metrica:'Escopo definido e viabilidade avaliada' },
-    { id:'d17', num:17, prio:'Alta',   status:'Pendente',           titulo:'Inspeção Motor de Veículos + Sensores',                 sit:'Síndico quer inspeção do motor trocado e avaliação dos sensores do motor e catraca. Possível realocação.',                acao:'Agendar visita da equipe do Fábio para inspeção completa.',                      resp:'Fábio / Equipe Técnica',   prazo:'A definir', metrica:'Inspeção realizada e relatório entregue' },
-    { id:'d18', num:18, prio:'Média',  status:'Pendente',           titulo:'Ligar Sinaleiro ao Motor + Sinalização de Fluxo',       sit:'Sinaleiro não conectado ao motor. Síndico quer sinalização visual de entrada/saída similar a prédios comerciais.',       acao:'Agendar com Fábio. Planejar pintura e sinalização com comunicado aos moradores.', resp:'Fábio / Equipe Técnica',  prazo:'A definir', metrica:'Sinaleiro ligado e sinalização instalada' },
-    { id:'d19', num:19, prio:'Alta',   status:'Pendente',           titulo:'Retirar Opção de Veículo no FastPass',                  sit:'Visitantes estão usando vagas indevidamente via convite com veículo. Síndico quer retirar essa opção.',                  acao:'Verificar viabilidade com Adriano e equipe técnica.',                            resp:'Matheus / Adriano',        prazo:'A definir', metrica:'Opção removida ou alternativa apresentada' },
-    { id:'d20', num:20, prio:'Baixa',  status:'Aguardando sistema', titulo:'Inabilitar Convite Sem Acesso no FastPass',             sit:'Função nativa do sistema — não é possível remover na versão atual. Será resolvido na atualização do aplicativo.',         acao:'Aguardar migração para novo aplicativo.',                                         resp:'Equipe Técnica',           prazo:'Na atualização', metrica:'Opção removida após atualização' },
-    { id:'d21', num:21, prio:'Média',  status:'Pendente',           titulo:'Ajuste Volume Sensor Portão de Pedestres',              sit:'Volume do alerta sonoro ao passar pelo portão precisa ser ajustado.',                                                     acao:'Alinhar com síndico o volume desejado e agendar ajuste técnico.',               resp:'Equipe Técnica',           prazo:'A definir', metrica:'Volume ajustado e aprovado' },
-    { id:'d22', num:22, prio:'Média',  status:'Pendente',           titulo:'Finalizar Layout + Renomear Câmeras + Enquadramento',   sit:'Layout não concluído, câmeras precisam ser renomeadas. Algumas com enquadramento inadequado.',                           acao:'Síndico indicar câmeras com problema. Equipe técnica executa ajustes.',          resp:'Síndico indicar / Equipe Técnica executar', prazo:'A definir', metrica:'Layout aprovado pelo síndico' },
-    { id:'d23', num:23, prio:'Alta',   status:'Pendente',           titulo:'Troca do Switch para Internet 300 Mega',                sit:'Switch atual suporta apenas 100 Mega. Upgrade para 300 Mega inviável sem troca do switch.',                              acao:'Levantar custo do switch compatível e agendar troca.',                           resp:'Equipe Técnica',           prazo:'A definir', metrica:'Switch trocado e internet 300 Mega operando' },
-    { id:'d24', num:24, prio:'Alta',   status:'Pendente',           titulo:'Problema de Fluxo Bike x Veículos',                    sit:'Ciclistas entram aproveitando abertura do portão de veículos sem validação. Sensor inicia fechamento com veículo em movimento — risco real de colisão.', acao:'Analisar soluções: separação física, ajuste de sensor, regras operacionais.', resp:'Matheus / Equipe Técnica', prazo:'A definir', metrica:'Solução implementada e fluxo seguro' }
-  ]
+let prestacaoState = {
+  condominios: null,
+  arquivos: [],
+  condId: null,
+  condNome: '',
+  periodo: '',
+  dataApresentacao: '',
+  observacoes: ''
 };
 
-// Inicializa carregando do Supabase
-document.addEventListener('DOMContentLoaded', () => { cpCarregarDoSupabase(); });
-
-function cpSalvar() {
-  // Mantido para compatibilidade: dados primários no Supabase
-  try { localStorage.setItem('cp_condominios', JSON.stringify(cpCondominios)); } catch(e) {}
-}
-
-function cpStatusBadge(s) {
-  if (s === 'Concluído') return '<span class="cp-badge-verde">Concluído</span>';
-  if (s === 'Em andamento') return '<span class="cp-badge-amar">Em andamento</span>';
-  return '<span class="cp-badge-verm">Pendente</span>';
-}
-
-function cpPrioBadge(p) {
-  if (p === 'Alta')  return '<span class="cp-badge-alta">Alta</span>';
-  if (p === 'Média') return '<span class="cp-badge-media">Média</span>';
-  return '<span class="cp-badge-baixa">Baixa</span>';
-}
-
-function cpCardClass(p) {
-  if (p === 'Alta')  return 'cp-alta';
-  if (p === 'Média') return 'cp-media';
-  return 'cp-baixa';
-}
-
-function cpToggleDem(id) {
-  const b = document.getElementById('cpbody-' + id);
-  if (b) b.classList.toggle('open');
-}
-
-// Renderiza a sidebar do painel Condomínios com a lista de condomínios disponíveis.
-// Lê o array global cpCondominios e marca como ativo o item cujo id bate com cpCondAtivo.
-// É chamada após cpCarregarDoSupabase, cpSelecionarCond e no override de showPanel,
-// garantindo que a sidebar sempre reflita o estado atual sem necessidade de reload.
-function cpRenderSidebar() {
-  // escHtml em vez de dcEscape porque c.id entra em onclick com aspas simples internas.
-  // dcEscape não escapa apóstrofo; escHtml escapa e cobre todos os chars perigosos.
-  const list = document.getElementById('cp-cond-list');
-  if (!list) return;
-  list.innerHTML = cpCondominios.map(c => {
-    // iniciais deriva de c.nome, herda o risco de injeção — escapar também
-    const iniciais = escHtml(c.nome.split(' ').slice(0,2).map(w=>w[0]).join('').toUpperCase());
-    return `<div class="cp-cond-item ${cpCondAtivo === c.id ? 'active':''}" onclick="cpSelecionarCond('${escHtml(c.id)}')">
-      <div class="cp-cond-avatar">${iniciais}</div>
-      <span class="cp-cond-name">${escHtml(c.nome)}</span>
-      <div class="cp-dot"></div>
-    </div>`;
-  }).join('');
-}
-
-function cpSelecionarCond(id) {
-  cpCondAtivo = id;
-  const c = cpCondominios.find(x => x.id === id);
-  document.getElementById('cp-top-nome').textContent = c.nome;
-  document.getElementById('cp-top-sub').textContent = 'gestão de demandas · Virtual Service';
-  const tagSind = document.getElementById('cp-top-sind');
-  tagSind.textContent = 'Síndico: ' + c.sindico;
-  tagSind.style.display = 'inline';
-  document.getElementById('cp-tabs-bar').style.display = 'flex';
-  document.getElementById('cp-btn-gerar').style.display = 'inline-block';
-  // Sincroniza condomínio ativo com o estado global para que importar
-  // despesas/unidades e demais funções usem o mesmo condomínio
-  if (c) {
-    // setCondominioAtivo atualiza state.config, localStorage e banners de uma vez
-    setCondominioAtivo({ id: c.id, nome: c.nome, id_superlogica: c.id_superlogica || null });
-    // Sincroniza o hidden do painel Configurações com o ID Superlógica (numérico),
-    // não o UUID Supabase, para que saveConfig não regrave UUID como condId.
-    const hiddenCp = document.getElementById('cfg-cond-id');
-    if (hiddenCp) hiddenCp.value = c.id_superlogica || '';
+// Roda na primeira vez que o painel Prestacao de Contas e mostrado.
+// Puxa lista de condominios do Supabase e seta data de hoje no campo de apresentacao.
+async function prestacaoInit() {
+  if (prestacaoState.condominios !== null) return;
+  prestacaoState.condominios = [];
+  try {
+    const r = await supaFetch('condominios?select=id,nome,id_superlogica&order=nome.asc');
+    if (Array.isArray(r)) prestacaoState.condominios = r;
+  } catch (e) {
   }
-  cpRenderSidebar();
-  cpAtualizarBadges(c);
-  const firstTab = document.querySelector('.cp-tab-btn');
-  cpShowTab('visao', firstTab);
+  var hoje = new Date();
+  var iso = hoje.getFullYear() + '-' +
+            String(hoje.getMonth() + 1).padStart(2, '0') + '-' +
+            String(hoje.getDate()).padStart(2, '0');
+  var dataInput = document.getElementById('prest-data-apresentacao');
+  if (dataInput && !dataInput.value) {
+    dataInput.value = iso;
+    prestacaoState.dataApresentacao = iso;
+  }
 }
 
-function cpAtualizarBadges(c) {
-  document.getElementById('cp-badge-prio').textContent = (c.prioridades||[]).length;
-  document.getElementById('cp-badge-dem').textContent = (c.demandas||[]).length;
+// Filtra a lista cached pelo texto digitado e re renderiza o dropdown.
+// Sempre adiciona "Outro condominio nao cadastrado" como ultimo item.
+function prestacaoFiltrarCondominios(query) {
+  var dd = document.getElementById('prest-cond-dropdown');
+  if (!dd) return;
+  var lista = Array.isArray(prestacaoState.condominios) ? prestacaoState.condominios : [];
+  var q = (query || '').trim().toLowerCase();
+  var filtrados = q.length === 0
+    ? lista.slice(0, 15)
+    : lista.filter(function(c) { return c && c.nome && c.nome.toLowerCase().indexOf(q) !== -1; }).slice(0, 15);
+  var esc = function(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+  var html = '';
+  if (filtrados.length === 0) {
+    html += '<div class="cond-option" style="opacity:.7;cursor:default">Nenhum condomínio encontrado</div>';
+  } else {
+    html += filtrados.map(function(c) {
+      var id = esc(c.id);
+      var nome = esc(c.nome);
+      var idSup = c.id_superlogica != null ? esc(c.id_superlogica) : '';
+      return '<div class="cond-option" data-id="' + id + '" data-nome="' + nome + '">'
+        + '<span class="cond-name">' + nome + '</span>'
+        + (idSup ? '<span class="cond-id">' + idSup + '</span>' : '')
+        + '</div>';
+    }).join('');
+  }
+  html += '<div class="cond-option" data-acao="outro" style="border-top:1px dashed var(--border2);font-style:italic">'
+        + '<span class="cond-name">Outro condomínio não cadastrado</span></div>';
+  dd.innerHTML = html;
+  dd.classList.add('open');
+  if (!dd._listenerAdded) {
+    dd.addEventListener('click', function(ev) {
+      var opt = ev.target.closest('.cond-option');
+      if (!opt) return;
+      if (opt.dataset.acao === 'outro') {
+        prestacaoUsarOutro();
+        return;
+      }
+      if (!opt.dataset.id) return;
+      prestacaoSelecionarCondominio(opt.dataset.id, opt.dataset.nome);
+    });
+    dd._listenerAdded = true;
+  }
 }
 
-function cpShowTab(id, btn) {
-  document.querySelectorAll('.cp-tab-btn').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
-  const el = document.getElementById('cp-content');
-  // demandas-ia usa state.config.condId, não cpCondAtivo: pode renderizar sem cond na sidebar
-  if (id === 'demandas-ia') {
-    // Salva texto atual do textarea antes de regerar o HTML (troca de aba destroi o DOM)
-    const taAtual = document.getElementById('dc-texto-bruto');
-    if (taAtual) dcTextoBrutoTemp = taAtual.value;
-    if (el) el.innerHTML = cpRenderDemandasIA();
-    // Restaura o texto que estava no textarea para não perder rascunho do usuário
-    const taNovo = document.getElementById('dc-texto-bruto');
-    if (taNovo && dcTextoBrutoTemp) taNovo.value = dcTextoBrutoTemp;
+// Seleciona um condominio do dropdown e fecha o popup.
+function prestacaoSelecionarCondominio(id, nome) {
+  var inp = document.getElementById('prest-cond-search');
+  if (inp) inp.value = nome;
+  var dd = document.getElementById('prest-cond-dropdown');
+  if (dd) { dd.classList.remove('open'); dd.innerHTML = ''; }
+  prestacaoState.condId = id;
+  prestacaoState.condNome = nome;
+  prestacaoAtualizarBotao();
+}
+
+// Troca a UI do Card 1 para o modo livre (condominio sem cadastro).
+function prestacaoUsarOutro() {
+  var dd = document.getElementById('prest-cond-dropdown');
+  if (dd) { dd.classList.remove('open'); dd.innerHTML = ''; }
+  document.getElementById('prest-modo-busca').style.display = 'none';
+  document.getElementById('prest-modo-livre').style.display = 'block';
+  prestacaoState.condId = null;
+  prestacaoState.condNome = '';
+  var nomeLivre = document.getElementById('prest-cond-nome-livre');
+  if (nomeLivre) { nomeLivre.value = ''; nomeLivre.focus(); }
+  prestacaoAtualizarBotao();
+}
+
+// Volta do modo livre para a busca normal.
+function prestacaoVoltarLista() {
+  document.getElementById('prest-modo-livre').style.display = 'none';
+  document.getElementById('prest-modo-busca').style.display = 'block';
+  prestacaoState.condId = null;
+  prestacaoState.condNome = '';
+  var inp = document.getElementById('prest-cond-search');
+  if (inp) { inp.value = ''; inp.focus(); }
+  prestacaoAtualizarBotao();
+}
+
+// Adiciona arquivos selecionados via input file.
+function prestacaoAdicionarArquivos(event) {
+  var arquivos = Array.from(event.target.files || []);
+  arquivos.forEach(function(f) { prestacaoState.arquivos.push(f); });
+  event.target.value = '';
+  prestacaoRenderizarListaArquivos();
+  prestacaoAtualizarBotao();
+}
+
+// Adiciona arquivos via drop na dropzone.
+function prestacaoAdicionarArquivosDrop(event) {
+  event.preventDefault();
+  handleDragLeave(event.currentTarget);
+  var arquivos = Array.from(event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files : []);
+  arquivos.forEach(function(f) { prestacaoState.arquivos.push(f); });
+  prestacaoRenderizarListaArquivos();
+  prestacaoAtualizarBotao();
+}
+
+// Remove um arquivo da lista pelo indice.
+function prestacaoRemoverArquivo(idx) {
+  if (idx < 0 || idx >= prestacaoState.arquivos.length) return;
+  prestacaoState.arquivos.splice(idx, 1);
+  prestacaoRenderizarListaArquivos();
+  prestacaoAtualizarBotao();
+}
+
+// Renderiza a lista de arquivos anexados abaixo da dropzone.
+function prestacaoRenderizarListaArquivos() {
+  var box = document.getElementById('prest-files-list');
+  if (!box) return;
+  if (!prestacaoState.arquivos.length) {
+    box.innerHTML = '';
     return;
   }
-  const c = cpGetCondominioAtivo();
-  if (!c || !el) return;
-  if (id === 'visao')       el.innerHTML = cpRenderVisao(c);
-  if (id === 'prioridades') el.innerHTML = cpRenderDemGrid(c.prioridades || [], 'Prioridades do Síndico ' + c.sindico, 'Itens classificados como urgentes: plano de acao ativo');
-  if (id === 'demandas')    el.innerHTML = cpRenderDemGrid(c.demandas || [], 'Todas as Demandas', 'Itens levantados em reuniao: ' + c.criadoEm);
-  if (id === 'laudos')      el.innerHTML = cpRenderLaudos(c);
-  if (id === 'historico')   el.innerHTML = cpRenderHistorico(c);
-  if (id === 'assinaturas') el.innerHTML = cpRenderAssinaturas(c);
-  if (id === 'importar')    el.innerHTML = cpRenderImportar();
+  var esc = function(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+  box.innerHTML = prestacaoState.arquivos.map(function(f, i) {
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:12px;font-family:var(--mono)">'
+      + '<span style="flex:1;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.name) + '</span>'
+      + '<span style="color:var(--muted)">' + prestacaoFormatarTamanho(f.size) + '</span>'
+      + '<button onclick="prestacaoRemoverArquivo(' + i + ')" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:2px 6px" title="Remover">✕</button>'
+      + '</div>';
+  }).join('');
 }
 
-// Renderiza o conteúdo da aba Caixa de Entrada dentro do painel Condomínios.
-// Reutiliza os mesmos IDs (dc-texto-bruto, dc-btn-processar, etc.) que as funções
-// dcProcessarTextoIA e dcSalvarDemandas esperam encontrar no DOM.
-function cpRenderDemandasIA() {
-  const cond = (state.config.condId && state.config.condNome) ? state.config.condNome : null;
-  return `
-    <div style="padding:24px">
-      <div style="font-size:13px;color:var(--muted);margin-bottom:12px">
-        ${cond
-          ? 'Condomínio ativo: <strong>' + dcEscape(cond) + '</strong>'
-          : 'Selecione um condomínio ativo no Dashboard antes de processar.'}
-      </div>
-      <div class="form-group">
-        <label>Cole o texto solto com as demandas</label>
-        <textarea id="dc-texto-bruto" rows="10"
-          placeholder="Ex: síndico ligou pedindo pra trocar lâmpadas queimadas do hall principal, virou urgência."
-          style="width:100%;font-family:var(--mono);font-size:13px;line-height:1.6;padding:14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);resize:vertical"></textarea>
-      </div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn btn-primary" id="dc-btn-processar" onclick="dcProcessarTextoIA()">
-          <span>✨</span> Processar com IA
-        </button>
-      </div>
-      <div id="dc-extraidas-container" style="display:none;margin-top:28px">
-        <div class="card-header" style="margin-bottom:12px">
-          <span class="card-title">Demandas extraídas</span>
-          <span id="dc-extraidas-count" style="font-size:11px;color:var(--muted);font-family:var(--mono)"></span>
-        </div>
-        <div id="dc-extraidas-list" style="display:flex;flex-direction:column;gap:12px"></div>
-        <div style="display:flex;gap:8px;margin-top:16px">
-          <button class="btn btn-primary" onclick="dcSalvarDemandas()">Confirmar e salvar</button>
-          <button class="btn btn-ghost" onclick="dcDescartarPreview()">Descartar</button>
-        </div>
-      </div>
-    </div>
-  `;
+// Atualiza o campo de observacoes no state.
+function prestacaoAtualizarObservacoes(valor) {
+  prestacaoState.observacoes = valor || '';
 }
 
-function cpRenderVisao(c) {
-  const todas = [...(c.prioridades||[]), ...(c.demandas||[])];
-  const conc = todas.filter(d => d.status === 'Concluído').length;
-  const and = todas.filter(d => d.status === 'Em andamento').length;
-  const pend = todas.filter(d => d.status === 'Pendente').length;
-  const total = todas.length;
-  const pct = total ? Math.round(conc / total * 100) : 0;
-  const laudosConc = (c.laudos||[]).filter(l => l.status === 'Concluído').length;
-  const laudosPend = (c.laudos||[]).filter(l => l.status !== 'Concluído').length;
+// Habilita o botao Gerar quando ha condominio (cadastrado OU livre com nome) e pelo menos 1 arquivo.
+function prestacaoAtualizarBotao() {
+  var btn = document.getElementById('prest-btn-gerar');
+  if (!btn) return;
+  var temCond = !!(prestacaoState.condId || (prestacaoState.condNome && prestacaoState.condNome.trim().length > 0));
+  var temArquivo = prestacaoState.arquivos.length > 0;
+  btn.disabled = !(temCond && temArquivo);
+}
 
-  let html = `<div class="cp-stats">
-    <div class="cp-stat verm"><div class="cp-stat-lbl">Pendentes</div><div class="cp-stat-num">${pend}</div><div class="cp-stat-sub">demandas em aberto</div></div>
-    <div class="cp-stat amar"><div class="cp-stat-lbl">Em Andamento</div><div class="cp-stat-num">${and}</div><div class="cp-stat-sub">em execução</div></div>
-    <div class="cp-stat verd"><div class="cp-stat-lbl">Concluídas</div><div class="cp-stat-num">${conc}</div><div class="cp-stat-sub">de ${total} demandas</div></div>
-    <div class="cp-stat azul"><div class="cp-stat-lbl">Laudos</div><div class="cp-stat-num">${laudosConc}</div><div class="cp-stat-sub">${laudosPend} pendente(s)</div></div>
-  </div>
-  <div class="cp-prog">
-    <div class="cp-prog-labels"><span>Progresso geral do plano de ação</span><span>${pct}%</span></div>
-    <div class="cp-prog-track"><div class="cp-prog-fill" style="width:${pct}%"></div></div>
-  </div>`;
+// Limpa todos os campos do painel e reseta state (preserva o cache de condominios).
+function prestacaoLimparTudo() {
+  prestacaoState.arquivos = [];
+  prestacaoState.condId = null;
+  prestacaoState.condNome = '';
+  prestacaoState.periodo = '';
+  prestacaoState.dataApresentacao = '';
+  prestacaoState.observacoes = '';
+  document.getElementById('prest-modo-livre').style.display = 'none';
+  document.getElementById('prest-modo-busca').style.display = 'block';
+  var inp = document.getElementById('prest-cond-search');
+  if (inp) inp.value = '';
+  var nomeLivre = document.getElementById('prest-cond-nome-livre');
+  if (nomeLivre) nomeLivre.value = '';
+  var per = document.getElementById('prest-periodo');
+  if (per) per.value = '';
+  var dat = document.getElementById('prest-data-apresentacao');
+  if (dat) dat.value = '';
+  var obs = document.getElementById('prest-observacoes');
+  if (obs) obs.value = '';
+  prestacaoRenderizarListaArquivos();
+  prestacaoAtualizarBotao();
+  prestacaoInit();
+}
 
-  if (c.prioridades && c.prioridades.length) {
-    html += `<div class="cp-sec-hdr"><div class="cp-sec-title">Resumo das Prioridades</div><div class="cp-sec-sub">Itens definidos como urgentes pelo síndico ${c.sindico}</div></div>
-    <div class="cp-table-card"><table><thead><tr><th>#</th><th>Demanda</th><th>Prioridade</th><th>Status</th><th>Responsável</th></tr></thead><tbody>`;
-    c.prioridades.forEach(d => {
-      html += `<tr><td>${d.num}</td><td class="nome">${d.titulo}</td><td>${cpPrioBadge(d.prio)}</td><td>${cpStatusBadge(d.status)}</td><td>${d.resp}</td></tr>`;
+// Helper de formatacao de tamanho de arquivo.
+function prestacaoFormatarTamanho(bytes) {
+  if (bytes == null) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+}
+
+// Formata um numero como moeda brasileira (BRL) sem usar Intl, para evitar
+// dependencias de locale do ambiente. Aceita valores nulos ou invalidos.
+function prestacaoFmtBRL(valor) {
+  if (valor === null || valor === undefined || isNaN(valor)) return 'R$ 0,00';
+  const s = Math.abs(Number(valor)).toFixed(2);
+  const partes = s.split('.');
+  const inteiros = partes[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const decimais = partes[1];
+  const sinal = Number(valor) < 0 ? '-' : '';
+  return sinal + 'R$ ' + inteiros + ',' + decimais;
+}
+
+// Formata um numero como percentual brasileiro com casas decimais configuraveis.
+// Padrao 1 casa. Troca ponto por virgula no separador decimal.
+function prestacaoFmtPct(valor, casas) {
+  if (valor === null || valor === undefined || isNaN(valor)) return '0,0%';
+  const c = (casas === undefined) ? 1 : casas;
+  return Number(valor).toFixed(c).replace('.', ',') + '%';
+}
+
+// Valida a consistencia dos dados extraidos pela IA. Devolve um array de
+// checagens com tipo, titulo, ok, esperado, recebido, diferenca e bloqueante.
+// Tolerancia de 1 real cobre arredondamentos do Superlogica.
+function prestacaoValidarConsistencia(dados) {
+  const tolerancia = 1.00;
+  const checks = [];
+
+  if (!dados || !dados.saldo || !dados.receitas || !dados.despesas) {
+    checks.push({
+      tipo: 'estrutura',
+      titulo: 'Estrutura do JSON incompleta',
+      ok: false,
+      esperado: 'Objeto com saldo, receitas e despesas',
+      recebido: 'Faltam campos obrigatorios',
+      diferenca: null,
+      bloqueante: true
     });
-    html += '</tbody></table></div>';
+    return checks;
   }
 
-  if (c.laudos && c.laudos.length) {
-    html += `<div class="cp-sec-hdr" style="margin-top:8px"><div class="cp-sec-title">Laudos Técnicos</div></div>
-    <div class="cp-table-card"><table><thead><tr><th>Laudo</th><th>Status</th><th>Enviado ao Síndico</th></tr></thead><tbody>`;
-    c.laudos.forEach(l => {
-      const env = l.enviado ? '<span class="cp-badge-verde">Enviado</span>' : '<span class="cp-badge-verm">Pendente</span>';
-      html += `<tr><td class="nome">${l.nome}</td><td>${cpStatusBadge(l.status)}</td><td>${env}</td></tr>`;
-    });
-    html += '</tbody></table></div>';
-  }
-  return html;
-}
+  const saldoIni = Number(dados.saldo.inicial) || 0;
+  const saldoFim = Number(dados.saldo.final) || 0;
+  const receitaTotal = Number(dados.receitas.total) || 0;
+  const despesaTotal = Number(dados.despesas.total) || 0;
 
-function cpRenderDemGrid(lista, titulo, sub) {
-  let html = `<div class="cp-sec-hdr"><div class="cp-sec-title">${titulo}</div><div class="cp-sec-sub">${sub}</div></div><div class="cp-dem-grid">`;
-  lista.forEach(d => {
-    const fotoAntes = d.fotoAntes ? `<img src="${d.fotoAntes}" style="width:100%;max-height:140px;object-fit:cover;border-radius:6px;margin-top:6px">` : `<div style="width:100%;height:80px;background:var(--bg);border:1px dashed var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;margin-top:6px">Sem foto</div>`;
-    const fotoDepois = d.fotoDepois ? `<img src="${d.fotoDepois}" style="width:100%;max-height:140px;object-fit:cover;border-radius:6px;margin-top:6px">` : `<div style="width:100%;height:80px;background:var(--bg);border:1px dashed var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;margin-top:6px">Sem foto</div>`;
-    html += `<div class="cp-dem-card ${cpCardClass(d.prio)} ${d.status==='Concluído'?'cp-conc':''}">
-      <div class="cp-dem-top" onclick="cpToggleDem('${d.id}')">
-        <div class="cp-dem-num">${d.num}</div>
-        <div class="cp-dem-info">
-          <div class="cp-dem-titulo">${d.titulo}</div>
-          <div class="cp-dem-sit">${d.sit}</div>
-          <div class="cp-dem-badges">${cpPrioBadge(d.prio)} ${cpStatusBadge(d.status)}</div>
-        </div>
-        <div class="cp-dem-meta"><strong>${d.resp}</strong>${d.prazo}</div>
-      </div>
-      <div class="cp-dem-body" id="cpbody-${d.id}">
-        <div class="cp-dem-body-grid">
-          <div class="cp-dem-field"><label>Ação Definida</label><p>${d.acao}</p></div>
-          <div class="cp-dem-field"><label>Métrica de Conclusão</label><p>${d.metrica}</p></div>
-        </div>
-        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <select onchange="cpAtualizarStatus('${d.id}', this.value)" style="padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;font-family:var(--mono)">
-            <option ${d.status==='Pendente'?'selected':''}>Pendente</option>
-            <option ${d.status==='Em andamento'?'selected':''}>Em andamento</option>
-            <option ${d.status==='Concluído'?'selected':''}>Concluído</option>
-            <option ${d.status==='Aguardando síndico'?'selected':''}>Aguardando síndico</option>
-            <option ${d.status==='Aguardando sistema'?'selected':''}>Aguardando sistema</option>
-          </select>
-          <label style="padding:6px 10px;background:rgba(92,160,255,0.15);color:#5ca0ff;border:1px solid rgba(92,160,255,0.3);border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">
-            📷 Antes <input type="file" accept="image/*" style="display:none" onchange="cpAnexarFoto('${d.id}','antes',event)">
-          </label>
-          <label style="padding:6px 10px;background:rgba(92,255,160,0.15);color:#5cffa0;border:1px solid rgba(92,255,160,0.3);border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">
-            📷 Depois <input type="file" accept="image/*" style="display:none" onchange="cpAnexarFoto('${d.id}','depois',event)">
-          </label>
-        </div>
-        ${d.fotoAntes || d.fotoDepois ? `
-        <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          <div><div style="font-size:10px;font-family:var(--mono);color:var(--muted);margin-bottom:4px">ANTES</div>${fotoAntes}</div>
-          <div><div style="font-size:10px;font-family:var(--mono);color:var(--muted);margin-bottom:4px">DEPOIS</div>${fotoDepois}</div>
-        </div>` : ''}
-      </div>
-    </div>`;
+  const saldoCalculado = saldoIni + receitaTotal - despesaTotal;
+  const difSaldo = saldoCalculado - saldoFim;
+  checks.push({
+    tipo: 'equacao',
+    titulo: 'Equacao do exercicio',
+    ok: Math.abs(difSaldo) <= tolerancia,
+    esperado: 'Saldo inicial + Receitas - Despesas = Saldo final',
+    calculo: prestacaoFmtBRL(saldoIni) + ' + ' + prestacaoFmtBRL(receitaTotal) + ' - ' + prestacaoFmtBRL(despesaTotal) + ' = ' + prestacaoFmtBRL(saldoCalculado),
+    recebido: 'Saldo final no JSON: ' + prestacaoFmtBRL(saldoFim),
+    diferenca: difSaldo,
+    bloqueante: Math.abs(difSaldo) > tolerancia
   });
-  return html + '</div>';
+
+  if (Array.isArray(dados.receitas.porCategoria)) {
+    const somaRec = dados.receitas.porCategoria.reduce(function(acc, cat) {
+      return acc + (Number(cat.valor) || 0);
+    }, 0);
+    const difRec = somaRec - receitaTotal;
+    checks.push({
+      tipo: 'soma_receitas',
+      titulo: 'Soma das categorias de receita',
+      ok: Math.abs(difRec) <= tolerancia,
+      esperado: 'Soma de todas as categorias = Receita total',
+      calculo: 'Soma de ' + dados.receitas.porCategoria.length + ' categorias: ' + prestacaoFmtBRL(somaRec),
+      recebido: 'Receita total declarada: ' + prestacaoFmtBRL(receitaTotal),
+      diferenca: difRec,
+      bloqueante: Math.abs(difRec) > tolerancia
+    });
+  }
+
+  if (Array.isArray(dados.despesasPorCategoria)) {
+    const somaDesp = dados.despesasPorCategoria.reduce(function(acc, cat) {
+      return acc + (Number(cat.valor) || 0);
+    }, 0);
+    const difDesp = somaDesp - despesaTotal;
+    checks.push({
+      tipo: 'soma_despesas',
+      titulo: 'Soma das categorias de despesa',
+      ok: Math.abs(difDesp) <= tolerancia,
+      esperado: 'Soma de todas as categorias = Despesa total',
+      calculo: 'Soma de ' + dados.despesasPorCategoria.length + ' categorias: ' + prestacaoFmtBRL(somaDesp),
+      recebido: 'Despesa total declarada: ' + prestacaoFmtBRL(despesaTotal),
+      diferenca: difDesp,
+      bloqueante: Math.abs(difDesp) > tolerancia
+    });
+  }
+
+  return checks;
 }
 
-function cpRenderLaudos(c) {
-  let html = `<div class="cp-sec-hdr"><div class="cp-sec-title">Laudos Técnicos</div><div class="cp-sec-sub">Clique em um laudo para anexar o PDF</div></div>
-  <div class="cp-laudos-lista">`;
-  if (!c.laudos || !c.laudos.length) {
-    html += `<div class="cp-assin-empty"><div class="ico">📄</div><strong>Nenhum laudo cadastrado</strong></div>`;
+// Resume um array de checks devolvido por prestacaoValidarConsistencia,
+// contando totais, bloqueantes, avisos e ok, e indicando se da pra gerar direto.
+function prestacaoResumirValidacao(checks) {
+  const total = checks.length;
+  const bloqueantes = checks.filter(function(c) { return c.bloqueante; }).length;
+  const avisos = checks.filter(function(c) { return !c.ok && !c.bloqueante; }).length;
+  const ok = checks.filter(function(c) { return c.ok; }).length;
+  return {
+    total: total,
+    bloqueantes: bloqueantes,
+    avisos: avisos,
+    ok: ok,
+    podeGerarDireto: bloqueantes === 0,
+    temAlertas: bloqueantes > 0 || avisos > 0
+  };
+}
+
+// Faz uma copia profunda do objeto de dados extraidos para a modal de revisao
+// poder editar sem mutar o original armazenado em prestacaoState.
+function prestacaoCloneDados(dados) {
+  return JSON.parse(JSON.stringify(dados));
+}
+
+// Abre a modal de revisao. Clona os dados extraidos para edicao isolada,
+// popula formularios das 5 secoes e o JSON cru, roda validacao inicial e
+// renderiza o preview dos slides na coluna direita.
+function prestacaoAbrirModal() {
+  if (!prestacaoState.dadosExtraidos) {
+    toast('Nao ha dados extraidos. Gere primeiro.', 'err');
+    return;
+  }
+  prestacaoState.dadosEditaveis = prestacaoCloneDados(prestacaoState.dadosExtraidos);
+  prestacaoPopularFormularios(prestacaoState.dadosEditaveis);
+  document.getElementById('prestacao-json-raw').value = JSON.stringify(prestacaoState.dadosEditaveis, null, 2);
+  const checks = prestacaoValidarConsistencia(prestacaoState.dadosEditaveis);
+  prestacaoRenderizarValidacao(checks);
+  prestacaoRenderizarPreview(prestacaoState.dadosEditaveis);
+  document.getElementById('prestacao-modal').style.display = 'block';
+}
+
+// Esconde a modal e descarta a copia de edicao para liberar memoria
+// e evitar que dados editados vazem para a proxima abertura.
+function prestacaoFecharModal() {
+  const m = document.getElementById('prestacao-modal');
+  if (m) m.style.display = 'none';
+  delete prestacaoState.dadosEditaveis;
+}
+
+// Helper interno que cria um par label + input (ou textarea), com data-campo
+// e data-idx para a leitura reversa em prestacaoAtualizarDadosEdicao.
+function prestacaoCriarCampo(tipo, label, valor, dataCampo, dataIdx) {
+  const wrap = document.createElement('div');
+  if (label) {
+    const lab = document.createElement('label');
+    lab.textContent = label;
+    wrap.appendChild(lab);
+  }
+  let inp;
+  if (tipo === 'textarea') {
+    inp = document.createElement('textarea');
+    inp.rows = 4;
   } else {
-    c.laudos.forEach((l, idx) => {
-      const env = l.enviado ? '<span class="cp-badge-verde">✓ Enviado ao síndico</span>' : '<span class="cp-badge-verm">Não enviado</span>';
-      const temPdf = l.pdfData ? true : false;
-      const statusCls = l.status === 'Concluído' ? 'conc' : l.status === 'Em andamento' ? 'and' : 'pend';
-      html += `<div class="cp-laudo-card ${statusCls}">
-        <div class="cp-laudo-top">
-          <div class="cp-laudo-ico">📄</div>
-          <div class="cp-laudo-info">
-            <div class="cp-laudo-nome">${l.nome}</div>
-            <div class="cp-laudo-meta">
-              <span>${cpStatusBadge(l.status)}</span>
-              <span>${env}</span>
-              <span class="cp-lm">🔧 ${l.tecnico}</span>
-              <span class="cp-lm">📅 Vistoria: ${l.dataVistoria}</span>
-              <span class="cp-lm">📋 Laudo: ${l.dataLaudo}</span>
-            </div>
-          </div>
-          <div class="cp-laudo-acoes">
-            ${temPdf
-              ? `<button class="cp-btn-ver" onclick="cpVerPdf('${c.id}', ${idx})">👁 Ver PDF</button>
-                 <button class="cp-btn-rem" onclick="cpRemoverPdf('${c.id}', ${idx})">🗑</button>`
-              : `<label class="cp-btn-upload" for="cp-upload-${idx}">📎 Anexar PDF</label>
-                 <input type="file" id="cp-upload-${idx}" accept="application/pdf" style="display:none" onchange="cpUploadPdf(event, '${c.id}', ${idx})">`
-            }
-          </div>
-        </div>
-        ${temPdf ? `<div class="cp-pdf-info">📎 PDF: <strong>${l.pdfNome || 'laudo.pdf'}</strong> <span class="cp-lm">(${l.pdfTamanho || ''})</span></div>` : ''}
-      </div>`;
+    inp = document.createElement('input');
+    inp.type = tipo;
+    if (tipo === 'number') inp.step = '0.01';
+  }
+  if (valor !== null && valor !== undefined) inp.value = valor;
+  inp.setAttribute('data-campo', dataCampo);
+  if (dataIdx !== undefined) inp.setAttribute('data-idx', String(dataIdx));
+  inp.oninput = prestacaoAtualizarDadosEdicao;
+  wrap.appendChild(inp);
+  return wrap;
+}
+
+// Monta os 5 formularios da coluna de edicao a partir do objeto dados.
+// Cada categoria de receita ou despesa vira uma linha com nome e valor.
+function prestacaoPopularFormularios(dados) {
+  const fc = document.getElementById('prestacao-form-cabecalho');
+  fc.innerHTML = '';
+  const cab = dados.cabecalho || {};
+  fc.appendChild(prestacaoCriarCampo('text', 'Condominio', cab.condominio || '', 'condominio'));
+  fc.appendChild(prestacaoCriarCampo('text', 'Periodo', cab.periodo || '', 'periodo'));
+  fc.appendChild(prestacaoCriarCampo('text', 'Data da apresentacao', cab.dataApresentacao || '', 'dataApresentacao'));
+
+  const fs = document.getElementById('prestacao-form-saldo');
+  fs.innerHTML = '';
+  const sal = dados.saldo || {};
+  fs.appendChild(prestacaoCriarCampo('number', 'Saldo inicial', sal.inicial != null ? sal.inicial : '', 'saldoInicial'));
+  fs.appendChild(prestacaoCriarCampo('number', 'Saldo final', sal.final != null ? sal.final : '', 'saldoFinal'));
+
+  const fr = document.getElementById('prestacao-form-receitas');
+  fr.innerHTML = '';
+  const rec = dados.receitas || {};
+  fr.appendChild(prestacaoCriarCampo('number', 'Receita total', rec.total != null ? rec.total : '', 'receitaTotal'));
+  const recCats = Array.isArray(rec.porCategoria) ? rec.porCategoria : [];
+  for (let i = 0; i < recCats.length; i++) {
+    const linha = document.createElement('div');
+    linha.style.display = 'flex';
+    linha.style.gap = '8px';
+    linha.style.marginTop = '8px';
+    const nomeWrap = prestacaoCriarCampo('text', 'Categoria ' + (i + 1), recCats[i].categoria || '', 'receitaCatNome', i);
+    const valWrap = prestacaoCriarCampo('number', 'Valor', recCats[i].valor != null ? recCats[i].valor : '', 'receitaCatValor', i);
+    nomeWrap.style.flex = '2';
+    valWrap.style.flex = '1';
+    linha.appendChild(nomeWrap);
+    linha.appendChild(valWrap);
+    fr.appendChild(linha);
+  }
+
+  const fd = document.getElementById('prestacao-form-despesas');
+  fd.innerHTML = '';
+  const desp = dados.despesas || {};
+  fd.appendChild(prestacaoCriarCampo('number', 'Despesa total', desp.total != null ? desp.total : '', 'despesaTotal'));
+  const despCats = Array.isArray(dados.despesasPorCategoria) ? dados.despesasPorCategoria : [];
+  for (let i = 0; i < despCats.length; i++) {
+    const linha = document.createElement('div');
+    linha.style.display = 'flex';
+    linha.style.gap = '8px';
+    linha.style.marginTop = '8px';
+    const nomeWrap = prestacaoCriarCampo('text', 'Categoria ' + (i + 1), despCats[i].categoria || '', 'despesaCatNome', i);
+    const valWrap = prestacaoCriarCampo('number', 'Valor', despCats[i].valor != null ? despCats[i].valor : '', 'despesaCatValor', i);
+    nomeWrap.style.flex = '2';
+    valWrap.style.flex = '1';
+    linha.appendChild(nomeWrap);
+    linha.appendChild(valWrap);
+    fd.appendChild(linha);
+  }
+
+  const fo = document.getElementById('prestacao-form-observacoes');
+  fo.innerHTML = '';
+  const obs = Array.isArray(dados.observacoes) ? dados.observacoes.join('\n') : (dados.observacoes || '');
+  fo.appendChild(prestacaoCriarCampo('textarea', 'Observacoes (uma por linha)', obs, 'observacoes'));
+}
+
+// Le todos os inputs da modal, reconstroi o objeto dadosEditaveis a partir
+// deles, atualiza o textarea de JSON, roda a validacao e re renderiza o preview.
+function prestacaoAtualizarDadosEdicao() {
+  const dados = prestacaoState.dadosEditaveis;
+  if (!dados) return;
+  const get = function(campo) {
+    const el = document.querySelector('[data-campo="' + campo + '"]');
+    return el ? el.value : '';
+  };
+  const num = function(v) {
+    if (v === '' || v === null || v === undefined) return null;
+    const n = Number(v);
+    return isNaN(n) ? null : n;
+  };
+
+  if (!dados.cabecalho) dados.cabecalho = {};
+  dados.cabecalho.condominio = get('condominio');
+  dados.cabecalho.periodo = get('periodo');
+  dados.cabecalho.dataApresentacao = get('dataApresentacao');
+
+  if (!dados.saldo) dados.saldo = {};
+  dados.saldo.inicial = num(get('saldoInicial'));
+  dados.saldo.final = num(get('saldoFinal'));
+  if (dados.saldo.inicial != null && dados.saldo.final != null) {
+    dados.saldo.movimentacao = dados.saldo.final - dados.saldo.inicial;
+  }
+
+  if (!dados.receitas) dados.receitas = {};
+  dados.receitas.total = num(get('receitaTotal'));
+  if (Array.isArray(dados.receitas.porCategoria)) {
+    const recNomes = document.querySelectorAll('[data-campo="receitaCatNome"]');
+    const recVals = document.querySelectorAll('[data-campo="receitaCatValor"]');
+    for (let i = 0; i < dados.receitas.porCategoria.length; i++) {
+      if (recNomes[i]) dados.receitas.porCategoria[i].categoria = recNomes[i].value;
+      if (recVals[i]) dados.receitas.porCategoria[i].valor = num(recVals[i].value);
+    }
+  }
+
+  if (!dados.despesas) dados.despesas = {};
+  dados.despesas.total = num(get('despesaTotal'));
+  if (Array.isArray(dados.despesasPorCategoria)) {
+    const dNomes = document.querySelectorAll('[data-campo="despesaCatNome"]');
+    const dVals = document.querySelectorAll('[data-campo="despesaCatValor"]');
+    for (let i = 0; i < dados.despesasPorCategoria.length; i++) {
+      if (dNomes[i]) dados.despesasPorCategoria[i].categoria = dNomes[i].value;
+      if (dVals[i]) dados.despesasPorCategoria[i].valor = num(dVals[i].value);
+    }
+  }
+
+  const obsTxt = get('observacoes') || '';
+  dados.observacoes = obsTxt.split('\n').filter(function(l) { return l.trim() !== ''; });
+
+  document.getElementById('prestacao-json-raw').value = JSON.stringify(dados, null, 2);
+  const checks = prestacaoValidarConsistencia(dados);
+  prestacaoRenderizarValidacao(checks);
+  prestacaoRenderizarPreview(dados);
+}
+
+// Renderiza um bloco por check no painel de validacao e controla a visibilidade
+// dos botoes de gerar e gerar urgencia conforme houver bloqueantes ou nao.
+function prestacaoRenderizarValidacao(checks) {
+  const cont = document.getElementById('prestacao-modal-validacao');
+  cont.innerHTML = '';
+  for (let i = 0; i < checks.length; i++) {
+    const c = checks[i];
+    const cls = c.ok ? 'ok' : (c.bloqueante ? 'erro' : 'aviso');
+    const div = document.createElement('div');
+    div.className = 'prestacao-validacao-bloco ' + cls;
+    const titulo = document.createElement('strong');
+    titulo.textContent = c.titulo;
+    div.appendChild(titulo);
+    if (c.esperado) {
+      const e = document.createElement('span');
+      e.className = 'det';
+      e.textContent = 'Esperado: ' + c.esperado;
+      div.appendChild(e);
+    }
+    if (c.calculo) {
+      const ca = document.createElement('span');
+      ca.className = 'det';
+      ca.textContent = 'Calculo: ' + c.calculo;
+      div.appendChild(ca);
+    }
+    if (c.recebido) {
+      const r = document.createElement('span');
+      r.className = 'det';
+      r.textContent = c.recebido;
+      div.appendChild(r);
+    }
+    if (c.diferenca !== null && c.diferenca !== undefined) {
+      const d = document.createElement('span');
+      d.className = 'det';
+      d.textContent = 'Diferenca: ' + prestacaoFmtBRL(c.diferenca);
+      div.appendChild(d);
+    }
+    cont.appendChild(div);
+  }
+
+  const resumo = prestacaoResumirValidacao(checks);
+  const btnUrg = document.getElementById('prestacao-btn-urgencia');
+  const btnGer = document.getElementById('prestacao-btn-gerar');
+  if (resumo.bloqueantes > 0) {
+    btnUrg.style.display = '';
+    btnGer.style.display = 'none';
+  } else {
+    btnUrg.style.display = 'none';
+    btnGer.style.display = '';
+    btnGer.disabled = false;
+  }
+}
+
+// Helper que cria a base de uma miniatura de slide (numero + titulo).
+function prestacaoMiniSlide(numero, titulo, opts) {
+  opts = opts || {};
+  const card = document.createElement('div');
+  card.className = 'prestacao-slide-mini' + (opts.dark ? ' dark' : '');
+  const num = document.createElement('div');
+  num.className = 'prestacao-slide-mini-numero';
+  num.textContent = 'Slide ' + numero;
+  card.appendChild(num);
+  const tit = document.createElement('div');
+  tit.className = 'prestacao-slide-mini-titulo';
+  tit.textContent = titulo;
+  card.appendChild(tit);
+  return card;
+}
+
+// Helper que adiciona um paragrafo de corpo na miniatura.
+function prestacaoMiniCorpo(card, texto) {
+  const c = document.createElement('div');
+  c.className = 'prestacao-slide-mini-corpo';
+  c.textContent = texto;
+  card.appendChild(c);
+}
+
+// Helper que adiciona uma faixa de KPIs coloridos na miniatura.
+function prestacaoMiniKpis(card, kpis) {
+  const w = document.createElement('div');
+  w.className = 'prestacao-slide-mini-kpis';
+  for (let i = 0; i < kpis.length; i++) {
+    const k = document.createElement('div');
+    k.className = 'prestacao-slide-mini-kpi';
+    k.textContent = kpis[i].label;
+    const b = document.createElement('b');
+    b.textContent = kpis[i].valor;
+    k.appendChild(b);
+    w.appendChild(k);
+  }
+  card.appendChild(w);
+}
+
+// Helper que desenha um mini grafico de barras escalonado pelo maior valor.
+function prestacaoMiniBars(card, valores) {
+  const w = document.createElement('div');
+  w.className = 'prestacao-slide-mini-bars';
+  let max = 0;
+  for (let i = 0; i < valores.length; i++) {
+    const v = Math.abs(Number(valores[i]) || 0);
+    if (v > max) max = v;
+  }
+  if (max === 0) max = 1;
+  for (let i = 0; i < valores.length; i++) {
+    const b = document.createElement('div');
+    b.className = 'prestacao-slide-mini-bar';
+    const v = Math.abs(Number(valores[i]) || 0);
+    const h = Math.max(2, Math.round((v / max) * 100));
+    b.style.height = h + '%';
+    w.appendChild(b);
+  }
+  card.appendChild(w);
+}
+
+// Renderiza a lista de miniaturas de slides na coluna direita da modal.
+// Ordem fixa: capa, visao geral, evolucao, patrimonio, superavit, origem,
+// estrutura, detalhamento por categoria de receita, depois despesa, e encerramento.
+function prestacaoRenderizarPreview(dados) {
+  const lista = document.getElementById('prestacao-preview-lista');
+  lista.innerHTML = '';
+  let n = 1;
+  const rec = (dados && dados.receitas) || {};
+  const desp = (dados && dados.despesas) || {};
+  const sal = (dados && dados.saldo) || {};
+  const cab = (dados && dados.cabecalho) || {};
+
+  const capa = prestacaoMiniSlide(n++, cab.condominio || 'Condominio', { dark: true });
+  prestacaoMiniCorpo(capa, 'Periodo: ' + (cab.periodo || ''));
+  lista.appendChild(capa);
+
+  const recT = Number(rec.total) || 0;
+  const despT = Number(desp.total) || 0;
+  const sIni = Number(sal.inicial) || 0;
+  const sFim = Number(sal.final) || 0;
+  const sup = recT - despT;
+  const visao = prestacaoMiniSlide(n++, 'Visao Geral');
+  prestacaoMiniKpis(visao, [
+    { label: 'Saldo inicial', valor: prestacaoFmtBRL(sIni) },
+    { label: 'Receita', valor: prestacaoFmtBRL(recT) },
+    { label: 'Despesa', valor: prestacaoFmtBRL(despT) },
+    { label: 'Superavit', valor: prestacaoFmtBRL(sup) },
+    { label: 'Saldo final', valor: prestacaoFmtBRL(sFim) }
+  ]);
+  lista.appendChild(visao);
+
+  const evo = prestacaoMiniSlide(n++, 'Evolucao Mensal');
+  const recDist = Array.isArray(rec.distribuicaoTemporalTotal) ? rec.distribuicaoTemporalTotal : [];
+  const despDist = Array.isArray(desp.distribuicaoTemporalTotal) ? desp.distribuicaoTemporalTotal : [];
+  if (recDist.length || despDist.length) {
+    if (recDist.length) prestacaoMiniBars(evo, recDist);
+    if (despDist.length) prestacaoMiniBars(evo, despDist);
+  } else {
+    prestacaoMiniCorpo(evo, 'Sem distribuicao temporal disponivel');
+  }
+  lista.appendChild(evo);
+
+  const patrim = prestacaoMiniSlide(n++, 'Patrimonio');
+  let pct = 0;
+  if (sIni !== 0) pct = ((sFim - sIni) / Math.abs(sIni)) * 100;
+  prestacaoMiniCorpo(patrim, 'Variacao: ' + prestacaoFmtPct(pct, 1));
+  const saldoMensal = Array.isArray(dados.saldoMensal) ? dados.saldoMensal : [];
+  if (saldoMensal.length) prestacaoMiniBars(patrim, saldoMensal);
+  lista.appendChild(patrim);
+
+  const supSlide = prestacaoMiniSlide(n++, 'Superavit Mensal');
+  if (recDist.length === despDist.length && recDist.length > 0) {
+    const supArr = [];
+    for (let i = 0; i < recDist.length; i++) {
+      supArr.push((Number(recDist[i]) || 0) - (Number(despDist[i]) || 0));
+    }
+    prestacaoMiniBars(supSlide, supArr);
+  } else {
+    prestacaoMiniCorpo(supSlide, 'Sem dados temporais para superavit');
+  }
+  lista.appendChild(supSlide);
+
+  const origem = prestacaoMiniSlide(n++, 'Origem da Receita');
+  const recCats = Array.isArray(rec.porCategoria) ? rec.porCategoria : [];
+  if (recCats.length) {
+    const linhas = recCats.map(function(c) {
+      return (c.categoria || 'Sem nome') + ': ' + prestacaoFmtBRL(c.valor);
+    }).join(' | ');
+    prestacaoMiniCorpo(origem, linhas);
+  } else {
+    prestacaoMiniCorpo(origem, 'Sem categorias');
+  }
+  lista.appendChild(origem);
+
+  const estr = prestacaoMiniSlide(n++, 'Estrutura de Despesas');
+  const despCats = Array.isArray(dados.despesasPorCategoria) ? dados.despesasPorCategoria : [];
+  if (despCats.length) {
+    const linhas = despCats.map(function(c) {
+      return (c.categoria || 'Sem nome') + ': ' + prestacaoFmtBRL(c.valor);
+    }).join(' | ');
+    prestacaoMiniCorpo(estr, linhas);
+  } else {
+    prestacaoMiniCorpo(estr, 'Sem categorias');
+  }
+  lista.appendChild(estr);
+
+  for (let i = 0; i < recCats.length; i++) {
+    const c = recCats[i];
+    const slide = prestacaoMiniSlide(n++, 'Receita: ' + (c.categoria || 'Sem nome'));
+    const pctCat = recT > 0 ? (Number(c.valor) / recT) * 100 : 0;
+    prestacaoMiniCorpo(slide, prestacaoFmtBRL(c.valor) + ' (' + prestacaoFmtPct(pctCat, 1) + ')');
+    if (Array.isArray(c.distribuicaoTemporal) && c.granularidade === 'mensal') {
+      prestacaoMiniBars(slide, c.distribuicaoTemporal);
+    }
+    lista.appendChild(slide);
+  }
+
+  for (let i = 0; i < despCats.length; i++) {
+    const c = despCats[i];
+    const slide = prestacaoMiniSlide(n++, 'Despesa: ' + (c.categoria || 'Sem nome'));
+    const pctCat = despT > 0 ? (Number(c.valor) / despT) * 100 : 0;
+    prestacaoMiniCorpo(slide, prestacaoFmtBRL(c.valor) + ' (' + prestacaoFmtPct(pctCat, 1) + ')');
+    if (Array.isArray(c.distribuicaoTemporal) && c.granularidade === 'mensal') {
+      prestacaoMiniBars(slide, c.distribuicaoTemporal);
+    }
+    lista.appendChild(slide);
+  }
+
+  const enc = prestacaoMiniSlide(n++, 'Encerramento', { dark: true });
+  let pctEnc = 0;
+  if (sIni !== 0) pctEnc = ((sFim - sIni) / Math.abs(sIni)) * 100;
+  prestacaoMiniCorpo(enc, prestacaoFmtPct(pctEnc, 1) + ' no caixa | ' + prestacaoFmtBRL(sIni) + ' para ' + prestacaoFmtBRL(sFim));
+  lista.appendChild(enc);
+}
+
+// Garante dados frescos, valida de novo e gera o pptx se nao houver
+// bloqueantes. A geracao real e feita por prestacaoMontarPptx.
+async function prestacaoConfirmarGeracao() {
+  prestacaoAtualizarDadosEdicao();
+  const dados = prestacaoState.dadosEditaveis;
+  const checks = prestacaoValidarConsistencia(dados);
+  const resumo = prestacaoResumirValidacao(checks);
+  if (resumo.bloqueantes > 0) {
+    toast('Existem inconsistencias bloqueantes. Corrija antes de gerar.', 'err');
+    return;
+  }
+  try {
+    toast('Gerando pptx...', 'info');
+    await prestacaoMontarPptx(dados);
+    toast('Pptx gerado e baixado.', 'ok');
+    prestacaoFecharModal();
+  } catch (err) {
+    console.error('[prestacao] erro ao gerar pptx:', err);
+    toast('Erro ao gerar pptx. Verifique o console.', 'err');
+  }
+}
+
+// Caminho de excecao para o sindico forcar geracao mesmo com inconsistencias
+// acima de R$ 1,00. Exige duas confirmacoes antes de prosseguir.
+async function prestacaoGerarMesmoAssim() {
+  const conf1 = window.confirm('Existem diferencas maiores que R$ 1,00 entre os valores. Gerar a apresentacao mesmo assim pode levar a erros na assembleia. Tem certeza?');
+  if (!conf1) return;
+  const conf2 = window.confirm('Confirma definitivamente que quer gerar com inconsistencias acima de R$ 1,00?');
+  if (!conf2) return;
+  prestacaoAtualizarDadosEdicao();
+  const dados = prestacaoState.dadosEditaveis;
+  try {
+    toast('Gerando pptx (modo urgencia)...', 'info');
+    await prestacaoMontarPptx(dados);
+    toast('Pptx gerado em modo urgencia.', 'ok');
+    prestacaoFecharModal();
+  } catch (err) {
+    console.error('[prestacao] erro ao gerar pptx em urgencia:', err);
+    toast('Erro ao gerar pptx. Verifique o console.', 'err');
+  }
+}
+
+// Tema visual unico do pptx. Cores em hex sem cardinal (formato PptxGenJS).
+const PRESTACAO_THEME = {
+  bgDark: '0A1733',
+  navy: '143A87',
+  navyDeep: '0A2463',
+  blue: '1E5AA8',
+  blueMid: '2E7BC7',
+  blueLight: '5299DC',
+  bluePale: '7FB5E3',
+  amber: 'E88B1A',
+  amberLight: 'FDE9CC',
+  positive: '228B54',
+  negative: 'C03B3B',
+  grayText: '3E5676',
+  grayMuted: '8B9AB8',
+  grayBg: 'F7F9FC',
+  grayLine: 'E2E8F0',
+  white: 'FFFFFF',
+  catColors: ['1E734A', '359E66', '143A87', '1E5AA8', '2E7BC7', '5299DC', '5B6A88', '7F8FA8', 'A5B0C2']
+};
+
+const PRESTACAO_MESES_INICIAL = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
+const PRESTACAO_MESES_CURTO = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+const PRESTACAO_MESES_COMPLETO = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
+// Calcula o superavit mes a mes a partir das duas distribuicoes temporais.
+function prestacaoCalcularSuperavitMensal(receitas, despesas) {
+  const r = Array.isArray(receitas) ? receitas : [];
+  const d = Array.isArray(despesas) ? despesas : [];
+  const len = Math.max(r.length, d.length, 12);
+  const out = [];
+  for (let i = 0; i < len; i++) {
+    out.push((Number(r[i]) || 0) - (Number(d[i]) || 0));
+  }
+  return out;
+}
+
+// Conta quantos meses do array tem valor estritamente maior que zero.
+function prestacaoMesesPositivos(arr) {
+  if (!Array.isArray(arr)) return 0;
+  let count = 0;
+  for (let i = 0; i < arr.length; i++) {
+    if (Number(arr[i]) > 0) count++;
+  }
+  return count;
+}
+
+// Retorna a variacao percentual entre inicial e final, tratando divisao por zero.
+function prestacaoCrescimentoPercentual(inicial, final) {
+  const ini = Number(inicial) || 0;
+  const fim = Number(final) || 0;
+  if (ini === 0) return fim === 0 ? 0 : null;
+  return ((fim - ini) / Math.abs(ini)) * 100;
+}
+
+// Detecta se ha um mes outlier no array (acima de 150% da media dos meses
+// com valor maior que zero) e devolve metadados para uma caixa de aviso.
+function prestacaoDetectarOutlier(arr12) {
+  const out = { temOutlier: false, indiceOutlier: -1, valorOutlier: 0, media: 0, descricao: '' };
+  if (!Array.isArray(arr12) || arr12.length === 0) return out;
+  const positivos = arr12.map(function(v) { return Math.abs(Number(v) || 0); }).filter(function(v) { return v > 0; });
+  if (positivos.length === 0) return out;
+  const media = positivos.reduce(function(a, b) { return a + b; }, 0) / positivos.length;
+  out.media = media;
+  let maiorIdx = -1;
+  let maiorVal = 0;
+  for (let i = 0; i < arr12.length; i++) {
+    const v = Math.abs(Number(arr12[i]) || 0);
+    if (v > maiorVal) { maiorVal = v; maiorIdx = i; }
+  }
+  if (maiorIdx >= 0 && maiorVal > media * 1.5) {
+    out.temOutlier = true;
+    out.indiceOutlier = maiorIdx;
+    out.valorOutlier = maiorVal;
+    const pctAcima = ((maiorVal - media) / media) * 100;
+    const nome = PRESTACAO_MESES_CURTO[maiorIdx] || ('Mes ' + (maiorIdx + 1));
+    out.descricao = 'Pico em ' + nome + ': ' + prestacaoFmtBRL(maiorVal) + ' (' + prestacaoFmtPct(pctAcima, 0) + ' acima da media mensal).';
+  }
+  return out;
+}
+
+// Formata um indice de mes (0 a 11) e ano numerico como "Janeiro/2025".
+function prestacaoFmtMesAno(indiceMes, ano) {
+  const idx = Number(indiceMes);
+  if (isNaN(idx) || idx < 0 || idx > 11) return '';
+  return PRESTACAO_MESES_COMPLETO[idx] + '/' + (ano || '');
+}
+
+// Tenta extrair um ano de 4 digitos de uma string como "Janeiro a Dezembro de 2025".
+function prestacaoExtrairAno(periodo) {
+  if (!periodo) return null;
+  const m = String(periodo).match(/(\d{4})/);
+  return m ? Number(m[1]) : null;
+}
+
+// Cabecalho padrao usado nos slides internos (nao na capa nem no encerramento).
+// Coloca eyebrow numero + secao, linha decorativa amber, titulo navy + accent
+// blueMid, e subtitulo opcional em grayText.
+function prestacaoSlideCabecalho(slide, numero, secao, tituloMain, tituloAccent, subtitulo) {
+  slide.addText(numero + '   ' + secao, {
+    x: 0.5, y: 0.4, w: 12.3, h: 0.3,
+    fontSize: 11, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 4
+  });
+  slide.addShape('rect', {
+    x: 0.5, y: 0.75, w: 0.8, h: 0.04,
+    fill: { color: PRESTACAO_THEME.amber },
+    line: { color: PRESTACAO_THEME.amber, width: 0 }
+  });
+  const partes = [];
+  if (tituloMain) partes.push({ text: tituloMain, options: { color: PRESTACAO_THEME.navy, bold: true } });
+  if (tituloMain && tituloAccent) partes.push({ text: ' ', options: { color: PRESTACAO_THEME.navy } });
+  if (tituloAccent) partes.push({ text: tituloAccent, options: { color: PRESTACAO_THEME.blueMid, bold: true } });
+  slide.addText(partes, {
+    x: 0.5, y: 0.9, w: 12.3, h: 0.7,
+    fontSize: 34, fontFace: 'Calibri', align: 'left'
+  });
+  if (subtitulo) {
+    slide.addText(subtitulo, {
+      x: 0.5, y: 1.62, w: 12.3, h: 0.4,
+      fontSize: 14, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'left'
     });
   }
-  return html + '</div>';
 }
 
-function cpUploadPdf(event, condId, idx) {
-  const file = event.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    const c = cpCondominios.find(x => x.id === condId);
-    c.laudos[idx].pdfData = e.target.result;
-    c.laudos[idx].pdfNome = file.name;
-    c.laudos[idx].pdfTamanho = (file.size / 1024).toFixed(0) + ' KB';
-    cpSalvar();
-    const activeTab = document.querySelector('.cp-tab-btn.active');
-    cpShowTab('laudos', activeTab);
-  };
-  reader.readAsDataURL(file);
-}
-
-function cpVerPdf(condId, idx) {
-  const c = cpCondominios.find(x => x.id === condId);
-  const l = c.laudos[idx];
-  document.getElementById('cp-pdf-title').textContent = l.nome;
-  document.getElementById('cp-pdf-frame').src = l.pdfData;
-  document.getElementById('cp-pdf-overlay').classList.add('open');
-}
-
-function cpFecharPdf(e) {
-  if (e.target === document.getElementById('cp-pdf-overlay')) cpFecharPdfBtn();
-}
-
-function cpFecharPdfBtn() {
-  document.getElementById('cp-pdf-overlay').classList.remove('open');
-  document.getElementById('cp-pdf-frame').src = '';
-}
-
-function cpRemoverPdf(condId, idx) {
-  if (!confirm('Remover o PDF anexado?')) return;
-  const c = cpCondominios.find(x => x.id === condId);
-  delete c.laudos[idx].pdfData;
-  delete c.laudos[idx].pdfNome;
-  delete c.laudos[idx].pdfTamanho;
-  cpSalvar();
-  const activeTab = document.querySelector('.cp-tab-btn.active');
-  cpShowTab('laudos', activeTab);
-}
-
-function cpRenderHistorico(c) {
-  if (!c.historico || !c.historico.length) return '<div class="cp-assin-empty"><div class="ico">📅</div><strong>Nenhum histórico registrado</strong></div>';
-  let html = `<div class="cp-sec-hdr"><div class="cp-sec-title">Histórico de Atividades</div><div class="cp-sec-sub">Registro cronológico de ações executadas</div></div>
-  <div class="cp-tl">`;
-  c.historico.forEach(h => {
-    html += `<div class="cp-tl-item"><div class="cp-tl-dot ${h.cor}"></div><div><div class="cp-tl-data">${h.data}</div><div class="cp-tl-txt">${h.txt}</div></div></div>`;
+// Rodape institucional com entidade e exercicio. Usa caractere bullet como separador.
+function prestacaoSlideRodape(slide, entidade, exercicio) {
+  const sep = ' • ';
+  const txt = String(entidade || '').toUpperCase() + sep + 'EXERCICIO ' + (exercicio || '');
+  slide.addText(txt, {
+    x: 0.5, y: 7.15, w: 12.3, h: 0.3,
+    fontSize: 9, color: PRESTACAO_THEME.grayMuted, fontFace: 'Calibri', align: 'center', charSpacing: 3
   });
-  return html + '</div>';
 }
 
-function cpRenderAssinaturas(c) {
-  return `<div class="cp-sec-hdr"><div class="cp-sec-title">Registro de Assinaturas</div><div class="cp-sec-sub">Confirmações formais de conclusão de serviço</div></div>
-  <div class="cp-assin-empty"><div class="ico">✍️</div><strong>Nenhuma assinatura registrada ainda</strong><p>As assinaturas do síndico confirmando conclusão de serviços aparecerão aqui.</p></div>`;
-}
-
-function cpRenderImportar() {
-  return `
-  <div class="cp-sec-hdr">
-    <div class="cp-sec-title">Importar Atualização</div>
-    <div class="cp-sec-sub">Cole o resumo aqui ou importe um arquivo JSON gerado pelo Claude</div>
-  </div>
-  <div style="display:flex;flex-direction:column;gap:16px;max-width:700px">
-    <div style="background:var(--bg2);border-radius:12px;border:1px solid var(--border);padding:20px">
-      <div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px">Opção 1 — Colar JSON do Claude</div>
-      <textarea id="cp-import-json" placeholder='Cole aqui o JSON gerado pelo Claude...' style="width:100%;height:140px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;color:var(--text);font-family:var(--mono);font-size:12px;resize:vertical"></textarea>
-      <button onclick="cpProcessarImportJSON()" style="margin-top:10px;padding:10px 20px;background:var(--gs-blue);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px">⬆️ Aplicar Atualização</button>
-    </div>
-    <div style="background:var(--bg2);border-radius:12px;border:1px solid var(--border);padding:20px">
-      <div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px">Opção 2 — Importar arquivo .json</div>
-      <input type="file" accept=".json" id="cp-import-file" style="display:none" onchange="cpImportarArquivoJSON(event)">
-      <button onclick="document.getElementById('cp-import-file').click()" style="padding:10px 20px;background:rgba(92,160,255,0.15);color:#5ca0ff;border:1px solid rgba(92,160,255,0.3);border-radius:8px;font-weight:600;cursor:pointer;font-size:13px">📁 Selecionar arquivo .json</button>
-    </div>
-    <div id="cp-import-result" style="display:none;background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);border-radius:8px;padding:14px;color:#22c55e;font-size:13px"></div>
-  </div>`;
-}
-
-async function cpProcessarImportJSON(jsonStr) {
-  try {
-    const raw = jsonStr || document.getElementById('cp-import-json')?.value;
-    if (!raw || raw.trim() === '') { alert('Cole o JSON primeiro.'); return; }
-    const data = JSON.parse(raw.trim());
-    await cpAplicarUpdate(data);
-  } catch(e) {
-    alert('JSON inválido. Verifique o formato e tente novamente.\n' + e.message);
+// Card retangular arredondado com label, valor grande e subtexto opcional.
+function prestacaoSlideKpiCard(slide, x, y, w, h, label, valor, subtexto, corFundo, corTexto) {
+  slide.addShape('roundRect', {
+    x: x, y: y, w: w, h: h,
+    fill: { color: corFundo },
+    line: { color: corFundo, width: 0 },
+    rectRadius: 0.08
+  });
+  slide.addText(String(label || '').toUpperCase(), {
+    x: x + 0.18, y: y + 0.12, w: w - 0.36, h: 0.28,
+    fontSize: 10, bold: true, color: corTexto, fontFace: 'Calibri', align: 'left', charSpacing: 3
+  });
+  const valY = y + 0.42;
+  const valH = subtexto ? Math.max(0.3, h - 0.85) : Math.max(0.3, h - 0.5);
+  slide.addText(String(valor || ''), {
+    x: x, y: valY, w: w, h: valH,
+    fontSize: 26, bold: true, color: corTexto, fontFace: 'Calibri', align: 'center', valign: 'middle'
+  });
+  if (subtexto) {
+    slide.addText(subtexto, {
+      x: x + 0.18, y: y + h - 0.4, w: w - 0.36, h: 0.3,
+      fontSize: 11, color: corTexto, fontFace: 'Calibri', align: 'center'
+    });
   }
 }
 
-async function cpImportarArquivoJSON(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  const text = await file.text();
-  await cpProcessarImportJSON(text);
+// Mini grafico de barras desenhado manualmente com shapes. Para 12 valores
+// adiciona iniciais de mes embaixo. Escala pelo maior valor absoluto.
+function prestacaoSlideMiniBars(slide, x, y, w, h, valores, corBar, corLabel) {
+  if (!Array.isArray(valores) || valores.length === 0) return;
+  let max = 0;
+  for (let i = 0; i < valores.length; i++) {
+    const v = Math.abs(Number(valores[i]) || 0);
+    if (v > max) max = v;
+  }
+  if (max === 0) max = 1;
+  const labelH = (valores.length === 12) ? 0.18 : 0;
+  const barAreaH = h - labelH;
+  const gap = 0.04;
+  const barW = (w - gap * (valores.length - 1)) / valores.length;
+  for (let i = 0; i < valores.length; i++) {
+    const v = Math.abs(Number(valores[i]) || 0);
+    const ratio = v / max;
+    const bH = Math.max(0.03, ratio * barAreaH);
+    const bX = x + i * (barW + gap);
+    const bY = y + (barAreaH - bH);
+    slide.addShape('rect', {
+      x: bX, y: bY, w: barW, h: bH,
+      fill: { color: corBar },
+      line: { color: corBar, width: 0 }
+    });
+    if (labelH > 0) {
+      slide.addText(PRESTACAO_MESES_INICIAL[i] || '', {
+        x: bX, y: y + barAreaH + 0.02, w: barW, h: labelH,
+        fontSize: 7, color: corLabel, fontFace: 'Calibri', align: 'center'
+      });
+    }
+  }
 }
 
-async function cpAtualizarStatus(demandaId, novoStatus) {
-  // Usa cpGetCondominioAtivo() que faz lookup correto no array pelo id string.
-  // cpCondAtivo é string, não objeto: acessar c.prioridades diretamente causava undefined.
-  const c = cpGetCondominioAtivo();
-  if (!c) return;
-  const item = [...(c.prioridades||[]), ...(c.demandas||[])].find(d => d.id === demandaId);
-  if (!item) return;
-  item.status = novoStatus;
-  await supaFetch('demandas?id=eq.' + demandaId, { method: 'PATCH', prefer: 'return=minimal', body: JSON.stringify({ status: novoStatus }) });
-  cpSelecionarCond(c.id);
+// Caixa amber light com borda amber e simbolo de aviso para destacar outliers.
+function prestacaoSlideCaixaAviso(slide, x, y, w, texto) {
+  const h = 0.4;
+  slide.addShape('roundRect', {
+    x: x, y: y, w: w, h: h,
+    fill: { color: PRESTACAO_THEME.amberLight },
+    line: { color: PRESTACAO_THEME.amber, width: 0.75 },
+    rectRadius: 0.05
+  });
+  slide.addText('!  ' + (texto || ''), {
+    x: x + 0.18, y: y, w: w - 0.36, h: h,
+    fontSize: 10, color: '8B5A00', fontFace: 'Calibri', align: 'left', valign: 'middle'
+  });
 }
 
-async function cpAnexarFoto(demandaId, tipo, event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    const base64 = e.target.result;
-    // Usa cpGetCondominioAtivo() para obter o objeto; cpCondAtivo é apenas a string id.
-    const c = cpGetCondominioAtivo();
-    if (!c) return;
-    const item = [...(c.prioridades||[]), ...(c.demandas||[])].find(d => d.id === demandaId);
-    if (!item) return;
-    if (tipo === 'antes') item.fotoAntes = base64;
-    else item.fotoDepois = base64;
-    const field = tipo === 'antes' ? 'foto_antes' : 'foto_depois';
-    await supaFetch('demandas?id=eq.' + demandaId, { method: 'PATCH', prefer: 'return=minimal', body: JSON.stringify({ [field]: base64 }) });
-    cpSelecionarCond(c.id);
-  };
-  reader.readAsDataURL(file);
+// Slide 1: capa do deck com fundo escuro, titulo grande e periodo.
+function prestacaoSlideCapa(pptx, dados, ano, entidade, periodo) {
+  const slide = pptx.addSlide();
+  slide.background = { color: PRESTACAO_THEME.bgDark };
+  slide.addText('PRESTACAO DE CONTAS', {
+    x: 0.7, y: 0.7, w: 12, h: 0.4,
+    fontSize: 14, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 6
+  });
+  slide.addText(String(entidade || 'Condominio').toUpperCase(), {
+    x: 0.7, y: 1.6, w: 12, h: 1.4,
+    fontSize: 60, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left'
+  });
+  slide.addText('EXERCICIO ' + (ano || ''), {
+    x: 0.7, y: 3.0, w: 12, h: 1.0,
+    fontSize: 60, bold: true, color: PRESTACAO_THEME.blueLight, fontFace: 'Calibri', align: 'left'
+  });
+  slide.addShape('rect', {
+    x: 0.7, y: 4.3, w: 1.5, h: 0.05,
+    fill: { color: PRESTACAO_THEME.amber },
+    line: { color: PRESTACAO_THEME.amber, width: 0 }
+  });
+  if (periodo) {
+    slide.addText(String(periodo), {
+      x: 0.7, y: 4.5, w: 12, h: 0.5,
+      fontSize: 18, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left'
+    });
+  }
+  if (dados.cabecalho && dados.cabecalho.dataApresentacao) {
+    slide.addText('Apresentado em ' + dados.cabecalho.dataApresentacao, {
+      x: 0.7, y: 6.7, w: 12, h: 0.4,
+      fontSize: 11, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left'
+    });
+  }
 }
 
-async function cpAplicarUpdate(data) {
-  // Usa cpGetCondominioAtivo() para obter o objeto; cpCondAtivo é apenas a string id.
-  const c = cpGetCondominioAtivo();
-  if (!c) { alert('Nenhum condomínio ativo.'); return; }
-  let atualizados = 0;
+// Slide 2: visao geral com 5 KPIs e faixa amber com 3 indicadores na base.
+function prestacaoSlideVisaoGeral(pptx, dados, entidade, ano) {
+  const slide = pptx.addSlide();
+  prestacaoSlideCabecalho(slide, '01', 'VISAO GERAL', 'Resultado consolidado do', 'exercicio', 'Numeros principais do periodo apurado.');
 
-  if (data.demandas) {
-    for (const upd of data.demandas) {
-      const idx = [...(c.prioridades||[]), ...(c.demandas||[])].findIndex(d => d.id === upd.id || d.titulo === upd.titulo);
-      if (idx >= 0) {
-        const lista = c.prioridades.find(d => d.id === upd.id) ? c.prioridades : c.demandas;
-        const item = lista.find(d => d.id === upd.id || d.titulo === upd.titulo);
-        if (item) {
-          Object.assign(item, upd);
-          await supaFetch('demandas?id=eq.' + item.id, { method: 'PATCH', prefer: 'return=minimal', body: JSON.stringify(upd) });
-          atualizados++;
+  const sIni = Number(dados.saldo && dados.saldo.inicial) || 0;
+  const sFim = Number(dados.saldo && dados.saldo.final) || 0;
+  const recT = Number(dados.receitas && dados.receitas.total) || 0;
+  const despT = Number(dados.despesas && dados.despesas.total) || 0;
+  const sup = recT - despT;
+
+  prestacaoSlideKpiCard(slide, 0.5, 2.2, 4.0, 1.4, 'Saldo Inicial', prestacaoFmtBRL(sIni), 'Caixa em ' + (ano - 1), PRESTACAO_THEME.blue, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 4.7, 2.2, 4.0, 1.4, 'Receita', prestacaoFmtBRL(recT), 'Total arrecadado', PRESTACAO_THEME.navyDeep, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 8.9, 2.2, 4.0, 1.4, 'Despesa', prestacaoFmtBRL(despT), 'Total pago', PRESTACAO_THEME.blueMid, PRESTACAO_THEME.white);
+
+  const corSup = sup < 0 ? PRESTACAO_THEME.negative : PRESTACAO_THEME.positive;
+  const labelSup = sup < 0 ? 'Deficit' : 'Superavit';
+  prestacaoSlideKpiCard(slide, 0.5, 3.85, 6.1, 1.4, labelSup, prestacaoFmtBRL(sup), 'Receita menos despesa', corSup, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 6.8, 3.85, 6.1, 1.4, 'Saldo Final', prestacaoFmtBRL(sFim), 'Caixa em ' + ano, PRESTACAO_THEME.navy, PRESTACAO_THEME.white);
+
+  slide.addShape('rect', {
+    x: 0.5, y: 5.6, w: 12.3, h: 1.0,
+    fill: { color: PRESTACAO_THEME.amberLight },
+    line: { color: PRESTACAO_THEME.amberLight, width: 0 }
+  });
+
+  const cobertura = despT > 0 ? (recT / despT) * 100 : 0;
+  const pctSuperavit = recT > 0 ? (sup / recT) * 100 : 0;
+  const crescSaldo = prestacaoCrescimentoPercentual(sIni, sFim);
+
+  let crescTxt = '0%';
+  if (crescSaldo === null) crescTxt = 'NA';
+  else if (crescSaldo >= 200) crescTxt = 'Quase triplicou';
+  else if (crescSaldo >= 100) crescTxt = 'Quase dobrou';
+  else crescTxt = (crescSaldo >= 0 ? '+' : '') + crescSaldo.toFixed(1) + '%';
+
+  slide.addText('COBERTURA DA RECEITA', { x: 0.7, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'center', charSpacing: 3 });
+  slide.addText(prestacaoFmtPct(cobertura, 0), { x: 0.7, y: 5.95, w: 4.0, h: 0.55, fontSize: 24, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'center' });
+
+  slide.addText('PERCENTUAL DE SUPERAVIT', { x: 4.8, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'center', charSpacing: 3 });
+  slide.addText(prestacaoFmtPct(pctSuperavit, 1), { x: 4.8, y: 5.95, w: 4.0, h: 0.55, fontSize: 24, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'center' });
+
+  slide.addText('CRESCIMENTO DO SALDO', { x: 8.9, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'center', charSpacing: 3 });
+  slide.addText(crescTxt, { x: 8.9, y: 5.95, w: 4.0, h: 0.55, fontSize: 24, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'center' });
+
+  prestacaoSlideRodape(slide, entidade, ano);
+}
+
+// Slide 3: evolucao mensal com 3 linhas (Receitas, Despesas, Saldo Acumulado)
+// e 3 cards de medias mensais na base.
+function prestacaoSlideEvolucaoMensal(pptx, dados, distRec, distDesp, saldoMensal, entidade, ano) {
+  const slide = pptx.addSlide();
+  prestacaoSlideCabecalho(slide, '02', 'EVOLUCAO', 'Receita e despesa', 'mes a mes', 'Acompanhamento mensal do exercicio.');
+
+  const sIni = Number(dados.saldo && dados.saldo.inicial) || 0;
+  let saldoAc = [];
+  if (Array.isArray(saldoMensal) && saldoMensal.length === 13) {
+    saldoAc = saldoMensal.slice(1);
+  } else if (Array.isArray(saldoMensal) && saldoMensal.length === 12) {
+    saldoAc = saldoMensal.slice();
+  } else {
+    let acc = sIni;
+    for (let i = 0; i < 12; i++) {
+      acc = acc + (Number(distRec[i]) || 0) - (Number(distDesp[i]) || 0);
+      saldoAc.push(acc);
+    }
+  }
+
+  const recArr = (distRec || []).slice(0, 12);
+  const despArr = (distDesp || []).slice(0, 12);
+  while (recArr.length < 12) recArr.push(0);
+  while (despArr.length < 12) despArr.push(0);
+
+  const chartData = [
+    { name: 'Receitas', labels: PRESTACAO_MESES_CURTO, values: recArr },
+    { name: 'Despesas', labels: PRESTACAO_MESES_CURTO, values: despArr },
+    { name: 'Saldo Acumulado', labels: PRESTACAO_MESES_CURTO, values: saldoAc.slice(0, 12) }
+  ];
+
+  slide.addChart(pptx.ChartType.line, chartData, {
+    x: 0.5, y: 2.15, w: 12.3, h: 3.6,
+    chartColors: [PRESTACAO_THEME.positive, PRESTACAO_THEME.negative, PRESTACAO_THEME.blueMid],
+    showLegend: true, legendPos: 'b', legendFontSize: 10,
+    catAxisLabelFontSize: 9, valAxisLabelFontSize: 9,
+    lineSize: 2, lineDataSymbolSize: 5
+  });
+
+  const medRec = recArr.reduce(function(a, b) { return a + (Number(b) || 0); }, 0) / 12;
+  const medDesp = despArr.reduce(function(a, b) { return a + (Number(b) || 0); }, 0) / 12;
+  const medEcon = medRec - medDesp;
+
+  prestacaoSlideKpiCard(slide, 0.5, 5.95, 4.0, 0.95, 'Media Receita', prestacaoFmtBRL(medRec), null, PRESTACAO_THEME.positive, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 4.7, 5.95, 4.0, 0.95, 'Media Despesa', prestacaoFmtBRL(medDesp), null, PRESTACAO_THEME.negative, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 8.9, 5.95, 4.0, 0.95, 'Media Economia', prestacaoFmtBRL(medEcon), null, PRESTACAO_THEME.blueMid, PRESTACAO_THEME.white);
+
+  prestacaoSlideRodape(slide, entidade, ano);
+}
+
+// Slide 4: patrimonio. Linha unica do saldoMensal e 4 cards a direita com
+// crescimento, saldo inicial, saldo final e superavit do periodo.
+function prestacaoSlidePatrimonio(pptx, dados, saldoMensal, entidade, ano) {
+  const slide = pptx.addSlide();
+  const sIni = Number(dados.saldo && dados.saldo.inicial) || 0;
+  const sFim = Number(dados.saldo && dados.saldo.final) || 0;
+  const cresc = prestacaoCrescimentoPercentual(sIni, sFim);
+  let subDinamico = 'Como o caixa evoluiu durante o exercicio.';
+  if (cresc !== null) {
+    if (cresc >= 100) subDinamico = 'O patrimonio mais que dobrou no exercicio.';
+    else if (cresc >= 50) subDinamico = 'Crescimento expressivo do patrimonio.';
+    else if (cresc >= 10) subDinamico = 'Patrimonio em crescimento solido.';
+    else if (cresc >= 0) subDinamico = 'Patrimonio mantido com leve evolucao.';
+    else subDinamico = 'Patrimonio em retracao no exercicio.';
+  }
+  prestacaoSlideCabecalho(slide, '03', 'PATRIMONIO', 'Evolucao do', 'caixa', subDinamico);
+
+  let serie = [];
+  let labels = [];
+  if (Array.isArray(saldoMensal) && saldoMensal.length === 13) {
+    serie = saldoMensal;
+    labels = ['Inicio'].concat(PRESTACAO_MESES_CURTO);
+  } else if (Array.isArray(saldoMensal) && saldoMensal.length === 12) {
+    serie = saldoMensal;
+    labels = PRESTACAO_MESES_CURTO;
+  } else if (Array.isArray(saldoMensal) && saldoMensal.length === 5) {
+    serie = saldoMensal;
+    labels = ['Inicio', 'T1', 'T2', 'T3', 'T4'];
+  } else {
+    serie = [sIni, sFim];
+    labels = ['Inicio', 'Fim'];
+  }
+
+  slide.addChart(pptx.ChartType.line, [
+    { name: 'Saldo', labels: labels, values: serie }
+  ], {
+    x: 0.5, y: 2.2, w: 7.5, h: 4.5,
+    chartColors: [PRESTACAO_THEME.blueMid],
+    showLegend: false,
+    catAxisLabelFontSize: 9, valAxisLabelFontSize: 9,
+    lineSize: 3, lineDataSymbolSize: 6
+  });
+
+  const corCresc = (cresc !== null && cresc < 0) ? PRESTACAO_THEME.negative : PRESTACAO_THEME.amber;
+  const labelCresc = (cresc !== null && cresc < 0) ? 'Retracao' : 'Crescimento';
+  let crescStr = 'NA';
+  if (cresc !== null) crescStr = (cresc >= 0 ? '+' : '') + cresc.toFixed(0) + '%';
+
+  slide.addShape('roundRect', { x: 8.3, y: 2.2, w: 4.5, h: 1.15, fill: { color: corCresc }, line: { color: corCresc, width: 0 }, rectRadius: 0.08 });
+  slide.addText(labelCresc.toUpperCase(), { x: 8.5, y: 2.3, w: 4.2, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addText(crescStr, { x: 8.3, y: 2.55, w: 4.5, h: 0.7, fontSize: 48, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', valign: 'middle' });
+
+  prestacaoSlideKpiCard(slide, 8.3, 3.45, 4.5, 1.05, 'Saldo Inicial', prestacaoFmtBRL(sIni), null, PRESTACAO_THEME.bluePale, PRESTACAO_THEME.navy);
+  prestacaoSlideKpiCard(slide, 8.3, 4.6, 4.5, 1.05, 'Saldo Final', prestacaoFmtBRL(sFim), null, PRESTACAO_THEME.blueMid, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 8.3, 5.75, 4.5, 1.05, 'Superavit do Periodo', prestacaoFmtBRL(sFim - sIni), null, PRESTACAO_THEME.positive, PRESTACAO_THEME.white);
+
+  prestacaoSlideRodape(slide, entidade, ano);
+}
+
+// Slide 5: superavit mensal em barras. Card grande com X de 12 meses positivos.
+function prestacaoSlideSuperavitMensal(pptx, dados, superavitMensal, entidade, ano) {
+  const slide = pptx.addSlide();
+  prestacaoSlideCabecalho(slide, '04', 'RESULTADO LIQUIDO', 'Superavit', 'mensal', 'Diferenca entre receitas e despesas mes a mes.');
+
+  const valores = (superavitMensal && superavitMensal.length) ? superavitMensal.slice(0, 12) : new Array(12).fill(0);
+  const positivos = prestacaoMesesPositivos(valores);
+  const supAnual = valores.reduce(function(a, b) { return a + (Number(b) || 0); }, 0);
+
+  slide.addChart(pptx.ChartType.bar, [
+    { name: 'Superavit', labels: PRESTACAO_MESES_CURTO, values: valores }
+  ], {
+    x: 0.5, y: 2.2, w: 8.0, h: 4.5,
+    chartColors: [PRESTACAO_THEME.positive],
+    barDir: 'col', barGrouping: 'clustered',
+    showLegend: false,
+    catAxisLabelFontSize: 9, valAxisLabelFontSize: 9
+  });
+
+  slide.addShape('roundRect', { x: 8.8, y: 2.2, w: 4.0, h: 2.7, fill: { color: PRESTACAO_THEME.positive }, line: { color: PRESTACAO_THEME.positive, width: 0 }, rectRadius: 0.08 });
+  slide.addText('MESES POSITIVOS', { x: 8.95, y: 2.32, w: 3.7, h: 0.3, fontSize: 11, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addText(String(positivos) + ' / 12', { x: 8.8, y: 2.7, w: 4.0, h: 1.85, fontSize: 80, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', valign: 'middle' });
+
+  prestacaoSlideKpiCard(slide, 8.8, 5.05, 4.0, 1.65, 'Superavit Anual', prestacaoFmtBRL(supAnual), null, PRESTACAO_THEME.navy, PRESTACAO_THEME.white);
+
+  prestacaoSlideRodape(slide, entidade, ano);
+}
+
+// Slide 6: origem da receita. Total grande a esquerda, lista de categorias a
+// direita ordenada decrescente, faixa amber com insight automatico na base.
+function prestacaoSlideOrigemReceita(pptx, dados, entidade, ano) {
+  const slide = pptx.addSlide();
+  prestacaoSlideCabecalho(slide, '05', 'ORIGEM DA RECEITA', 'Como o caixa', 'foi alimentado', 'Receitas por categoria no periodo.');
+
+  const recT = Number(dados.receitas && dados.receitas.total) || 0;
+  const cats = (dados.receitas && Array.isArray(dados.receitas.porCategoria)) ? dados.receitas.porCategoria.slice() : [];
+  cats.sort(function(a, b) { return (Number(b.valor) || 0) - (Number(a.valor) || 0); });
+
+  slide.addText('TOTAL', { x: 0.5, y: 2.4, w: 5.5, h: 0.4, fontSize: 12, bold: true, color: PRESTACAO_THEME.grayMuted, fontFace: 'Calibri', align: 'left', charSpacing: 4 });
+  slide.addText(prestacaoFmtBRL(recT), { x: 0.5, y: 2.85, w: 5.5, h: 1.2, fontSize: 60, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'left' });
+  slide.addText('Receita total no exercicio', { x: 0.5, y: 4.1, w: 5.5, h: 0.4, fontSize: 12, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'left' });
+
+  const listaX = 6.2;
+  const itemH = cats.length > 0 ? Math.min(0.5, 4.0 / cats.length) : 0.5;
+  for (let i = 0; i < cats.length; i++) {
+    const c = cats[i];
+    const v = Number(c.valor) || 0;
+    const pct = recT > 0 ? (v / recT) * 100 : 0;
+    const cor = i === 0 ? PRESTACAO_THEME.positive : PRESTACAO_THEME.blue;
+    const yI = 2.2 + i * itemH;
+    slide.addText(String(c.categoria || 'Sem nome'), { x: listaX, y: yI, w: 3.5, h: itemH, fontSize: 12, bold: i === 0, color: cor, fontFace: 'Calibri', align: 'left', valign: 'middle' });
+    slide.addText(prestacaoFmtBRL(v), { x: listaX + 3.5, y: yI, w: 1.7, h: itemH, fontSize: 12, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'right', valign: 'middle' });
+    slide.addText(prestacaoFmtPct(pct, 1), { x: listaX + 5.2, y: yI, w: 1.5, h: itemH, fontSize: 12, bold: true, color: cor, fontFace: 'Calibri', align: 'right', valign: 'middle' });
+  }
+
+  if (cats.length > 0) {
+    const principal = cats[0];
+    const pctPrinc = recT > 0 ? ((Number(principal.valor) || 0) / recT) * 100 : 0;
+    slide.addShape('rect', { x: 0.5, y: 6.4, w: 12.3, h: 0.5, fill: { color: PRESTACAO_THEME.amberLight }, line: { color: PRESTACAO_THEME.amberLight, width: 0 } });
+    slide.addText(String(principal.categoria || 'Categoria principal') + ' representa ' + prestacaoFmtPct(pctPrinc, 1) + ' da receita do exercicio.', {
+      x: 0.7, y: 6.4, w: 11.9, h: 0.5,
+      fontSize: 11, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'left', valign: 'middle'
+    });
+  }
+
+  prestacaoSlideRodape(slide, entidade, ano);
+}
+
+// Slide 7: estrutura de despesas. Total grande a esquerda, lista de categorias
+// a direita ordenada decrescente, com bullet colorido por catColors em ordem.
+function prestacaoSlideEstruturaDespesas(pptx, dados, entidade, ano) {
+  const slide = pptx.addSlide();
+  prestacaoSlideCabecalho(slide, '06', 'ESTRUTURA DE DESPESAS', 'Para onde foi', 'o dinheiro', 'Despesas por categoria no periodo.');
+
+  const despT = Number(dados.despesas && dados.despesas.total) || 0;
+  const cats = Array.isArray(dados.despesasPorCategoria) ? dados.despesasPorCategoria.slice() : [];
+  cats.sort(function(a, b) { return (Number(b.valor) || 0) - (Number(a.valor) || 0); });
+
+  slide.addText('TOTAL', { x: 0.5, y: 2.4, w: 5.5, h: 0.4, fontSize: 12, bold: true, color: PRESTACAO_THEME.grayMuted, fontFace: 'Calibri', align: 'left', charSpacing: 4 });
+  slide.addText(prestacaoFmtBRL(despT), { x: 0.5, y: 2.85, w: 5.5, h: 1.2, fontSize: 60, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'left' });
+  slide.addText('Despesa total no exercicio', { x: 0.5, y: 4.1, w: 5.5, h: 0.4, fontSize: 12, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'left' });
+
+  const listaX = 6.2;
+  const itemH = cats.length > 0 ? Math.min(0.45, 4.5 / cats.length) : 0.45;
+  for (let i = 0; i < cats.length; i++) {
+    const c = cats[i];
+    const v = Number(c.valor) || 0;
+    const pct = despT > 0 ? (v / despT) * 100 : 0;
+    const corHex = PRESTACAO_THEME.catColors[i % PRESTACAO_THEME.catColors.length];
+    const yI = 2.2 + i * itemH;
+    slide.addShape('rect', { x: listaX, y: yI + itemH * 0.3, w: 0.15, h: itemH * 0.4, fill: { color: corHex }, line: { color: corHex, width: 0 } });
+    slide.addText(String(c.categoria || 'Sem nome'), { x: listaX + 0.25, y: yI, w: 3.3, h: itemH, fontSize: 11, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'left', valign: 'middle' });
+    slide.addText(prestacaoFmtBRL(v), { x: listaX + 3.55, y: yI, w: 1.7, h: itemH, fontSize: 11, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'right', valign: 'middle' });
+    slide.addText(prestacaoFmtPct(pct, 1), { x: listaX + 5.25, y: yI, w: 1.5, h: itemH, fontSize: 11, bold: true, color: corHex, fontFace: 'Calibri', align: 'right', valign: 'middle' });
+  }
+
+  prestacaoSlideRodape(slide, entidade, ano);
+}
+
+// Slide de detalhamento de uma categoria (despesa ou receita). Card escuro a
+// esquerda com totais e mini barras, tabela de lancamentos a direita, e
+// caixa de aviso na base se houver outlier.
+function prestacaoSlideDetalhamentoCategoria(pptx, cat, idx, tipo, entidade, ano, totalGrupo) {
+  const slide = pptx.addSlide();
+  const numStr = (idx + 7 < 10 ? '0' : '') + (idx + 7);
+  const tituloMain = tipo === 'receita' ? 'Receita' : 'Despesa';
+  const subBaseAccent = String(cat.categoria || 'Sem nome');
+  prestacaoSlideCabecalho(slide, numStr, 'DETALHAMENTO', tituloMain, subBaseAccent, '');
+
+  const valorCat = Number(cat.valor) || 0;
+  const total = Number(totalGrupo) || 0;
+  const pct = total > 0 ? (valorCat / total) * 100 : 0;
+  const corCard = tipo === 'receita' ? PRESTACAO_THEME.positive : PRESTACAO_THEME.navy;
+  const labelGrupo = tipo === 'receita' ? 'DA RECEITA TOTAL' : 'DA DESPESA TOTAL';
+
+  slide.addShape('rect', { x: 0.5, y: 2.2, w: 5.2, h: 4.75, fill: { color: corCard }, line: { color: corCard, width: 0 } });
+  slide.addShape('rect', { x: 0.7, y: 2.4, w: 0.3, h: 0.3, fill: { color: PRESTACAO_THEME.amber }, line: { color: PRESTACAO_THEME.amber, width: 0 } });
+
+  slide.addText('TOTAL DO GRUPO', { x: 0.7, y: 2.8, w: 4.8, h: 0.3, fontSize: 11, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addText(prestacaoFmtBRL(valorCat), { x: 0.7, y: 3.1, w: 4.8, h: 0.6, fontSize: 34, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left' });
+  slide.addText(prestacaoFmtPct(pct, 1) + ' ' + labelGrupo, { x: 0.7, y: 3.78, w: 4.8, h: 0.3, fontSize: 10, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+
+  slide.addShape('rect', { x: 0.7, y: 4.15, w: 1.0, h: 0.03, fill: { color: PRESTACAO_THEME.bluePale }, line: { color: PRESTACAO_THEME.bluePale, width: 0 } });
+
+  const distArr = (Array.isArray(cat.distribuicaoTemporal) && cat.granularidade === 'mensal') ? cat.distribuicaoTemporal : null;
+  let mesesComLancamento = 0;
+  if (distArr) {
+    for (let i = 0; i < distArr.length; i++) {
+      if (Math.abs(Number(distArr[i]) || 0) > 0) mesesComLancamento++;
+    }
+  }
+  let descricao = '';
+  if (idx === 0) descricao = 'Maior categoria do exercicio.';
+  else if (idx <= 2) descricao = 'Categoria de peso significativo no exercicio.';
+  else descricao = 'Categoria componente do exercicio.';
+  if (distArr && mesesComLancamento > 0) descricao = descricao + ' ' + mesesComLancamento + ' meses com lancamento.';
+
+  slide.addText(descricao, { x: 0.7, y: 4.3, w: 4.8, h: 0.7, fontSize: 11, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left' });
+  slide.addText('DISTRIBUICAO MENSAL', { x: 0.7, y: 5.15, w: 4.8, h: 0.3, fontSize: 10, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+
+  if (distArr) {
+    prestacaoSlideMiniBars(slide, 0.7, 5.5, 4.8, 1.3, distArr.slice(0, 12), PRESTACAO_THEME.white, PRESTACAO_THEME.bluePale);
+  } else {
+    slide.addText('Sem distribuicao mensal disponivel', { x: 0.7, y: 5.5, w: 4.8, h: 0.4, fontSize: 11, italic: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left' });
+  }
+
+  const linhas = [];
+  if (distArr) {
+    for (let i = 0; i < distArr.length; i++) {
+      const v = Number(distArr[i]) || 0;
+      if (Math.abs(v) > 0) linhas.push({ rotulo: PRESTACAO_MESES_COMPLETO[i] || ('Mes ' + (i + 1)), valor: v });
+    }
+  }
+  if (linhas.length === 0) {
+    linhas.push({ rotulo: cat.categoria || 'Total', valor: valorCat });
+  }
+
+  const tabelaX = 6.0;
+  const tabelaY = 2.2;
+  const tabelaW = 6.8;
+  const headerH = 0.4;
+  const totalRowH = 0.5;
+  const dispH = 4.75 - headerH - totalRowH;
+  let fontHeader = 11;
+  let fontRow = 10;
+  if (linhas.length > 12 && linhas.length <= 16) { fontHeader = 10; fontRow = 9; }
+  else if (linhas.length > 16) { fontHeader = 9; fontRow = 8; }
+  const rowH = dispH / Math.max(linhas.length, 1);
+
+  slide.addShape('rect', { x: tabelaX, y: tabelaY, w: tabelaW, h: headerH, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 } });
+  slide.addText('LANCAMENTOS DO PERIODO', { x: tabelaX + 0.15, y: tabelaY, w: tabelaW * 0.6, h: headerH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle', charSpacing: 3 });
+  slide.addText('VALOR', { x: tabelaX + tabelaW * 0.6, y: tabelaY, w: tabelaW * 0.4 - 0.15, h: headerH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'right', valign: 'middle', charSpacing: 3 });
+
+  for (let i = 0; i < linhas.length; i++) {
+    const yI = tabelaY + headerH + i * rowH;
+    const fill = i % 2 === 0 ? PRESTACAO_THEME.white : PRESTACAO_THEME.grayBg;
+    slide.addShape('rect', { x: tabelaX, y: yI, w: tabelaW, h: rowH, fill: { color: fill }, line: { color: PRESTACAO_THEME.grayLine, width: 0.25 } });
+    slide.addText(String(linhas[i].rotulo), { x: tabelaX + 0.15, y: yI, w: tabelaW * 0.6, h: rowH, fontSize: fontRow, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'left', valign: 'middle' });
+    slide.addText(prestacaoFmtBRL(linhas[i].valor), { x: tabelaX + tabelaW * 0.6, y: yI, w: tabelaW * 0.4 - 0.15, h: rowH, fontSize: fontRow, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'right', valign: 'middle' });
+  }
+
+  const totalY = tabelaY + headerH + linhas.length * rowH;
+  slide.addShape('rect', { x: tabelaX, y: totalY, w: tabelaW, h: totalRowH, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 } });
+  slide.addText('TOTAL', { x: tabelaX + 0.15, y: totalY, w: tabelaW * 0.6, h: totalRowH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle', charSpacing: 3 });
+  slide.addText(prestacaoFmtBRL(valorCat), { x: tabelaX + tabelaW * 0.6, y: totalY, w: tabelaW * 0.4 - 0.15, h: totalRowH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'right', valign: 'middle' });
+
+  if (distArr) {
+    const out = prestacaoDetectarOutlier(distArr);
+    if (out.temOutlier) {
+      prestacaoSlideCaixaAviso(slide, 0.5, 7.05, 5.2, out.descricao);
+    } else {
+      prestacaoSlideRodape(slide, entidade, ano);
+    }
+  } else {
+    prestacaoSlideRodape(slide, entidade, ano);
+  }
+}
+
+// Slide final: encerramento com fundo escuro, painel grande do saldoMensal a
+// esquerda, mini barras inicio vs fim e cards de crescimento e cobertura a
+// direita, e tira inferior com dois retangulos lado a lado.
+function prestacaoSlideEncerramento(pptx, dados, saldoMensal, superavitMensal, entidade, ano) {
+  const slide = pptx.addSlide();
+  slide.background = { color: PRESTACAO_THEME.bgDark };
+
+  const sIni = Number(dados.saldo && dados.saldo.inicial) || 0;
+  const sFim = Number(dados.saldo && dados.saldo.final) || 0;
+  const recT = Number(dados.receitas && dados.receitas.total) || 0;
+  const despT = Number(dados.despesas && dados.despesas.total) || 0;
+  const cresc = prestacaoCrescimentoPercentual(sIni, sFim);
+  const cobertura = despT > 0 ? (recT / despT) * 100 : 0;
+  const positivos = prestacaoMesesPositivos(superavitMensal);
+
+  slide.addText('ENCERRAMENTO   BALANCO DO EXERCICIO', {
+    x: 0.5, y: 0.5, w: 12.3, h: 0.3,
+    fontSize: 12, bold: true, color: PRESTACAO_THEME.amber, fontFace: 'Calibri', align: 'left', charSpacing: 5
+  });
+
+  slide.addText([
+    { text: 'O ano em ', options: { color: PRESTACAO_THEME.white, bold: true } },
+    { text: 'numeros', options: { color: PRESTACAO_THEME.amber, bold: true } }
+  ], {
+    x: 0.5, y: 0.9, w: 12.3, h: 0.85,
+    fontSize: 44, fontFace: 'Calibri', align: 'left'
+  });
+
+  slide.addText('Como o patrimonio da entidade evoluiu ao longo do exercicio', {
+    x: 0.5, y: 1.85, w: 12.3, h: 0.4,
+    fontSize: 14, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left'
+  });
+
+  slide.addShape('roundRect', {
+    x: 0.5, y: 2.5, w: 7.6, h: 4.0,
+    fill: { color: PRESTACAO_THEME.navyDeep },
+    line: { color: PRESTACAO_THEME.navyDeep, width: 0 },
+    rectRadius: 0.1
+  });
+  slide.addText('EVOLUCAO DO PATRIMONIO EM CAIXA', {
+    x: 0.7, y: 2.65, w: 7.2, h: 0.3,
+    fontSize: 11, bold: true, color: PRESTACAO_THEME.amber, fontFace: 'Calibri', align: 'left', charSpacing: 4
+  });
+
+  let serie = [];
+  let labels = [];
+  if (Array.isArray(saldoMensal) && saldoMensal.length === 13) {
+    serie = saldoMensal;
+    labels = ['Inicio'].concat(PRESTACAO_MESES_CURTO);
+  } else if (Array.isArray(saldoMensal) && saldoMensal.length === 12) {
+    serie = saldoMensal;
+    labels = PRESTACAO_MESES_CURTO;
+  } else if (Array.isArray(saldoMensal) && saldoMensal.length === 5) {
+    serie = saldoMensal;
+    labels = ['Inicio', 'T1', 'T2', 'T3', 'T4'];
+  } else {
+    serie = [sIni, sFim];
+    labels = ['Inicio', 'Fim'];
+  }
+  const ref = serie.map(function() { return sIni; });
+
+  slide.addChart(pptx.ChartType.line, [
+    { name: 'Saldo', labels: labels, values: serie },
+    { name: 'Referencia', labels: labels, values: ref }
+  ], {
+    x: 0.7, y: 3.0, w: 7.2, h: 3.3,
+    chartColors: [PRESTACAO_THEME.amber, PRESTACAO_THEME.bluePale],
+    showLegend: false,
+    catAxisLabelFontSize: 9, catAxisLabelColor: PRESTACAO_THEME.bluePale,
+    valAxisLabelFontSize: 9, valAxisLabelColor: PRESTACAO_THEME.bluePale,
+    lineSize: 4, lineDataSymbolSize: 6
+  });
+
+  slide.addShape('roundRect', {
+    x: 8.3, y: 2.5, w: 4.5, h: 1.8,
+    fill: { color: '0F2342' },
+    line: { color: '0F2342', width: 0 },
+    rectRadius: 0.08
+  });
+  slide.addText('INICIO', { x: 8.5, y: 2.65, w: 1.8, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'center', charSpacing: 3 });
+  slide.addText('FIM', { x: 10.6, y: 2.65, w: 1.8, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.amber, fontFace: 'Calibri', align: 'center', charSpacing: 3 });
+  const maxV = Math.max(Math.abs(sIni), Math.abs(sFim), 1);
+  const barAreaH = 1.0;
+  const hIni = Math.max(0.1, (Math.abs(sIni) / maxV) * barAreaH);
+  const hFim = Math.max(0.1, (Math.abs(sFim) / maxV) * barAreaH);
+  slide.addShape('rect', { x: 9.0, y: 2.95 + (barAreaH - hIni), w: 1.2, h: hIni, fill: { color: PRESTACAO_THEME.blueMid }, line: { color: PRESTACAO_THEME.blueMid, width: 0 } });
+  slide.addShape('rect', { x: 11.1, y: 2.95 + (barAreaH - hFim), w: 1.2, h: hFim, fill: { color: PRESTACAO_THEME.amber }, line: { color: PRESTACAO_THEME.amber, width: 0 } });
+  slide.addText(prestacaoFmtBRL(sIni), { x: 8.5, y: 4.05, w: 1.8, h: 0.25, fontSize: 9, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center' });
+  slide.addText(prestacaoFmtBRL(sFim), { x: 10.6, y: 4.05, w: 1.8, h: 0.25, fontSize: 9, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center' });
+
+  const corCresc = (cresc !== null && cresc < 0) ? PRESTACAO_THEME.negative : PRESTACAO_THEME.amber;
+  slide.addShape('roundRect', { x: 8.3, y: 4.4, w: 4.5, h: 1.05, fill: { color: corCresc }, line: { color: corCresc, width: 0 }, rectRadius: 0.08 });
+  slide.addText('O CAIXA CRESCEU', { x: 8.45, y: 4.5, w: 4.2, h: 0.3, fontSize: 10, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  let crescStr = 'NA';
+  if (cresc !== null) crescStr = (cresc >= 0 ? '+' : '') + cresc.toFixed(0) + '%';
+  slide.addText(crescStr, { x: 8.3, y: 4.78, w: 4.5, h: 0.6, fontSize: 38, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', valign: 'middle' });
+
+  slide.addShape('roundRect', { x: 8.3, y: 5.55, w: 4.5, h: 0.95, fill: { color: PRESTACAO_THEME.positive }, line: { color: PRESTACAO_THEME.positive, width: 0 }, rectRadius: 0.08 });
+  slide.addText('RECEITA COBRIU ' + prestacaoFmtPct(cobertura, 0) + ' DA DESPESA', { x: 8.45, y: 5.6, w: 4.2, h: 0.3, fontSize: 9, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addText(positivos + ' meses com superavit', { x: 8.3, y: 5.9, w: 4.5, h: 0.5, fontSize: 14, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', valign: 'middle' });
+
+  slide.addShape('rect', { x: 0.5, y: 6.7, w: 6.4, h: 0.7, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 } });
+  slide.addText('INICIO ANO', { x: 0.7, y: 6.75, w: 2.5, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addText(prestacaoFmtBRL(sIni), { x: 0.7, y: 6.97, w: 6.0, h: 0.4, fontSize: 16, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle' });
+
+  slide.addShape('rect', { x: 6.95, y: 6.7, w: 6.4, h: 0.7, fill: { color: PRESTACAO_THEME.amber }, line: { color: PRESTACAO_THEME.amber, width: 0 } });
+  slide.addText('FIM ANO', { x: 7.15, y: 6.75, w: 2.5, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addText(prestacaoFmtBRL(sFim), { x: 7.15, y: 6.97, w: 6.0, h: 0.4, fontSize: 16, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle' });
+}
+
+// Funcao principal do B5: monta o pptx completo a partir do JSON em
+// dadosEditaveis e dispara o download do arquivo no navegador.
+async function prestacaoMontarPptx(dados) {
+  const pptx = new PptxGenJS();
+  pptx.defineLayout({ name: 'LAYOUT_WIDE', width: 13.333, height: 7.5 });
+  pptx.layout = 'LAYOUT_WIDE';
+
+  const ano = prestacaoExtrairAno(dados.cabecalho && dados.cabecalho.periodo) || new Date().getFullYear();
+  const entidade = (dados.cabecalho && dados.cabecalho.condominio) || 'Condominio';
+  const periodo = (dados.cabecalho && dados.cabecalho.periodo) || '';
+
+  const distRec = (dados.receitas && Array.isArray(dados.receitas.distribuicaoTemporalTotal)) ? dados.receitas.distribuicaoTemporalTotal.slice() : new Array(12).fill(0);
+  const distDesp = (dados.despesas && Array.isArray(dados.despesas.distribuicaoTemporalTotal)) ? dados.despesas.distribuicaoTemporalTotal.slice() : new Array(12).fill(0);
+  while (distRec.length < 12) distRec.push(0);
+  while (distDesp.length < 12) distDesp.push(0);
+  const saldoMensal = Array.isArray(dados.saldoMensal) ? dados.saldoMensal : null;
+  const superavitMensal = prestacaoCalcularSuperavitMensal(distRec, distDesp);
+
+  prestacaoSlideCapa(pptx, dados, ano, entidade, periodo);
+  prestacaoSlideVisaoGeral(pptx, dados, entidade, ano);
+  prestacaoSlideEvolucaoMensal(pptx, dados, distRec, distDesp, saldoMensal, entidade, ano);
+  prestacaoSlidePatrimonio(pptx, dados, saldoMensal, entidade, ano);
+  prestacaoSlideSuperavitMensal(pptx, dados, superavitMensal, entidade, ano);
+  prestacaoSlideOrigemReceita(pptx, dados, entidade, ano);
+  prestacaoSlideEstruturaDespesas(pptx, dados, entidade, ano);
+
+  if (Array.isArray(dados.despesasPorCategoria)) {
+    dados.despesasPorCategoria.forEach(function(cat, idx) {
+      prestacaoSlideDetalhamentoCategoria(pptx, cat, idx, 'despesa', entidade, ano, dados.despesas && dados.despesas.total);
+    });
+  }
+  if (dados.receitas && Array.isArray(dados.receitas.porCategoria)) {
+    dados.receitas.porCategoria.forEach(function(cat, idx) {
+      prestacaoSlideDetalhamentoCategoria(pptx, cat, idx, 'receita', entidade, ano, dados.receitas.total);
+    });
+  }
+
+  prestacaoSlideEncerramento(pptx, dados, saldoMensal, superavitMensal, entidade, ano);
+
+  const slug = String(entidade).replace(/[^a-zA-Z0-9]/g, '-').toLowerCase();
+  const nomeArquivo = 'prestacao-contas-' + slug + '-' + ano + '.pptx';
+  await pptx.writeFile({ fileName: nomeArquivo });
+}
+
+// Handler do botao Gerar pptx do Card de geracao. A partir do B5 prompt 2B
+// abre a modal de revisao em vez de gerar direto. A geracao real entra no 2C.
+function prestacaoGerarPptx() {
+  if (!prestacaoState.dadosExtraidos) {
+    toast('Nao ha dados extraidos. Gere primeiro.', 'err');
+    return;
+  }
+  prestacaoAbrirModal();
+}
+
+// Le um arquivo do prestacaoState e devolve um content block do Anthropic.
+// PDFs viram bloco document base64, imagens viram bloco image base64,
+// qualquer outro tipo e lido como texto via FileReader.readAsText e enviado como bloco text.
+function prestacaoArquivoParaBloco(file) {
+  return new Promise(function(resolve, reject) {
+    var nome = file && file.name ? file.name : 'sem_nome';
+    var ehPdf = (file.type === 'application/pdf') || /\.pdf$/i.test(nome);
+    var ehImagem = (file.type || '').indexOf('image/') === 0;
+    var reader = new FileReader();
+    reader.onerror = function() { reject(new Error('Falha ao ler ' + nome)); };
+    if (ehPdf || ehImagem) {
+      reader.onload = function() {
+        var dataUrl = String(reader.result || '');
+        var b64 = dataUrl.split(',')[1] || '';
+        if (ehPdf) {
+          resolve({
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: b64 },
+            title: nome
+          });
+        } else {
+          var media = file.type || 'image/png';
+          resolve({
+            type: 'image',
+            source: { type: 'base64', media_type: media, data: b64 }
+          });
         }
-      }
+      };
+      reader.readAsDataURL(file);
+    } else {
+      reader.onload = function() {
+        var texto = String(reader.result || '');
+        resolve({
+          type: 'text',
+          text: 'Arquivo: ' + nome + '\n\n' + texto
+        });
+      };
+      reader.readAsText(file);
     }
-  }
-
-  if (data.historico) {
-    for (const h of data.historico) {
-      await supaFetch('historico', { method: 'POST', prefer: 'return=minimal', body: JSON.stringify({...h, condominio_id: c.id}) });
-      c.historico.unshift(h);
-    }
-  }
-
-  if (data.laudos) {
-    for (const l of data.laudos) {
-      const existing = c.laudos.find(x => x.nome === l.nome);
-      if (existing) {
-        Object.assign(existing, l);
-        await supaFetch('laudos?condominio_id=eq.' + c.id + '&nome=eq.' + encodeURIComponent(l.nome), { method: 'PATCH', prefer: 'return=minimal', body: JSON.stringify(l) });
-      } else {
-        await supaFetch('laudos', { method: 'POST', prefer: 'return=minimal', body: JSON.stringify({...l, condominio_id: c.id}) });
-        c.laudos.push(l);
-      }
-      atualizados++;
-    }
-  }
-
-  const res = document.getElementById('cp-import-result');
-  if (res) {
-    res.style.display = 'block';
-    res.textContent = '✓ Atualização aplicada com sucesso — ' + atualizados + ' item(s) atualizado(s).';
-  }
-  cpSelecionarCond(c.id);
+  });
 }
 
-
-async function cpGerarApresentacao() {
-  const c = cpCondominios.find(x => x.id === cpCondAtivo);
-  if (!c) return;
-  const btn = document.getElementById('cp-btn-gerar');
+// Handler principal do botao Gerar.
+// Le todos os arquivos do prestacaoState, monta payload Anthropic com instrucoes
+// para extrair a estrutura JSON da prestacao de contas e envia para o proxy
+// /api/claude/messages. Em sucesso salva em prestacaoState.dadosExtraidos, loga
+// no console e troca o botao para acionar prestacaoGerarPptx (B5). Em erro,
+// restaura o botao original e mostra toast com a mensagem.
+async function prestacaoGerar() {
+  var btn = document.getElementById('prest-btn-gerar');
+  if (!btn) return;
+  var textoOriginal = btn.textContent;
+  var onclickOriginal = btn.onclick;
   btn.disabled = true;
-  btn.textContent = '⏳ Gerando...';
+  btn.textContent = 'Lendo arquivos...';
   try {
-    if (typeof PptxGenJS === 'undefined') {
-      const script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js';
-      await new Promise((res, rej) => { script.onload = res; script.onerror = rej; document.head.appendChild(script); });
+    if (!prestacaoState.arquivos || prestacaoState.arquivos.length === 0) {
+      throw new Error('Nenhum arquivo carregado.');
     }
-    const pres = new PptxGenJS();
-    pres.layout = 'LAYOUT_16x9';
-    pres.title = 'Plano de Ação — ' + c.nome;
-    const AZUL_ESC='1A2E4A', AZUL='2D9CDB', BRANCO='FFFFFF', VERDE='27AE60', VERM='C0392B', AMAR='D4880A', MUTED='718096', TEXTO='1A1A2E', CINZA='F5F7FA';
-    const todas = [...(c.prioridades||[]), ...(c.demandas||[])];
-    const conc = todas.filter(d => d.status === 'Concluído').length;
-    const pend = todas.filter(d => d.status === 'Pendente').length;
-    const pct = todas.length ? Math.round(conc / todas.length * 100) : 0;
-    const hoje = new Date().toLocaleDateString('pt-BR');
-    // CAPA
-    { const s = pres.addSlide(); s.background={color:AZUL_ESC};
-      s.addShape(pres.shapes.RECTANGLE,{x:0,y:0,w:0.18,h:5.625,fill:{color:AZUL}});
-      s.addText('PLANO DE AÇÃO',{x:0.5,y:1.2,w:9,h:0.7,fontSize:13,color:AZUL,bold:true,charSpacing:6});
-      s.addText(c.nome,{x:0.5,y:1.9,w:9,h:1.2,fontSize:36,color:BRANCO,bold:true});
-      s.addText('Síndico: '+c.sindico,{x:0.5,y:3.1,w:6,h:0.45,fontSize:16,color:AZUL});
-      s.addText('Virtual Service  ·  '+hoje,{x:0.5,y:4.8,w:9,h:0.35,fontSize:11,color:MUTED}); }
-    // RESUMO
-    { const s = pres.addSlide(); s.background={color:BRANCO};
-      s.addText('RESUMO EXECUTIVO',{x:0.5,y:0.35,w:9,h:0.4,fontSize:11,color:AZUL,bold:true,charSpacing:4});
-      s.addText(c.nome,{x:0.5,y:0.75,w:9,h:0.55,fontSize:22,color:TEXTO,bold:true});
-      [{lbl:'Pendentes\n',val:String(pend),cor:VERM},{lbl:'Concluídas\n',val:String(conc),cor:VERDE},{lbl:'Total\n',val:String(todas.length),cor:AZUL},{lbl:'Progresso\n',val:pct+'%',cor:AMAR}].forEach((st,i)=>{
-        const x=0.4+i*2.35;
-        s.addShape(pres.shapes.RECTANGLE,{x,y:1.55,w:2.1,h:1.8,fill:{color:CINZA}});
-        s.addShape(pres.shapes.RECTANGLE,{x,y:1.55,w:2.1,h:0.06,fill:{color:st.cor}});
-        s.addText(st.val,{x,y:1.7,w:2.1,h:0.8,fontSize:36,color:st.cor,bold:true,align:'center'});
-        s.addText(st.lbl,{x,y:2.55,w:2.1,h:0.6,fontSize:10,color:MUTED,align:'center'}); }); }
-    // PRIORIDADES TABLE
-    if (c.prioridades && c.prioridades.length) {
-      const s = pres.addSlide(); s.background={color:BRANCO};
-      s.addText('PRIORIDADES',{x:0.5,y:0.35,w:9,h:0.4,fontSize:11,color:AZUL,bold:true,charSpacing:4});
-      s.addText(c.prioridades.length+' itens urgentes — Síndico '+c.sindico,{x:0.5,y:0.75,w:9,h:0.45,fontSize:18,color:TEXTO,bold:true});
-      const rows = c.prioridades.map(p=>[
-        {text:String(p.num),options:{bold:true,align:'center',color:TEXTO}},
-        {text:p.titulo,options:{bold:true,color:TEXTO}},
-        {text:p.prio,options:{bold:true,color:p.prio==='Alta'?VERM:p.prio==='Média'?AMAR:VERDE}},
-        {text:p.status,options:{bold:true,color:p.status==='Concluído'?VERDE:p.status==='Em andamento'?AMAR:VERM}},
-        {text:p.resp,options:{color:MUTED}}]);
-      s.addTable([[{text:'#',options:{bold:true,color:BRANCO,fill:{color:AZUL_ESC}}},{text:'Demanda',options:{bold:true,color:BRANCO,fill:{color:AZUL_ESC}}},{text:'Prioridade',options:{bold:true,color:BRANCO,fill:{color:AZUL_ESC}}},{text:'Status',options:{bold:true,color:BRANCO,fill:{color:AZUL_ESC}}},{text:'Responsável',options:{bold:true,color:BRANCO,fill:{color:AZUL_ESC}}}],...rows],{x:0.5,y:1.35,w:9,colW:[0.4,3.5,1.2,1.5,2.4],fontSize:11,border:{pt:0.5,color:'E2E8F0'}}); }
-    const nomeArquivo = 'PlanoAcao_'+c.nome.replace(/\s+/g,'_')+'_'+hoje.replace(/\//g,'-')+'.pptx';
-    await pres.writeFile({ fileName: nomeArquivo });
-  } catch(err) { alert('Erro ao gerar: ' + err.message); console.error(err); }
-  btn.disabled = false;
-  btn.textContent = '📊 Gerar Apresentação';
-}
+    var blocos = [];
+    for (var i = 0; i < prestacaoState.arquivos.length; i++) {
+      btn.textContent = 'Lendo arquivo ' + (i + 1) + ' de ' + prestacaoState.arquivos.length + '...';
+      var bloco = await prestacaoArquivoParaBloco(prestacaoState.arquivos[i]);
+      blocos.push(bloco);
+    }
+    btn.textContent = 'Consultando IA...';
 
-// Init condomínios tab data
-document.getElementById('cp-top-data').textContent = new Date().toLocaleDateString('pt-BR', {day:'2-digit',month:'long',year:'numeric'});
-cpRenderSidebar();
+    // System prompt orienta o modelo a devolver JSON estruturado seguindo o
+    // padrao da skill powerpoint prestacao contas, com base nos relatorios
+    // W011A (despesas por categoria) e W015A (extrato bancario) do Superlogica.
+    var systemPrompt = [
+      'Voce e um assistente especializado em montar prestacao de contas condominial em formato pptx.',
+      'O usuario vai fornecer relatorios do Superlogica, em especial W011A (despesas por categoria) e W015A (extrato bancario com receitas e saldos).',
+      'Sua tarefa e extrair os dados em JSON estruturado para alimentar a skill powerpoint prestacao contas.',
+      'Devolva SEMPRE um unico bloco JSON valido, dentro de cercas tripla com a tag json (```json ... ```), sem texto antes nem depois.',
+      'Estrutura obrigatoria do JSON:',
+      '{',
+      '  "cabecalho": { "condominio": string, "periodo": string, "dataApresentacao": string },',
+      '  "blocosTemporais": [ { "rotulo": string, "inicio": string, "fim": string } ],',
+      '  "despesasPorCategoria": [ { "categoria": string, "valor": number, "percentual": number, "granularidade": string, "distribuicaoTemporal": array ou null } ],',
+      '  "despesas": { "total": number, "distribuicaoTemporalTotal": array ou null, "granularidade": string },',
+      '  "receitas": { "total": number, "distribuicaoTemporalTotal": array ou null, "granularidade": string, "porCategoria": [ { "categoria": string, "valor": number, "granularidade": string, "distribuicaoTemporal": array ou null } ] },',
+      '  "saldo": { "inicial": number, "final": number, "movimentacao": number },',
+      '  "saldoMensal": array ou null,',
+      '  "observacoes": [ string ],',
+      '  "slidesSugeridos": [ { "titulo": string, "tipo": string, "conteudo": string } ]',
+      '}',
+      'Regras de granularidade e distribuicao temporal:',
+      'O campo granularidade deve ser uma string com valor mensal, trimestral ou anual indicando o nivel de detalhe que foi possivel extrair do PDF para aquele bloco ou categoria.',
+      'O campo distribuicaoTemporal de cada categoria deve ser array de 12 numeros (Jan a Dez) quando granularidade for mensal, array de 4 numeros (T1 a T4) quando trimestral, e null quando anual.',
+      'O campo distribuicaoTemporalTotal de receitas e de despesas segue a mesma logica (12 numeros, 4 numeros ou null) e representa o total do bloco mes a mes ou trimestre a trimestre.',
+      'O campo saldoMensal deve ser array de 13 numeros (saldo inicial seguido pelos 12 fechamentos mensais) quando possivel, array de 5 numeros (saldo inicial seguido pelos 4 fechamentos trimestrais) caso so haja dado trimestral, e null caso nao seja possivel nem mensal nem trimestral.',
+      'Em blocosTemporais mantenha apenas rotulo, inicio e fim, sem campos adicionais.',
+      'Prefira sempre a extracao mensal quando o PDF tiver os dados. Caia para trimestral somente se nao houver dado mensal, e use anual somente se nao houver nem mensal nem trimestral.',
+      'Nunca invente valores. Se o PDF nao trouxer detalhamento mensal, devolva granularidade trimestral ou anual com distribuicaoTemporal preenchido conforme possivel ou null. Nunca divida o total por 12 e finja que e mensal.',
+      'Use numeros decimais com ponto (nunca virgula) e datas em formato ISO 8601.',
+      'Se algum campo nao puder ser extraido com seguranca, devolva null nele em vez de inventar.'
+    ].join('\n');
 
-// ============================================================
-// DEMANDAS DE CLIENTE: Caixa de Entrada (Etapa 1)
-// ============================================================
-let dcDemandasPreview = [];
-// Preserva o texto do textarea quando o usuário troca de aba e volta pra Caixa de Entrada
-let dcTextoBrutoTemp = '';
+    var contextoUsuario = [];
+    contextoUsuario.push({
+      type: 'text',
+      text:
+        'Condominio: ' + (prestacaoState.condNome || 'nao informado') + '\n' +
+        'Periodo: ' + (prestacaoState.periodo || 'nao informado') + '\n' +
+        'Data da apresentacao: ' + (prestacaoState.dataApresentacao || 'nao informada') + '\n' +
+        'Observacoes adicionais: ' + (prestacaoState.observacoes || 'nenhuma') + '\n\n' +
+        'A seguir vao os arquivos da prestacao de contas. Extraia o JSON conforme as instrucoes do system prompt.'
+    });
+    for (var j = 0; j < blocos.length; j++) contextoUsuario.push(blocos[j]);
 
+    var payload = {
+      model: 'claude-sonnet-4-5-20250929',
+      max_tokens: 16000,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: contextoUsuario }]
+    };
 
-async function dcProcessarTextoIA() {
-  const texto = (document.getElementById('dc-texto-bruto').value || '').trim();
-  // Usa o condomínio ativo global em vez do select removido
-  const condId = state.config && state.config.condId;
-  if (!condId) { toast('Selecione um condomínio ativo no Dashboard', 'warn'); return; }
-  if (!texto)  { toast('Cole o texto das demandas primeiro', 'warn'); return; }
-
-  const btn = document.getElementById('dc-btn-processar');
-  const labelOrig = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '<div class="spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px"></div> Processando...';
-
-  try {
-    const system = 'Você extrai demandas de gestão condominial a partir de texto solto em português brasileiro. Retorne APENAS um JSON array válido, sem markdown, sem comentários, sem texto adicional. Cada item segue o schema: {"titulo": string curto, "prio": "Alta"|"Média"|"Baixa", "sit": string descrevendo a situação atual, "acao": string com a próxima ação, "resp": string com responsável (ou "A definir"), "prazo": "YYYY-MM-DD" ou "A definir"}. Separe demandas distintas em itens separados. Se não houver demandas claras, retorne [].';
-
-    const resp = await fetch('/api/claude/messages', {
+    var resp = await fetch('/api/claude/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 2000,
-        system,
-        messages: [{ role: 'user', content: texto }]
-      })
+      body: JSON.stringify(payload)
     });
-
     if (!resp.ok) {
-      const err = await resp.text();
-      console.error('[dc] /api/claude/messages falhou:', resp.status, err);
-      toast('Erro do proxy Claude (' + resp.status + '). Veja console.', 'err');
-      return;
+      var erroTxt = await resp.text();
+      throw new Error('Falha na API (' + resp.status + '): ' + erroTxt.slice(0, 200));
     }
+    var data = await resp.json();
+    var primeiroBloco = (data && Array.isArray(data.content))
+      ? data.content.find(function(b) { return b && b.type === 'text'; })
+      : null;
+    var textoResposta = primeiroBloco && primeiroBloco.text ? primeiroBloco.text : '';
+    if (!textoResposta) throw new Error('Resposta da IA sem bloco de texto.');
 
-    const data = await resp.json();
-    const raw = (data.content?.[0]?.text || '').trim();
-    let arr = [];
-    try { arr = JSON.parse(raw); }
-    catch(_) {
-      // Parse defensivo: extrai primeiro array JSON do texto (caso venha embrulhado)
-      const m = raw.match(/\[[\s\S]*\]/);
-      if (m) { try { arr = JSON.parse(m[0]); } catch(__) {} }
+    // Extracao do JSON: tenta cercas ```json primeiro, depois cercas genericas, depois parse direto.
+    var jsonStr = '';
+    var matchJson = textoResposta.match(/```json\s*([\s\S]*?)```/i);
+    if (matchJson && matchJson[1]) {
+      jsonStr = matchJson[1].trim();
+    } else {
+      var matchGen = textoResposta.match(/```\s*([\s\S]*?)```/);
+      jsonStr = matchGen && matchGen[1] ? matchGen[1].trim() : textoResposta.trim();
     }
-
-    if (!Array.isArray(arr) || arr.length === 0) {
-      console.warn('[dc] resposta bruta sem array:', raw);
-      toast('Nenhuma demanda identificada no texto', 'warn');
-      return;
+    var dados;
+    try {
+      dados = JSON.parse(jsonStr);
+    } catch (e) {
+      console.error('[prestacao] resposta bruta nao parseavel:', textoResposta);
+      throw new Error('JSON invalido na resposta da IA.');
     }
+    prestacaoState.dadosExtraidos = dados;
+    console.log('[prestacao] dados extraidos:', dados);
 
-    dcDemandasPreview = arr.map(d => ({
-      titulo: (d && d.titulo) || '',
-      prio:   ['Alta','Média','Baixa'].includes(d && d.prio) ? d.prio : 'Média',
-      sit:    (d && d.sit)   || '',
-      acao:   (d && d.acao)  || '',
-      resp:   (d && d.resp)  || 'A definir',
-      prazo:  (d && typeof d.prazo === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d.prazo)) ? d.prazo : ''
-    }));
-    dcRenderizarPreview(dcDemandasPreview);
-  } catch(e) {
-    console.error('[dc] erro no processamento:', e);
-    toast('Erro ao processar: ' + e.message, 'err');
-  } finally {
     btn.disabled = false;
-    btn.innerHTML = labelOrig;
+    btn.textContent = 'Dados extraidos. Gerar pptx';
+    btn.onclick = prestacaoGerarPptx;
+    toast('Extracao concluida. Veja prestacaoState.dadosExtraidos no console.', 'ok');
+  } catch (err) {
+    console.error('[prestacao] erro ao gerar:', err);
+    btn.disabled = false;
+    btn.textContent = textoOriginal || 'Gerar prestacao de contas';
+    if (onclickOriginal) btn.onclick = onclickOriginal;
+    toast('Erro: ' + (err && err.message ? err.message : String(err)), 'err');
   }
 }
 
-function dcRenderizarPreview(demandas) {
-  const cont  = document.getElementById('dc-extraidas-container');
-  const list  = document.getElementById('dc-extraidas-list');
-  const count = document.getElementById('dc-extraidas-count');
-  count.textContent = demandas.length + ' ite' + (demandas.length === 1 ? 'm' : 'ns');
-  list.innerHTML = demandas.map((d, i) => `
-    <div class="card" style="padding:16px">
-      <div style="display:grid;grid-template-columns:1fr 150px;gap:12px;margin-bottom:10px">
-        <div class="form-group" style="margin:0">
-          <label>Título</label>
-          <input type="text" value="${dcEscape(d.titulo)}" oninput="dcDemandasPreview[${i}].titulo=this.value">
-        </div>
-        <div class="form-group" style="margin:0">
-          <label>Prioridade</label>
-          <select oninput="dcDemandasPreview[${i}].prio=this.value">
-            <option${d.prio==='Alta' ?' selected':''}>Alta</option>
-            <option${d.prio==='Média'?' selected':''}>Média</option>
-            <option${d.prio==='Baixa'?' selected':''}>Baixa</option>
-          </select>
-        </div>
+// Fecha o dropdown de condominios quando o usuario clica fora do Card 1.
+document.addEventListener('click', function(ev) {
+  var dd = document.getElementById('prest-cond-dropdown');
+  if (!dd || !dd.classList.contains('open')) return;
+  var inp = document.getElementById('prest-cond-search');
+  if (ev.target === inp) return;
+  if (dd.contains(ev.target)) return;
+  dd.classList.remove('open');
+});
+
+</script>
+
+<div id="prestacao-modal" class="prestacao-modal" style="display:none">
+  <div class="prestacao-modal-overlay" onclick="prestacaoFecharModal()"></div>
+  <div class="prestacao-modal-conteudo">
+    <header class="prestacao-modal-header">
+      <h2>Revisar dados antes de gerar</h2>
+      <button class="prestacao-modal-fechar" onclick="prestacaoFecharModal()" aria-label="Fechar">x</button>
+    </header>
+    <div id="prestacao-modal-validacao" class="prestacao-modal-validacao"></div>
+    <div class="prestacao-modal-corpo">
+      <div class="prestacao-modal-coluna-edicao">
+        <details open><summary>Cabecalho</summary><div id="prestacao-form-cabecalho"></div></details>
+        <details open><summary>Saldo</summary><div id="prestacao-form-saldo"></div></details>
+        <details><summary>Receitas</summary><div id="prestacao-form-receitas"></div></details>
+        <details><summary>Despesas por categoria</summary><div id="prestacao-form-despesas"></div></details>
+        <details><summary>Observacoes</summary><div id="prestacao-form-observacoes"></div></details>
+        <details><summary>Ver JSON completo</summary><textarea id="prestacao-json-raw" readonly rows="20" style="width:100%;font-family:monospace;font-size:11px"></textarea></details>
       </div>
-      <div class="form-group" style="margin-bottom:10px">
-        <label>Situação atual</label>
-        <textarea rows="2" style="width:100%;font-family:var(--mono);font-size:12px;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);resize:vertical" oninput="dcDemandasPreview[${i}].sit=this.value">${dcEscape(d.sit)}</textarea>
-      </div>
-      <div class="form-group" style="margin-bottom:10px">
-        <label>Próxima ação</label>
-        <textarea rows="2" style="width:100%;font-family:var(--mono);font-size:12px;padding:10px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);resize:vertical" oninput="dcDemandasPreview[${i}].acao=this.value">${dcEscape(d.acao)}</textarea>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 180px;gap:12px">
-        <div class="form-group" style="margin:0">
-          <label>Responsável</label>
-          <input type="text" value="${dcEscape(d.resp)}" oninput="dcDemandasPreview[${i}].resp=this.value">
-        </div>
-        <div class="form-group" style="margin:0">
-          <label>Prazo</label>
-          <input type="date" value="${d.prazo || ''}" oninput="dcDemandasPreview[${i}].prazo=this.value">
-        </div>
+      <div class="prestacao-modal-coluna-preview">
+        <div class="prestacao-preview-titulo">Preview dos slides</div>
+        <div id="prestacao-preview-lista" class="prestacao-preview-lista"></div>
       </div>
     </div>
-  `).join('');
-  cont.style.display = 'block';
-}
-
-function dcEscape(s) {
-  return String(s == null ? '' : s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function dcDescartarPreview() {
-  dcDemandasPreview = [];
-  document.getElementById('dc-extraidas-container').style.display = 'none';
-}
-
-async function dcSalvarDemandas() {
-  // Usa o condomínio ativo global em vez do select removido
-  const condId     = state.config && state.config.condId;
-  const textoBruto = (document.getElementById('dc-texto-bruto').value || '').trim();
-  if (!condId) { toast('Selecione um condomínio ativo no Dashboard', 'warn'); return; }
-  if (!dcDemandasPreview.length) { toast('Nada para salvar', 'warn'); return; }
-
-  // Próximo num: max(num)+1 do condomínio. Inclui prioridades e demandas (mesma tabela).
-  let baseNum = 0;
-  try {
-    const existentes = await supaFetch('demandas?condominio_id=eq.' + encodeURIComponent(condId) + '&select=num&order=num.desc&limit=1');
-    if (existentes && existentes.length) baseNum = Number(existentes[0].num) || 0;
-  } catch(_) {}
-
-  const agora = new Date().toISOString();
-  // Sem `return=minimal`: supaFetch devolve a linha inserida (truthy) em sucesso ou null em erro.
-  // Isso permite distinguir falha por item em vez de sempre mostrar toast verde.
-  let ok = 0, fail = 0;
-  for (let i = 0; i < dcDemandasPreview.length; i++) {
-    const d = dcDemandasPreview[i];
-    baseNum += 1;
-    const payload = {
-      id: 'dc_' + Date.now() + '_' + i,
-      num: baseNum,
-      prio: d.prio,
-      status: 'Pendente',
-      titulo: d.titulo,
-      sit: d.sit,
-      acao: d.acao,
-      resp: d.resp,
-      prazo: d.prazo || 'A definir',
-      tipo: 'demanda',
-      condominio_id: condId,
-      fonte: 'ia-caixa-entrada',
-      origem_texto_bruto: textoBruto,
-      processado_em: agora
-    };
-    const r = await supaFetch('demandas', { method: 'POST', body: JSON.stringify(payload) });
-    if (r) ok++; else fail++;
-  }
-  if (fail === 0) {
-    toast(ok + ' demanda(s) salva(s) com sucesso', 'ok');
-    dcDescartarPreview();
-    document.getElementById('dc-texto-bruto').value = '';
-  } else if (ok === 0) {
-    toast('Erro ao salvar demandas. Veja o console (provável migração pendente).', 'err');
-  } else {
-    toast(ok + ' salva(s), ' + fail + ' falharam. Veja o console.', 'warn');
-  }
-}
-
-// Auto-seleciona condomínio na sidebar quando o painel Condomínios é aberto
-const _origShowPanel = showPanel;
-showPanel = function(name) {
-  _origShowPanel(name);
-  if (name === 'condominios') {
-    cpRenderSidebar();
-    if (!cpCondAtivo && cpCondominios.length) cpSelecionarCond(cpCondominios[0].id);
-  }
-};
-</script>
-<script>
-function cpGetCondominioAtivo() {
-  if (cpCondAtivo) return cpCondominios.find(x => x.id === cpCondAtivo) || cpCondominios[0];
-  return cpCondominios[0] || null;
-}
-
-function statusCor(s) {
-  if (!s) return '#888';
-  s = s.toLowerCase();
-  if (s.includes('concluí') || s.includes('concluido')) return '#22c55e';
-  if (s.includes('andamento')) return '#3b9ac7';
-  if (s.includes('aguardando')) return '#f59e0b';
-  if (s.includes('sistema')) return '#a855f7';
-  if (s.includes('pendente')) return '#ef4444';
-  return '#888';
-}
-
-function prioCor(p) {
-  if (!p) return '#888';
-  p = p.toLowerCase();
-  if (p === 'alta') return '#ef4444';
-  if (p === 'média' || p === 'media') return '#f59e0b';
-  if (p === 'baixa') return '#22c55e';
-  return '#888';
-}
-
-function gerarRelatorioSindico() {
-  const c = cpGetCondominioAtivo();
-  if (!c) { alert('Nenhum condomínio selecionado.'); return; }
-  const hoje = new Date().toLocaleDateString('pt-BR');
-
-  // Deduplica: usa só demandas, remove duplicatas por título
-  const todasRaw = [...(c.demandas||[]), ...(c.prioridades||[])];
-  const vistas = new Set();
-  const todas = todasRaw.filter(d => {
-    if (vistas.has(d.titulo)) return false;
-    vistas.add(d.titulo);
-    return true;
-  });
-
-  const conc = todas.filter(d => d.status === 'Concluído').length;
-  const pend = todas.filter(d => d.status === 'Pendente').length;
-  const and  = todas.filter(d => d.status === 'Em andamento').length;
-  const ag   = todas.filter(d => (d.status||'').includes('Aguardando')).length;
-  const total = todas.length;
-  const prog = total ? Math.round((conc/total)*100) : 0;
-
-  const itensConc = todas.filter(d => d.status === 'Concluído');
-  const itensAnd  = todas.filter(d => d.status === 'Em andamento' || (d.status||'').includes('Aguardando'));
-  const itensPend = todas.filter(d => d.status === 'Pendente' || d.status === 'Aguardando sistema');
-
-  const laudosHTML = (c.laudos||[]).map(l => `
-    <tr>
-      <td>${l.nome}</td>
-      <td style="color:${l.status==='Concluído'?'#22c55e':'#f59e0b'};font-weight:600">${l.status}</td>
-      <td>${l.tecnico||'—'}</td>
-      <td>${l.data_laudo||l.dataLaudo||'—'}</td>
-      <td style="color:${l.enviado?'#22c55e':'#f59e0b'}">${l.enviado?'✓ Enviado':'Pendente'}</td>
-    </tr>`).join('');
-
-  const rowsConc = itensConc.map(d=>{
-    const fotos = (d.fotoAntes || d.fotoDepois) ? `
-      <tr><td colspan="3" style="padding:8px 10px">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:500px">
-          ${d.fotoAntes ? `<div><div style="font-size:10px;color:#888;margin-bottom:4px;font-weight:600">ANTES</div><img src="${d.fotoAntes}" style="width:100%;max-height:120px;object-fit:cover;border-radius:6px;border:1px solid #e5e7eb"></div>` : ''}
-          ${d.fotoDepois ? `<div><div style="font-size:10px;color:#888;margin-bottom:4px;font-weight:600">DEPOIS</div><img src="${d.fotoDepois}" style="width:100%;max-height:120px;object-fit:cover;border-radius:6px;border:1px solid #e5e7eb"></div>` : ''}
-        </div>
-      </td></tr>` : '';
-    return `<tr><td>${d.titulo}</td><td style="color:#22c55e;font-weight:600">✓ Concluído</td><td>${d.prazo||'—'}</td></tr>${fotos}`;
-  }).join('');
-  const rowsAnd  = itensAnd.map(d=>`<tr><td>${d.titulo}</td><td style="color:#3b9ac7;font-weight:600">${d.status}</td><td>${d.prazo||'A definir'}</td></tr>`).join('');
-  const rowsPend = itensPend.map(d=>`<tr><td>${d.titulo}</td><td style="color:#ef4444;font-weight:600">Pendente</td><td>${d.prazo||'A definir'}</td></tr>`).join('');
-
-  const hist = (c.historico||[]).slice(0,6).map(h=>`<tr><td style="white-space:nowrap">${h.data}</td><td>${h.txt}</td></tr>`).join('');
-
-  const w = window.open('','_blank');
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Relatório — ${c.nome}</title>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:Arial,sans-serif;font-size:13px;color:#1a1a1a;background:#fff;padding:32px}
-    h1{font-size:22px;color:#1F4E79;margin-bottom:4px}
-    .sub{color:#555;font-size:12px;margin-bottom:24px}
-    .cards{display:flex;gap:12px;margin-bottom:24px;flex-wrap:wrap}
-    .card{border-radius:8px;padding:16px 20px;min-width:120px;flex:1;text-align:center}
-    .card .num{font-size:28px;font-weight:700}
-    .card .lbl{font-size:11px;color:#555;margin-top:2px}
-    .card.verd{background:#f0fdf4;border:1px solid #bbf7d0}.card.verd .num{color:#16a34a}
-    .card.azul{background:#eff6ff;border:1px solid #bfdbfe}.card.azul .num{color:#2563eb}
-    .card.amar{background:#fffbeb;border:1px solid #fde68a}.card.amar .num{color:#d97706}
-    .card.verm{background:#fef2f2;border:1px solid #fecaca}.card.verm .num{color:#dc2626}
-    .prog-bar{background:#e5e7eb;border-radius:99px;height:10px;margin-bottom:24px}
-    .prog-fill{background:#1F4E79;height:10px;border-radius:99px}
-    h2{font-size:14px;color:#1F4E79;font-weight:700;margin:20px 0 8px;border-bottom:2px solid #e5e7eb;padding-bottom:4px}
-    table{width:100%;border-collapse:collapse;margin-bottom:16px}
-    th{background:#1F4E79;color:#fff;padding:8px 10px;text-align:left;font-size:12px}
-    td{padding:7px 10px;border-bottom:1px solid #f1f5f9;font-size:12px}
-    tr:hover td{background:#f8fafc}
-    .footer{margin-top:32px;text-align:center;font-size:11px;color:#888;border-top:1px solid #e5e7eb;padding-top:16px}
-    @media print{body{padding:16px}.card{min-width:100px}}
-  </style></head><body>
-  <h1>Relatório de Acompanhamento</h1>
-  <div class="sub">${c.nome} &nbsp;|&nbsp; Síndico: ${c.sindico} &nbsp;|&nbsp; Emitido em: ${hoje} &nbsp;|&nbsp; Virtual Service</div>
-
-  <div class="cards">
-    <div class="card verd"><div class="num">${conc}</div><div class="lbl">Concluídos</div></div>
-    <div class="card azul"><div class="num">${and + ag}</div><div class="lbl">Em andamento</div></div>
-    <div class="card verm"><div class="num">${pend}</div><div class="lbl">Pendentes</div></div>
-    <div class="card amar"><div class="num">${total}</div><div class="lbl">Total de itens</div></div>
+    <footer class="prestacao-modal-footer">
+      <button class="btn-secundario" onclick="prestacaoFecharModal()">Cancelar</button>
+      <button id="prestacao-btn-urgencia" class="btn-urgencia" onclick="prestacaoGerarMesmoAssim()" style="display:none">Gerar mesmo com diferencas grandes</button>
+      <button id="prestacao-btn-gerar" class="btn-primario" onclick="prestacaoConfirmarGeracao()">Gerar pptx</button>
+    </footer>
   </div>
-
-  <div style="margin-bottom:6px;font-size:12px;color:#555">Progresso geral do plano de ação: <strong>${prog}%</strong></div>
-  <div class="prog-bar"><div class="prog-fill" style="width:${prog}%"></div></div>
-
-  ${itensConc.length ? `<h2>✓ Itens Concluídos</h2><table><thead><tr><th>Item</th><th>Status</th><th>Data</th></tr></thead><tbody>${rowsConc}</tbody></table>`:''}
-  ${itensAnd.length  ? `<h2>⏳ Em Andamento / Aguardando Retorno</h2><table><thead><tr><th>Item</th><th>Status</th><th>Prazo</th></tr></thead><tbody>${rowsAnd}</tbody></table>`:''}
-  ${itensPend.length ? `<h2>📋 Itens Pendentes</h2><table><thead><tr><th>Item</th><th>Status</th><th>Prazo</th></tr></thead><tbody>${rowsPend}</tbody></table>`:''}
-
-  <h2>📄 Laudos Técnicos</h2>
-  <table><thead><tr><th>Laudo</th><th>Status</th><th>Técnico</th><th>Data</th><th>Envio</th></tr></thead><tbody>${laudosHTML}</tbody></table>
-
-  <h2>📅 Histórico Recente</h2>
-  <table><thead><tr><th>Data</th><th>Atividade</th></tr></thead><tbody>${hist}</tbody></table>
-
-  <div class="footer">Virtual Service &nbsp;·&nbsp; Gestão de Condomínios &nbsp;·&nbsp; ${hoje}<br>Documento gerado automaticamente pelo Service Hub</div>
-  <script>window.onload=()=>window.print()<\/script>
-  </body></html>`);
-  w.document.close();
-}
-
-function gerarRelatorioInterno() {
-  const c = cpGetCondominioAtivo();
-  if (!c) { alert('Nenhum condomínio selecionado.'); return; }
-  const hoje = new Date().toLocaleDateString('pt-BR');
-
-  // Deduplica por título
-  const todasRaw = [...(c.demandas||[]), ...(c.prioridades||[])];
-  const vistas = new Set();
-  const todas = todasRaw.filter(d => {
-    if (vistas.has(d.titulo)) return false;
-    vistas.add(d.titulo);
-    return true;
-  });
-
-  const total = todas.length;
-  const conc = todas.filter(d=>d.status==='Concluído').length;
-  const prog = total ? Math.round((conc/total)*100) : 0;
-
-  const rows = todas.map(d=>`
-    <tr>
-      <td>${d.num||''}</td>
-      <td><strong>${d.titulo}</strong><br><span style="color:#888;font-size:11px">${d.sit||''}</span></td>
-      <td style="color:${prioCor(d.prio)};font-weight:600">${d.prio||'—'}</td>
-      <td style="color:${statusCor(d.status)};font-weight:600">${d.status||'—'}</td>
-      <td>${d.resp||'—'}</td>
-      <td>${d.prazo||'A definir'}</td>
-      <td style="color:#555;font-size:11px">${d.acao||'—'}</td>
-    </tr>`).join('');
-
-  const laudosHTML = (c.laudos||[]).map(l=>`
-    <tr>
-      <td>${l.nome}</td>
-      <td style="color:${l.status==='Concluído'?'#22c55e':'#f59e0b'};font-weight:600">${l.status}</td>
-      <td>${l.tecnico||'—'}</td>
-      <td>${l.data_laudo||l.dataLaudo||'—'}</td>
-      <td style="color:${l.enviado?'#22c55e':'#ef4444'}">${l.enviado?'✓ Enviado':'❌ Não enviado'}</td>
-    </tr>`).join('');
-
-  const hist = (c.historico||[]).map(h=>`<tr><td style="white-space:nowrap">${h.data}</td><td>${h.txt}</td></tr>`).join('');
-
-  const pend_cobrar = todas.filter(d=>d.status==='Pendente'&&d.resp&&d.resp.toLowerCase().includes('matheus'));
-  const cobrarHTML = pend_cobrar.length ? pend_cobrar.map(d=>`<li style="margin-bottom:4px">⚠️ <strong>${d.titulo}</strong> — ${d.acao||''}</li>`).join('') : '<li>Nenhum item pendente direto de Matheus.</li>';
-
-  const w = window.open('','_blank');
-  w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Relatório Interno — ${c.nome}</title>
-  <style>
-    *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:Arial,sans-serif;font-size:12px;color:#1a1a1a;background:#fff;padding:28px}
-    h1{font-size:20px;color:#3A3A3A;margin-bottom:2px}
-    .badge-interno{display:inline-block;background:#ef4444;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;margin-left:8px;vertical-align:middle}
-    .sub{color:#555;font-size:11px;margin-bottom:20px}
-    .alerta{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:14px 18px;margin-bottom:20px}
-    .alerta h3{color:#dc2626;font-size:13px;margin-bottom:8px}
-    .alerta ul{padding-left:16px;color:#1a1a1a}
-    h2{font-size:13px;color:#3A3A3A;font-weight:700;margin:18px 0 6px;border-bottom:2px solid #e5e7eb;padding-bottom:3px}
-    table{width:100%;border-collapse:collapse;margin-bottom:14px}
-    th{background:#3A3A3A;color:#fff;padding:7px 8px;text-align:left;font-size:11px}
-    td{padding:6px 8px;border-bottom:1px solid #f1f5f9;font-size:11px;vertical-align:top}
-    tr:hover td{background:#f8fafc}
-    .prog-bar{background:#e5e7eb;border-radius:99px;height:8px;margin:8px 0 18px}
-    .prog-fill{background:#3A3A3A;height:8px;border-radius:99px}
-    .footer{margin-top:24px;text-align:center;font-size:10px;color:#888;border-top:1px solid #e5e7eb;padding-top:12px}
-    @media print{body{padding:12px}}
-  </style></head><body>
-  <h1>Relatório Interno — Uso Restrito <span class="badge-interno">INTERNO</span></h1>
-  <div class="sub">${c.nome} &nbsp;|&nbsp; Síndico: ${c.sindico} &nbsp;|&nbsp; Emitido em: ${hoje} &nbsp;|&nbsp; Virtual Service</div>
-
-  <div class="alerta">
-    <h3>⚠️ Itens que dependem de ação direta de Matheus</h3>
-    <ul>${cobrarHTML}</ul>
-  </div>
-
-  <div style="font-size:11px;color:#555;margin-bottom:4px">Progresso geral: <strong>${prog}% (${conc}/${total} concluídos)</strong></div>
-  <div class="prog-bar"><div class="prog-fill" style="width:${prog}%"></div></div>
-
-  <h2>📋 Todas as Demandas — Detalhamento Completo</h2>
-  <table>
-    <thead><tr><th>#</th><th>Demanda / Situação</th><th>Prioridade</th><th>Status</th><th>Responsável</th><th>Prazo</th><th>Próxima ação</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
-
-  <h2>📄 Laudos Técnicos</h2>
-  <table><thead><tr><th>Laudo</th><th>Status</th><th>Técnico</th><th>Data</th><th>Envio ao Síndico</th></tr></thead><tbody>${laudosHTML}</tbody></table>
-
-  <h2>📅 Histórico Completo</h2>
-  <table><thead><tr><th>Data</th><th>Atividade</th></tr></thead><tbody>${hist}</tbody></table>
-
-  <div class="footer">USO INTERNO — Virtual Service &nbsp;·&nbsp; Service Hub &nbsp;·&nbsp; ${hoje}<br>NÃO COMPARTILHAR COM O SÍNDICO OU TERCEIROS</div>
-  <script>window.onload=()=>window.print()<\/script>
-  </body></html>`);
-  w.document.close();
-}
-</script>
+</div>
 </body>
 </html>

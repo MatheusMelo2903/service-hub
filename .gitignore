@@ -18,3 +18,9 @@ backups/
 # Editor
 .vscode/
 .idea/
+
+# CLI Supabase local
+supabase/
+
+# Variaveis de ambiente
+.env*
