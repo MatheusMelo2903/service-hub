@@ -235,6 +235,15 @@ html, body {
 </head>
 <body>
 
+<!-- DEBUG PANEL (visível só quando há erro) -->
+<div id="debug" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:#7f1d1d;color:#fff;font-family:monospace;font-size:11px;padding:10px 14px;max-height:60vh;overflow:auto;white-space:pre-wrap;word-break:break-word;border-bottom:2px solid #fca5a5;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+    <strong style="font-size:12px;">⚠ DEBUG</strong>
+    <button onclick="document.getElementById('debug').style.display='none'" style="background:#fff;color:#7f1d1d;border:none;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;cursor:pointer;">x</button>
+  </div>
+  <div id="debug-content"></div>
+</div>
+
 <!-- LOADING -->
 <div id="loading">
   <div class="logo">Service<span>Hub</span></div>
@@ -347,18 +356,44 @@ const ICON  = { pendente:'○', em_andamento:'◑', concluido:'●' };
 
 let sb, user = null, data = {}, filter = 'all', ch = null;
 
+function dbg(msg, obj) {
+  const el = document.getElementById('debug');
+  const box = document.getElementById('debug-content');
+  if (!el || !box) return;
+  const ts = new Date().toLocaleTimeString('pt-BR');
+  let line = `[${ts}] ${msg}`;
+  if (obj !== undefined) {
+    try { line += '\n' + JSON.stringify(obj, Object.getOwnPropertyNames(obj || {}), 2); }
+    catch { line += '\n' + String(obj); }
+  }
+  box.textContent += (box.textContent ? '\n\n' : '') + line;
+  el.style.display = 'block';
+  console.error(msg, obj);
+}
+
 async function boot() {
-  sb = window.supabase.createClient(URL, KEY);
-  const saved = localStorage.getItem('sh_user');
-  if (!saved) { hide('loading'); show('user-modal'); return; }
-  user = JSON.parse(saved);
-  updateChip();
-  await load();
+  try {
+    sb = window.supabase.createClient(URL, KEY, {
+      global: { headers: { Authorization: 'Bearer ' + KEY, apikey: KEY } }
+    });
+    const saved = localStorage.getItem('sh_user');
+    if (!saved) { hide('loading'); show('user-modal'); return; }
+    user = JSON.parse(saved);
+    updateChip();
+    await load();
+  } catch (e) {
+    dbg('boot() falhou', e);
+    hide('loading');
+    toast('Falha na inicialização.', 4000);
+    setTimeout(() => { show('user-modal'); }, 500);
+  }
 }
 
 async function load() {
   try {
-    const { data: rows, error } = await sb.from(TBL).select('*');
+    dbg('load() iniciando · TBL=' + TBL);
+    const { data: rows, error, status, statusText } = await sb.from(TBL).select('id');
+    dbg('load() select retornou · status=' + status + ' ' + (statusText || '') + ' · rows=' + (rows ? rows.length : 'null'));
     if (error) throw error;
     data = {};
     rows.forEach(r => { data[r.id] = r; });
@@ -367,7 +402,7 @@ async function load() {
     subscribe();
     hide('loading'); hide('user-modal'); show('app');
   } catch(e) {
-    console.error(e);
+    dbg('load() ERRO', e);
     hide('loading');
     toast('Erro ao conectar. Verifique a internet.', 4000);
     setTimeout(() => { show('user-modal'); }, 500);
@@ -382,8 +417,10 @@ async function seed() {
     if (!data[t.id]) rows.push({ id:t.id, fase:p.id, etapa:i+1, titulo:t.titulo, responsavel:t.resp, status:'pendente', atualizado_por:null, atualizado_em:new Date().toISOString() });
   }));
   if (rows.length) {
+    dbg('seed() upsert · linhas=' + rows.length);
     const { error } = await sb.from(TBL).upsert(rows);
-    if (!error) rows.forEach(r => { data[r.id] = r; });
+    if (error) dbg('seed() ERRO upsert', error);
+    else rows.forEach(r => { data[r.id] = r; });
   }
 }
 
