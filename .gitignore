@@ -24,3 +24,12 @@ supabase/
 
 # Variaveis de ambiente
 .env*
+
+# Claude Code direcional (privado)
+.claude/settings.local.json
+.claude/SESSION_LOG.md
+.claude/logs/
+.claude/worktrees/
+docs/handoffs/*
+!docs/handoffs/.gitkeep
+*.local

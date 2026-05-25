@@ -98,3 +98,38 @@ Em 2026-04-30 a entrega de Inquilino e Dependente deixou public/index.html com 5
 ## Quando estiver em dúvida
 
 Perguntar ao Matheus em português direto. Uma ou duas perguntas, as mais críticas. Sem flood de perguntas.
+
+---
+
+## Pasta direcional (adicionada 2026-05-25)
+
+Estrutura espelhada do MasterClinic (`clinicmanager-erp`). Sempre ler nesta ordem ao iniciar sessão:
+
+| Quando precisar de... | Ler |
+|---|---|
+| Sprint atual + log de atividade | `MISSION_CONTROL.md` |
+| Visão produto + DNA | `PANORAMA_ESTRATEGICO.md` |
+| Roadmap 14 dias | `PLANO_ATIVO.md` |
+| Stack, URLs, ENVs | `PROJECT_CONTEXT.md` |
+| Snapshot técnico | `AUDITORIA_PROJETO.md` |
+| Skills MC reaproveitáveis | `AUDITORIA_SKILLS_MC_PARA_SH.md` |
+| Setup dev local | `docs/02-PLANO-LOCAL.md` |
+| Runbook deploy | `docs/03-RUNBOOK-DEPLOY.md` |
+| Última sessão (continuação) | `.claude/CONTINUACAO.md` |
+
+### Subagentes (`.claude/agents/`)
+- `architect` — planeja antes de implementar (Read/Glob/Grep only)
+- `implementer` — executa o plano
+- `reviewer` — revisão de qualidade
+- `security-auditor` — auditoria de tokens + secrets
+- `validator` — build (mudanças puras de lib/lógica)
+- `validator-v2` — build + visual MCP (mudanças que afetam UI/UX)
+- `documenter` — atualiza docs/mission control
+
+### Skills locais (`.claude/skills/`)
+- `frontend-design/` — UI/CSS distintivo (Anthropic oficial)
+- `ops/` — rotação de secrets Superlógica + smoke tests
+- `service-hub/` — master skill do Hub (do Matheus + upgrade integracoes)
+
+### Scripts
+- `scripts/rotate-secrets-sh.sh` — rotação automatizada `INTERNAL_API_SECRET`
