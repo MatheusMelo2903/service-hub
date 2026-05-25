@@ -393,6 +393,7 @@ function render() {
   updateOverall();
   const phases = filter === 'all' ? PHASES : PHASES.filter(p => p.id === filter);
   document.getElementById('content').innerHTML = phases.map(p => phaseHTML(p)).join('');
+  console.log('render() executou, fases:', PHASES.length);
 }
 
 function phaseHTML(p) {
@@ -576,7 +577,11 @@ function ago(iso) {
   return new Date(iso).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
 }
 
-function show(id) { const el=document.getElementById(id); el.classList.remove('hidden'); el.style.display=''; }
+function show(id) {
+  const el = document.getElementById(id);
+  el.classList.remove('hidden');
+  el.style.display = 'block';
+}
 function hide(id) { document.getElementById(id).style.display='none'; }
 
 window.addEventListener('load', boot);
