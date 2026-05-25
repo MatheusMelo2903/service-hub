@@ -458,7 +458,10 @@ async function tap(id, e) {
   patchPhase(id);
 
   syncUI(true);
-  const { error } = await sb.from(TBL).upsert({ id, status:next, atualizado_por:who, atualizado_em:now });
+  // UPDATE em vez de UPSERT: a linha sempre existe (criada pelo seed),
+  // e UPSERT do PostgREST tenta INSERT antes do merge — falhava com 23502
+  // (fase é NOT NULL e não vem no payload do toggle).
+  const { error } = await sb.from(TBL).update({ status:next, atualizado_por:who, atualizado_em:now }).eq('id', id);
   syncUI(false);
 
   if (error) toast('Erro ao salvar :(');
