@@ -539,7 +539,10 @@ function setUser(key) {
   user = map[key];
   localStorage.setItem('sh_user', JSON.stringify(user));
   hide('user-modal'); updateChip();
-  if (document.getElementById('app').style.display === 'none') {
+  // `ch` só é setado depois que load() completa e subscribe() roda.
+  // Não dá pra checar #app.style.display porque display:none vem do CSS,
+  // não do inline style, então a comparação é sempre falsa no 1º acesso.
+  if (!ch) {
     show('loading'); load();
   }
 }
