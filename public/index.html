@@ -1389,11 +1389,11 @@
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px">
           <div class="form-group" style="margin:0">
             <label>Condomínio</label>
-            <input type="text" id="ata-cond" placeholder="Nome do condomínio">
+            <input type="text" id="ata-cond" placeholder="Nome do condomínio" autocomplete="off" name="ata-cond">
           </div>
           <div class="form-group" style="margin:0">
             <label>Data da Reunião</label>
-            <input type="text" id="ata-data" placeholder="DD/MM/AAAA">
+            <input type="text" id="ata-data" placeholder="DD/MM/AAAA" autocomplete="off" name="ata-data">
           </div>
           <div class="form-group" style="margin:0">
             <label>Tipo de Assembleia</label>
@@ -1408,11 +1408,11 @@
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
           <div class="form-group" style="margin:0">
             <label>Síndico</label>
-            <input type="text" id="ata-sindico" placeholder="Nome completo do síndico">
+            <input type="text" id="ata-sindico" placeholder="Nome completo do síndico" autocomplete="off" name="ata-sindico">
           </div>
           <div class="form-group" style="margin:0">
             <label>Local da Reunião</label>
-            <input type="text" id="ata-local" placeholder="ex: Salão de Festas">
+            <input type="text" id="ata-local" placeholder="ex: Salão de Festas" autocomplete="off" name="ata-local">
           </div>
         </div>
       </div>
@@ -1427,7 +1427,7 @@
         </div>
         <div id="pauta-list">
           <div class="pauta-item" style="flex-wrap:wrap;gap:6px;align-items:flex-start">
-            <input type="text" placeholder="ex: Aprovação do balancete financeiro" style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+            <input type="text" placeholder="ex: Aprovação do balancete financeiro" autocomplete="off" name="pauta-1-titulo" style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
             <label style="display:inline-flex;align-items:center;gap:5px;padding:8px 11px;background:var(--bg3);border:1px dashed var(--border2);border-radius:8px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--muted);white-space:nowrap;transition:all 0.15s" title="Anexar PDF com informações deste item">
               📎 PDF
               <input type="file" accept="application/pdf" style="display:none" onchange="anexarPdfPauta(this)">
@@ -3776,7 +3776,7 @@ function addPauta() {
   const div = document.createElement('div');
   div.className = 'pauta-item';
   div.style.cssText = 'flex-wrap:wrap;gap:6px;align-items:flex-start';
-  div.innerHTML = `<input type="text" placeholder="Item de pauta ${pautaCount}"
+  div.innerHTML = `<input type="text" placeholder="Item de pauta ${pautaCount}" autocomplete="off" name="pauta-${pautaCount}-titulo"
     style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
     <label style="display:inline-flex;align-items:center;gap:5px;padding:8px 11px;background:var(--bg3);border:1px dashed var(--border2);border-radius:8px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--muted);white-space:nowrap;transition:all 0.15s" title="Anexar PDF">
       📎 PDF
