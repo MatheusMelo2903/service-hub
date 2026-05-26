@@ -91,6 +91,11 @@
     window.AUTH_TOKEN = session ? session.access_token : null;
     window.AUTH_USER = user ? { id: user.id, email: user.email, user_metadata: user.user_metadata || {} } : null;
     window.AUTH_LEVEL = (user && user.user_metadata && user.user_metadata.access_level) || 'total';
+    // Atualiza label do botão Sair com email do user (se o botão existir)
+    if (user && user.email) {
+      const lbl = document.getElementById('logout-label');
+      if (lbl) lbl.textContent = 'Sair · ' + user.email.split('@')[0];
+    }
   }
 
   // ── 2. Bootstrap async ──────────────────────────────────────────────────

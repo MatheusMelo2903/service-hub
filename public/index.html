@@ -1007,6 +1007,9 @@
     <button class="config-btn" onclick="showPanel('configuracoes')">
       <span>⚙</span> Configurações
     </button>
+    <button class="config-btn" id="btn-logout" onclick="if(confirm('Sair?')) window.authLogout && window.authLogout()" style="margin-top:6px;">
+      <span>⎋</span> <span id="logout-label">Sair</span>
+    </button>
   </div>
 </aside>
 
@@ -1498,12 +1501,12 @@
           <span class="card-title">Participantes</span>
         </div>
         <textarea class="ata-field" id="ata-participantes" rows="4"
-          placeholder="Liste os participantes presentes (opcional — se não informar, o assistente vai extrair da transcrição)"></textarea>
+          placeholder="Liste os participantes presentes (opcional — se não informar, a Service Hub IA vai extrair da transcrição)"></textarea>
       </div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:20px">
         <button class="btn btn-ghost" onclick="limparAta()">✕ Limpar tudo</button>
-        <button class="btn btn-primary" id="btn-copiar-claude" onclick="copiarProClaude()">⎘ Copiar pro assistente</button>
+        <button class="btn btn-primary" id="btn-copiar-claude" onclick="copiarProClaude()">⎘ Copiar pro Service Hub IA</button>
       </div>
     </div>
 
@@ -3927,8 +3930,8 @@ ${trans}
 
   try {
     await navigator.clipboard.writeText(bloco);
-    toast('✓ Copiado! Cole no assistente pra gerar a ata em .docx', 'ok');
-    addHistorico('Ata copiada pro assistente: ' + cond + ' · ' + data);
+    toast('✓ Copiado! Cole no Service Hub IA pra gerar a ata em .docx', 'ok');
+    addHistorico('Ata copiada pro Service Hub IA: ' + cond + ' · ' + data);
   } catch(e) {
     // Fallback: textarea temporário
     const ta = document.createElement('textarea');
@@ -3938,8 +3941,8 @@ ${trans}
     ta.select();
     try {
       document.execCommand('copy');
-      toast('✓ Copiado! Cole no assistente pra gerar a ata em .docx', 'ok');
-      addHistorico('Ata copiada pro assistente: ' + cond + ' · ' + data);
+      toast('✓ Copiado! Cole no Service Hub IA pra gerar a ata em .docx', 'ok');
+      addHistorico('Ata copiada pro Service Hub IA: ' + cond + ' · ' + data);
     } catch(err) {
       toast('Erro ao copiar: ' + err.message, 'err');
     }
