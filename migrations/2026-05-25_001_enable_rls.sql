@@ -33,22 +33,21 @@ COMMENT ON POLICY "authenticated_full_access" ON condominios IS
   'Entrega 2 substituirá por policies por empresa/módulo.';
 
 -- ─────────────────────────────────────────────────────────────────────────
--- TABELA: hub_progresso
+-- TABELA: hub_progresso — DELIBERADAMENTE FORA DA ENTREGA 1
 -- Usada por: public/tracker.html (linha 308 TBL constant; SELECT + UPSERT)
--- Schema: id (text PK), fase (int), etapa (int), titulo, responsavel,
---         status, atualizado_por, atualizado_em
+-- Razão: tracker.html é PWA standalone com user-modal próprio (sh_user
+-- localStorage). Forçar login Supabase quebra UX offline. Dados são
+-- progresso de 20 tarefas internas — risco baixo.
+-- Entrega 1.1 (sprint seguinte): adicionar login Supabase no tracker.html
+-- e ligar RLS aqui.
 -- ─────────────────────────────────────────────────────────────────────────
 
-ALTER TABLE hub_progresso ENABLE ROW LEVEL SECURITY;
-
-DROP POLICY IF EXISTS "authenticated_full_access" ON hub_progresso;
-CREATE POLICY "authenticated_full_access" ON hub_progresso
-  FOR ALL
-  USING (auth.role() = 'authenticated')
-  WITH CHECK (auth.role() = 'authenticated');
-
-COMMENT ON POLICY "authenticated_full_access" ON hub_progresso IS
-  'Tracker PWA. Igual condominios — Entrega 1 só exige auth.';
+-- ALTER TABLE hub_progresso ENABLE ROW LEVEL SECURITY;
+-- DROP POLICY IF EXISTS "authenticated_full_access" ON hub_progresso;
+-- CREATE POLICY "authenticated_full_access" ON hub_progresso
+--   FOR ALL
+--   USING (auth.role() = 'authenticated')
+--   WITH CHECK (auth.role() = 'authenticated');
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- TABELA: demandas
@@ -74,7 +73,7 @@ COMMENT ON POLICY "authenticated_full_access" ON demandas IS
 
 -- Conferir RLS ligado:
 -- SELECT tablename, rowsecurity FROM pg_tables
--- WHERE schemaname = 'public' AND tablename IN ('condominios', 'hub_progresso', 'demandas');
+-- WHERE schemaname = 'public' AND tablename IN ('condominios', 'demandas');
 -- Esperado: rowsecurity = true em todas
 
 -- Conferir policies criadas:
@@ -92,8 +91,6 @@ COMMENT ON POLICY "authenticated_full_access" ON demandas IS
 -- ─────────────────────────────────────────────────────────────────────────
 
 -- ALTER TABLE condominios DISABLE ROW LEVEL SECURITY;
--- ALTER TABLE hub_progresso DISABLE ROW LEVEL SECURITY;
 -- ALTER TABLE demandas DISABLE ROW LEVEL SECURITY;
 -- DROP POLICY IF EXISTS "authenticated_full_access" ON condominios;
--- DROP POLICY IF EXISTS "authenticated_full_access" ON hub_progresso;
 -- DROP POLICY IF EXISTS "authenticated_full_access" ON demandas;
