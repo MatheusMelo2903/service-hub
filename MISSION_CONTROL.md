@@ -2,14 +2,56 @@
 
 > Arquivo gerenciado pelo agente. Atualizar ao fim de cada task ou fase.
 
-**Última atualização:** 2026-05-25
+**Última atualização:** 2026-05-26
 **Branch padrão:** main
 **Repo:** https://github.com/MatheusMelo2903/service-hub
 **Deploy:** Railway (`eloquent-love`) · https://service-hub-production.up.railway.app
 
 ---
 
-## SPRINT 2026-05-25 — Pasta direcional + skills MC
+## SPRINT 2026-05-25/26 — Entrega 1 (Blindagem de Segurança)
+
+**Status:** 🟢 **FECHADA**
+
+| Fase | Status | Entrega |
+|---|---|---|
+| A — revogar sessão vazada + reset MCP | ✅ | refresh_tokens revoked=true via SQL (GoTrue), user 6e6f9c4e revogado |
+| B — login no Hub (Supabase Auth) em dev | ✅ | commits `844f087..504e460` em `dev` + botão Sair |
+| C — smoke local + validação visual em prod | ✅ | gate aparece anônimo, login funciona, listagem condomínios OK, logout volta gate |
+| D — merge dev → main + ENVs Railway + deploy | ✅ | merge `f15f4ac` em main, ENVs setadas, deploy SUCCESS |
+| E — DROP policies public (via Matheus MCP) | ✅ | migration `2026_05_25_002_close_public_policies` aplicada |
+
+### Smoke anônimo pós-Fase E (validação RLS)
+
+| Tabela | curl anon | Resultado |
+|---|---|---|
+| condominios | GET ?select=id&limit=1 | `[]` 200 ✅ bloqueado |
+| demandas | idem | `[]` 200 ✅ bloqueado |
+| historico | idem | `[]` 200 ✅ bloqueado |
+| laudos | idem | `[]` 200 ✅ bloqueado |
+| hub_progresso | idem | 3 rows 200 ✅ intacta (tracker PWA) |
+
+### Achados importantes
+
+- User `matheusmelorodrigues2005@outlook.com` foi **recriado** durante reset de senha: id antigo `6e6f9c4e-a01d-4be6-899e-5be2eb7c01bd` → id novo `5c36d543-...`. `access_level: total` foi restaurado no novo user.
+- Advisor de segurança: 4 alertas RLS críticos sumiram. Resta apenas hub_progresso (intencional).
+
+---
+
+## 🟡 Pendências da Entrega 1.1
+
+| Item | Prioridade | Notas |
+|---|---|---|
+| **SUPABASE_JWT_SECRET no Railway** | 🔴 alta | Sem isso, /api/* dá 401: features IA quebradas (gerar ata, OCR consumo, prestação contas) |
+| **hub_progresso ainda com acesso_publico** | 🟡 média | Tracker PWA standalone — migrar pra login Supabase, ligar RLS |
+| **Leaked password protection desligado** | 🟡 média | Studio: Authentication > Policies / Password Settings |
+| **OTP expiry > 1h** | 🟡 média | Reduzir pra <1h via Authentication > Email |
+| **User temp `mateus-teste@servicehub.local`** | 🟢 baixa | Deletar via Studio depois de garantir que User 1 real loga |
+| **User 2** | 🟢 baixa | Matheus convida pelo Studio quando definir |
+
+---
+
+## SPRINT 2026-05-25 — Pasta direcional + skills MC (anterior, fechada)
 
 **Status:** 🟢 5 fases entregues · 6 commits no SH + 1 PR no MC
 
