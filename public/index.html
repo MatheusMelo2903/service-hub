@@ -1498,12 +1498,12 @@
           <span class="card-title">Participantes</span>
         </div>
         <textarea class="ata-field" id="ata-participantes" rows="4"
-          placeholder="Liste os participantes presentes (opcional — se não informar, o Claude vai extrair da transcrição)"></textarea>
+          placeholder="Liste os participantes presentes (opcional — se não informar, o assistente vai extrair da transcrição)"></textarea>
       </div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:20px">
         <button class="btn btn-ghost" onclick="limparAta()">✕ Limpar tudo</button>
-        <button class="btn btn-primary" id="btn-copiar-claude" onclick="copiarProClaude()">⎘ Copiar pro Claude</button>
+        <button class="btn btn-primary" id="btn-copiar-claude" onclick="copiarProClaude()">⎘ Copiar pro assistente</button>
       </div>
     </div>
 
@@ -3927,8 +3927,8 @@ ${trans}
 
   try {
     await navigator.clipboard.writeText(bloco);
-    toast('✓ Copiado! Cole no Claude pra gerar a ata em .docx', 'ok');
-    addHistorico('Ata copiada pro Claude: ' + cond + ' · ' + data);
+    toast('✓ Copiado! Cole no assistente pra gerar a ata em .docx', 'ok');
+    addHistorico('Ata copiada pro assistente: ' + cond + ' · ' + data);
   } catch(e) {
     // Fallback: textarea temporário
     const ta = document.createElement('textarea');
@@ -3938,8 +3938,8 @@ ${trans}
     ta.select();
     try {
       document.execCommand('copy');
-      toast('✓ Copiado! Cole no Claude pra gerar a ata em .docx', 'ok');
-      addHistorico('Ata copiada pro Claude: ' + cond + ' · ' + data);
+      toast('✓ Copiado! Cole no assistente pra gerar a ata em .docx', 'ok');
+      addHistorico('Ata copiada pro assistente: ' + cond + ' · ' + data);
     } catch(err) {
       toast('Erro ao copiar: ' + err.message, 'err');
     }
@@ -3981,7 +3981,7 @@ async function processFilesConsumo(files) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
+          model: 'claude-haiku-4-5',
           max_tokens: 200,
           messages: [{
             role: 'user',
@@ -5875,7 +5875,7 @@ async function prestacaoGerar() {
     for (var j = 0; j < blocos.length; j++) contextoUsuario.push(blocos[j]);
 
     var payload = {
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'claude-sonnet-4-6',
       max_tokens: 16000,
       system: systemPrompt,
       messages: [{ role: 'user', content: contextoUsuario }]
