@@ -69,35 +69,104 @@ function rateLimit(req, res, next) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Auth middleware — aceita Bearer JWT Supabase OU Bearer INTERNAL_API_SECRET
-// JWT validation usa HMAC SHA256 nativo (sem dep externa).
-// Sem SUPABASE_JWT_SECRET: só aceita INTERNAL_API_SECRET.
-// Sem INTERNAL_API_SECRET nem SUPABASE_JWT_SECRET: rejeita tudo (fail-safe).
+// Auth middleware — aceita Bearer JWT Supabase (ES256/JWKS) OU Bearer INTERNAL_API_SECRET
+//
+// JWT do Supabase é ES256 (ECDSA P-256, signing key assimétrica).
+// Public key vem do JWKS público em /auth/v1/.well-known/jwks.json (cache 1h,
+// refresh on miss pra suportar key rotation). crypto.verify nativo + dsaEncoding
+// 'ieee-p1363' aceita raw r||s do JWT direto, zero deps externas.
+//
+// SUPABASE_JWT_SECRET (HS256 legacy) NÃO é mais usado — a ENV pode ficar setada
+// no Railway, é simplesmente ignorada agora. Remover em sessão futura.
+//
+// Sem INTERNAL_API_SECRET nem SUPABASE_URL: rejeita tudo (fail-safe).
 // ─────────────────────────────────────────────────────────────────────────
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+
+let JWKS_CACHE = { keys: [], fetchedAt: 0 };
+const JWKS_TTL_MS = 60 * 60 * 1000; // 1h
+
 function base64UrlDecode(s) {
   s = s.replace(/-/g, '+').replace(/_/g, '/');
   while (s.length % 4) s += '=';
   return Buffer.from(s, 'base64');
 }
 
-function verifySupabaseJwt(token, secret) {
+function fetchJwks() {
+  return new Promise((resolve) => {
+    if (!SUPABASE_URL) return resolve([]);
+    const url = new URL(SUPABASE_URL + '/auth/v1/.well-known/jwks.json');
+    const opts = {
+      hostname: url.hostname,
+      path: url.pathname,
+      method: 'GET',
+      headers: SUPABASE_ANON_KEY ? { apikey: SUPABASE_ANON_KEY } : {}
+    };
+    const r = https.request(opts, (resp) => {
+      let d = '';
+      resp.on('data', (c) => d += c);
+      resp.on('end', () => {
+        try { resolve((JSON.parse(d).keys) || []); }
+        catch { resolve([]); }
+      });
+    });
+    r.on('error', () => resolve([]));
+    r.end();
+  });
+}
+
+async function getJwk(kid) {
+  const fresh = Date.now() - JWKS_CACHE.fetchedAt < JWKS_TTL_MS;
+  let key = fresh ? JWKS_CACHE.keys.find(k => k.kid === kid) : null;
+  if (key) return key;
+  // Refresh on cache miss/expiry — suporta key rotation
+  const keys = await fetchJwks();
+  if (keys.length) JWKS_CACHE = { keys, fetchedAt: Date.now() };
+  return JWKS_CACHE.keys.find(k => k.kid === kid) || null;
+}
+
+async function verifySupabaseJwt(token) {
   const parts = token.split('.');
   if (parts.length !== 3) return null;
-  const [header64, payload64, sig64] = parts;
-  const signingInput = `${header64}.${payload64}`;
-  const expected = crypto.createHmac('sha256', secret).update(signingInput).digest();
-  const actual = base64UrlDecode(sig64);
-  if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) return null;
+  const [h64, p64, s64] = parts;
+
+  let header, payload;
   try {
-    const payload = JSON.parse(base64UrlDecode(payload64).toString('utf8'));
-    if (payload.exp && payload.exp * 1000 < Date.now()) return null;
-    return payload;
+    header = JSON.parse(base64UrlDecode(h64).toString('utf8'));
+    payload = JSON.parse(base64UrlDecode(p64).toString('utf8'));
   } catch { return null; }
+
+  if (header.alg !== 'ES256') return null;
+  if (!header.kid) return null;
+
+  const jwk = await getJwk(header.kid);
+  if (!jwk || jwk.kty !== 'EC' || jwk.crv !== 'P-256') return null;
+
+  let pubKey;
+  try {
+    pubKey = crypto.createPublicKey({ key: jwk, format: 'jwk' });
+  } catch { return null; }
+
+  // 'ieee-p1363' aceita o raw r||s do JWT direto, sem precisar converter pra DER.
+  // Suportado desde Node 16.
+  const ok = crypto.verify(
+    'SHA256',
+    Buffer.from(`${h64}.${p64}`),
+    { key: pubKey, dsaEncoding: 'ieee-p1363' },
+    base64UrlDecode(s64)
+  );
+  if (!ok) return null;
+
+  if (payload.exp && payload.exp * 1000 < Date.now()) return null;
+  if (payload.role !== 'authenticated') return null;
+
+  return payload;
 }
 
 function requireAuth(req, res, next) {
-  if (!INTERNAL_API_SECRET && !SUPABASE_JWT_SECRET) {
-    res.status(503).json({ erro: 'auth_nao_configurada', detalhe: 'INTERNAL_API_SECRET ou SUPABASE_JWT_SECRET ausente no servidor' });
+  if (!INTERNAL_API_SECRET && !SUPABASE_URL) {
+    res.status(503).json({ erro: 'auth_nao_configurada', detalhe: 'INTERNAL_API_SECRET ou SUPABASE_URL ausente no servidor' });
     return;
   }
   const auth = req.headers.authorization || '';
@@ -112,10 +181,13 @@ function requireAuth(req, res, next) {
     const b = Buffer.from(INTERNAL_API_SECRET);
     if (crypto.timingSafeEqual(a, b)) { req.authMode = 'internal'; return next(); }
   }
-  // 2. Tentar como Supabase JWT
-  if (SUPABASE_JWT_SECRET) {
-    const payload = verifySupabaseJwt(token, SUPABASE_JWT_SECRET);
-    if (payload) { req.user = payload; req.authMode = 'supabase'; return next(); }
+  // 2. Tentar como Supabase JWT ES256 (async — usa JWKS)
+  if (SUPABASE_URL) {
+    verifySupabaseJwt(token).then((payload) => {
+      if (payload) { req.user = payload; req.authMode = 'supabase'; return next(); }
+      res.status(401).json({ erro: 'token_invalido' });
+    }).catch(() => res.status(401).json({ erro: 'token_invalido' }));
+    return;
   }
   res.status(401).json({ erro: 'token_invalido' });
 }
@@ -133,8 +205,8 @@ app.use('/api', rateLimit);
 // ─────────────────────────────────────────────────────────────────────────
 app.get('/api/config', (req, res) => {
   res.json({
-    supabaseUrl: process.env.SUPABASE_URL || '',
-    supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
+    supabaseUrl: SUPABASE_URL,
+    supabaseAnonKey: SUPABASE_ANON_KEY,
   });
 });
 
