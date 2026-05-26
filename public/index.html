@@ -1389,11 +1389,11 @@
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px">
           <div class="form-group" style="margin:0">
             <label>Condomínio</label>
-            <input type="text" id="ata-cond" placeholder="Nome do condomínio">
+            <input type="text" id="ata-cond" placeholder="Nome do condomínio" autocomplete="off" name="ata-cond">
           </div>
           <div class="form-group" style="margin:0">
             <label>Data da Reunião</label>
-            <input type="text" id="ata-data" placeholder="DD/MM/AAAA">
+            <input type="text" id="ata-data" placeholder="DD/MM/AAAA" autocomplete="off" name="ata-data">
           </div>
           <div class="form-group" style="margin:0">
             <label>Tipo de Assembleia</label>
@@ -1408,11 +1408,11 @@
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
           <div class="form-group" style="margin:0">
             <label>Síndico</label>
-            <input type="text" id="ata-sindico" placeholder="Nome completo do síndico">
+            <input type="text" id="ata-sindico" placeholder="Nome completo do síndico" autocomplete="off" name="ata-sindico">
           </div>
           <div class="form-group" style="margin:0">
             <label>Local da Reunião</label>
-            <input type="text" id="ata-local" placeholder="ex: Salão de Festas">
+            <input type="text" id="ata-local" placeholder="ex: Salão de Festas" autocomplete="off" name="ata-local">
           </div>
         </div>
       </div>
@@ -1427,7 +1427,7 @@
         </div>
         <div id="pauta-list">
           <div class="pauta-item" style="flex-wrap:wrap;gap:6px;align-items:flex-start">
-            <input type="text" placeholder="ex: Aprovação do balancete financeiro" style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
+            <input type="text" placeholder="ex: Aprovação do balancete financeiro" autocomplete="off" name="pauta-1-titulo" style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
             <label style="display:inline-flex;align-items:center;gap:5px;padding:8px 11px;background:var(--bg3);border:1px dashed var(--border2);border-radius:8px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--muted);white-space:nowrap;transition:all 0.15s" title="Anexar PDF com informações deste item">
               📎 PDF
               <input type="file" accept="application/pdf" style="display:none" onchange="anexarPdfPauta(this)">
@@ -1506,7 +1506,24 @@
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:20px">
         <button class="btn btn-ghost" onclick="limparAta()">✕ Limpar tudo</button>
-        <button class="btn btn-primary" id="btn-copiar-claude" onclick="copiarProClaude()">⎘ Copiar pro Service Hub IA</button>
+        <button class="btn btn-ghost" id="btn-copiar-claude" onclick="copiarProClaude()" title="Copia o texto pra colar no Claude.ai externo (fallback)">⎘ Copiar pro Service Hub IA</button>
+        <button class="btn btn-primary" id="btn-gerar-ata" onclick="gerarAtaIA()">📄 Gerar ata</button>
+      </div>
+
+      <!-- MODAL: Ata gerada -->
+      <div id="ata-gerada-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.5);justify-content:center;align-items:center;padding:24px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);max-width:880px;width:100%;max-height:92vh;display:flex;flex-direction:column;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:1px solid var(--border)">
+            <span style="font-size:14px;font-weight:700;color:var(--text)">📄 Ata gerada · revisão</span>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-ghost" onclick="copiarAtaTexto()" style="font-size:12px;padding:6px 12px">⎘ Copiar texto</button>
+              <button class="btn btn-primary" onclick="baixarAtaPDF()" style="font-size:12px;padding:6px 12px">⬇ Baixar PDF</button>
+              <button class="btn btn-ghost" onclick="fecharAtaGerada()" style="font-size:12px;padding:6px 12px">✕ Fechar</button>
+            </div>
+          </div>
+          <div id="ata-gerada-conteudo" style="flex:1;overflow:auto;padding:24px 28px;background:#fff;color:#1a1a1a;font-family:'Times New Roman',Times,serif;font-size:13px;line-height:1.6;white-space:pre-wrap"></div>
+          <div style="padding:12px 22px;background:var(--bg3);border-top:1px solid var(--border);font-size:11px;font-family:var(--mono);color:var(--muted)">⚠ Revise tudo antes de baixar. Campos marcados como <code>[a confirmar]</code> indicam dados não extraíveis da transcrição — preencha manualmente.</div>
+        </div>
       </div>
     </div>
 
@@ -3759,7 +3776,7 @@ function addPauta() {
   const div = document.createElement('div');
   div.className = 'pauta-item';
   div.style.cssText = 'flex-wrap:wrap;gap:6px;align-items:flex-start';
-  div.innerHTML = `<input type="text" placeholder="Item de pauta ${pautaCount}"
+  div.innerHTML = `<input type="text" placeholder="Item de pauta ${pautaCount}" autocomplete="off" name="pauta-${pautaCount}-titulo"
     style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
     <label style="display:inline-flex;align-items:center;gap:5px;padding:8px 11px;background:var(--bg3);border:1px dashed var(--border2);border-radius:8px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--muted);white-space:nowrap;transition:all 0.15s" title="Anexar PDF">
       📎 PDF
@@ -3846,6 +3863,215 @@ function limparAta() {
     <span class="pauta-pdf-nome" style="font-size:10px;font-family:var(--mono);color:var(--gs-blue);display:none;align-self:center"></span>
     <button class="pauta-remove" onclick="removePauta(this)">×</button>
   </div>`;
+}
+
+// ============================================================
+// GERAR ATA IA — Sonnet 4.6 + prompt formal brasileiro
+// ============================================================
+// Fluxo novo: substitui o "Copiar pro Service Hub IA" gerando a ata direto
+// no Hub via /api/claude/messages. Saída: texto da ata em modal + PDF via
+// window.print (zero dep nova). Fallback "Copiar pro Service Hub IA" segue
+// disponível.
+
+const ATA_SYSTEM_PROMPT = [
+  'Você é um especialista em redação de atas condominiais brasileiras.',
+  'Gere uma ata formal da assembleia com base na transcrição e nos dados fornecidos.',
+  '',
+  'FORMATO DE SAÍDA — INVIOLÁVEL:',
+  '- Texto corrido em prosa, igual a uma ata jurídica de cartório.',
+  '- PROIBIDO usar Markdown de qualquer tipo: nada de **negrito**, *itálico*, `código`, > blockquote.',
+  '- PROIBIDO usar separadores horizontais (---, ___, ===, *** ou linhas equivalentes).',
+  '- PROIBIDO usar subtítulos com # ## ### ou similares.',
+  '- PROIBIDO usar bullets (-, *, +) ou listas numeradas como 1. 2. 3. soltas.',
+  '- Subitens internos dentro da prosa usam (i), (ii), (iii), nunca bullets nem números soltos.',
+  '- Apenas TEXTO PURO com parágrafos separados por uma linha em branco. Sem decoração visual.',
+  '- O cabeçalho do condomínio aparece em linhas separadas no topo, em CAIXA ALTA quando for o nome.',
+  '- Títulos de seção como "ATA DA ASSEMBLEIA GERAL ORDINÁRIA", "ITEM 1) APROVAÇÃO DAS CONTAS:", "ENCERRAMENTO E PRÓXIMOS PASSOS:" aparecem em CAIXA ALTA dentro do parágrafo, sem marcadores.',
+  '- Não escreva nada fora da ata (sem "Aqui está a ata:", sem comentários do modelo, sem cercas de código).',
+  '',
+  'REGRAS OBRIGATÓRIAS DE REDAÇÃO:',
+  '- Linguagem jurídica formal, narração em 3ª pessoa.',
+  '- Números por extenso na primeira menção + algarismo entre parênteses: "vinte (20)".',
+  '- Horas por extenso: "dezenove horas e trinta minutos (19h30min)".',
+  '- Datas por extenso: "vinte (20) dias do mês de maio de dois mil e vinte e seis (2026)".',
+  '- Valores sempre com centavos no padrão brasileiro: R$ 800,00.',
+  '- Títulos dos itens de pauta em CAIXA ALTA, no formato "ITEM 1) APROVAÇÃO DAS CONTAS:" seguido do corpo no mesmo parágrafo.',
+  '- Resultado de votações registrado explicitamente ("aprovado por unanimidade", "sem manifestação contrária").',
+  '- Campos desconhecidos marcados como [a confirmar] — NUNCA inventar dados.',
+  '- Seção de encerramento consolidando TODOS os deliberados como (i), (ii), (iii)... dentro da prosa.',
+  '- Frase final padrão: "Nada mais havendo a tratar, o Presidente da Mesa declarou encerrados os trabalhos da [tipo de assembleia], da qual foi lavrada a presente ata."',
+  '- Local e data centralizados após o encerramento, em linha própria.',
+  '- Bloco de assinaturas ao final: uma linha de underscores (cerca de 47 caracteres) por assinante, com a identificação logo abaixo. Assinantes: Síndico, Presidente da Mesa, Secretária da Ata, Representante da Administradora, Conselho (ajustar conforme presentes).',
+  '',
+  'ESTRUTURA SEQUENCIAL DA ATA:',
+  '1) Cabeçalho do condomínio em linhas separadas: nome em CAIXA ALTA, CNPJ, endereço completo.',
+  '2) Linha com "ATA DA ASSEMBLEIA GERAL ORDINÁRIA" ou "ATA DA ASSEMBLEIA GERAL EXTRAORDINÁRIA".',
+  '3) Parágrafo de abertura corrido com data por extenso, local, tipo de convocação, horário, quórum, referência ao edital e lista de presentes (Síndico, administradora, condôminos), terminando com "Feitas as formalidades de abertura, passou-se à deliberação dos itens da pauta, conforme a seguir:".',
+  '4) Itens da pauta numerados em arábicos. Cada item inicia com "ITEM N) TÍTULO EM CAIXA ALTA:" seguido do corpo em prosa corrida no mesmo parágrafo. Sem quebrar em sub-tópicos visuais.',
+  '5) Parágrafo "ENCERRAMENTO E PRÓXIMOS PASSOS:" consolidando deliberações em (i), (ii), (iii), terminando com a frase final padrão.',
+  '6) Linha com "Cidade/UF, data por extenso." centralizada.',
+  '7) Bloco de assinaturas, um por par (linha de underscores + identificação).',
+  '',
+  'Use APENAS informações da transcrição e dos dados fornecidos. Não complete com suposições.'
+].join('\n');
+
+let _ataTextoGerado = '';
+
+async function gerarAtaIA() {
+  const cond    = document.getElementById('ata-cond').value.trim();
+  const data    = document.getElementById('ata-data').value.trim();
+  const tipo    = document.getElementById('ata-tipo').value;
+  const sindico = document.getElementById('ata-sindico').value.trim();
+  const local   = document.getElementById('ata-local').value.trim();
+  const trans   = document.getElementById('ata-transcricao').value.trim();
+  const partic  = document.getElementById('ata-participantes').value.trim();
+
+  if (!trans) { toast('Cole ou importe a transcrição antes de gerar', 'err'); return; }
+  if (!cond)  { toast('Informe o nome do condomínio', 'err'); return; }
+  if (!data)  { toast('Informe a data da reunião', 'err'); return; }
+
+  // Coleta itens de pauta (mesma lógica do fallback copiarProClaude)
+  const pautaItems = document.querySelectorAll('#pauta-list .pauta-item');
+  const meses = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+  let dataExtenso = data;
+  const mData = data.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (mData) {
+    const d = parseInt(mData[1], 10);
+    const m = parseInt(mData[2], 10);
+    const y = mData[3];
+    if (m >= 1 && m <= 12) dataExtenso = `${String(d).padStart(2,'0')} de ${meses[m-1]} de ${y}`;
+  }
+  const pautasSemEdital = [];
+  const editaisAnexos = [];
+  Array.from(pautaItems).forEach((item, i) => {
+    const texto = item.querySelector('input[type=text]')?.value?.trim() || '';
+    const pdfInput = item.querySelector('input[type=file]');
+    const pdfTexto = pdfInput?.dataset?.pdfTexto || '';
+    const pdfNome = pdfInput?.files?.[0]?.name || '';
+    if (!texto && !pdfTexto) return;
+    if (pdfTexto) {
+      editaisAnexos.push({ n: i+1, titulo: texto || '(sem título)', arquivo: pdfNome, texto: pdfTexto });
+    } else {
+      pautasSemEdital.push(`${i+1}. ${texto}`);
+    }
+  });
+  let blocoEditais = '';
+  if (editaisAnexos.length) {
+    blocoEditais = '\n=== EDITAIS / DOCUMENTOS ANEXADOS ===\n' +
+      '(Use o edital como fonte oficial dos pontos que DEVERIAM ser deliberados — a transcrição mostra o que DE FATO foi discutido. Cruze: edital + transcrição confirmando → registre com precisão; números/datas/valores do edital prevalecem como oficiais; transcrição contradiz edital → registre o efetivamente deliberado.)\n\n' +
+      editaisAnexos.map(e => `--- ${e.n}. ${e.titulo}${e.arquivo ? ' [arquivo: ' + e.arquivo + ']' : ''} ---\n${e.texto}`).join('\n\n') + '\n';
+  }
+
+  const userMessage = [
+    '=== DADOS DA REUNIÃO ===',
+    `Condomínio: ${cond}`,
+    `Tipo: ${tipo}`,
+    `Data: ${data}${dataExtenso !== data ? ' (' + dataExtenso + ')' : ''}`,
+    `Síndico: ${sindico || '[a confirmar]'}`,
+    `Local: ${local || '[a confirmar]'}`,
+    '',
+    '=== ITENS DE PAUTA ===',
+    pautasSemEdital.length ? pautasSemEdital.join('\n') : '(extrair da transcrição e/ou dos editais anexados abaixo)',
+    blocoEditais,
+    '=== PARTICIPANTES ===',
+    partic || '(extrair da transcrição; se não identificáveis, use [a confirmar])',
+    '',
+    '=== TRANSCRIÇÃO COMPLETA DA REUNIÃO ===',
+    trans,
+    '',
+    'Gere a ata completa seguindo todas as regras e estrutura do sistema. Use [a confirmar] em qualquer dado ausente.'
+  ].join('\n');
+
+  // UI: loading state
+  const btn = document.getElementById('btn-gerar-ata');
+  const btnTextoOriginal = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Gerando ata...';
+
+  try {
+    const resp = await apiAuthFetch('/api/claude/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 4000,
+        system: ATA_SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userMessage }]
+      })
+    });
+    if (!resp.ok) {
+      const erro = await resp.text();
+      throw new Error('IA retornou ' + resp.status + ': ' + erro.slice(0, 200));
+    }
+    const data = await resp.json();
+    const texto = data.content && data.content[0] && data.content[0].text ? data.content[0].text.trim() : '';
+    if (!texto) throw new Error('IA não retornou texto');
+
+    _ataTextoGerado = texto;
+    document.getElementById('ata-gerada-conteudo').textContent = texto;
+    document.getElementById('ata-gerada-modal').style.display = 'flex';
+    addHistorico('Ata gerada via IA: ' + cond + ' · ' + data);
+    toast('Ata gerada — revise antes de baixar', 'ok');
+  } catch (e) {
+    toast('Falha ao gerar ata: ' + (e.message || 'erro'), 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = btnTextoOriginal;
+  }
+}
+
+function fecharAtaGerada() {
+  document.getElementById('ata-gerada-modal').style.display = 'none';
+}
+
+async function copiarAtaTexto() {
+  if (!_ataTextoGerado) { toast('Nada pra copiar', 'err'); return; }
+  try {
+    await navigator.clipboard.writeText(_ataTextoGerado);
+    toast('Texto copiado pra área de transferência', 'ok');
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = _ataTextoGerado;
+    ta.style.cssText = 'position:fixed;top:-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); toast('Texto copiado', 'ok'); }
+    finally { ta.remove(); }
+  }
+}
+
+function baixarAtaPDF() {
+  if (!_ataTextoGerado) { toast('Nada pra baixar', 'err'); return; }
+  // Abre janela formatada em A4 e aciona print — user salva como PDF via browser.
+  // Padrão idêntico ao gerarRelatorioSindico (zero dep nova).
+  const cond = document.getElementById('ata-cond').value.trim() || 'Condomínio';
+  const dataReuniao = document.getElementById('ata-data').value.trim() || '';
+  const fileHint = `Ata_${cond.replace(/[^a-zA-Z0-9]+/g,'_')}_${dataReuniao.replace(/\//g,'-')}`;
+  const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const w = window.open('', '_blank');
+  if (!w) { toast('Bloqueado pelo navegador. Permita pop-ups e tente novamente.', 'err'); return; }
+  w.document.write(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>${esc(fileHint)}</title>
+<style>
+  @page { size: A4; margin: 2.5cm 2cm 2.5cm 2.5cm; }
+  body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.5; color: #000; margin: 0; }
+  .ata { white-space: pre-wrap; text-align: justify; }
+  @media screen {
+    body { background: #f3f4f6; padding: 24px; }
+    .page { background: #fff; max-width: 21cm; min-height: 29.7cm; margin: 0 auto; padding: 2.5cm 2cm; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+  }
+  @media print { .page { padding: 0; box-shadow: none; } }
+</style>
+</head>
+<body onload="setTimeout(function(){window.print()},250)">
+<div class="page"><div class="ata">${esc(_ataTextoGerado)}</div></div>
+</body>
+</html>`);
+  w.document.close();
+  toast('Janela de impressão aberta — salve como PDF', 'ok');
 }
 
 async function copiarProClaude() {
