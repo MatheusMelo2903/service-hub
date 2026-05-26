@@ -1209,6 +1209,47 @@
     <div class="panel" id="panel-unidades">
       <!-- Banner populado por renderBannerCondAtivo('unidades') ao abrir o painel -->
       <div id="banner-cond-unidades"></div>
+
+      <!-- NORMALIZADOR IA: doc fora do padrão → planilha 26 colunas -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Normalizar via IA</span>
+          <span style="font-size:10px;font-family:var(--mono);color:var(--muted)">opcional — se a planilha já está no formato 26 colunas, pula direto pra "Importar Unidades" abaixo</span>
+        </div>
+        <div id="normalizar-dropzone" style="background:var(--bg3);border:1.5px dashed var(--border2);border-radius:var(--radius);padding:14px 18px;transition:all 0.2s"
+          ondragover="normalizarDragOver(event)"
+          ondragleave="normalizarDragLeave(event)"
+          ondrop="normalizarDrop(event)">
+          <div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">🔄 Reformatar documento qualquer → modelo Superlógica (26 colunas)</div>
+          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:10px">Anexe PDF, planilha fora do padrão, imagem ou texto. A IA reformata pro modelo exato. Você revisa antes de baixar — nada vai pro Superlógica sem sua confirmação.</p>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <label style="display:inline-flex;align-items:center;gap:8px;padding:8px 14px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:var(--sans);color:var(--gs-blue);transition:all 0.15s">
+              📎 Selecionar documento
+              <input type="file" id="normalizar-input" accept="application/pdf,.xlsx,.xls,.csv,.txt,image/png,image/jpeg,image/webp" style="display:none" onchange="anexarDocNormalizar(event)">
+            </label>
+            <span id="normalizar-status" style="font-size:11px;font-family:var(--mono);color:var(--muted)"></span>
+          </div>
+          <div id="normalizar-progress-wrap" style="display:none;margin-top:10px">
+            <div style="background:var(--bg);border-radius:4px;height:3px;overflow:hidden">
+              <div id="normalizar-progress-bar" style="height:100%;background:var(--gs-blue);border-radius:4px;width:0%;transition:width 0.3s"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview da planilha normalizada -->
+        <div id="normalizar-preview" style="display:none;margin-top:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span style="font-size:12px;font-family:var(--mono);color:var(--text)"><span id="normalizar-resumo"></span></span>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-ghost" onclick="descartarNormalizado()" style="font-size:12px;padding:6px 12px">✕ Descartar</button>
+              <button class="btn btn-primary" onclick="baixarPlanilhaNormalizada()" style="font-size:12px;padding:6px 12px">⬇ Baixar XLSX</button>
+            </div>
+          </div>
+          <div class="table-wrap" style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table id="normalizar-table"></table></div>
+          <p style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-top:8px">⚠ Revise antes de baixar. Após baixar, arraste o .xlsx pro dropzone "Importar Unidades" abaixo pra subir ao Superlógica.</p>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <span class="card-title">Importar Unidades</span>
@@ -1386,6 +1427,28 @@
         <div class="card-header">
           <span class="card-title">Dados da Reunião</span>
         </div>
+
+        <!-- ANEXAR EDITAL PRA AUTOPREENCHER -->
+        <div id="edital-dropzone" style="background:var(--bg3);border:1.5px dashed var(--border2);border-radius:var(--radius);padding:14px 18px;margin-bottom:16px;transition:all 0.2s"
+          ondragover="editalDragOver(event)"
+          ondragleave="editalDragLeave(event)"
+          ondrop="editalDrop(event)">
+          <div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">📄 Anexar edital de convocação para autopreencher</div>
+          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:10px">Arraste o PDF/imagem aqui ou clique para selecionar. A IA lê o edital e preenche os campos abaixo. Revise antes de prosseguir.</p>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <label id="edital-label" style="display:inline-flex;align-items:center;gap:8px;padding:8px 14px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:var(--sans);color:var(--gs-blue);transition:all 0.15s">
+              📎 Selecionar edital
+              <input type="file" id="edital-input" accept="application/pdf,image/png,image/jpeg,image/webp" style="display:none" onchange="anexarEdital(event)">
+            </label>
+            <span id="edital-status" style="font-size:11px;font-family:var(--mono);color:var(--muted)"></span>
+          </div>
+          <div id="edital-progress-wrap" style="display:none;margin-top:10px">
+            <div style="background:var(--bg);border-radius:4px;height:3px;overflow:hidden">
+              <div id="edital-progress-bar" style="height:100%;background:var(--gs-blue);border-radius:4px;width:0%;transition:width 0.3s"></div>
+            </div>
+          </div>
+        </div>
+
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px">
           <div class="form-group" style="margin:0">
             <label>Condomínio</label>
@@ -3846,6 +3909,416 @@ function anexarPdfPauta(input) {
   reader.readAsArrayBuffer(file);
 }
 
+// ============================================================
+// EDITAL AUTOPREENCHE — IA lê PDF/imagem e preenche os 5 campos
+// ============================================================
+
+const EDITAL_MAX_BYTES = 8 * 1024 * 1024; // 8MB — limite seguro para Anthropic
+const EDITAL_SYSTEM_PROMPT = [
+  'Voce e um extrator de dados de editais condominiais brasileiros.',
+  'O usuario vai te entregar um edital de convocacao (PDF ou imagem).',
+  'Sua tarefa: extrair os 5 campos da reuniao em JSON puro, sem markdown, sem cercas, sem comentarios.',
+  '',
+  'Estrutura EXATA do JSON:',
+  '{',
+  '  "condominio": string | null,',
+  '  "data": string | null,',
+  '  "tipo": "AGO" | "AGE" | "Reuniao de Diretoria" | "Reuniao de Moradores" | null,',
+  '  "sindico": string | null,',
+  '  "local": string | null',
+  '}',
+  '',
+  'Regras invioláveis:',
+  '- Use null se o campo nao aparecer claramente no edital. NUNCA invente.',
+  '- AGO = Assembleia Geral Ordinaria; AGE = Assembleia Geral Extraordinaria.',
+  '- Data sempre no formato DD/MM/AAAA. Use a data da REUNIAO (nao a data da convocacao).',
+  '- Se a data estiver por extenso ("01 de abril de 2026"), converta pra 01/04/2026.',
+  '- Sindico: extraia somente se mencionado explicitamente como sindico (nao confunda com presidente da mesa).',
+  '- Local: extraia o local da reuniao como aparece (ex: "Salao de Festas", "presencial e remoto via Zoom").',
+  '- Condominio: extraia o nome oficial como aparece (sem aspas).',
+].join('\n');
+
+async function anexarEdital(event) {
+  const file = (event && event.target && event.target.files && event.target.files[0]) || null;
+  if (!file) return;
+  await processarEditalFile(file);
+  // Limpa o input pra permitir reanexar o mesmo arquivo
+  event.target.value = '';
+}
+
+function editalDragOver(e) {
+  e.preventDefault();
+  e.currentTarget.style.borderColor = 'var(--gs-blue)';
+  e.currentTarget.style.background = 'var(--gs-blue-light)';
+}
+function editalDragLeave(e) {
+  e.currentTarget.style.borderColor = '';
+  e.currentTarget.style.background = 'var(--bg3)';
+}
+async function editalDrop(e) {
+  e.preventDefault();
+  editalDragLeave(e);
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!file) return;
+  await processarEditalFile(file);
+}
+
+async function processarEditalFile(file) {
+  const status = document.getElementById('edital-status');
+  const progressWrap = document.getElementById('edital-progress-wrap');
+  const progressBar = document.getElementById('edital-progress-bar');
+
+  // Validacoes basicas
+  const accepted = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
+  if (!accepted.includes(file.type)) {
+    status.textContent = 'Formato nao suportado. Use PDF, PNG, JPG ou WEBP.';
+    status.style.color = 'var(--danger)';
+    return;
+  }
+  if (file.size > EDITAL_MAX_BYTES) {
+    status.textContent = `Arquivo muito grande (${(file.size/1024/1024).toFixed(1)}MB). Limite 8MB.`;
+    status.style.color = 'var(--danger)';
+    return;
+  }
+
+  status.textContent = `Lendo ${file.name}...`;
+  status.style.color = 'var(--gs-blue)';
+  progressWrap.style.display = 'block';
+  progressBar.style.width = '20%';
+
+  try {
+    // Le como base64
+    const base64 = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const result = r.result || '';
+        const idx = result.indexOf(',');
+        resolve(idx >= 0 ? result.slice(idx + 1) : result);
+      };
+      r.onerror = () => reject(new Error('Falha ao ler arquivo'));
+      r.readAsDataURL(file);
+    });
+    progressBar.style.width = '45%';
+    status.textContent = 'Extraindo dados via IA...';
+
+    // Monta content block conforme tipo
+    const isPdf = file.type === 'application/pdf';
+    const docBlock = isPdf
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+      : { type: 'image',    source: { type: 'base64', media_type: file.type, data: base64 } };
+
+    const payload = {
+      model: 'claude-haiku-4-5',
+      max_tokens: 800,
+      system: EDITAL_SYSTEM_PROMPT,
+      messages: [{
+        role: 'user',
+        content: [
+          docBlock,
+          { type: 'text', text: 'Extraia os 5 campos do edital acima em JSON puro, conforme as regras do sistema.' }
+        ]
+      }]
+    };
+
+    const resp = await apiAuthFetch('/api/claude/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    progressBar.style.width = '85%';
+
+    if (!resp.ok) {
+      const erro = await resp.text();
+      throw new Error('IA retornou ' + resp.status + ': ' + erro.slice(0, 200));
+    }
+    const data = await resp.json();
+    const texto = data.content && data.content[0] && data.content[0].text ? data.content[0].text : '';
+    if (!texto) throw new Error('IA nao retornou texto');
+
+    // Parse JSON (tolerar cercas ```json se modelo escapar a regra)
+    let json;
+    try {
+      const limpo = texto.replace(/```(?:json)?\s*|\s*```/g, '').trim();
+      json = JSON.parse(limpo);
+    } catch (e) {
+      throw new Error('IA nao retornou JSON valido. Texto: ' + texto.slice(0, 200));
+    }
+
+    aplicarCamposExtraidos(json);
+    progressBar.style.width = '100%';
+    const n = ['condominio','data','tipo','sindico','local'].filter(k => json[k]).length;
+    status.textContent = `✓ ${n}/5 campos preenchidos. Revise antes de prosseguir.`;
+    status.style.color = 'var(--success)';
+    toast(`Edital lido: ${n}/5 campos preenchidos`, 'ok');
+    setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
+  } catch (e) {
+    status.textContent = '✕ ' + (e.message || 'Falha ao processar edital');
+    status.style.color = 'var(--danger)';
+    progressWrap.style.display = 'none';
+    toast('Falha ao ler edital', 'err');
+  }
+}
+
+function aplicarCamposExtraidos(json) {
+  // Sobrescreve campos com o que a IA achou. User edita se errar.
+  const tipos = { 'AGO': 'AGO', 'AGE': 'AGE', 'Reuniao de Diretoria': 'Reunião de Diretoria', 'Reuniao de Moradores': 'Reunião de Moradores' };
+  if (json.condominio) document.getElementById('ata-cond').value = String(json.condominio);
+  if (json.data) document.getElementById('ata-data').value = String(json.data);
+  if (json.tipo && tipos[json.tipo]) document.getElementById('ata-tipo').value = tipos[json.tipo];
+  if (json.sindico) document.getElementById('ata-sindico').value = String(json.sindico);
+  if (json.local) document.getElementById('ata-local').value = String(json.local);
+}
+
+// ============================================================
+// NORMALIZADOR IA — doc qualquer → planilha 26 colunas Superlógica
+// ============================================================
+
+const NORMALIZAR_MAX_BYTES = 8 * 1024 * 1024;
+// Cabeçalhos exatos das 26 colunas (formato unificado Superlógica)
+const NORMALIZAR_HEADERS = ['Tipo','Unidade','Bloco','Fração','Metragem','Nome','CPF','CNPJ','RG','Data Nascimento','Gênero','Email','DDI','Telefone','Tipo Telefone','CEP','Endereço','Número','Complemento','Bairro','Cidade','Estado','Data Entrada','Data Saída','Recebe Cobrança','Observação'];
+
+const NORMALIZAR_SYSTEM_PROMPT = [
+  'Voce e um normalizador de dados de unidades condominiais.',
+  'O usuario vai te dar um documento (PDF, planilha fora do padrao, imagem ou texto) com informacoes',
+  'de unidades + proprietarios + inquilinos + dependentes de um condominio.',
+  '',
+  'Sua tarefa: reformatar tudo no modelo unificado de 26 colunas que o Superlogica aceita.',
+  '',
+  'CABECALHO EXATO DO CSV (primeira linha, copie LITERALMENTE):',
+  'Tipo;Unidade;Bloco;Fracao;Metragem;Nome;CPF;CNPJ;RG;Data Nascimento;Genero;Email;DDI;Telefone;Tipo Telefone;CEP;Endereco;Numero;Complemento;Bairro;Cidade;Estado;Data Entrada;Data Saida;Recebe Cobranca;Observacao',
+  '',
+  'MAPEAMENTO POR POSICAO (1..26) — INVIOLAVEL:',
+  '  1  Tipo            (Proprietario|Inquilino|Dependente)',
+  '  2  Unidade         (apto, sala, numero da unidade)',
+  '  3  Bloco           (torre, bloco — pode ficar vazio)',
+  '  4  Fracao          (decimal — pode ficar vazio)',
+  '  5  Metragem        (numero — pode ficar vazio)',
+  '  6  Nome            ★ OBRIGATORIO se houver pessoa identificada — NUNCA deixar vazio quando o documento traz o nome',
+  '  7  CPF             (so digitos, 11) — vazio se nao informado',
+  '  8  CNPJ            (so digitos, 14) — vazio se nao informado',
+  '  9  RG              vazio se nao informado',
+  ' 10  Data Nascimento dd/mm/aaaa — vazio se nao informado',
+  ' 11  Genero          M|F — vazio se nao souber',
+  ' 12  Email           ★ ENDERECO DE EMAIL VAI AQUI (coluna 12, nao na 13). Ex: joao@gmail.com',
+  ' 13  DDI             SO o codigo do pais. Padrao Brasil = "55". NUNCA coloque email aqui. Vazio se nao houver telefone.',
+  ' 14  Telefone        SO digitos com DDD (ex: 27998148653). Sem +, sem espacos, sem parenteses, sem hifen.',
+  ' 15  Tipo Telefone   1=fixo, 2=celular (default), 3=comercial',
+  ' 16  CEP             so digitos (8) — vazio se nao informado',
+  ' 17  Endereco        rua, avenida, etc',
+  ' 18  Numero          numero da casa/apto na rua',
+  ' 19  Complemento     ',
+  ' 20  Bairro          ',
+  ' 21  Cidade          ',
+  ' 22  Estado          sigla 2 letras (ES, SP, RJ...)',
+  ' 23  Data Entrada    dd/mm/aaaa (inquilino — vazio se nao souber)',
+  ' 24  Data Saida      dd/mm/aaaa — vazio se nao houver',
+  ' 25  Recebe Cobranca Sim|Nao',
+  ' 26  Observacao      texto livre',
+  '',
+  'CHECKLIST ANTES DE EMITIR CADA LINHA:',
+  '- Tem nome? Vai na coluna 6, NAO em outra coluna.',
+  '- Tem email? Vai na coluna 12, NAO na 13 (que e DDI).',
+  '- DDI so "55" ou vazio — NUNCA recebe email nem numero longo.',
+  '- Telefone: extrair so os digitos. "(27) 99814-8653" vira "27998148653".',
+  '- Conte os pontos-e-virgula: cada linha DEVE ter exatamente 25 (separando 26 campos).',
+  '',
+  'COMO MAPEAR PLANILHAS COM CABECALHOS DIFERENTES:',
+  '- "Apt" / "Numero do apartamento" / "Unidade" / "Apartamento" → coluna 2 (Unidade)',
+  '- "Tel" / "Telefone" / "Celular" / "Whatsapp" → coluna 14 (Telefone)',
+  '- "Email" / "E-mail" / "Correio eletronico" → coluna 12 (Email)',
+  '- "Nome" / "Nome completo" / "Morador" / "Proprietario" → coluna 6 (Nome)',
+  '- Se cabecalho da entrada tem ordem diferente das 26, REORDENE para emitir na ordem 1..26.',
+  '',
+  'EXEMPLO COMPLETO (entrada 6 colunas Nome;Apt;Bloco;Tel;Email;Tipo):',
+  'Entrada: "Joao da Silva;101;A;(27) 99814-8653;joao@email.com;Proprietario"',
+  'Saida:   "Proprietario;101;A;;;Joao da Silva;;;;;;joao@email.com;55;27998148653;2;;;;;;;;;;;"',
+  '         (Tipo, Unid=101, Bloco=A, Frac vazio, Metr vazio, Nome="Joao da Silva", CPF vazio, CNPJ vazio, RG vazio, DataNasc vazio, Gen vazio, Email=joao@email.com, DDI=55, Tel=27998148653, TipoTel=2, depois 11 colunas vazias = 11 ; finais)',
+  '',
+  'REGRA ANTI-INVENCAO: se um campo nao aparece claramente no documento, DEIXE VAZIO. Nunca inventar CPFs, RGs, datas, enderecos.',
+  '',
+  'AGRUPAMENTO:',
+  '- Linhas com mesma Unidade+Bloco sao agrupadas como UMA unidade.',
+  '- Cada unidade deve ter exatamente 1 Proprietario.',
+  '- Inquilinos e Dependentes da mesma unidade vem em linhas separadas.',
+  '',
+  'FORMATO DE SAIDA:',
+  '- Retorne APENAS CSV puro, sem markdown, sem cercas ```, sem prefacio ("Aqui esta...").',
+  '- Separador: ponto-e-virgula (;). Vazio = celula vazia (dois ; consecutivos).',
+  '- Primeira linha = o cabecalho exato listado acima.',
+  '- Cada linha de dados = uma pessoa, EXATAMENTE 25 ; (26 campos).',
+  '- NAO use aspas a menos que o valor contenha ; literal (raro).',
+].join('\n');
+
+let _normalizarRows = null;
+let _normalizarSourceName = '';
+
+async function anexarDocNormalizar(event) {
+  const file = (event && event.target && event.target.files && event.target.files[0]) || null;
+  if (!file) return;
+  await processarDocNormalizar(file);
+  event.target.value = '';
+}
+
+function normalizarDragOver(e) {
+  e.preventDefault();
+  e.currentTarget.style.borderColor = 'var(--gs-blue)';
+  e.currentTarget.style.background = 'var(--gs-blue-light)';
+}
+function normalizarDragLeave(e) {
+  e.currentTarget.style.borderColor = '';
+  e.currentTarget.style.background = 'var(--bg3)';
+}
+async function normalizarDrop(e) {
+  e.preventDefault();
+  normalizarDragLeave(e);
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!file) return;
+  await processarDocNormalizar(file);
+}
+
+async function processarDocNormalizar(file) {
+  const status = document.getElementById('normalizar-status');
+  const progressWrap = document.getElementById('normalizar-progress-wrap');
+  const progressBar = document.getElementById('normalizar-progress-bar');
+
+  if (file.size > NORMALIZAR_MAX_BYTES) {
+    status.textContent = `Arquivo muito grande (${(file.size/1024/1024).toFixed(1)}MB). Limite 8MB.`;
+    status.style.color = 'var(--danger)';
+    return;
+  }
+
+  _normalizarSourceName = file.name;
+  status.textContent = `Lendo ${file.name}...`;
+  status.style.color = 'var(--gs-blue)';
+  progressWrap.style.display = 'block';
+  progressBar.style.width = '15%';
+
+  try {
+    // Decide se manda como document (PDF), image (imagem), ou texto (planilha/csv/txt)
+    let content;
+    const isPdf = file.type === 'application/pdf';
+    const isImage = file.type && file.type.startsWith('image/');
+    const isText = /\.(csv|txt)$/i.test(file.name);
+    const isSpreadsheet = /\.(xlsx|xls)$/i.test(file.name);
+
+    if (isPdf || isImage) {
+      const base64 = await fileToBase64(file);
+      const block = isPdf
+        ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+        : { type: 'image',    source: { type: 'base64', media_type: file.type, data: base64 } };
+      content = [block, { type: 'text', text: 'Reformate as unidades do documento acima no CSV de 26 colunas conforme regras do sistema.' }];
+    } else if (isSpreadsheet) {
+      // Le XLSX/XLS via SheetJS e converte pra CSV bruto pra mandar como texto
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rawCsv = XLSX.utils.sheet_to_csv(sheet, { FS: ';' });
+      if (rawCsv.length > 200000) throw new Error('Planilha muito densa. Divida em partes menores.');
+      content = [{ type: 'text', text: 'Planilha original (CSV bruto fora do padrao):\n\n' + rawCsv + '\n\nReformate pro CSV de 26 colunas conforme regras.' }];
+    } else if (isText) {
+      const text = await file.text();
+      if (text.length > 200000) throw new Error('Texto muito longo. Divida em partes menores.');
+      content = [{ type: 'text', text: 'Documento original:\n\n' + text + '\n\nExtraia e reformate as unidades no CSV de 26 colunas conforme regras.' }];
+    } else {
+      throw new Error('Formato nao suportado. Use PDF, XLSX, XLS, CSV, TXT, PNG, JPG ou WEBP.');
+    }
+    progressBar.style.width = '40%';
+    status.textContent = 'IA reformatando...';
+
+    const payload = {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 16000,
+      system: NORMALIZAR_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content }]
+    };
+
+    const resp = await apiAuthFetch('/api/claude/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    progressBar.style.width = '80%';
+
+    if (!resp.ok) {
+      const erro = await resp.text();
+      throw new Error('IA retornou ' + resp.status + ': ' + erro.slice(0, 200));
+    }
+    const data = await resp.json();
+    let csvText = data.content && data.content[0] && data.content[0].text ? data.content[0].text : '';
+    if (!csvText) throw new Error('IA nao retornou texto');
+    // Tolerar cercas ``` se modelo escapar
+    csvText = csvText.replace(/```(?:csv)?\s*|\s*```/g, '').trim();
+
+    // Parse CSV (split por ; e quebras de linha)
+    const linhas = csvText.split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (linhas.length < 1) throw new Error('CSV retornado vazio');
+    const headerCsv = linhas[0].split(';').map(s => s.trim());
+    if (headerCsv.length < 20) throw new Error(`CSV tem so ${headerCsv.length} colunas (esperado 26)`);
+    const rows = linhas.slice(1).map(l => {
+      const cells = l.split(';');
+      // Garante 26 colunas mesmo se faltar trailing
+      while (cells.length < 26) cells.push('');
+      return cells.slice(0, 26).map(c => c.trim());
+    });
+
+    _normalizarRows = rows;
+    renderPreviewNormalizado(rows);
+    progressBar.style.width = '100%';
+    status.textContent = `✓ ${rows.length} linhas geradas. Revise abaixo.`;
+    status.style.color = 'var(--success)';
+    toast(`Normalizado: ${rows.length} linhas`, 'ok');
+    setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
+  } catch (e) {
+    status.textContent = '✕ ' + (e.message || 'Falha ao normalizar');
+    status.style.color = 'var(--danger)';
+    progressWrap.style.display = 'none';
+    toast('Falha ao normalizar', 'err');
+  }
+}
+
+// `fileToBase64` já está definido mais abaixo (módulo Consumo, linha ~4469).
+// Reusa a versão existente — comportamento idêntico (resolve r.result.split(',')[1]).
+
+function renderPreviewNormalizado(rows) {
+  const previewBox = document.getElementById('normalizar-preview');
+  const table = document.getElementById('normalizar-table');
+  const resumo = document.getElementById('normalizar-resumo');
+
+  // Conta proprietários, inquilinos, dependentes pra resumo
+  const proprietarios = rows.filter(r => /propriet/i.test(r[0])).length;
+  const inquilinos = rows.filter(r => /inquilino/i.test(r[0])).length;
+  const dependentes = rows.filter(r => /dependente/i.test(r[0])).length;
+  const unidades = new Set(rows.map(r => `${r[1]}|${r[2]}`)).size;
+  resumo.textContent = `${rows.length} linhas · ${unidades} unidades · ${proprietarios} proprietários · ${inquilinos} inquilinos · ${dependentes} dependentes`;
+
+  // Tabela compacta
+  const headerHtml = NORMALIZAR_HEADERS.map(h => `<th style="padding:6px 8px;background:var(--bg3);font-size:10px;font-family:var(--mono);text-transform:uppercase;color:var(--muted);position:sticky;top:0;border-bottom:1px solid var(--border2);white-space:nowrap">${h}</th>`).join('');
+  const rowsHtml = rows.map(r => '<tr>' + r.map(c => `<td style="padding:5px 8px;font-size:11px;font-family:var(--mono);border-bottom:1px solid var(--border);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis" title="${(c || '').replace(/"/g, '&quot;')}">${c || ''}</td>`).join('') + '</tr>').join('');
+  table.innerHTML = `<thead><tr>${headerHtml}</tr></thead><tbody>${rowsHtml}</tbody>`;
+  previewBox.style.display = 'block';
+}
+
+function descartarNormalizado() {
+  _normalizarRows = null;
+  _normalizarSourceName = '';
+  document.getElementById('normalizar-preview').style.display = 'none';
+  document.getElementById('normalizar-status').textContent = '';
+  document.getElementById('normalizar-status').style.color = '';
+  toast('Descartado', 'ok');
+}
+
+function baixarPlanilhaNormalizada() {
+  if (!_normalizarRows || !_normalizarRows.length) { toast('Nada pra baixar', 'err'); return; }
+  // Monta worksheet com header + linhas
+  const aoa = [NORMALIZAR_HEADERS.slice(), ..._normalizarRows];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Unidades');
+  const baseName = (_normalizarSourceName || 'unidades').replace(/\.[^.]+$/, '');
+  XLSX.writeFile(wb, `${baseName}_normalizado.xlsx`);
+  toast('Planilha baixada', 'ok');
+}
+
 function limparAta() {
   document.getElementById('ata-cond').value = '';
   document.getElementById('ata-data').value = '';
@@ -3853,6 +4326,11 @@ function limparAta() {
   document.getElementById('ata-local').value = '';
   document.getElementById('ata-transcricao').value = '';
   document.getElementById('ata-participantes').value = '';
+  // Reset uploader edital
+  const editalStatus = document.getElementById('edital-status');
+  if (editalStatus) { editalStatus.textContent = ''; editalStatus.style.color = ''; }
+  const editalProgress = document.getElementById('edital-progress-wrap');
+  if (editalProgress) editalProgress.style.display = 'none';
   document.getElementById('pauta-list').innerHTML = `<div class="pauta-item" style="flex-wrap:wrap;gap:6px;align-items:flex-start">
     <input type="text" placeholder="ex: Aprovacao do balancete financeiro"
       style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
