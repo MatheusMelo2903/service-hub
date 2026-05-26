@@ -1209,6 +1209,47 @@
     <div class="panel" id="panel-unidades">
       <!-- Banner populado por renderBannerCondAtivo('unidades') ao abrir o painel -->
       <div id="banner-cond-unidades"></div>
+
+      <!-- NORMALIZADOR IA: doc fora do padrão → planilha 26 colunas -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Normalizar via IA</span>
+          <span style="font-size:10px;font-family:var(--mono);color:var(--muted)">opcional — se a planilha já está no formato 26 colunas, pula direto pra "Importar Unidades" abaixo</span>
+        </div>
+        <div id="normalizar-dropzone" style="background:var(--bg3);border:1.5px dashed var(--border2);border-radius:var(--radius);padding:14px 18px;transition:all 0.2s"
+          ondragover="normalizarDragOver(event)"
+          ondragleave="normalizarDragLeave(event)"
+          ondrop="normalizarDrop(event)">
+          <div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">🔄 Reformatar documento qualquer → modelo Superlógica (26 colunas)</div>
+          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:10px">Anexe PDF, planilha fora do padrão, imagem ou texto. A IA reformata pro modelo exato. Você revisa antes de baixar — nada vai pro Superlógica sem sua confirmação.</p>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <label style="display:inline-flex;align-items:center;gap:8px;padding:8px 14px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:var(--sans);color:var(--gs-blue);transition:all 0.15s">
+              📎 Selecionar documento
+              <input type="file" id="normalizar-input" accept="application/pdf,.xlsx,.xls,.csv,.txt,image/png,image/jpeg,image/webp" style="display:none" onchange="anexarDocNormalizar(event)">
+            </label>
+            <span id="normalizar-status" style="font-size:11px;font-family:var(--mono);color:var(--muted)"></span>
+          </div>
+          <div id="normalizar-progress-wrap" style="display:none;margin-top:10px">
+            <div style="background:var(--bg);border-radius:4px;height:3px;overflow:hidden">
+              <div id="normalizar-progress-bar" style="height:100%;background:var(--gs-blue);border-radius:4px;width:0%;transition:width 0.3s"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Preview da planilha normalizada -->
+        <div id="normalizar-preview" style="display:none;margin-top:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span style="font-size:12px;font-family:var(--mono);color:var(--text)"><span id="normalizar-resumo"></span></span>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-ghost" onclick="descartarNormalizado()" style="font-size:12px;padding:6px 12px">✕ Descartar</button>
+              <button class="btn btn-primary" onclick="baixarPlanilhaNormalizada()" style="font-size:12px;padding:6px 12px">⬇ Baixar XLSX</button>
+            </div>
+          </div>
+          <div class="table-wrap" style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table id="normalizar-table"></table></div>
+          <p style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-top:8px">⚠ Revise antes de baixar. Após baixar, arraste o .xlsx pro dropzone "Importar Unidades" abaixo pra subir ao Superlógica.</p>
+        </div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <span class="card-title">Importar Unidades</span>
@@ -4009,6 +4050,223 @@ function aplicarCamposExtraidos(json) {
   if (json.tipo && tipos[json.tipo]) document.getElementById('ata-tipo').value = tipos[json.tipo];
   if (json.sindico) document.getElementById('ata-sindico').value = String(json.sindico);
   if (json.local) document.getElementById('ata-local').value = String(json.local);
+}
+
+// ============================================================
+// NORMALIZADOR IA — doc qualquer → planilha 26 colunas Superlógica
+// ============================================================
+
+const NORMALIZAR_MAX_BYTES = 8 * 1024 * 1024;
+// Cabeçalhos exatos das 26 colunas (formato unificado Superlógica)
+const NORMALIZAR_HEADERS = ['Tipo','Unidade','Bloco','Fração','Metragem','Nome','CPF','CNPJ','RG','Data Nascimento','Gênero','Email','DDI','Telefone','Tipo Telefone','CEP','Endereço','Número','Complemento','Bairro','Cidade','Estado','Data Entrada','Data Saída','Recebe Cobrança','Observação'];
+
+const NORMALIZAR_SYSTEM_PROMPT = [
+  'Voce e um normalizador de dados de unidades condominiais.',
+  'O usuario vai te dar um documento (PDF, planilha fora do padrao, imagem ou texto) com informacoes',
+  'de unidades + proprietarios + inquilinos + dependentes de um condominio.',
+  '',
+  'Sua tarefa: reformatar tudo no modelo unificado de 26 colunas que o Superlogica aceita.',
+  '',
+  'COLUNAS EXATAS (na ordem A..Z, separadas por ponto-e-virgula no CSV):',
+  'Tipo;Unidade;Bloco;Fracao;Metragem;Nome;CPF;CNPJ;RG;Data Nascimento;Genero;Email;DDI;Telefone;Tipo Telefone;CEP;Endereco;Numero;Complemento;Bairro;Cidade;Estado;Data Entrada;Data Saida;Recebe Cobranca;Observacao',
+  '',
+  'REGRAS DE PREENCHIMENTO:',
+  '- Uma linha por pessoa (Proprietario, Inquilino, Dependente).',
+  '- Tipo: "Proprietario" | "Inquilino" | "Dependente".',
+  '- Bloco: opcional. Pode estar vazio.',
+  '- Fracao: numero decimal, vazio se ausente. Aceita virgula ou ponto.',
+  '- CPF: apenas digitos (11). CNPJ: apenas digitos (14). Preencher SO UM dos dois por linha.',
+  '- Data Nascimento e Data Entrada/Saida: dd/mm/aaaa.',
+  '- Genero: "M" ou "F" (vazio se nao souber).',
+  '- DDI: padrao "55" se houver telefone.',
+  '- Telefone: apenas digitos com DDD (ex: 27998148653).',
+  '- Tipo Telefone: "1"=fixo, "2"=celular, "3"=comercial. Default "2".',
+  '- CEP: apenas digitos.',
+  '- Estado: sigla 2 letras (ES, SP, RJ...).',
+  '- Recebe Cobranca: "Sim" ou "Nao".',
+  '- Endereco/CEP/Telefone do Proprietario sao usados como dados de cobranca da unidade.',
+  '- Inquilinos e Dependentes podem ter endereco proprio.',
+  '- Linhas com mesma Unidade+Bloco sao agrupadas como UMA unidade. Cada unidade deve ter exatamente 1 Proprietario.',
+  '',
+  'REGRA ANTI-INVENCAO: se um campo nao aparece claramente no documento, DEIXE VAZIO. Nunca inventar nomes, CPFs, telefones, enderecos.',
+  '',
+  'FORMATO DA SAIDA:',
+  '- Retorne APENAS CSV puro, sem markdown, sem cercas, sem comentarios.',
+  '- Use ponto-e-virgula (;) como separador. Vazio = celula vazia (dois ; consecutivos).',
+  '- Primeira linha = cabecalho exato listado acima.',
+  '- Demais linhas = uma pessoa por linha.',
+  '- Se o documento tem 0 unidades identificaveis, retorne apenas o cabecalho.',
+  '- NAO use aspas a menos que o valor contenha ponto-e-virgula (raro).',
+].join('\n');
+
+let _normalizarRows = null;
+let _normalizarSourceName = '';
+
+async function anexarDocNormalizar(event) {
+  const file = (event && event.target && event.target.files && event.target.files[0]) || null;
+  if (!file) return;
+  await processarDocNormalizar(file);
+  event.target.value = '';
+}
+
+function normalizarDragOver(e) {
+  e.preventDefault();
+  e.currentTarget.style.borderColor = 'var(--gs-blue)';
+  e.currentTarget.style.background = 'var(--gs-blue-light)';
+}
+function normalizarDragLeave(e) {
+  e.currentTarget.style.borderColor = '';
+  e.currentTarget.style.background = 'var(--bg3)';
+}
+async function normalizarDrop(e) {
+  e.preventDefault();
+  normalizarDragLeave(e);
+  const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (!file) return;
+  await processarDocNormalizar(file);
+}
+
+async function processarDocNormalizar(file) {
+  const status = document.getElementById('normalizar-status');
+  const progressWrap = document.getElementById('normalizar-progress-wrap');
+  const progressBar = document.getElementById('normalizar-progress-bar');
+
+  if (file.size > NORMALIZAR_MAX_BYTES) {
+    status.textContent = `Arquivo muito grande (${(file.size/1024/1024).toFixed(1)}MB). Limite 8MB.`;
+    status.style.color = 'var(--danger)';
+    return;
+  }
+
+  _normalizarSourceName = file.name;
+  status.textContent = `Lendo ${file.name}...`;
+  status.style.color = 'var(--gs-blue)';
+  progressWrap.style.display = 'block';
+  progressBar.style.width = '15%';
+
+  try {
+    // Decide se manda como document (PDF), image (imagem), ou texto (planilha/csv/txt)
+    let content;
+    const isPdf = file.type === 'application/pdf';
+    const isImage = file.type && file.type.startsWith('image/');
+    const isText = /\.(csv|txt)$/i.test(file.name);
+    const isSpreadsheet = /\.(xlsx|xls)$/i.test(file.name);
+
+    if (isPdf || isImage) {
+      const base64 = await fileToBase64(file);
+      const block = isPdf
+        ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
+        : { type: 'image',    source: { type: 'base64', media_type: file.type, data: base64 } };
+      content = [block, { type: 'text', text: 'Reformate as unidades do documento acima no CSV de 26 colunas conforme regras do sistema.' }];
+    } else if (isSpreadsheet) {
+      // Le XLSX/XLS via SheetJS e converte pra CSV bruto pra mandar como texto
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rawCsv = XLSX.utils.sheet_to_csv(sheet, { FS: ';' });
+      if (rawCsv.length > 200000) throw new Error('Planilha muito densa. Divida em partes menores.');
+      content = [{ type: 'text', text: 'Planilha original (CSV bruto fora do padrao):\n\n' + rawCsv + '\n\nReformate pro CSV de 26 colunas conforme regras.' }];
+    } else if (isText) {
+      const text = await file.text();
+      if (text.length > 200000) throw new Error('Texto muito longo. Divida em partes menores.');
+      content = [{ type: 'text', text: 'Documento original:\n\n' + text + '\n\nExtraia e reformate as unidades no CSV de 26 colunas conforme regras.' }];
+    } else {
+      throw new Error('Formato nao suportado. Use PDF, XLSX, XLS, CSV, TXT, PNG, JPG ou WEBP.');
+    }
+    progressBar.style.width = '40%';
+    status.textContent = 'IA reformatando...';
+
+    const payload = {
+      model: 'claude-sonnet-4-6',
+      max_tokens: 16000,
+      system: NORMALIZAR_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content }]
+    };
+
+    const resp = await apiAuthFetch('/api/claude/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    progressBar.style.width = '80%';
+
+    if (!resp.ok) {
+      const erro = await resp.text();
+      throw new Error('IA retornou ' + resp.status + ': ' + erro.slice(0, 200));
+    }
+    const data = await resp.json();
+    let csvText = data.content && data.content[0] && data.content[0].text ? data.content[0].text : '';
+    if (!csvText) throw new Error('IA nao retornou texto');
+    // Tolerar cercas ``` se modelo escapar
+    csvText = csvText.replace(/```(?:csv)?\s*|\s*```/g, '').trim();
+
+    // Parse CSV (split por ; e quebras de linha)
+    const linhas = csvText.split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (linhas.length < 1) throw new Error('CSV retornado vazio');
+    const headerCsv = linhas[0].split(';').map(s => s.trim());
+    if (headerCsv.length < 20) throw new Error(`CSV tem so ${headerCsv.length} colunas (esperado 26)`);
+    const rows = linhas.slice(1).map(l => {
+      const cells = l.split(';');
+      // Garante 26 colunas mesmo se faltar trailing
+      while (cells.length < 26) cells.push('');
+      return cells.slice(0, 26).map(c => c.trim());
+    });
+
+    _normalizarRows = rows;
+    renderPreviewNormalizado(rows);
+    progressBar.style.width = '100%';
+    status.textContent = `✓ ${rows.length} linhas geradas. Revise abaixo.`;
+    status.style.color = 'var(--success)';
+    toast(`Normalizado: ${rows.length} linhas`, 'ok');
+    setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
+  } catch (e) {
+    status.textContent = '✕ ' + (e.message || 'Falha ao normalizar');
+    status.style.color = 'var(--danger)';
+    progressWrap.style.display = 'none';
+    toast('Falha ao normalizar', 'err');
+  }
+}
+
+// `fileToBase64` já está definido mais abaixo (módulo Consumo, linha ~4469).
+// Reusa a versão existente — comportamento idêntico (resolve r.result.split(',')[1]).
+
+function renderPreviewNormalizado(rows) {
+  const previewBox = document.getElementById('normalizar-preview');
+  const table = document.getElementById('normalizar-table');
+  const resumo = document.getElementById('normalizar-resumo');
+
+  // Conta proprietários, inquilinos, dependentes pra resumo
+  const proprietarios = rows.filter(r => /propriet/i.test(r[0])).length;
+  const inquilinos = rows.filter(r => /inquilino/i.test(r[0])).length;
+  const dependentes = rows.filter(r => /dependente/i.test(r[0])).length;
+  const unidades = new Set(rows.map(r => `${r[1]}|${r[2]}`)).size;
+  resumo.textContent = `${rows.length} linhas · ${unidades} unidades · ${proprietarios} proprietários · ${inquilinos} inquilinos · ${dependentes} dependentes`;
+
+  // Tabela compacta
+  const headerHtml = NORMALIZAR_HEADERS.map(h => `<th style="padding:6px 8px;background:var(--bg3);font-size:10px;font-family:var(--mono);text-transform:uppercase;color:var(--muted);position:sticky;top:0;border-bottom:1px solid var(--border2);white-space:nowrap">${h}</th>`).join('');
+  const rowsHtml = rows.map(r => '<tr>' + r.map(c => `<td style="padding:5px 8px;font-size:11px;font-family:var(--mono);border-bottom:1px solid var(--border);white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis" title="${(c || '').replace(/"/g, '&quot;')}">${c || ''}</td>`).join('') + '</tr>').join('');
+  table.innerHTML = `<thead><tr>${headerHtml}</tr></thead><tbody>${rowsHtml}</tbody>`;
+  previewBox.style.display = 'block';
+}
+
+function descartarNormalizado() {
+  _normalizarRows = null;
+  _normalizarSourceName = '';
+  document.getElementById('normalizar-preview').style.display = 'none';
+  document.getElementById('normalizar-status').textContent = '';
+  document.getElementById('normalizar-status').style.color = '';
+  toast('Descartado', 'ok');
+}
+
+function baixarPlanilhaNormalizada() {
+  if (!_normalizarRows || !_normalizarRows.length) { toast('Nada pra baixar', 'err'); return; }
+  // Monta worksheet com header + linhas
+  const aoa = [NORMALIZAR_HEADERS.slice(), ..._normalizarRows];
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Unidades');
+  const baseName = (_normalizarSourceName || 'unidades').replace(/\.[^.]+$/, '');
+  XLSX.writeFile(wb, `${baseName}_normalizado.xlsx`);
+  toast('Planilha baixada', 'ok');
 }
 
 function limparAta() {
