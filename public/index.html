@@ -7,6 +7,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/auth-bootstrap.js" defer></script>
 <style>
   :root {
     --bg: #F4F6F9;
@@ -1005,6 +1007,9 @@
     <button class="config-btn" onclick="showPanel('configuracoes')">
       <span>⚙</span> Configurações
     </button>
+    <button class="config-btn" id="btn-logout" onclick="if(confirm('Sair?')) window.authLogout && window.authLogout()" style="margin-top:6px;">
+      <span>⎋</span> <span id="logout-label">Sair</span>
+    </button>
   </div>
 </aside>
 
@@ -1496,12 +1501,12 @@
           <span class="card-title">Participantes</span>
         </div>
         <textarea class="ata-field" id="ata-participantes" rows="4"
-          placeholder="Liste os participantes presentes (opcional — se não informar, o Claude vai extrair da transcrição)"></textarea>
+          placeholder="Liste os participantes presentes (opcional — se não informar, a Service Hub IA vai extrair da transcrição)"></textarea>
       </div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:20px">
         <button class="btn btn-ghost" onclick="limparAta()">✕ Limpar tudo</button>
-        <button class="btn btn-primary" id="btn-copiar-claude" onclick="copiarProClaude()">⎘ Copiar pro Claude</button>
+        <button class="btn btn-primary" id="btn-copiar-claude" onclick="copiarProClaude()">⎘ Copiar pro Service Hub IA</button>
       </div>
     </div>
 
@@ -3355,7 +3360,7 @@ async function processarArquivoAudio(file) {
     const tamanhoMB = (file.size / 1024 / 1024).toFixed(1);
     setAudioProgress(5, `Enviando arquivo (${tamanhoMB}MB)...`, 'Conectando ao AssemblyAI...');
 
-    const uploadResp = await fetch(AAI_UPLOAD_URL, {
+    const uploadResp = await apiAuthFetch(AAI_UPLOAD_URL, {
       method: 'POST',
       body: file,
       signal: audioAbortController?.signal
@@ -3366,7 +3371,7 @@ async function processarArquivoAudio(file) {
     setAudioProgress(20, 'Arquivo enviado! Iniciando transcrição...', 'Upload concluído ✓');
 
     // PASSO 2: Inicia transcrição
-    const transcriptResp = await fetch(AAI_TRANSCRIPT_URL, {
+    const transcriptResp = await apiAuthFetch(AAI_TRANSCRIPT_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -3390,7 +3395,7 @@ async function processarArquivoAudio(file) {
       pollTimer = setInterval(async () => {
         if (audioAbortController?.signal.aborted) { clearInterval(pollTimer); reject(new Error('Cancelado')); return; }
         try {
-          const pollResp = await fetch(AAI_POLL_BASE + id);
+          const pollResp = await apiAuthFetch(AAI_POLL_BASE + id);
           const result = await pollResp.json();
 
           if (result.status === 'completed') {
@@ -3925,8 +3930,8 @@ ${trans}
 
   try {
     await navigator.clipboard.writeText(bloco);
-    toast('✓ Copiado! Cole no Claude pra gerar a ata em .docx', 'ok');
-    addHistorico('Ata copiada pro Claude: ' + cond + ' · ' + data);
+    toast('✓ Copiado! Cole no Service Hub IA pra gerar a ata em .docx', 'ok');
+    addHistorico('Ata copiada pro Service Hub IA: ' + cond + ' · ' + data);
   } catch(e) {
     // Fallback: textarea temporário
     const ta = document.createElement('textarea');
@@ -3936,8 +3941,8 @@ ${trans}
     ta.select();
     try {
       document.execCommand('copy');
-      toast('✓ Copiado! Cole no Claude pra gerar a ata em .docx', 'ok');
-      addHistorico('Ata copiada pro Claude: ' + cond + ' · ' + data);
+      toast('✓ Copiado! Cole no Service Hub IA pra gerar a ata em .docx', 'ok');
+      addHistorico('Ata copiada pro Service Hub IA: ' + cond + ' · ' + data);
     } catch(err) {
       toast('Erro ao copiar: ' + err.message, 'err');
     }
@@ -3975,11 +3980,11 @@ async function processFilesConsumo(files) {
     // Extrai leitura via Claude
     try {
       const b64 = await fileToBase64(file);
-      const resp = await fetch('/api/claude/messages', {
+      const resp = await apiAuthFetch('/api/claude/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
+          model: 'claude-haiku-4-5',
           max_tokens: 200,
           messages: [{
             role: 'user',
@@ -4156,14 +4161,25 @@ function toast(msg, type) {
 // ============================================================
 // SUPABASE INTEGRATION
 // ============================================================
-const SUPA_URL = 'https://mtucxdfepkwsfnqpfydb.supabase.co';
-const SUPA_KEY = 'sb_publishable_LgUqE8qdyvhh6VhLD4c4yg_zo6aWJXH';
+// URL e anon key vêm de window.__APP_CONFIG__ (carregado pelo auth-bootstrap.js
+// via /api/config). Bearer usado nas chamadas é o JWT do usuário logado
+// (window.AUTH_TOKEN), necessário pra passar pelas RLS policies.
+
+function supaUrl() {
+  return (window.__APP_CONFIG__ && window.__APP_CONFIG__.supabaseUrl) || '';
+}
+function supaAnonKey() {
+  return (window.__APP_CONFIG__ && window.__APP_CONFIG__.supabaseAnonKey) || '';
+}
+function supaBearer() {
+  return window.AUTH_TOKEN || supaAnonKey();
+}
 
 async function supaFetch(path, options = {}) {
-  const res = await fetch(SUPA_URL + '/rest/v1/' + path, {
+  const res = await fetch(supaUrl() + '/rest/v1/' + path, {
     headers: {
-      'apikey': SUPA_KEY,
-      'Authorization': 'Bearer ' + SUPA_KEY,
+      'apikey': supaAnonKey(),
+      'Authorization': 'Bearer ' + supaBearer(),
       'Content-Type': 'application/json',
       'Prefer': options.prefer || 'return=representation',
       ...options.headers
@@ -4181,10 +4197,10 @@ async function supaFetch(path, options = {}) {
 // Não substitui supaFetch pois os outros callers dependem do retorno null atual.
 async function supaFetchRich(path, options = {}) {
   try {
-    const res = await fetch(SUPA_URL + '/rest/v1/' + path, {
+    const res = await fetch(supaUrl() + '/rest/v1/' + path, {
       headers: {
-        'apikey': SUPA_KEY,
-        'Authorization': 'Bearer ' + SUPA_KEY,
+        'apikey': supaAnonKey(),
+        'Authorization': 'Bearer ' + supaBearer(),
         'Content-Type': 'application/json',
         'Prefer': options.prefer || 'return=representation',
         ...options.headers
@@ -4199,6 +4215,18 @@ async function supaFetchRich(path, options = {}) {
   } catch (e) {
     return { ok: false, status: 0, detail: e.message || 'Falha de rede ao conectar ao Supabase' };
   }
+}
+
+// ============================================================
+// API AUTH HELPER — injeta Bearer JWT em chamadas /api/*
+// ============================================================
+// Backend /api/* exige Bearer (JWT do user logado via Supabase Auth) por causa
+// do requireAuth middleware em server.js. Helper centraliza a injeção do header.
+async function apiAuthFetch(url, options = {}) {
+  const token = window.AUTH_TOKEN;
+  const headers = { ...(options.headers || {}) };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  return fetch(url, { ...options, headers });
 }
 
 // ============================================================
@@ -5850,13 +5878,13 @@ async function prestacaoGerar() {
     for (var j = 0; j < blocos.length; j++) contextoUsuario.push(blocos[j]);
 
     var payload = {
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'claude-sonnet-4-6',
       max_tokens: 16000,
       system: systemPrompt,
       messages: [{ role: 'user', content: contextoUsuario }]
     };
 
-    var resp = await fetch('/api/claude/messages', {
+    var resp = await apiAuthFetch('/api/claude/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
