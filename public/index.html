@@ -1584,8 +1584,8 @@
               <button class="btn btn-ghost" onclick="fecharAtaGerada()" style="font-size:12px;padding:6px 12px">✕ Fechar</button>
             </div>
           </div>
-          <div id="ata-gerada-conteudo" style="flex:1;overflow:auto;padding:24px 28px;background:#fff;color:#1a1a1a;font-family:'Times New Roman',Times,serif;font-size:13px;line-height:1.6;white-space:pre-wrap"></div>
-          <div style="padding:12px 22px;background:var(--bg3);border-top:1px solid var(--border);font-size:11px;font-family:var(--mono);color:var(--muted)">⚠ Revise tudo antes de baixar. Campos marcados como <code>[a confirmar]</code> indicam dados não extraíveis da transcrição — preencha manualmente.</div>
+          <div id="ata-gerada-conteudo" style="flex:1;overflow:auto;padding:24px 28px;background:#fff;color:#1a1a1a;font-family:Arial,Helvetica,sans-serif;font-size:12pt;line-height:1.5;white-space:pre-wrap;text-align:justify"></div>
+          <div style="padding:12px 22px;background:var(--bg3);border-top:1px solid var(--border);font-size:11px;font-family:var(--mono);color:var(--muted);line-height:1.6">⚠ Revise tudo antes de baixar. Campos marcados como <code>[a confirmar]</code> indicam dados não extraíveis da transcrição — preencha manualmente.<br>📄 <b>Na janela de impressão, desative "Cabeçalhos e rodapés"</b> (em "Mais configurações") para um PDF limpo, sem URL nem numeração de página.</div>
         </div>
       </div>
     </div>
@@ -4364,7 +4364,7 @@ const ATA_SYSTEM_PROMPT = [
   '- Subitens internos dentro da prosa usam (i), (ii), (iii), nunca bullets nem números soltos.',
   '- Apenas TEXTO PURO com parágrafos separados por uma linha em branco. Sem decoração visual.',
   '- O cabeçalho do condomínio aparece em linhas separadas no topo, em CAIXA ALTA quando for o nome.',
-  '- Títulos de seção como "ATA DA ASSEMBLEIA GERAL ORDINÁRIA", "ITEM 1) APROVAÇÃO DAS CONTAS:", "ENCERRAMENTO E PRÓXIMOS PASSOS:" aparecem em CAIXA ALTA dentro do parágrafo, sem marcadores.',
+  '- Títulos de seção como "ATA DA ASSEMBLEIA GERAL ORDINÁRIA", "ITEM  1)  APROVAÇÃO DAS CONTAS:", "ENCERRAMENTO E PRÓXIMOS PASSOS:" aparecem em CAIXA ALTA dentro do parágrafo, sem marcadores.',
   '- Não escreva nada fora da ata (sem "Aqui está a ata:", sem comentários do modelo, sem cercas de código).',
   '',
   'REGRAS OBRIGATÓRIAS DE REDAÇÃO:',
@@ -4373,22 +4373,43 @@ const ATA_SYSTEM_PROMPT = [
   '- Horas por extenso: "dezenove horas e trinta minutos (19h30min)".',
   '- Datas por extenso: "vinte (20) dias do mês de maio de dois mil e vinte e seis (2026)".',
   '- Valores sempre com centavos no padrão brasileiro: R$ 800,00.',
-  '- Títulos dos itens de pauta em CAIXA ALTA, no formato "ITEM 1) APROVAÇÃO DAS CONTAS:" seguido do corpo no mesmo parágrafo.',
   '- Resultado de votações registrado explicitamente ("aprovado por unanimidade", "sem manifestação contrária").',
   '- Campos desconhecidos marcados como [a confirmar] — NUNCA inventar dados.',
   '- Seção de encerramento consolidando TODOS os deliberados como (i), (ii), (iii)... dentro da prosa.',
   '- Frase final padrão: "Nada mais havendo a tratar, o Presidente da Mesa declarou encerrados os trabalhos da [tipo de assembleia], da qual foi lavrada a presente ata."',
-  '- Local e data centralizados após o encerramento, em linha própria.',
-  '- Bloco de assinaturas ao final: uma linha de underscores (cerca de 47 caracteres) por assinante, com a identificação logo abaixo. Assinantes: Síndico, Presidente da Mesa, Secretária da Ata, Representante da Administradora, Conselho (ajustar conforme presentes).',
+  '- Local e data centralizados após o encerramento, em linha própria, terminando com ponto final.',
+  '',
+  'ORDEM OBRIGATÓRIA NA ABERTURA — INVIOLÁVEL:',
+  '- A frase de abertura DEVE usar a ordem: "reuniram-se os condôminos em Assembleia Geral [Ordinária/Extraordinária], em [primeira/segunda e última] convocação..."',
+  '- PROIBIDO inverter para "reuniram-se em Assembleia Geral [tipo] os condôminos" ou variações.',
+  '',
+  'FORMATO DOS TÍTULOS DE ITEM — INVIOLÁVEL:',
+  '- Sempre "ITEM  N)  TÍTULO EM CAIXA ALTA:" com DOIS espaços após "ITEM" e DOIS espaços após o ")".',
+  '- O título e o início do corpo ficam no MESMO parágrafo, sem quebra de linha entre eles.',
+  '- Sem sub-tópicos visuais dentro do item.',
+  '',
+  'ASSINATURAS — REGRAS INVIOLÁVEIS:',
+  '1. Cada assinatura é um par: linha com cerca de 47 underscores, e na linha imediatamente abaixo a identificação no formato "Papel – Nome Completo".',
+  '2. Separador é TRAVESSÃO ("–"), NUNCA dois-pontos (":") nem hífen ("-"). Exemplo correto: "Síndico – João da Silva".',
+  '3. Ordem obrigatória dos assinantes (omitir somente se confirmado que o papel não existe na assembleia): Síndico → Presidente da Mesa → Secretária da Ata → Representante da Administradora → Conselho Fiscal/Consultivo.',
+  '4. Representante da Administradora: incluir o NOME DA ADMINISTRADORA se constar nos dados — formato "Representante da Administradora – [Nome da Administradora] – [Nome do Representante]" ou, se o representante for desconhecido, "Representante da Administradora – [Nome da Administradora] – [Nome a confirmar]".',
+  '5. Campos sem dado: usar "[Nome a confirmar]" ou "[Administradora a confirmar]". NUNCA inventar.',
+  '6. Entre cada bloco de assinatura (par underscore + identificação) deixe DUAS LINHAS EM BRANCO para dar espaçamento visual no PDF.',
+  '',
+  'LOCAL E DATA — REGRAS INVIOLÁVEIS:',
+  '- Formato exato: "Cidade/UF, DD de mês por extenso de AAAA." — sempre com ponto final.',
+  '- USAR APENAS cidade/UF que estiver EXPLICITAMENTE nos DADOS DA REUNIÃO (campo Cidade ou similar).',
+  '- Se não houver cidade/UF nos dados: escrever literalmente "[Cidade/UF a confirmar], DD de mês de AAAA.".',
+  '- NUNCA inferir cidade pelo nome do condomínio, endereço, administradora ou contexto. "Salvador/BA" é ERRADO para um condomínio em Vitória/ES.',
   '',
   'ESTRUTURA SEQUENCIAL DA ATA:',
   '1) Cabeçalho do condomínio em linhas separadas: nome em CAIXA ALTA, CNPJ, endereço completo.',
   '2) Linha com "ATA DA ASSEMBLEIA GERAL ORDINÁRIA" ou "ATA DA ASSEMBLEIA GERAL EXTRAORDINÁRIA".',
-  '3) Parágrafo de abertura corrido com data por extenso, local, tipo de convocação, horário, quórum, referência ao edital e lista de presentes (Síndico, administradora, condôminos), terminando com "Feitas as formalidades de abertura, passou-se à deliberação dos itens da pauta, conforme a seguir:".',
-  '4) Itens da pauta numerados em arábicos. Cada item inicia com "ITEM N) TÍTULO EM CAIXA ALTA:" seguido do corpo em prosa corrida no mesmo parágrafo. Sem quebrar em sub-tópicos visuais.',
+  '3) Parágrafo de abertura corrido com data por extenso, local, tipo de convocação, horário, quórum, referência ao edital e lista de presentes (Síndico, administradora, condôminos), seguindo a ORDEM OBRIGATÓRIA NA ABERTURA acima, e terminando com "Feitas as formalidades de abertura, passou-se à deliberação dos itens da pauta, conforme a seguir:".',
+  '4) Itens da pauta numerados em arábicos, no formato "ITEM  N)  TÍTULO EM CAIXA ALTA:" + corpo em prosa corrida no mesmo parágrafo.',
   '5) Parágrafo "ENCERRAMENTO E PRÓXIMOS PASSOS:" consolidando deliberações em (i), (ii), (iii), terminando com a frase final padrão.',
-  '6) Linha com "Cidade/UF, data por extenso." centralizada.',
-  '7) Bloco de assinaturas, um por par (linha de underscores + identificação).',
+  '6) Linha com "Cidade/UF, DD de mês de AAAA." centralizada, seguindo as REGRAS INVIOLÁVEIS de Local e Data.',
+  '7) Bloco de assinaturas, um por par (linha de underscores + identificação no formato "Papel – Nome"), separados por DUAS linhas em branco.',
   '',
   'Use APENAS informações da transcrição e dos dados fornecidos. Não complete com suposições.'
 ].join('\n');
@@ -4521,35 +4542,76 @@ async function copiarAtaTexto() {
 function baixarAtaPDF() {
   if (!_ataTextoGerado) { toast('Nada pra baixar', 'err'); return; }
   // Abre janela formatada em A4 e aciona print — user salva como PDF via browser.
-  // Padrão idêntico ao gerarRelatorioSindico (zero dep nova).
-  const cond = document.getElementById('ata-cond').value.trim() || 'Condomínio';
-  const dataReuniao = document.getElementById('ata-data').value.trim() || '';
-  const fileHint = `Ata_${cond.replace(/[^a-zA-Z0-9]+/g,'_')}_${dataReuniao.replace(/\//g,'-')}`;
+  // Padrão visual espelha a Ata 1 Praia Dourada (gabarito Matheus):
+  //   - Fonte Arial 12pt, line-height 1.5, texto justificado
+  //   - Margens 2.54cm (sup/dir/inf) + 3.17cm (esq)
+  //   - <title> vazio + toast pra que o usuário desmarque "Cabeçalhos e
+  //     rodapés" no diálogo (browser não suprime URL/página via CSS)
+  //   - ITEMs viram blocos com page-break-inside:avoid pra não cortar
   const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  // Parseia o texto em cabeçalho · ITEMs · encerramento.
+  // Regex \s+ no "ITEM\s+\d+\)" cobre tanto "ITEM 1)" quanto "ITEM  1)" (dois espaços).
+  const linhas = _ataTextoGerado.split('\n');
+  const reItem = /^ITEM\s+\d+\)/;
+  const reEnc  = /^ENCERRAMENTO\b/i;
+  const cabec = [];
+  const items = [];
+  const enc   = [];
+  let modo = 'cab';
+  let buf = null;
+  for (const ln of linhas) {
+    if (reItem.test(ln)) {
+      if (buf) items.push(buf);
+      buf = [ln];
+      modo = 'item';
+      continue;
+    }
+    if (reEnc.test(ln) && modo === 'item') {
+      if (buf) { items.push(buf); buf = null; }
+      modo = 'enc';
+      enc.push(ln);
+      continue;
+    }
+    if (modo === 'cab') cabec.push(ln);
+    else if (modo === 'item') buf.push(ln);
+    else enc.push(ln);
+  }
+  if (buf) items.push(buf);
+
+  const blocoCab = cabec.length ? `<div class="bloco cab">${esc(cabec.join('\n'))}</div>` : '';
+  const blocoItems = items.map(it => `<div class="bloco item">${esc(it.join('\n'))}</div>`).join('');
+  const blocoEnc = enc.length ? `<div class="bloco enc">${esc(enc.join('\n'))}</div>` : '';
+  const corpo = (blocoCab + blocoItems + blocoEnc) || `<div class="bloco">${esc(_ataTextoGerado)}</div>`;
+
   const w = window.open('', '_blank');
   if (!w) { toast('Bloqueado pelo navegador. Permita pop-ups e tente novamente.', 'err'); return; }
   w.document.write(`<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<title>${esc(fileHint)}</title>
+<title> </title>
 <style>
-  @page { size: A4; margin: 2.5cm 2cm 2.5cm 2.5cm; }
-  body { font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.5; color: #000; margin: 0; }
-  .ata { white-space: pre-wrap; text-align: justify; }
+  @page { size: A4; margin: 2.54cm 2.54cm 2.54cm 3.17cm; }
+  html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: Arial, Helvetica, sans-serif; font-size: 12pt; line-height: 1.5; color: #000; }
+  .bloco { white-space: pre-wrap; text-align: justify; text-justify: inter-word; margin: 0; }
+  .bloco.item { page-break-inside: avoid; break-inside: avoid; }
   @media screen {
     body { background: #f3f4f6; padding: 24px; }
-    .page { background: #fff; max-width: 21cm; min-height: 29.7cm; margin: 0 auto; padding: 2.5cm 2cm; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+    .page { background: #fff; max-width: 21cm; min-height: 29.7cm; margin: 0 auto; padding: 2.54cm 2.54cm 2.54cm 3.17cm; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
   }
-  @media print { .page { padding: 0; box-shadow: none; } }
+  @media print {
+    .page { padding: 0; box-shadow: none; max-width: none; min-height: 0; }
+  }
 </style>
 </head>
 <body onload="setTimeout(function(){window.print()},250)">
-<div class="page"><div class="ata">${esc(_ataTextoGerado)}</div></div>
+<div class="page">${corpo}</div>
 </body>
 </html>`);
   w.document.close();
-  toast('Janela de impressão aberta — salve como PDF', 'ok');
+  toast('No diálogo de impressão: desmarque "Cabeçalhos e rodapés" e salve como PDF', 'ok');
 }
 
 async function copiarProClaude() {
