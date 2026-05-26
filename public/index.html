@@ -950,6 +950,10 @@
   .prestacao-modal-footer { display: flex; justify-content: flex-end; gap: 12px; padding: 16px 24px; border-top: 1px solid #e2e8f0; background: #f7f9fc; }
   .btn-urgencia { background: #C03B3B; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
   .btn-urgencia:hover { background: #a02f2f; }
+  /* Blocos da ata (preview + PDF compartilham mesmo nome de classe) */
+  .ata-bloco { margin: 0; white-space: pre-wrap; text-align: justify; text-justify: inter-word; }
+  .ata-bloco.centro { text-align: center; }
+  .ata-bloco.assin { text-align: left; }
 </style>
 </head>
 <body>
@@ -1584,7 +1588,7 @@
               <button class="btn btn-ghost" onclick="fecharAtaGerada()" style="font-size:12px;padding:6px 12px">✕ Fechar</button>
             </div>
           </div>
-          <div id="ata-gerada-conteudo" style="flex:1;overflow:auto;padding:24px 28px;background:#fff;color:#1a1a1a;font-family:Arial,Helvetica,sans-serif;font-size:12pt;line-height:1.5;white-space:pre-wrap;text-align:justify"></div>
+          <div id="ata-gerada-conteudo" style="flex:1;overflow:auto;padding:24px 28px;background:#fff;color:#1a1a1a;font-family:Arial,Helvetica,sans-serif;font-size:12pt;line-height:1.5"></div>
           <div style="padding:12px 22px;background:var(--bg3);border-top:1px solid var(--border);font-size:11px;font-family:var(--mono);color:var(--muted);line-height:1.6">⚠ Revise tudo antes de baixar. Campos marcados como <code>[a confirmar]</code> indicam dados não extraíveis da transcrição — preencha manualmente.<br>📄 <b>Na janela de impressão, desative "Cabeçalhos e rodapés"</b> (em "Mais configurações") para um PDF limpo, sem URL nem numeração de página.</div>
         </div>
       </div>
@@ -4507,7 +4511,8 @@ async function gerarAtaIA() {
     if (!texto) throw new Error('IA não retornou texto');
 
     _ataTextoGerado = texto;
-    document.getElementById('ata-gerada-conteudo').textContent = texto;
+    const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    document.getElementById('ata-gerada-conteudo').innerHTML = renderAtaBlocos(texto, escHtml);
     document.getElementById('ata-gerada-modal').style.display = 'flex';
     addHistorico('Ata gerada via IA: ' + cond + ' · ' + data);
     toast('Ata gerada — revise antes de baixar', 'ok');
@@ -4539,50 +4544,84 @@ async function copiarAtaTexto() {
   }
 }
 
+// Helper compartilhado entre preview do modal e popup do PDF: quebra o texto
+// da ata em blocos com alinhamento por tipo, espelhando o gabarito Ata 1:
+//   - cabeçalho do condomínio + título "ATA DA ASSEMBLEIA..."  → centro
+//   - parágrafo de abertura em prosa                            → justify
+//   - cada ITEM N)                                              → justify + page-break-inside:avoid
+//   - parágrafo "ENCERRAMENTO..."                               → justify
+//   - linha "Cidade/UF, data."                                  → centro
+//   - bloco de assinaturas (a partir do primeiro underscore)    → left
+// Se nenhum ITEM for detectado, devolve fallback single-block justify.
+function renderAtaBlocos(texto, escFn) {
+  const reItem      = /^ITEM\s+\d+\)/;
+  const reEnc       = /^ENCERRAMENTO\b/i;
+  const reTituloATA = /^ATA DA ASSEMBLEIA/i;
+  const reLocalData = /^[^/\n]+\/[A-Z]{2},\s*\d+\s+de\s+\S+\s+de\s+\d{4}\.?\s*$/i;
+  const reUnderline = /^_{10,}\s*$/;
+
+  const linhas = texto.split('\n');
+  const cabCentro = [];
+  const cabJust   = [];
+  const items     = [];
+  const encJust   = [];
+  let encLocalData = '';
+  const encAssin  = [];
+
+  let modo = 'cabCentro';
+  let buf = null;
+
+  for (const ln of linhas) {
+    if (modo === 'cabCentro') {
+      cabCentro.push(ln);
+      if (reTituloATA.test(ln)) modo = 'cabJust';
+      continue;
+    }
+    if (modo === 'cabJust') {
+      if (reItem.test(ln)) { modo = 'item'; buf = [ln]; continue; }
+      cabJust.push(ln);
+      continue;
+    }
+    if (modo === 'item') {
+      if (reItem.test(ln)) { if (buf) items.push(buf); buf = [ln]; continue; }
+      if (reEnc.test(ln))  { if (buf) { items.push(buf); buf = null; } modo = 'encJust'; encJust.push(ln); continue; }
+      buf.push(ln);
+      continue;
+    }
+    if (modo === 'encJust') {
+      if (reLocalData.test(ln.trim())) { encLocalData = ln; modo = 'encAssin'; continue; }
+      if (reUnderline.test(ln.trim())) { modo = 'encAssin'; encAssin.push(ln); continue; }
+      encJust.push(ln);
+      continue;
+    }
+    encAssin.push(ln);
+  }
+  if (buf) items.push(buf);
+
+  if (items.length === 0) return `<div class="ata-bloco">${escFn(texto)}</div>`;
+
+  const parts = [];
+  if (cabCentro.length)  parts.push(`<div class="ata-bloco centro">${escFn(cabCentro.join('\n'))}</div>`);
+  if (cabJust.length)    parts.push(`<div class="ata-bloco">${escFn(cabJust.join('\n'))}</div>`);
+  for (const it of items) parts.push(`<div class="ata-bloco item">${escFn(it.join('\n'))}</div>`);
+  if (encJust.length)    parts.push(`<div class="ata-bloco">${escFn(encJust.join('\n'))}</div>`);
+  if (encLocalData)      parts.push(`<div class="ata-bloco centro">${escFn(encLocalData)}</div>`);
+  if (encAssin.length)   parts.push(`<div class="ata-bloco assin">${escFn(encAssin.join('\n'))}</div>`);
+  return parts.join('');
+}
+
 function baixarAtaPDF() {
   if (!_ataTextoGerado) { toast('Nada pra baixar', 'err'); return; }
   // Abre janela formatada em A4 e aciona print — user salva como PDF via browser.
   // Padrão visual espelha a Ata 1 Praia Dourada (gabarito Matheus):
-  //   - Fonte Arial 12pt, line-height 1.5, texto justificado
+  //   - Fonte Arial 12pt, line-height 1.5
   //   - Margens 2.54cm (sup/dir/inf) + 3.17cm (esq)
+  //   - Texto justificado no corpo; cabeçalho e linha de local/data centralizados
   //   - <title> vazio + toast pra que o usuário desmarque "Cabeçalhos e
   //     rodapés" no diálogo (browser não suprime URL/página via CSS)
   //   - ITEMs viram blocos com page-break-inside:avoid pra não cortar
   const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-
-  // Parseia o texto em cabeçalho · ITEMs · encerramento.
-  // Regex \s+ no "ITEM\s+\d+\)" cobre tanto "ITEM 1)" quanto "ITEM  1)" (dois espaços).
-  const linhas = _ataTextoGerado.split('\n');
-  const reItem = /^ITEM\s+\d+\)/;
-  const reEnc  = /^ENCERRAMENTO\b/i;
-  const cabec = [];
-  const items = [];
-  const enc   = [];
-  let modo = 'cab';
-  let buf = null;
-  for (const ln of linhas) {
-    if (reItem.test(ln)) {
-      if (buf) items.push(buf);
-      buf = [ln];
-      modo = 'item';
-      continue;
-    }
-    if (reEnc.test(ln) && modo === 'item') {
-      if (buf) { items.push(buf); buf = null; }
-      modo = 'enc';
-      enc.push(ln);
-      continue;
-    }
-    if (modo === 'cab') cabec.push(ln);
-    else if (modo === 'item') buf.push(ln);
-    else enc.push(ln);
-  }
-  if (buf) items.push(buf);
-
-  const blocoCab = cabec.length ? `<div class="bloco cab">${esc(cabec.join('\n'))}</div>` : '';
-  const blocoItems = items.map(it => `<div class="bloco item">${esc(it.join('\n'))}</div>`).join('');
-  const blocoEnc = enc.length ? `<div class="bloco enc">${esc(enc.join('\n'))}</div>` : '';
-  const corpo = (blocoCab + blocoItems + blocoEnc) || `<div class="bloco">${esc(_ataTextoGerado)}</div>`;
+  const corpo = renderAtaBlocos(_ataTextoGerado, esc);
 
   const w = window.open('', '_blank');
   if (!w) { toast('Bloqueado pelo navegador. Permita pop-ups e tente novamente.', 'err'); return; }
@@ -4595,8 +4634,10 @@ function baixarAtaPDF() {
   @page { size: A4; margin: 2.54cm 2.54cm 2.54cm 3.17cm; }
   html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 12pt; line-height: 1.5; color: #000; }
-  .bloco { white-space: pre-wrap; text-align: justify; text-justify: inter-word; margin: 0; }
-  .bloco.item { page-break-inside: avoid; break-inside: avoid; }
+  .ata-bloco { margin: 0; white-space: pre-wrap; text-align: justify; text-justify: inter-word; }
+  .ata-bloco.centro { text-align: center; }
+  .ata-bloco.assin  { text-align: left; }
+  .ata-bloco.item   { page-break-inside: avoid; break-inside: avoid; }
   @media screen {
     body { background: #f3f4f6; padding: 24px; }
     .page { background: #fff; max-width: 21cm; min-height: 29.7cm; margin: 0 auto; padding: 2.54cm 2.54cm 2.54cm 3.17cm; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
