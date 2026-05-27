@@ -1635,6 +1635,81 @@
 
     <!-- CONFIGURAÇÕES -->
     <div class="panel" id="panel-configuracoes">
+      <!-- Card de seed dev — visível só pra GESTOR em ambiente dev (auto-hide em prod) -->
+      <!-- Card Gestão de Usuários — visível só pra GESTOR (qualquer ambiente) -->
+      <div class="card" id="card-usuarios-admin" style="display:none">
+        <div class="card-header">
+          <span class="card-title">👥 Gestão de Usuários</span>
+          <button class="btn btn-primary" onclick="abrirModalConvidar()" style="font-size:12px;padding:6px 12px">+ Convidar usuário</button>
+        </div>
+        <div id="usuarios-lista" style="display:flex;flex-direction:column;gap:10px;margin-top:12px">
+          <div style="font-size:12px;color:var(--muted);font-family:var(--mono)">Carregando...</div>
+        </div>
+      </div>
+
+      <!-- Modal Convidar -->
+      <div id="modal-convidar" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.5);justify-content:center;align-items:center;padding:24px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);max-width:440px;width:100%;padding:24px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <span style="font-size:15px;font-weight:700;color:var(--text)">Convidar usuário</span>
+            <button class="btn btn-ghost" onclick="fecharModalConvidar()" style="font-size:12px;padding:4px 10px">✕</button>
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="conv-email" placeholder="email@dominio.com" autocomplete="off" name="conv-email">
+          </div>
+          <div class="form-group">
+            <label>Nome (opcional)</label>
+            <input type="text" id="conv-nome" placeholder="Nome do convidado" autocomplete="off" name="conv-nome">
+          </div>
+          <div class="form-group">
+            <label>Função</label>
+            <select id="conv-role" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px">
+              <option value="OPERACIONAL">OPERACIONAL — acesso mínimo, configurável</option>
+              <option value="GERENTE">GERENTE — acesso configurável + opção de convidar</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+            <button class="btn btn-ghost" onclick="fecharModalConvidar()" style="font-size:12px;padding:8px 14px">Cancelar</button>
+            <button id="conv-submit" class="btn btn-primary" onclick="enviarConvite()" style="font-size:12px;padding:8px 14px">Enviar convite</button>
+          </div>
+          <div id="conv-erro" style="font-size:11px;color:var(--danger);font-family:var(--mono);margin-top:10px;min-height:14px"></div>
+        </div>
+      </div>
+
+      <!-- Modal Editar Permissões -->
+      <div id="modal-permissoes" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.5);justify-content:center;align-items:center;padding:24px">
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);max-width:680px;width:100%;max-height:90vh;display:flex;flex-direction:column;overflow:hidden">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 22px;border-bottom:1px solid var(--border)">
+            <span id="perms-titulo" style="font-size:14px;font-weight:700;color:var(--text)">Permissões</span>
+            <button class="btn btn-ghost" onclick="fecharModalPermissoes()" style="font-size:12px;padding:4px 10px">✕</button>
+          </div>
+          <div id="perms-corpo" style="flex:1;overflow:auto;padding:18px 22px"></div>
+          <div style="padding:12px 22px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px;background:var(--bg3)">
+            <button class="btn btn-ghost" onclick="fecharModalPermissoes()" style="font-size:12px;padding:8px 14px">Cancelar</button>
+            <button id="perms-submit" class="btn btn-primary" onclick="salvarPermissoes()" style="font-size:12px;padding:8px 14px">Salvar permissões</button>
+          </div>
+          <div id="perms-erro" style="padding:0 22px 12px;font-size:11px;color:var(--danger);font-family:var(--mono);min-height:14px"></div>
+        </div>
+      </div>
+
+      <div class="card" id="card-seed-dev" style="display:none;border:1.5px dashed var(--gs-blue)">
+        <div class="card-header">
+          <span class="card-title">🔄 Ambiente de testes (DEV)</span>
+          <span style="font-size:10px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em">restrito · GESTOR</span>
+        </div>
+        <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:14px;line-height:1.7">
+          Limpa os dados de teste do banco DEV e repopula com 5 condomínios mockup
+          (Buritis, Praia Dourada, Solar das Palmeiras, Vila Nova, Residencial Vitória)
+          + demandas, laudos e histórico. Cada cenário cobre um módulo do roadmap.
+          <br>⚠ Não afeta dados reais (filtra por <code>mockup=true</code>). Indisponível em produção.
+        </p>
+        <button id="btn-reset-dados" class="btn btn-primary" onclick="resetDadosTeste()" style="font-size:13px">
+          🔄 Reset dados de teste
+        </button>
+        <span id="reset-dados-status" style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-left:12px"></span>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <span class="card-title">Credenciais da API Superlógica</span>
@@ -5035,6 +5110,377 @@ async function apiAuthFetch(url, options = {}) {
   if (token) headers['Authorization'] = 'Bearer ' + token;
   return fetch(url, { ...options, headers });
 }
+
+// ============================================================
+// RESET DADOS DE TESTE (dev only, GESTOR only)
+// Card visível em panel-configuracoes só quando ambiente=='dev' E role=='GESTOR'.
+// Backend valida tudo de novo antes de executar o seed.
+// ============================================================
+
+function atualizarCardSeedDev() {
+  const card = document.getElementById('card-seed-dev');
+  if (!card) return;
+  const ambiente = (window.__APP_CONFIG__ || {}).ambiente;
+  const role = window.USER_ROLE;
+  card.style.display = (ambiente === 'dev' && role === 'GESTOR') ? 'block' : 'none';
+}
+
+async function resetDadosTeste() {
+  if (!confirm('Isso apaga todos os dados mockup e recria os 5 condomínios de teste. Confirmar?')) return;
+  const btn = document.getElementById('btn-reset-dados');
+  const status = document.getElementById('reset-dados-status');
+  btn.disabled = true; btn.textContent = '⏳ Resetando...';
+  status.textContent = '';
+  try {
+    const resp = await apiAuthFetch('/api/admin/seed-dev', { method: 'POST' });
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok) throw new Error((data && data.erro) || ('HTTP ' + resp.status));
+    const resumo = Array.isArray(data) ? data.map(r => `${r.tabela}=${r.total}`).join(' · ') : 'OK';
+    status.textContent = '✓ ' + resumo;
+    status.style.color = 'var(--success)';
+    toast('✅ Dados de teste resetados', 'ok');
+  } catch (e) {
+    status.textContent = '✕ ' + (e.message || 'falha');
+    status.style.color = 'var(--danger)';
+    toast('Falha ao resetar: ' + (e.message || 'erro'), 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = '🔄 Reset dados de teste';
+  }
+}
+
+// ============================================================
+// APLICAÇÃO DE PERMISSÕES NA UI
+// Após login, busca o profile do user em public.profiles (RLS permite via
+// "ver_proprio_perfil") e guarda window.USER_PERMS = { dashboard:{visivel,acoes}, ... }.
+// Depois esconde nav-items dos módulos com visivel=false.
+// GESTOR sempre vê tudo (trigger de banco força). Loading state: enquanto
+// USER_PERMS é null, mostra tudo (evita flicker).
+// ============================================================
+
+// Mapping: argumento de showPanel() → chave de MODULOS_CATALOGO
+const PANEL_TO_MODULO = {
+  dashboard:      'dashboard',
+  despesas:       'importar_despesas',
+  unidades:       'importar_unidades',
+  boletos:        'boletos',
+  financeiro:     'conciliacao',
+  nf:             'notas_fiscais',
+  prestacao:      'prestacao_contas',
+  atas:           'atas',
+  consumo:        'leitura_consumo',
+  tarefas:        'tarefas',
+  configuracoes:  'configuracoes'
+};
+
+async function carregarPermissoesUser() {
+  const user = window.AUTH_USER;
+  if (!user || !window.__SUPABASE__) return;
+  try {
+    const { data, error } = await window.__SUPABASE__
+      .from('profiles')
+      .select('role, permissoes, pode_convidar')
+      .eq('id', user.id)
+      .single();
+    if (error || !data) {
+      console.warn('[perms] falha ao carregar profile, default OPERACIONAL', error);
+      window.USER_PERMS = null;
+      return;
+    }
+    window.USER_PERMS = data.permissoes || {};
+    window.USER_ROLE = data.role; // sobrescreve fallback do JWT
+    aplicarPermissoesSidebar();
+  } catch (e) {
+    console.warn('[perms] erro carregar permissoes', e);
+  }
+}
+
+function temPermissao(modulo, acao) {
+  if (!window.USER_PERMS) return true; // loading state: mostra tudo
+  const p = window.USER_PERMS[modulo];
+  if (!p || !p.visivel) return false;
+  if (!acao) return true;
+  return (p.acoes || []).includes(acao);
+}
+
+function aplicarPermissoesSidebar() {
+  if (!window.USER_PERMS) return;
+  // Esconde nav-items inteiros se o módulo está invisível
+  document.querySelectorAll('.nav-item').forEach(el => {
+    const handler = el.getAttribute('onclick') || '';
+    const m = handler.match(/showPanel\('([^']+)'\)/);
+    if (!m) return;
+    const modulo = PANEL_TO_MODULO[m[1]];
+    if (!modulo) return;
+    const visivel = window.USER_PERMS[modulo]?.visivel;
+    el.style.display = visivel ? '' : 'none';
+  });
+  // Botão Configurações (não tem .nav-item)
+  const cfgBtn = document.querySelector('.config-btn[onclick*="configuracoes"]');
+  if (cfgBtn) {
+    cfgBtn.style.display = window.USER_PERMS.configuracoes?.visivel ? '' : 'none';
+  }
+}
+
+// Re-avalia visibilidade ao receber sessão e ao abrir o painel Config
+document.addEventListener('auth:ready', carregarPermissoesUser);
+document.addEventListener('auth:ready', atualizarCardSeedDev);
+document.addEventListener('auth:ready', atualizarCardUsuariosAdmin);
+
+// ============================================================
+// GESTÃO DE USUÁRIOS (GESTOR only) — Fase 3 frontend
+// Card #card-usuarios-admin lista profiles, abre modais de convite e
+// edição de permissões. Backend valida tudo via /api/admin/usuarios/*.
+// ============================================================
+
+// Catálogo de módulos × ações disponíveis. Espelha o default do trigger
+// set_gestor_permissoes_totais — toda mudança aqui deve ser refletida lá.
+const MODULOS_CATALOGO = {
+  dashboard:          { label: 'Dashboard',           acoes: ['ver'] },
+  importar_despesas:  { label: 'Importar Despesas',   acoes: ['ver', 'importar'] },
+  importar_unidades:  { label: 'Importar Unidades',   acoes: ['ver', 'importar', 'normalizar'] },
+  boletos:            { label: 'Boletos',             acoes: ['ver'] },
+  conciliacao:        { label: 'Conciliação',         acoes: ['ver'] },
+  notas_fiscais:      { label: 'Notas Fiscais',       acoes: ['ver'] },
+  prestacao_contas:   { label: 'Prestação de Contas', acoes: ['ver', 'gerar'] },
+  atas:               { label: 'Atas Condominiais',   acoes: ['ver', 'gerar', 'edital'] },
+  leitura_consumo:    { label: 'Leitura de Consumo',  acoes: ['ver', 'ler'] },
+  tarefas:            { label: 'Tarefas',             acoes: ['ver'] },
+  configuracoes:      { label: 'Configurações',       acoes: ['ver', 'editar', 'convidar'] }
+};
+
+const ROLE_COR = { GESTOR: '#00D2FF', GERENTE: '#A78BFA', OPERACIONAL: '#8B95A8' };
+let _perfilEditando = null;
+let _usuariosCache = [];
+
+function atualizarCardUsuariosAdmin() {
+  const card = document.getElementById('card-usuarios-admin');
+  if (!card) return;
+  const visivel = window.USER_ROLE === 'GESTOR';
+  card.style.display = visivel ? 'block' : 'none';
+  if (visivel && document.getElementById('panel-configuracoes')?.classList.contains('active')) {
+    carregarUsuarios();
+  }
+}
+
+async function carregarUsuarios() {
+  const lista = document.getElementById('usuarios-lista');
+  if (!lista) return;
+  lista.innerHTML = '<div style="font-size:12px;color:var(--muted);font-family:var(--mono)">Carregando...</div>';
+  try {
+    const resp = await apiAuthFetch('/api/admin/usuarios');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json();
+    _usuariosCache = Array.isArray(data) ? data : [];
+    renderListaUsuarios();
+  } catch (e) {
+    lista.innerHTML = '<div style="font-size:12px;color:var(--danger);font-family:var(--mono)">✕ Falha ao listar: ' + (e.message || '') + '</div>';
+  }
+}
+
+function renderListaUsuarios() {
+  const lista = document.getElementById('usuarios-lista');
+  if (!_usuariosCache.length) {
+    lista.innerHTML = '<div style="font-size:12px;color:var(--muted);font-family:var(--mono)">Nenhum usuário cadastrado ainda.</div>';
+    return;
+  }
+  const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const eu = window.AUTH_USER?.id;
+  lista.innerHTML = _usuariosCache.map(u => {
+    const visiveis = Object.values(u.permissoes || {}).filter(p => p?.visivel).length;
+    const cor = ROLE_COR[u.role] || ROLE_COR.OPERACIONAL;
+    const isGestor = u.role === 'GESTOR';
+    const isSelf = u.id === eu;
+    return `<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px 14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div style="flex:1;min-width:180px">
+        <div style="font-size:13px;font-weight:600;color:var(--text)">${esc(u.email)}${isSelf ? ' <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">(você)</span>' : ''}</div>
+        <div style="font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px">${esc(u.nome || '')}</div>
+      </div>
+      <span style="display:inline-block;padding:3px 10px;background:${cor}20;color:${cor};border:1px solid ${cor}40;border-radius:12px;font-size:10px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.05em">${esc(u.role)}</span>
+      <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">${visiveis}/${Object.keys(MODULOS_CATALOGO).length} módulos</span>
+      ${u.pode_convidar ? '<span style="font-size:10px;color:var(--gs-blue);font-family:var(--mono)" title="Pode convidar usuários">✉</span>' : ''}
+      ${isGestor
+        ? '<button class="btn btn-ghost" disabled style="font-size:11px;padding:6px 10px;opacity:0.5;cursor:not-allowed" title="GESTOR tem permissões totais imutáveis">imutável</button>'
+        : `<button class="btn btn-ghost" onclick='abrirModalPermissoes(${JSON.stringify(u.id)})' style="font-size:11px;padding:6px 10px">Editar permissões</button>`}
+      ${(isGestor || isSelf) ? '' : `<button class="btn btn-ghost" onclick='deletarUsuario(${JSON.stringify(u.id)}, ${JSON.stringify(u.email)})' style="font-size:11px;padding:6px 10px;color:var(--danger)" title="Remover usuário">✕</button>`}
+    </div>`;
+  }).join('');
+}
+
+// ── Modal convidar ──
+function abrirModalConvidar() {
+  document.getElementById('conv-email').value = '';
+  document.getElementById('conv-nome').value = '';
+  document.getElementById('conv-role').value = 'OPERACIONAL';
+  document.getElementById('conv-erro').textContent = '';
+  document.getElementById('modal-convidar').style.display = 'flex';
+}
+function fecharModalConvidar() { document.getElementById('modal-convidar').style.display = 'none'; }
+
+async function enviarConvite() {
+  const email = document.getElementById('conv-email').value.trim();
+  const nome  = document.getElementById('conv-nome').value.trim();
+  const role  = document.getElementById('conv-role').value;
+  const erro  = document.getElementById('conv-erro');
+  const btn   = document.getElementById('conv-submit');
+  erro.textContent = '';
+  if (!email || !/.+@.+\..+/.test(email)) { erro.textContent = 'Email inválido'; return; }
+  btn.disabled = true; btn.textContent = 'Enviando...';
+  try {
+    const resp = await apiAuthFetch('/api/admin/usuarios/convidar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, nome: nome || undefined, role })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detalhe?.msg || data.detalhe?.message || data.erro || ('HTTP ' + resp.status));
+    fecharModalConvidar();
+    toast('✉ Convite enviado pra ' + email, 'ok');
+    carregarUsuarios();
+  } catch (e) {
+    erro.textContent = '✕ ' + (e.message || 'falha ao convidar');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Enviar convite';
+  }
+}
+
+// ── Modal permissões ──
+function abrirModalPermissoes(userId) {
+  const u = _usuariosCache.find(x => x.id === userId);
+  if (!u) return;
+  _perfilEditando = JSON.parse(JSON.stringify(u)); // clone deep
+  if (!_perfilEditando.permissoes) _perfilEditando.permissoes = {};
+  document.getElementById('perms-titulo').textContent = `Permissões de ${u.email} (${u.role})`;
+  document.getElementById('perms-erro').textContent = '';
+  document.getElementById('perms-corpo').innerHTML = renderPermissoesForm(_perfilEditando);
+  document.getElementById('modal-permissoes').style.display = 'flex';
+}
+function fecharModalPermissoes() {
+  document.getElementById('modal-permissoes').style.display = 'none';
+  _perfilEditando = null;
+}
+
+function renderPermissoesForm(u) {
+  const esc = (s) => String(s || '').replace(/</g,'&lt;');
+  const podeConvidar = u.role === 'GERENTE'
+    ? `<div style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:14px">
+         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text)">
+           <input type="checkbox" id="perm-pode-convidar" ${u.pode_convidar ? 'checked' : ''}>
+           Permitir que este GERENTE convide novos usuários (somente OPERACIONAL)
+         </label>
+       </div>` : '';
+  const linhas = Object.entries(MODULOS_CATALOGO).map(([modulo, def]) => {
+    const atual = u.permissoes[modulo] || { visivel: false, acoes: [] };
+    const checks = def.acoes.map(a => {
+      const c = (atual.acoes || []).includes(a);
+      return `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;font-size:11px;font-family:var(--mono);color:var(--text);cursor:pointer">
+        <input type="checkbox" data-modulo="${modulo}" data-acao="${a}" ${c ? 'checked' : ''} ${atual.visivel ? '' : 'disabled'}> ${esc(a)}
+      </label>`;
+    }).join('');
+    return `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:8px 10px;font-size:12px;color:var(--text);width:42%">${esc(def.label)}</td>
+      <td style="padding:8px 10px;text-align:center;width:18%">
+        <label style="cursor:pointer">
+          <input type="checkbox" data-modulo-visivel="${modulo}" ${atual.visivel ? 'checked' : ''}>
+        </label>
+      </td>
+      <td style="padding:8px 10px">${checks || '<span style="font-size:10px;color:var(--muted);font-family:var(--mono)">—</span>'}</td>
+    </tr>`;
+  }).join('');
+  return podeConvidar + `<table style="width:100%;border-collapse:collapse">
+    <thead><tr style="background:var(--bg3)">
+      <th style="padding:9px 10px;text-align:left;font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Módulo</th>
+      <th style="padding:9px 10px;text-align:center;font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Visível</th>
+      <th style="padding:9px 10px;text-align:left;font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Ações</th>
+    </tr></thead>
+    <tbody>${linhas}</tbody>
+  </table>
+  <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:10px">Desmarcar "Visível" desabilita o módulo na sidebar — ações ficam ignoradas.</div>`;
+}
+
+// Listener delegado pra reagir ao toggle "visível" (re-renderiza pra habilitar/desabilitar checkboxes de ação)
+document.addEventListener('change', (ev) => {
+  if (!ev.target.dataset?.moduloVisivel) return;
+  const corpo = document.getElementById('perms-corpo');
+  if (!corpo || !_perfilEditando) return;
+  // Coleta estado atual e re-renderiza
+  coletarPermissoesDoForm();
+  corpo.innerHTML = renderPermissoesForm(_perfilEditando);
+});
+
+function coletarPermissoesDoForm() {
+  if (!_perfilEditando) return;
+  const novas = {};
+  Object.keys(MODULOS_CATALOGO).forEach(m => {
+    novas[m] = { visivel: false, acoes: [] };
+  });
+  document.querySelectorAll('[data-modulo-visivel]').forEach(cb => {
+    const m = cb.dataset.moduloVisivel;
+    if (cb.checked && novas[m]) novas[m].visivel = true;
+  });
+  document.querySelectorAll('[data-modulo][data-acao]').forEach(cb => {
+    if (!cb.checked || cb.disabled) return;
+    const m = cb.dataset.modulo;
+    const a = cb.dataset.acao;
+    if (novas[m] && novas[m].visivel) novas[m].acoes.push(a);
+  });
+  _perfilEditando.permissoes = novas;
+  const pc = document.getElementById('perm-pode-convidar');
+  if (pc) _perfilEditando.pode_convidar = pc.checked;
+}
+
+async function salvarPermissoes() {
+  if (!_perfilEditando) return;
+  coletarPermissoesDoForm();
+  const btn = document.getElementById('perms-submit');
+  const erro = document.getElementById('perms-erro');
+  erro.textContent = '';
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    const body = { permissoes: _perfilEditando.permissoes };
+    if (_perfilEditando.role === 'GERENTE') body.pode_convidar = !!_perfilEditando.pode_convidar;
+    const resp = await apiAuthFetch(`/api/admin/usuarios/${encodeURIComponent(_perfilEditando.id)}/permissoes`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detalhe?.message || data.erro || ('HTTP ' + resp.status));
+    fecharModalPermissoes();
+    toast('✓ Permissões atualizadas', 'ok');
+    carregarUsuarios();
+  } catch (e) {
+    erro.textContent = '✕ ' + (e.message || 'falha ao salvar');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar permissões';
+  }
+}
+
+async function deletarUsuario(userId, email) {
+  if (!confirm(`Remover ${email} permanentemente? Esta ação não pode ser desfeita.`)) return;
+  try {
+    const resp = await apiAuthFetch(`/api/admin/usuarios/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detalhe?.message || data.erro || ('HTTP ' + resp.status));
+    toast(`✓ ${email} removido`, 'ok');
+    carregarUsuarios();
+  } catch (e) {
+    toast('✕ Falha ao remover: ' + (e.message || 'erro'), 'err');
+  }
+}
+
+// Hook em showPanel: chama atualização quando entrar no painel-configuracoes
+(function() {
+  const original = window.showPanel;
+  if (typeof original !== 'function') return;
+  window.showPanel = function(name) {
+    const r = original.apply(this, arguments);
+    if (name === 'configuracoes') {
+      atualizarCardSeedDev();
+      atualizarCardUsuariosAdmin();
+    }
+    return r;
+  };
+})();
 
 // ============================================================
 // PRESTACAO DE CONTAS
