@@ -7,281 +7,198 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Service Hub">
-<meta name="theme-color" content="#0F1117">
+<meta name="theme-color" content="#0A0C12">
 <title>Service Hub · Tracker</title>
-<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Crect width='180' height='180' rx='40' fill='%230F1117'/%3E%3Ctext x='50%25' y='54%25' font-size='72' font-weight='900' fill='%2300D296' text-anchor='middle' dominant-baseline='central' font-family='Arial'%3ESH%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Crect width='180' height='180' rx='40' fill='%230A0C12'/%3E%3Ctext x='50%25' y='54%25' font-size='72' font-weight='900' fill='%2300D296' text-anchor='middle' dominant-baseline='central' font-family='Arial'%3ESH%3C/text%3E%3C/svg%3E">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
 :root {
-  --green: #00D296;
-  --blue:  #00D2FF;
-  --f0:    #FF6B6B;
-  --f1:    #00D296;
-  --f2:    #00D2FF;
-  --f3:    #A78BFA;
-  --bg:    #0F1117;
-  --card:  #161A23;
-  --card2: #1B2029;
-  --ink:   #E8ECF0;
-  --dim:   #7A828F;
-  --dim2:  #C8CDD8;
-  --line:  #232936;
-  --pend:  #2A2F3A;
-  --amber: #F59E0B;
+  --green:  #00D296;
+  --blue:   #00D2FF;
+  --purple: #A78BFA;
+  --amber:  #F59E0B;
+  --red:    #FF6B6B;
+  --f0: #FF6B6B; --f1: #00D296; --f2: #00D2FF; --f3: #A78BFA; --f4: #F5B454;
+  --bg:    #0A0C12;
+  --bg2:   #111420;
+  --card:  #151922;
+  --card2: #1A1F2E;
+  --card3: #1F2535;
+  --ink:   #EEF0F5;
+  --dim:   #6B7280;
+  --dim2:  #9BA3AF;
+  --line:  #1E2436;
+  --line2: #252C3D;
 }
-
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { background: var(--bg); color: var(--ink); font-family: -apple-system,'SF Pro Display','Segoe UI',system-ui,sans-serif; min-height: 100vh; overscroll-behavior: none; }
 
-html, body {
-  background: var(--bg);
-  color: var(--ink);
-  font-family: -apple-system, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
-  min-height: 100vh;
-  overscroll-behavior: none;
-}
+@keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@keyframes spin   { to { transform:rotate(360deg); } }
+@keyframes pulse  { 0%,100%{opacity:1} 50%{opacity:.3} }
+@keyframes ripple { to { transform:scale(4); opacity:0; } }
 
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+/* LOADING */
+#loading { position:fixed; inset:0; background:var(--bg); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; z-index:900; }
+.logo-big { font-size:40px; font-weight:900; letter-spacing:-.02em; }
+.logo-big .g { color:var(--green); } .logo-big .b { color:var(--blue); }
+.spinner { width:28px; height:28px; border-radius:50%; border:2.5px solid var(--line2); border-top-color:var(--green); animation:spin .6s linear infinite; }
+#loading p { font-size:13px; color:var(--dim); }
 
-.fade { animation: fadeUp .3s ease both; }
+/* USER MODAL */
+#user-modal { position:fixed; inset:0; background:rgba(10,12,18,.97); z-index:800; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:28px; padding:40px 24px; }
+#user-modal h2 { font-size:20px; font-weight:700; color:var(--ink); }
+#user-modal p { font-size:13px; color:var(--dim); text-align:center; line-height:1.6; }
+.user-cards { display:flex; flex-direction:column; gap:10px; width:100%; max-width:320px; }
+.user-card { background:var(--card); border:1px solid var(--line2); border-radius:16px; padding:16px 18px; display:flex; align-items:center; gap:14px; cursor:pointer; transition:border-color .2s,transform .1s; }
+.user-card:active { transform:scale(.97); }
+.user-avatar { width:42px; height:42px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:800; flex-shrink:0; }
+.u-name { font-size:15px; font-weight:700; color:var(--ink); }
+.u-role { font-size:11px; color:var(--dim); margin-top:2px; }
 
-/* ── LOADING ── */
-#loading {
-  position: fixed; inset: 0; background: var(--bg);
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 18px; z-index: 900;
-}
-#loading .logo { font-size: 42px; font-weight: 900; color: var(--green); letter-spacing: -.02em; }
-#loading .logo span { color: var(--blue); }
-.spinner {
-  width: 32px; height: 32px; border-radius: 50%;
-  border: 3px solid var(--line); border-top-color: var(--green);
-  animation: spin .7s linear infinite;
-}
-#loading p { font-size: 13px; color: var(--dim); }
+/* APP */
+#app { display:none; padding-bottom:env(safe-area-inset-bottom,20px); }
 
-/* ── USER MODAL ── */
-#user-modal {
-  position: fixed; inset: 0; background: rgba(15,17,23,.97);
-  z-index: 800; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 24px;
-  padding: 32px 24px;
-}
-#user-modal .logo { font-size: 36px; font-weight: 900; color: var(--green); }
-#user-modal .logo span { color: var(--blue); }
-#user-modal h2 { font-size: 22px; font-weight: 700; color: var(--ink); }
-#user-modal p { font-size: 14px; color: var(--dim); text-align: center; }
-.user-cards { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 340px; }
-.user-card {
-  background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-  padding: 18px 20px; display: flex; align-items: center; gap: 16px;
-  cursor: pointer; transition: border-color .2s, transform .15s;
-  -webkit-user-select: none;
-}
-.user-card:active { transform: scale(.97); }
-.user-avatar {
-  width: 44px; height: 44px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 17px; font-weight: 800; flex-shrink: 0;
-}
-.user-card .u-name { font-size: 16px; font-weight: 700; color: var(--ink); }
-.user-card .u-role { font-size: 12px; color: var(--dim); margin-top: 3px; }
+/* HEADER */
+.app-header { position:sticky; top:0; z-index:100; background:rgba(10,12,18,.92); backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px); border-bottom:1px solid var(--line); padding:calc(env(safe-area-inset-top)+14px) 16px 12px; }
+.header-row1 { display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; }
+.app-logo { font-size:17px; font-weight:900; letter-spacing:-.01em; }
+.app-logo .g { color:var(--green); } .app-logo .b { color:var(--blue); }
+.user-chip { display:flex; align-items:center; gap:7px; background:var(--card2); border:1px solid var(--line2); border-radius:50px; padding:5px 12px 5px 8px; cursor:pointer; }
+.chip-dot { width:7px; height:7px; border-radius:50%; }
+.chip-name { font-size:11px; font-weight:600; color:var(--dim2); }
 
-/* ── APP ── */
-#app { display: none; padding-bottom: 32px; }
+/* PROGRESS GLOBAL */
+.prog-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+.prog-label { font-size:11px; color:var(--dim); }
+.prog-pct { font-size:13px; font-weight:700; font-variant-numeric:tabular-nums; color:var(--green); }
+.prog-track { height:4px; background:var(--card2); border-radius:99px; overflow:hidden; }
+.prog-fill { height:100%; border-radius:99px; background:linear-gradient(90deg,var(--green),var(--blue)); transition:width .7s cubic-bezier(.4,0,.2,1); }
 
-/* ── HEADER ── */
-.app-header {
-  position: sticky; top: 0; z-index: 100;
-  background: rgba(15,17,23,.93);
-  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--line);
-  padding: calc(env(safe-area-inset-top) + 16px) 20px 14px;
-}
-.header-row1 {
-  display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;
-}
-.app-logo { font-size: 18px; font-weight: 900; color: var(--green); letter-spacing: -.01em; }
-.app-logo span { color: var(--blue); }
-.user-chip {
-  display: flex; align-items: center; gap: 8px;
-  background: var(--card2); border: 1px solid var(--line);
-  border-radius: 50px; padding: 6px 12px 6px 8px; cursor: pointer;
-}
-.chip-dot { width: 8px; height: 8px; border-radius: 50%; }
-.chip-name { font-size: 12px; font-weight: 600; color: var(--dim2); }
+/* SYNC */
+.sync-row { display:flex; align-items:center; gap:7px; padding:7px 16px; font-size:11px; color:var(--dim); border-bottom:1px solid var(--line); }
+.sync-dot { width:5px; height:5px; border-radius:50%; background:var(--green); animation:pulse 2s infinite; }
+.sync-row.syncing .sync-dot { background:var(--amber); animation:none; }
 
-.progress-section {}
-.prog-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }
-.prog-label { font-size: 12px; color: var(--dim); }
-.prog-pct {
-  font-size: 14px; font-weight: 700;
-  font-variant-numeric: tabular-nums; color: var(--green);
-}
-.prog-track { height: 5px; background: var(--card2); border-radius: 99px; overflow: hidden; }
-.prog-fill {
-  height: 100%; border-radius: 99px;
-  background: linear-gradient(90deg, var(--green), var(--blue));
-  transition: width .7s cubic-bezier(.4,0,.2,1);
-}
+/* TABS */
+.tab-bar { display:flex; border-bottom:1px solid var(--line); background:var(--bg); }
+.tab-btn { flex:1; padding:11px 4px; font-size:12px; font-weight:600; color:var(--dim); border:none; background:transparent; cursor:pointer; font-family:inherit; border-bottom:2px solid transparent; transition:color .2s,border-color .2s; }
+.tab-btn.active { color:var(--green); border-bottom-color:var(--green); }
 
-/* ── SYNC ── */
-.sync-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 20px; font-size: 11px; color: var(--dim);
-  border-bottom: 1px solid var(--line);
-}
-.sync-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s infinite; }
-.sync-row.syncing .sync-dot { background: var(--amber); animation: none; }
+/* FILTER */
+.filter-row { display:flex; gap:7px; padding:10px 14px; overflow-x:auto; scrollbar-width:none; background:var(--bg); }
+.filter-row::-webkit-scrollbar { display:none; }
+.fbtn { padding:6px 13px; border-radius:50px; font-size:11px; font-weight:700; border:1px solid var(--line2); background:transparent; color:var(--dim); cursor:pointer; white-space:nowrap; font-family:inherit; transition:all .15s; }
+.fbtn.act { background:var(--card2); color:var(--ink); border-color:var(--line2); }
 
-/* ── FILTER ── */
-.filter-row {
-  display: flex; gap: 8px; padding: 12px 16px;
-  overflow-x: auto; scrollbar-width: none;
-}
-.filter-row::-webkit-scrollbar { display: none; }
-.fbtn {
-  padding: 7px 14px; border-radius: 50px; font-size: 12px; font-weight: 700;
-  border: 1px solid var(--line); background: transparent; color: var(--dim);
-  cursor: pointer; white-space: nowrap; font-family: inherit;
-  transition: all .2s; -webkit-user-select: none;
-}
-.fbtn.active-all { background: var(--card2); color: var(--ink); border-color: var(--line); }
+/* CONTENT */
+.tab-panel { display:none; padding:10px 12px 24px; }
+.tab-panel.show { display:block; animation:fadeUp .2s ease both; }
 
-/* ── CONTENT ── */
-.content { padding: 12px 14px 0; }
+/* PHASE CARD */
+.phase-card { background:var(--card); border:1px solid var(--line); border-radius:18px; margin-bottom:10px; overflow:hidden; }
+.phase-head { padding:14px 16px 12px; border-bottom:1px solid var(--line); }
+.phase-top-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.phase-badge { font-size:10px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; padding:3px 9px; border-radius:50px; }
+.phase-period { font-size:10px; color:var(--dim); }
+.phase-title { font-size:15px; font-weight:800; color:var(--ink); margin-bottom:8px; }
+.phase-prog-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+.phase-prog-label { font-size:10px; color:var(--dim); }
+.phase-prog-pct { font-size:10px; font-weight:700; font-variant-numeric:tabular-nums; }
+.phase-track { height:2.5px; background:var(--card2); border-radius:99px; overflow:hidden; }
+.phase-fill { height:100%; border-radius:99px; transition:width .5s ease; }
 
-/* ── PHASE CARD ── */
-.phase-card {
-  background: var(--card); border: 1px solid var(--line);
-  border-radius: 20px; margin-bottom: 14px; overflow: hidden;
-  animation: fadeUp .3s ease both;
-}
-.phase-head {
-  padding: 16px 18px 14px; border-bottom: 1px solid var(--line);
-}
-.phase-top-row {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
-}
-.phase-badge {
-  font-size: 11px; font-weight: 800; letter-spacing: .07em;
-  text-transform: uppercase; padding: 4px 10px; border-radius: 50px;
-}
-.phase-period { font-size: 11px; color: var(--dim); }
-.phase-title { font-size: 17px; font-weight: 800; color: var(--ink); margin-bottom: 10px; }
-.phase-prog-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
-.phase-prog-label { font-size: 11px; color: var(--dim); }
-.phase-prog-pct { font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.phase-track { height: 3px; background: var(--card2); border-radius: 99px; overflow: hidden; }
-.phase-fill { height: 100%; border-radius: 99px; transition: width .5s ease; }
+/* TASKS */
+.task { display:flex; align-items:flex-start; gap:12px; padding:11px 16px; border-bottom:1px solid var(--line); cursor:pointer; transition:background .1s; position:relative; overflow:hidden; }
+.task:last-child { border-bottom:none; }
+.task:active { background:rgba(255,255,255,.02); }
+.task-icon { width:26px; height:26px; border-radius:8px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:13px; margin-top:1px; transition:all .2s; }
+.task-body { flex:1; min-width:0; }
+.task-title { font-size:13px; font-weight:600; line-height:1.35; }
+.task-sub { display:flex; align-items:center; gap:5px; margin-top:4px; flex-wrap:wrap; }
+.task-resp { font-size:10px; color:var(--dim); }
+.task-who { font-size:10px; color:var(--dim); }
 
-/* ── TASKS ── */
-.task {
-  display: flex; align-items: flex-start; gap: 13px;
-  padding: 13px 18px; border-bottom: 1px solid var(--line);
-  cursor: pointer; transition: background .12s;
-  -webkit-user-select: none; position: relative; overflow: hidden;
-}
-.task:last-child { border-bottom: none; }
-.task:active { background: rgba(255,255,255,.025); }
+.s-pendente .task-icon   { background:var(--card2); color:var(--dim); }
+.s-pendente .task-title  { color:var(--dim2); }
+.s-em_andamento .task-icon { background:rgba(245,158,11,.15); color:var(--amber); }
+.s-em_andamento .task-title { color:var(--ink); }
+.s-concluido .task-icon  { background:rgba(0,210,150,.15); color:var(--green); }
+.s-concluido .task-title { color:var(--dim); text-decoration:line-through; }
 
-.task-icon {
-  width: 28px; height: 28px; border-radius: 9px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px; margin-top: 1px; transition: all .2s;
-}
-.task-body { flex: 1; min-width: 0; }
-.task-title { font-size: 14px; font-weight: 600; line-height: 1.3; transition: color .2s; }
-.task-sub { display: flex; align-items: center; gap: 6px; margin-top: 5px; flex-wrap: wrap; }
-.task-resp { font-size: 11px; color: var(--dim); }
-.task-who { font-size: 11px; color: var(--dim); }
+/* RIPPLE */
+.rip { position:absolute; border-radius:50%; background:rgba(255,255,255,.06); transform:scale(0); animation:ripple .5s ease-out forwards; pointer-events:none; }
 
-/* status styles */
-.s-pendente .task-icon    { background: var(--pend); color: var(--dim); }
-.s-pendente .task-title   { color: var(--dim2); }
+/* TOAST */
+#toast { position:fixed; bottom:calc(env(safe-area-inset-bottom)+20px); left:50%; transform:translateX(-50%); z-index:999; display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+.toast-item { background:var(--card3); border:1px solid var(--line2); border-radius:12px; padding:10px 18px; font-size:13px; font-weight:600; color:var(--ink); white-space:nowrap; animation:fadeUp .2s ease; }
 
-.s-em_andamento .task-icon  { background: rgba(245,158,11,.18); color: var(--amber); }
-.s-em_andamento .task-title { color: var(--ink); }
+/* ── MEMÓRIA TAB ── */
+.mem-section { margin-bottom:16px; }
+.mem-title { font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); margin-bottom:8px; padding:0 2px; }
+.mem-card { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; margin-bottom:8px; }
+.mem-item { display:flex; align-items:flex-start; gap:10px; padding:10px 14px; border-bottom:1px solid var(--line); }
+.mem-item:last-child { border-bottom:none; }
+.mem-icon { font-size:15px; flex-shrink:0; margin-top:1px; }
+.mem-info { flex:1; min-width:0; }
+.mem-name { font-size:12px; font-weight:700; color:var(--ink); margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mem-desc { font-size:11px; color:var(--dim); line-height:1.4; }
+.mem-badge { font-size:9px; font-weight:700; padding:2px 7px; border-radius:50px; flex-shrink:0; margin-top:3px; }
+.badge-green { background:rgba(0,210,150,.15); color:var(--green); }
+.badge-blue  { background:rgba(0,210,255,.15); color:var(--blue); }
+.badge-amber { background:rgba(245,158,11,.15); color:var(--amber); }
+.badge-purple{ background:rgba(167,139,250,.15); color:var(--purple); }
+.badge-red   { background:rgba(255,107,107,.15); color:var(--red); }
+.badge-dim   { background:var(--card2); color:var(--dim); }
 
-.s-concluido .task-icon  { background: rgba(0,210,150,.15); color: var(--green); }
-.s-concluido .task-title { color: var(--dim); text-decoration: line-through; text-decoration-color: var(--line); }
+.mem-tree { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:12px 14px; font-family:'SF Mono','Fira Code',monospace; font-size:11px; line-height:1.8; color:var(--dim2); }
+.mem-tree .dir  { color:var(--blue); font-weight:700; }
+.mem-tree .file { color:var(--ink); }
+.mem-tree .note { color:var(--dim); font-style:italic; }
+.mem-tree .ok   { color:var(--green); }
+.mem-tree .pend { color:var(--amber); }
 
-/* ── TOAST ── */
-#toast {
-  position: fixed; bottom: calc(env(safe-area-inset-bottom) + 20px);
-  left: 50%; transform: translateX(-50%) translateY(80px);
-  background: var(--card2); border: 1px solid var(--line);
-  border-radius: 50px; padding: 12px 22px;
-  font-size: 13px; font-weight: 600; color: var(--ink);
-  transition: transform .3s cubic-bezier(.4,0,.2,1);
-  z-index: 500; white-space: nowrap; pointer-events: none;
-}
-#toast.show { transform: translateX(-50%) translateY(0); }
-
-/* ── RIPPLE ── */
-.rip {
-  position: absolute; border-radius: 50%; pointer-events: none;
-  background: rgba(255,255,255,.08);
-  animation: rip .4s ease; transform: scale(0);
-}
-@keyframes rip { to { transform: scale(3); opacity: 0; } }
-
-.hidden { display: none !important; }
+.hidden { display:none!important; }
 </style>
 </head>
 <body>
 
-<!-- LOADING -->
 <div id="loading">
-  <div class="logo">Service<span>Hub</span></div>
+  <div class="logo-big"><span class="g">Service</span><span class="b">Hub</span></div>
   <div class="spinner"></div>
   <p>Conectando...</p>
 </div>
 
-<!-- USER MODAL -->
 <div id="user-modal" class="hidden">
-  <div class="logo">Service<span>Hub</span></div>
+  <div class="logo-big"><span class="g">Service</span><span class="b">Hub</span></div>
   <h2>Quem é você?</h2>
-  <p>Salvo neste aparelho.<br>Muda depois tocando no seu nome.</p>
+  <p>Salvo neste aparelho.<br>Mude tocando no seu nome.</p>
   <div class="user-cards">
     <div class="user-card" onclick="setUser('mateus')">
-      <div class="user-avatar" style="background:rgba(0,210,255,.15);color:var(--blue)">M</div>
-      <div>
-        <div class="u-name">Mateus Melo</div>
-        <div class="u-role">Dev técnico</div>
-      </div>
+      <div class="user-avatar" style="background:rgba(0,210,255,.12);color:var(--blue)">M</div>
+      <div><div class="u-name">Mateus Melo</div><div class="u-role">Dev técnico · Tech lead</div></div>
     </div>
     <div class="user-card" onclick="setUser('matheus')">
-      <div class="user-avatar" style="background:rgba(167,139,250,.15);color:var(--f3)">M</div>
-      <div>
-        <div class="u-name">Matheus de Melo</div>
-        <div class="u-role">Comercial · Planejamento</div>
-      </div>
+      <div class="user-avatar" style="background:rgba(167,139,250,.12);color:var(--purple)">M</div>
+      <div><div class="u-name">Matheus de Melo</div><div class="u-role">Estratégia · Produto</div></div>
     </div>
   </div>
 </div>
 
-<!-- APP -->
 <div id="app">
   <div class="app-header">
     <div class="header-row1">
-      <div class="app-logo">Service<span>Hub</span></div>
+      <div class="app-logo"><span class="g">Service</span><span class="b">Hub</span></div>
       <div class="user-chip" onclick="showUserModal()">
         <div class="chip-dot" id="chip-dot"></div>
         <span class="chip-name" id="chip-name">...</span>
       </div>
     </div>
-    <div class="progress-section">
-      <div class="prog-row">
-        <span class="prog-label">Progresso geral</span>
-        <span class="prog-pct" id="overall-pct">0%</span>
-      </div>
-      <div class="prog-track"><div class="prog-fill" id="overall-bar" style="width:0%"></div></div>
+    <div class="prog-row">
+      <span class="prog-label">Progresso geral — 18 meses</span>
+      <span class="prog-pct" id="overall-pct">0%</span>
     </div>
+    <div class="prog-track"><div class="prog-fill" id="overall-bar" style="width:0%"></div></div>
   </div>
 
   <div class="sync-row" id="sync-row">
@@ -289,16 +206,175 @@ html, body {
     <span id="sync-txt">Conectado · tempo real</span>
   </div>
 
-  <div class="filter-row" id="filter-row">
-    <button class="fbtn active-all" onclick="setFilter(this,'all')">Tudo</button>
-    <button class="fbtn" style="--c:var(--f0)" onclick="setFilter(this,0)">F0 · Segurança</button>
-    <button class="fbtn" style="--c:var(--f1)" onclick="setFilter(this,1)">F1 · Produto</button>
-    <button class="fbtn" style="--c:var(--f2)" onclick="setFilter(this,2)">F2 · Pagantes</button>
-    <button class="fbtn" style="--c:var(--f3)" onclick="setFilter(this,3)">F3 · Venda</button>
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="showTab('plano',this)">Plano</button>
+    <button class="tab-btn" onclick="showTab('memoria',this)">Memória</button>
   </div>
 
-  <div class="content" id="content"></div>
-</div>
+  <!-- PLANO TAB -->
+  <div id="tab-plano" class="tab-panel show">
+    <div class="filter-row" id="filter-row">
+      <button class="fbtn act" onclick="setFilter(this,'all')">Tudo</button>
+      <button class="fbtn" style="--c:var(--f0)" onclick="setFilter(this,0)">F0 · Fundação</button>
+      <button class="fbtn" style="--c:var(--f1)" onclick="setFilter(this,1)">F1 · Valor</button>
+      <button class="fbtn" style="--c:var(--f2)" onclick="setFilter(this,2)">F2 · Docs</button>
+      <button class="fbtn" style="--c:var(--f3)" onclick="setFilter(this,3)">F3 · Multi</button>
+      <button class="fbtn" style="--c:var(--f4)" onclick="setFilter(this,4)">F4 · Venda</button>
+    </div>
+    <div id="content"></div>
+  </div>
+
+  <!-- MEMÓRIA TAB -->
+  <div id="tab-memoria" class="tab-panel">
+
+    <div class="mem-section">
+      <div class="mem-title">Repositório service-hub</div>
+      <div class="mem-tree">
+<span class="dir">service-hub/</span>
+├── <span class="file">CLAUDE.md</span>              <span class="note">← regras absolutas do projeto</span>
+├── <span class="file ok">MISSION_CONTROL.md</span>    <span class="note">← sprint tracker ✓</span>
+├── <span class="file ok">PANORAMA_ESTRATEGICO.md</span> <span class="note">← visão produto ✓</span>
+├── <span class="file pend">PLANO_ATIVO.md</span>        <span class="note">← próx 14 dias (preencher)</span>
+├── <span class="file ok">PROJECT_CONTEXT.md</span>    <span class="note">← stack, ENVs, URLs ✓</span>
+├── <span class="file ok">AUDITORIA_PROJETO.md</span>  <span class="note">← snapshot técnico ✓</span>
+├── <span class="file ok">AUDITORIA_SKILLS_MC.md</span> <span class="note">← skills MC→SH ✓</span>
+├── <span class="dir">docs/</span>
+│   ├── <span class="file">01-DIAGNOSTICO.md</span>
+│   ├── <span class="file">02-PLANO-LOCAL.md</span>
+│   ├── <span class="file">03-RUNBOOK-DEPLOY.md</span>
+│   └── <span class="dir">handoffs/</span>             <span class="note">← gitignored</span>
+├── <span class="dir">tarefas/</span>
+│   ├── <span class="dir">em-andamento/</span>
+│   └── <span class="dir">concluidas/</span>
+└── <span class="dir">.claude/</span>
+    ├── <span class="file ok">CLAUDE.md</span>         <span class="note">← regras globais ✓</span>
+    ├── <span class="dir ok">agents/</span>            <span class="note">← 7 subagentes ✓</span>
+    ├── <span class="dir ok">skills/</span>            <span class="note">← frontend-design, ops, service-hub ✓</span>
+    └── <span class="file">CONTINUACAO.md</span>
+      </div>
+    </div>
+
+    <div class="mem-section">
+      <div class="mem-title">Subagentes (.claude/agents/)</div>
+      <div class="mem-card">
+        <div class="mem-item">
+          <div class="mem-icon">🏗</div>
+          <div class="mem-info"><div class="mem-name">architect.md</div><div class="mem-desc">Lê o código antes de tudo. Lista o que vai tocar. Não escreve uma linha.</div></div>
+          <div class="mem-badge badge-blue">leitura</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">⚙️</div>
+          <div class="mem-info"><div class="mem-name">implementer.md</div><div class="mem-desc">Executa exatamente o que o arquiteto definiu. Nada mais.</div></div>
+          <div class="mem-badge badge-green">código</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">🔍</div>
+          <div class="mem-info"><div class="mem-name">reviewer.md</div><div class="mem-desc">Verifica regras de negócio e UI. Paleta, textos, datas.</div></div>
+          <div class="mem-badge badge-blue">revisão</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">🔒</div>
+          <div class="mem-info"><div class="mem-name">security-auditor.md</div><div class="mem-desc">Tokens Superlógica nunca no frontend. Nada exposto.</div></div>
+          <div class="mem-badge badge-red">segurança</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">✅</div>
+          <div class="mem-info"><div class="mem-name">validator-v2.md</div><div class="mem-desc">Fase 1: build limpo. Fase 2: MCP Chrome, screenshot, compara visual.</div></div>
+          <div class="mem-badge badge-amber">validação</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">📝</div>
+          <div class="mem-info"><div class="mem-name">documenter.md</div><div class="mem-desc">Commit semântico, push, atualiza MISSION_CONTROL e tracker.</div></div>
+          <div class="mem-badge badge-purple">docs</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">🔑</div>
+          <div class="mem-info"><div class="mem-name">validator.md</div><div class="mem-desc">Validador de build (legado do MC). v2 é o principal.</div></div>
+          <div class="mem-badge badge-dim">legado</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mem-section">
+      <div class="mem-title">Skills (.claude/skills/)</div>
+      <div class="mem-card">
+        <div class="mem-item">
+          <div class="mem-icon">🎨</div>
+          <div class="mem-info"><div class="mem-name">frontend-design/</div><div class="mem-desc">Design system Anthropic. Aplica em qualquer mudança de UI.</div></div>
+          <div class="mem-badge badge-blue">Anthropic</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">🔐</div>
+          <div class="mem-info"><div class="mem-name">ops/</div><div class="mem-desc">Rotação de secrets Superlógica + regras Railway CLI + script rotação.</div></div>
+          <div class="mem-badge badge-red">segurança</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">🏢</div>
+          <div class="mem-info"><div class="mem-name">service-hub/</div><div class="mem-desc">Mapa Superlógica: endpoints, armadilhas, DevTools pattern, V8S.</div></div>
+          <div class="mem-badge badge-green">domínio</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">📱</div>
+          <div class="mem-info"><div class="mem-name">tracker-updater/</div><div class="mem-desc">Como atualizar o tracker via MCP Supabase após cada PR.</div></div>
+          <div class="mem-badge badge-purple">automação</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mem-section">
+      <div class="mem-title">Arquivos-chave do projeto</div>
+      <div class="mem-card">
+        <div class="mem-item">
+          <div class="mem-icon">📋</div>
+          <div class="mem-info"><div class="mem-name">MISSION_CONTROL.md</div><div class="mem-desc">Tracker de sprint. O que está feito, em andamento e pendente.</div></div>
+          <div class="mem-badge badge-green">✓ ativo</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">🎯</div>
+          <div class="mem-info"><div class="mem-name">PANORAMA_ESTRATEGICO.md</div><div class="mem-desc">Visão do produto: o que é, para quem, jornada 18 meses, personas.</div></div>
+          <div class="mem-badge badge-green">✓ ativo</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">📅</div>
+          <div class="mem-info"><div class="mem-name">PLANO_ATIVO.md</div><div class="mem-desc">O que fazer nos próximos 14 dias. Precisa ser preenchido com Matheus.</div></div>
+          <div class="mem-badge badge-amber">pendente</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">🔧</div>
+          <div class="mem-info"><div class="mem-name">PROJECT_CONTEXT.md</div><div class="mem-desc">Stack, URLs Railway, ENVs necessárias (sem valores).</div></div>
+          <div class="mem-badge badge-green">✓ ativo</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mem-section">
+      <div class="mem-title">Infraestrutura</div>
+      <div class="mem-card">
+        <div class="mem-item">
+          <div class="mem-icon">🚀</div>
+          <div class="mem-info"><div class="mem-name">Prod — Railway (main)</div><div class="mem-desc">service-hub-production.up.railway.app · deploy auto no push</div></div>
+          <div class="mem-badge badge-green">online</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">🧪</div>
+          <div class="mem-info"><div class="mem-name">Dev — Railway (branch dev)</div><div class="mem-desc">service-hub-dev.up.railway.app · ambiente isolado</div></div>
+          <div class="mem-badge badge-blue">online</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">🗄</div>
+          <div class="mem-info"><div class="mem-name">Supabase Prod</div><div class="mem-desc">mtucxdfepkwsfnqpfydb · RLS ativo · Auth ES256</div></div>
+          <div class="mem-badge badge-green">blindado</div>
+        </div>
+        <div class="mem-item">
+          <div class="mem-icon">🗄</div>
+          <div class="mem-info"><div class="mem-name">Supabase Dev</div><div class="mem-desc">ledgyprytkuvgtbunsck · schema idêntico · dados fake</div></div>
+          <div class="mem-badge badge-blue">isolado</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /tab-memoria -->
+</div><!-- /app -->
 
 <div id="toast"></div>
 
@@ -308,101 +384,134 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const TBL = 'hub_progresso';
 
 const PHASES = [
-  { id:0, name:'Fechar as brechas',    period:'Mês 1–2',   color:'#FF6B6B',
+  { id:0, name:'Fundação e blindagem', period:'Mês 1', color:'#FF6B6B',
     tasks:[
-      {id:'f0t1', titulo:'Auditar proteção do banco (RLS)',        resp:'Mateus'},
-      {id:'f0t2', titulo:'Tirar chave da IA do navegador',         resp:'Mateus'},
-      {id:'f0t3', titulo:'Confirmar senhas e chaves que vazaram',  resp:'Mateus'},
-      {id:'f0t4', titulo:'Desenhar estrutura Open API no papel',   resp:'Ambos'},
-      {id:'f0t5', titulo:'Subir esqueleto do sistema novo',        resp:'Mateus'},
+      {id:'f0t1',  titulo:'RLS ligado + policies (banco protegido)',           resp:'Mateus'},
+      {id:'f0t2',  titulo:'ES256/JWKS — IA destravada em prod',               resp:'Mateus'},
+      {id:'f0t3',  titulo:'Login obrigatório (Supabase Auth)',                 resp:'Mateus'},
+      {id:'f0t4',  titulo:'Proxies /api fechados (Bearer JWT)',                resp:'Mateus'},
+      {id:'f0t5',  titulo:'Dev separado de prod (Railway + Supabase)',         resp:'Mateus'},
+      {id:'f0t6',  titulo:'Feature 1 — Edital autopreenche reunião',           resp:'Mateus'},
+      {id:'f0t7',  titulo:'Feature 2 — Gerar ata in-Hub (Arial, padrão Ata 1)',resp:'Mateus'},
+      {id:'f0t8',  titulo:'Feature 3 — Normalizador 26 colunas (PDF + xlsx)', resp:'Mateus'},
+      {id:'f0t9',  titulo:'Sistema de usuários GESTOR/GERENTE/OPERACIONAL',   resp:'Mateus'},
+      {id:'f0t10', titulo:'Mascarar Claude → Service Hub IA na UI',           resp:'Mateus'},
     ]},
-  { id:1, name:'Produto real',          period:'Mês 3–6',   color:'#00D296',
+  { id:1, name:'Prova de valor', period:'Mês 1–3', color:'#00D296',
     tasks:[
-      {id:'f1t1', titulo:'Migrar 1ª funcionalidade pro sistema novo', resp:'Mateus'},
-      {id:'f1t2', titulo:'Empacotar IA como produto com identidade',  resp:'Ambos'},
-      {id:'f1t3', titulo:'Corrigir bug 403 na busca de condomínios',  resp:'Mateus'},
-      {id:'f1t4', titulo:'Fechar Demandas de Cliente Etapas 2 e 3',   resp:'Mateus'},
-      {id:'f1t5', titulo:'Definir o que o cliente paga e por quanto', resp:'Matheus de Melo'},
+      {id:'f1t1', titulo:'Seletor de condomínio com ID (bloqueador)',          resp:'Mateus'},
+      {id:'f1t2', titulo:'Painel inadimplência + IA (Buritis R$127k)',         resp:'Mateus'},
+      {id:'f1t3', titulo:'Conciliação bancária automática',                    resp:'Mateus'},
+      {id:'f1t4', titulo:'Gerador de acordos com IA',                         resp:'Mateus'},
+      {id:'f1t5', titulo:'PANORAMA_ESTRATEGICO alinhado (produto + visão)',    resp:'Ambos'},
     ]},
-  { id:2, name:'Primeiros pagantes',    period:'Mês 7–11',  color:'#00D2FF',
+  { id:2, name:'Documentos premium', period:'Mês 3–7', color:'#00D2FF',
     tasks:[
-      {id:'f2t1', titulo:'Login e separação por empresa',              resp:'Mateus'},
-      {id:'f2t2', titulo:'Cobrança automática mensal',                 resp:'Mateus'},
-      {id:'f2t3', titulo:'Onboarding: cliente entra sem ajuda',        resp:'Mateus'},
-      {id:'f2t4', titulo:'LGPD: política e termos antes do 1º externo',resp:'Ambos'},
-      {id:'f2t5', titulo:'Fechar 2 a 3 clientes pagantes',             resp:'Matheus de Melo'},
+      {id:'f2t1', titulo:'Prestação de contas automática (PDF nível agência)', resp:'Mateus'},
+      {id:'f2t2', titulo:'Previsão orçamentária automática',                   resp:'Mateus'},
+      {id:'f2t3', titulo:'Multiusuário sem conflito (colisão de edição)',      resp:'Mateus'},
+      {id:'f2t4', titulo:'Tabela de percentuais por rubrica',                  resp:'Matheus de Melo'},
+      {id:'f2t5', titulo:'Marco da virada — sistema atual aposentado (~mês 8)',resp:'Ambos'},
     ]},
-  { id:3, name:'Preparar a venda',      period:'Mês 12–18', color:'#A78BFA',
+  { id:3, name:'Produto multi-empresa', period:'Mês 8–13', color:'#A78BFA',
     tasks:[
-      {id:'f3t1', titulo:'Crescer para 8 a 15 clientes pagantes',     resp:'Matheus de Melo'},
-      {id:'f3t2', titulo:'Montar métricas de venda (MRR, churn, CAC)',resp:'Ambos'},
-      {id:'f3t3', titulo:'Documentar código para due diligence',       resp:'Mateus'},
-      {id:'f3t4', titulo:'Conectar segundo ERP (se cliente pagar)',    resp:'Mateus'},
-      {id:'f3t5', titulo:'Montar material de venda da empresa',        resp:'Matheus de Melo'},
+      {id:'f3t1', titulo:'Isolamento por empresa (multi-tenant)',              resp:'Mateus'},
+      {id:'f3t2', titulo:'Permissão granular por módulo (Entrega 2)',          resp:'Mateus'},
+      {id:'f3t3', titulo:'Portal do condômino (2ª via boleto, chamado)',       resp:'Mateus'},
+      {id:'f3t4', titulo:'Agentes autônomos + score inadimplência (IA)',       resp:'Mateus'},
+      {id:'f3t5', titulo:'Fechar 2 a 3 clientes pagantes',                    resp:'Matheus de Melo'},
+    ]},
+  { id:4, name:'Empacotar e vender', period:'Mês 13–18', color:'#F5B454',
+    tasks:[
+      {id:'f4t1', titulo:'Onboarding self-service (cliente entra sem ajuda)',  resp:'Mateus'},
+      {id:'f4t2', titulo:'MRR, churn, CAC — métricas de venda prontas',       resp:'Ambos'},
+      {id:'f4t3', titulo:'Documentar código para due diligence',               resp:'Mateus'},
+      {id:'f4t4', titulo:'Material de venda + case Grupo Service',             resp:'Matheus de Melo'},
+      {id:'f4t5', titulo:'Vender a solução',                                   resp:'Ambos'},
     ]},
 ];
 
 const CYCLE = ['pendente','em_andamento','concluido'];
 const ICON  = { pendente:'○', em_andamento:'◑', concluido:'●' };
+let sb, user=null, data={}, filter='all', ch=null, activeTab='plano';
 
-let sb, user = null, data = {}, filter = 'all', ch = null;
+function show(id){ document.getElementById(id).classList.remove('hidden'); }
+function hide(id){ document.getElementById(id).classList.add('hidden'); }
 
-async function boot() {
+async function boot(){
   sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   const saved = localStorage.getItem('sh_user');
-  if (!saved) { hide('loading'); show('user-modal'); return; }
+  if(!saved){ hide('loading'); show('user-modal'); return; }
   user = JSON.parse(saved);
   updateChip();
   await load();
 }
 
-async function load() {
-  try {
-    const { data: rows, error } = await sb.from(TBL).select('*');
-    if (error) throw error;
-    data = {};
-    rows.forEach(r => { data[r.id] = r; });
+async function load(){
+  try{
+    const {data:rows,error} = await sb.from(TBL).select('*');
+    if(error) throw error;
+    data={};
+    rows.forEach(r=>{ data[r.id]=r; });
     await seed();
-    const { data: rows2, error: err2 } = await sb.from(TBL).select('*');
-    if (!err2 && rows2) { rows2.forEach(r => { data[r.id] = r; }); }
+    const {data:rows2,error:err2} = await sb.from(TBL).select('*');
+    if(!err2&&rows2){ rows2.forEach(r=>{ data[r.id]=r; }); }
     render();
     subscribe();
-    hide('loading'); hide('user-modal'); show('app');
-  } catch(e) {
+    hide('loading'); hide('user-modal');
+    document.getElementById('app').style.display='block';
+  }catch(e){
     console.error(e);
     hide('loading');
-    toast('Erro ao conectar. Verifique a internet.', 4000);
-    setTimeout(() => { show('user-modal'); }, 500);
+    toast('Erro ao conectar.');
+    setTimeout(()=>{ show('user-modal'); },600);
   }
 }
 
-async function seed() {
-  const missing = PHASES.flatMap(p => p.tasks).filter(t => !data[t.id]);
-  if (!missing.length) return;
-  const rows = [];
-  PHASES.forEach(p => p.tasks.forEach((t,i) => {
-    if (!data[t.id]) rows.push({ id:t.id, fase:p.id, etapa:i+1, titulo:t.titulo, responsavel:t.resp, status:'pendente', atualizado_por:null, atualizado_em:new Date().toISOString() });
+async function seed(){
+  const missing = PHASES.flatMap(p=>p.tasks).filter(t=>!data[t.id]);
+  if(!missing.length) return;
+  const rows=[];
+  PHASES.forEach(p=>p.tasks.forEach((t,i)=>{
+    if(!data[t.id]) rows.push({id:t.id,fase:p.id,etapa:i+1,titulo:t.titulo,responsavel:t.resp,status:'pendente',atualizado_por:null,atualizado_em:new Date().toISOString()});
   }));
-  if (rows.length) {
-    const { error } = await sb.from(TBL).upsert(rows);
-    if (!error) rows.forEach(r => { data[r.id] = r; });
+  if(rows.length){
+    const {error}=await sb.from(TBL).upsert(rows);
+    if(!error) rows.forEach(r=>{ data[r.id]=r; });
   }
 }
 
-function render() {
-  updateOverall();
-  const phases = filter === 'all' ? PHASES : PHASES.filter(p => p.id === filter);
-  document.getElementById('content').innerHTML = phases.map(p => phaseHTML(p)).join('');
-  console.log('render() executou, fases:', PHASES.length);
+function subscribe(){
+  if(ch) sb.removeChannel(ch);
+  ch=sb.channel('tracker').on('postgres_changes',{event:'*',schema:'public',table:TBL},pl=>{
+    setSyncing();
+    if(pl.new) data[pl.new.id]=pl.new;
+    render();
+    setConnected();
+  }).subscribe();
 }
 
-function phaseHTML(p) {
-  const done = p.tasks.filter(t => data[t.id]?.status === 'concluido').length;
-  const pct  = Math.round(done / p.tasks.length * 100);
-  return `<div class="phase-card" id="pc${p.id}">
+function showTab(tab, btn){
+  activeTab=tab;
+  document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('show'));
+  document.getElementById('tab-'+tab).classList.add('show');
+}
+
+function render(){
+  updateOverall();
+  const phases = filter==='all'?PHASES:PHASES.filter(p=>p.id===filter);
+  document.getElementById('content').innerHTML = phases.map(p=>phaseHTML(p)).join('');
+}
+
+function phaseHTML(p){
+  const done=p.tasks.filter(t=>data[t.id]?.status==='concluido').length;
+  const pct=Math.round(done/p.tasks.length*100);
+  return `<div class="phase-card">
     <div class="phase-head">
       <div class="phase-top-row">
-        <span class="phase-badge" style="background:${p.color}22;color:${p.color}">F${p.id}</span>
+        <span class="phase-badge" style="background:${p.color}20;color:${p.color}">F${p.id}</span>
         <span class="phase-period">${p.period}</span>
       </div>
       <div class="phase-title">${p.name}</div>
@@ -410,16 +519,16 @@ function phaseHTML(p) {
         <span class="phase-prog-label">${done} de ${p.tasks.length} concluídas</span>
         <span class="phase-prog-pct" style="color:${p.color}">${pct}%</span>
       </div>
-      <div class="phase-track"><div class="phase-fill" id="pf${p.id}" style="width:${pct}%;background:${p.color}"></div></div>
+      <div class="phase-track"><div class="phase-fill" style="width:${pct}%;background:${p.color}"></div></div>
     </div>
-    <div>${p.tasks.map(t => taskHTML(t)).join('')}</div>
+    <div>${p.tasks.map(t=>taskHTML(t)).join('')}</div>
   </div>`;
 }
 
-function taskHTML(t) {
-  const d = data[t.id] || {};
-  const s = d.status || 'pendente';
-  const who = d.atualizado_por ? `· ${d.atualizado_por} ${ago(d.atualizado_em)}` : '';
+function taskHTML(t){
+  const d=data[t.id]||{};
+  const s=d.status||'pendente';
+  const who=d.atualizado_por?`· ${d.atualizado_por} ${ago(d.atualizado_em)}`:'';
   return `<div class="task s-${s}" id="tk${t.id}" onclick="tap('${t.id}',event)">
     <div class="task-icon">${ICON[s]}</div>
     <div class="task-body">
@@ -432,165 +541,104 @@ function taskHTML(t) {
   </div>`;
 }
 
-async function tap(id, e) {
-  // ripple
-  const el = document.getElementById('tk'+id);
-  const r  = el.getBoundingClientRect();
-  const rp = document.createElement('div');
-  rp.className = 'rip';
-  const sz = Math.max(r.width, r.height) * 1.5;
-  rp.style.cssText = `width:${sz}px;height:${sz}px;left:${e.clientX-r.left-sz/2}px;top:${e.clientY-r.top-sz/2}px`;
+async function tap(id,e){
+  const el=document.getElementById('tk'+id);
+  const r=el.getBoundingClientRect();
+  const rp=document.createElement('div');
+  rp.className='rip';
+  const sz=Math.max(r.width,r.height)*1.5;
+  rp.style.cssText=`width:${sz}px;height:${sz}px;left:${e.clientX-r.left-sz/2}px;top:${e.clientY-r.top-sz/2}px`;
   el.appendChild(rp);
-  setTimeout(() => rp.remove(), 400);
+  setTimeout(()=>rp.remove(),500);
 
-  const cur  = data[id]?.status || 'pendente';
-  const next = CYCLE[(CYCLE.indexOf(cur)+1) % CYCLE.length];
-  const now  = new Date().toISOString();
-  const who  = user?.name || '?';
-
-  if (!data[id]) data[id] = { id };
-  data[id].status = next;
-  data[id].atualizado_por = who;
-  data[id].atualizado_em  = now;
-
-  patchTaskEl(id);
-  updateOverall();
-  patchPhase(id);
-
-  syncUI(true);
-  // UPDATE em vez de UPSERT: a linha sempre existe (criada pelo seed),
-  // e UPSERT do PostgREST tenta INSERT antes do merge — falhava com 23502
-  // (fase é NOT NULL e não vem no payload do toggle).
-  const { error } = await sb.from(TBL).update({ status:next, atualizado_por:who, atualizado_em:now }).eq('id', id);
-  syncUI(false);
-
-  if (error) toast('Erro ao salvar :(');
-  else toast(next === 'concluido' ? '● Concluído' : next === 'em_andamento' ? '◑ Em andamento' : '○ Resetado');
+  const cur=data[id]?.status||'pendente';
+  const next=CYCLE[(CYCLE.indexOf(cur)+1)%CYCLE.length];
+  const now=new Date().toISOString();
+  const who=user?.name||'?';
+  if(!data[id]) data[id]={id};
+  data[id].status=next;
+  data[id].atualizado_por=who;
+  data[id].atualizado_em=now;
+  render();
+  toast(next==='concluido'?'● Concluído':next==='em_andamento'?'◑ Em andamento':'○ Resetado');
+  setSyncing();
+  const {error}=await sb.from(TBL).upsert({id,fase:PHASES.find(p=>p.tasks.some(t=>t.id===id))?.id??0,etapa:1,titulo:PHASES.flatMap(p=>p.tasks).find(t=>t.id===id)?.titulo??id,responsavel:PHASES.flatMap(p=>p.tasks).find(t=>t.id===id)?.resp??'',status:next,atualizado_por:who,atualizado_em:now});
+  if(error) toast('Erro ao salvar');
+  else setConnected();
 }
 
-function patchTaskEl(id) {
-  const el = document.getElementById('tk'+id);
-  if (!el) return;
-  const t = PHASES.flatMap(p=>p.tasks).find(t=>t.id===id);
-  if (!t) return;
-  const d = data[id] || {};
-  const s = d.status || 'pendente';
-  el.className = `task s-${s}`;
-  el.querySelector('.task-icon').textContent = ICON[s];
-  const who = d.atualizado_por ? `· ${d.atualizado_por} ${ago(d.atualizado_em)}` : '';
-  el.querySelector('.task-sub').innerHTML = `<span class="task-resp">${t.resp}</span><span class="task-who">${who}</span>`;
+function updateOverall(){
+  const all=PHASES.flatMap(p=>p.tasks);
+  const done=all.filter(t=>data[t.id]?.status==='concluido').length;
+  const pct=Math.round(done/all.length*100);
+  document.getElementById('overall-pct').textContent=pct+'%';
+  document.getElementById('overall-bar').style.width=pct+'%';
 }
 
-function patchPhase(id) {
-  const p = PHASES.find(p => p.tasks.some(t=>t.id===id));
-  if (!p) return;
-  const done = p.tasks.filter(t=>data[t.id]?.status==='concluido').length;
-  const pct  = Math.round(done/p.tasks.length*100);
-  const fill = document.getElementById('pf'+p.id);
-  const card = document.getElementById('pc'+p.id);
-  if (fill) fill.style.width = pct+'%';
-  if (card) {
-    const pl = card.querySelector('.phase-prog-label');
-    const pp = card.querySelector('.phase-prog-pct');
-    if (pl) pl.textContent = `${done} de ${p.tasks.length} concluídas`;
-    if (pp) pp.textContent = pct+'%';
-  }
+function setFilter(btn,val){
+  filter=val;
+  document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('act'));
+  btn.classList.add('act');
+  render();
 }
 
-function updateOverall() {
-  const all  = PHASES.flatMap(p=>p.tasks);
-  const done = all.filter(t=>data[t.id]?.status==='concluido').length;
-  const pct  = Math.round(done/all.length*100);
-  document.getElementById('overall-pct').textContent = pct+'%';
-  document.getElementById('overall-bar').style.width = pct+'%';
+function setSyncing(){
+  const sr=document.getElementById('sync-row');
+  const sd=document.getElementById('sync-dot');
+  const st=document.getElementById('sync-txt');
+  sr.classList.add('syncing');
+  sd.style.background='var(--amber)';
+  sd.style.animation='none';
+  st.textContent='Sincronizando...';
+}
+function setConnected(){
+  const sr=document.getElementById('sync-row');
+  const sd=document.getElementById('sync-dot');
+  const st=document.getElementById('sync-txt');
+  sr.classList.remove('syncing');
+  sd.style.background='var(--green)';
+  sd.style.animation='pulse 2s infinite';
+  st.textContent='Conectado · tempo real';
 }
 
-function subscribe() {
-  if (ch) sb.removeChannel(ch);
-  ch = sb.channel('sh_realtime')
-    .on('postgres_changes',{event:'*',schema:'public',table:TBL}, pl => {
-      const r = pl.new; if (!r?.id) return;
-      if (!data[r.id]) data[r.id] = {};
-      Object.assign(data[r.id], r);
-      patchTaskEl(r.id);
-      updateOverall();
-      patchPhase(r.id);
-      const name = r.atualizado_por || 'alguém';
-      syncTxt(`${name} atualizou agora`);
-      setTimeout(()=>syncTxt('Conectado · tempo real'), 3000);
-    })
-    .subscribe();
+function setUser(key){
+  const u={mateus:{key:'mateus',name:'Mateus',color:'var(--blue)'},matheus:{key:'matheus',name:'Matheus',color:'var(--purple)'}}[key];
+  user=u;
+  localStorage.setItem('sh_user',JSON.stringify(u));
+  updateChip();
+  hide('user-modal');
+  load();
 }
 
-function setFilter(btn, val) {
-  document.querySelectorAll('.fbtn').forEach(b => {
-    b.className = 'fbtn'; b.style.background=''; b.style.borderColor=''; b.style.color='';
-  });
-  btn.classList.add(val==='all'?'active-all':'fbtna');
-  if (val !== 'all') {
-    const c = PHASES[val].color;
-    btn.style.background = c+'22'; btn.style.borderColor = c+'66'; btn.style.color = c;
-  }
-  filter = val; render();
+function showUserModal(){
+  show('user-modal');
 }
 
-function setUser(key) {
-  const map = {
-    mateus:  { key:'mateus',  name:'Mateus',         color:'#00D2FF' },
-    matheus: { key:'matheus', name:'Matheus de Melo', color:'#A78BFA' },
-  };
-  user = map[key];
-  localStorage.setItem('sh_user', JSON.stringify(user));
-  hide('user-modal'); updateChip();
-  // `ch` só é setado depois que load() completa e subscribe() roda.
-  // Não dá pra checar #app.style.display porque display:none vem do CSS,
-  // não do inline style, então a comparação é sempre falsa no 1º acesso.
-  if (!ch) {
-    show('loading'); load();
-  }
+function updateChip(){
+  if(!user) return;
+  document.getElementById('chip-dot').style.background=user.color;
+  document.getElementById('chip-name').textContent=user.name;
 }
 
-function showUserModal() { show('user-modal'); }
-
-function updateChip() {
-  if (!user) return;
-  document.getElementById('chip-dot').style.background = user.color;
-  document.getElementById('chip-name').textContent = user.name;
+function ago(iso){
+  if(!iso) return '';
+  const diff=(Date.now()-new Date(iso).getTime())/1000;
+  if(diff<60) return 'agora';
+  if(diff<3600) return Math.floor(diff/60)+'min';
+  if(diff<86400) return Math.floor(diff/3600)+'h';
+  return Math.floor(diff/86400)+'d';
 }
 
-function syncUI(v) {
-  document.getElementById('sync-row').classList.toggle('syncing', v);
-}
-function syncTxt(t) {
-  const el = document.getElementById('sync-txt');
-  if (el) el.textContent = t;
-}
-
-let _tt;
-function toast(msg, dur=2000) {
-  const el = document.getElementById('toast');
-  el.textContent = msg; el.classList.add('show');
-  clearTimeout(_tt);
-  _tt = setTimeout(()=>el.classList.remove('show'), dur);
+let toastQ=[];
+function toast(msg,ms=2200){
+  const el=document.createElement('div');
+  el.className='toast-item';
+  el.textContent=msg;
+  document.getElementById('toast').appendChild(el);
+  setTimeout(()=>el.remove(),ms);
 }
 
-function ago(iso) {
-  if (!iso) return '';
-  const s = Math.floor((Date.now()-new Date(iso))/1000);
-  if (s<60) return 'agora';
-  if (s<3600) return Math.floor(s/60)+'min';
-  if (s<86400) return Math.floor(s/3600)+'h';
-  return new Date(iso).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
-}
-
-function show(id) {
-  const el = document.getElementById(id);
-  el.classList.remove('hidden');
-  el.style.display = 'block';
-}
-function hide(id) { document.getElementById(id).style.display='none'; }
-
-window.addEventListener('load', boot);
+boot();
 </script>
 </body>
 </html>
