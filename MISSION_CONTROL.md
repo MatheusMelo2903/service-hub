@@ -2,10 +2,47 @@
 
 > Arquivo gerenciado pelo agente. Atualizar ao fim de cada task ou fase.
 
-**Última atualização:** 2026-05-26
+**Última atualização:** 2026-05-27
 **Branch padrão:** main
 **Repo:** https://github.com/MatheusMelo2903/service-hub
 **Deploy:** Railway (`eloquent-love`) · https://service-hub-production.up.railway.app
+
+---
+
+## 🚀 SPRINT ATIVA — 2026-05-27 a 2026-06-09 (14 dias)
+
+**Plano completo:** `PLANO_ATIVO.md`
+**Status:** 🟢 Em execução
+
+### Próxima tarefa
+🔴 **1.1 — Seletor de condomínio com ID** (4h, bloqueador da Fase 1)
+- Substitui a digitação manual do identificador
+- Bloqueador das tarefas 1.4 e 1.5
+- Critério de aceite: testar com condomínio 167
+
+### Demais tarefas da Semana 1 (27/05–02/06)
+- 🟡 1.2 — Higiene de deploy (1h)
+- 🟡 Matheus — Levantar tabela de % por rubrica (até 02/06)
+- 🟡 Matheus — Convidar User 2 do Grupo Service (até 02/06)
+
+---
+
+## SPRINT 2026-05-26/27 — Sistema de usuários (Fase 0)
+
+**Status:** 🟢 **FECHADA**
+
+| Task | Status | Entrega |
+|---|---|---|
+| f0t1 — migration profiles + roles + RLS + triggers | ✅ | `2026-05-26_002_profiles_roles.sql` aplicada em prod |
+| f0t2 — backend rotas /api/admin/usuarios + requireGestor | ✅ | server.js + middleware GoTrue |
+| f0t3 — frontend aba Usuários + modais convidar/permissões | ✅ | index.html (Configurações) |
+| f0t4 — seed dev + botão Reset (RPC + proteção backend) | ✅ | scripts/seed-dev.sql + RPC |
+| f0t5 — JWT Supabase via ES256/JWKS | ✅ | fix root cause do 401 em /api/* |
+| f0t9 — GESTOR/GERENTE/OPERACIONAL em prod + smoke E2E | ✅ | Matheus logando, permissões aplicando |
+
+**Ambientes:**
+- Prod (`mtucxdfepkwsfnqpfydb`): GESTOR criado, SERVICE_ROLE_KEY rotacionada no Railway
+- Dev (`ledgyprytkuvgtbunsck`): migrado da org pessoal → Grupo Service, schema sincronizado, deploy ativo
 
 ---
 
@@ -42,7 +79,7 @@
 
 | Item | Prioridade | Notas |
 |---|---|---|
-| **SUPABASE_JWT_SECRET no Railway** | 🔴 alta | Sem isso, /api/* dá 401: features IA quebradas (gerar ata, OCR consumo, prestação contas) |
+| **SUPABASE_JWT_SECRET no Railway** | ✅ | resolvido em prod + dev |
 | **hub_progresso ainda com acesso_publico** | 🟡 média | Tracker PWA standalone — migrar pra login Supabase, ligar RLS |
 | **Leaked password protection desligado** | 🟡 média | Studio: Authentication > Policies / Password Settings |
 | **OTP expiry > 1h** | 🟡 média | Reduzir pra <1h via Authentication > Email |
@@ -82,7 +119,7 @@
 | Item | Próximo passo | Prioridade |
 |---|---|---|
 | **PANORAMA_ESTRATEGICO.md** | sessão de produto com Matheus — preencher 4 seções (o que é, problema, visão 3-5 anos, jornada) | 🔴 alta |
-| **PLANO_ATIVO.md** | definir após PANORAMA fechado — sprint de 14 dias | 🔴 alta |
+| **PLANO_ATIVO.md** | ✅ resolvido — sprint 27/05–09/06 definida | — |
 | **CLAUDE.md ampliado** | adicionar regras V8S específicas, armadilhas conhecidas, padrão Anthropic tool use | 🟡 média |
 | **Auditoria técnica completa** | expandir AUDITORIA_PROJETO.md — npm audit, lighthouse, rotas Express vs links | 🟡 média |
 | **Importar 19 skills restantes do zip Matheus** | superlogica-api-rest, ata-condominial, etc → `.claude/skills/` | 🟡 média |
@@ -100,33 +137,29 @@ Nenhum.
 
 ## 📋 Próxima sessão — sugestão de pauta
 
-1. **Alinhamento de produto com Matheus** (1h)
-   - O que é Service Hub em uma frase?
-   - Quem sofre hoje e onde?
-   - Visão 3-5 anos
-   - Jornada intencional dos módulos
-   - → preencher PANORAMA_ESTRATEGICO.md
+1. **Tarefa 1.1 — Seletor de condomínio** (4h)
+   - Dropdown nome + ID, persistir na sessão
+   - Integrar com importação de unidades
+   - Critério: testar com condomínio 167
 
-2. **Definir 14 dias** (30min)
-   - Próximas 3-5 features prioritárias
-   - → preencher PLANO_ATIVO.md
+2. **Tarefa 1.2 — Higiene de deploy** (1h)
+   - Verificar se hook de secrets (2B) funciona em commit real
 
-3. **Auditoria técnica completa** (1h)
-   - npm audit, lighthouse, mapping de rotas vs links
-   - Limpar resíduos identificados (`tracker-pwa.html`, etc)
-   - → atualizar AUDITORIA_PROJETO.md
+3. **Alinhamento de produto com Matheus** (1h)
+   - Preencher PANORAMA_ESTRATEGICO.md (4 seções)
 
 ---
 
 ## Log de atividade
 
+- **2026-05-27** — Sistema de usuários Fase 0 fechada E2E. Migração dev→Grupo Service org (consolidou prod `mtucxdfepkwsfnqpfydb` + dev `ledgyprytkuvgtbunsck`). Merge `main→dev` fast-forward + deploy dev validado (login + aba Usuários OK). PLANO_ATIVO sprint 27/05–09/06 definido.
 - **2026-05-25** — Sessão de bootstrap (5 fases + final). Pasta direcional criada do zero espelhando padrão `clinicmanager-erp`. Skills MC adaptadas: frontend-design (literal), ops (Superlógica), service-hub (com padrão integracoes). 6 subagentes copiados + validator-v2 novo. 6 commits SH `aa4de04..(próximo)`; 1 PR MC #9.
 
 ---
 
 ## Referência rápida
 
-- Sprint atual: este arquivo
+- Sprint atual: este arquivo · plano detalhado em `PLANO_ATIVO.md`
 - Visão produto: `PANORAMA_ESTRATEGICO.md`
 - Stack/ENVs: `PROJECT_CONTEXT.md`
 - Audit skills MC: `AUDITORIA_SKILLS_MC_PARA_SH.md`
