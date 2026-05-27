@@ -424,6 +424,24 @@ app.delete('/api/admin/usuarios/:id',
 //
 // O trabalho real é feito pela RPC public.seed_dev() (PL/pgSQL SECURITY DEFINER).
 // ─────────────────────────────────────────────────────────────────────────
+// TEMP DEBUG (remover após validar SERVICE_ROLE_KEY) — só GESTOR, retorna
+// metadata segura da key sem expor o valor pra diagnosticar problemas de
+// formato (sb_secret_* vs eyJ legacy, whitespace, etc).
+app.get('/api/admin/_debug-key',
+  requireAuth, requireGestor,
+  (req, res) => {
+    const k = SUPABASE_SERVICE_ROLE_KEY;
+    res.json({
+      length: k.length,
+      prefix: k.slice(0, 10),  // "eyJhbGciOi" ou "sb_secret_" — não é segredo
+      suffix4: k.slice(-4),
+      hasWhitespace: /\s/.test(k),
+      anonKeyLength: SUPABASE_ANON_KEY.length,
+      anonKeyPrefix: SUPABASE_ANON_KEY.slice(0, 10),
+      supabaseUrl: SUPABASE_URL
+    });
+  });
+
 app.post('/api/admin/seed-dev',
   requireAuth, requireGestor, requireServiceRoleKey,
   async (req, res) => {
