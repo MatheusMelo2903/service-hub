@@ -83,6 +83,10 @@ function rateLimit(req, res, next) {
 // ─────────────────────────────────────────────────────────────────────────
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+// Service role key: necessária pras rotas /api/admin/usuarios/*. Sem ela essas
+// rotas devolvem 503. Setar via `railway variables --set SUPABASE_SERVICE_ROLE_KEY=$VAR`
+// (NUNCA expor no frontend nem em commit — guarda valores em ENV apenas).
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 let JWKS_CACHE = { keys: [], fetchedAt: 0 };
 const JWKS_TTL_MS = 60 * 60 * 1000; // 1h
@@ -162,6 +166,23 @@ async function verifySupabaseJwt(token) {
   if (payload.role !== 'authenticated') return null;
 
   return payload;
+}
+
+// Extrai role do payload JWT (app_metadata.role injetado pelo trigger sync_role_to_metadata).
+// Fallback OPERACIONAL pra users sem profile (não deveria acontecer em prod por causa do
+// handle_new_user, mas é safety net).
+function getRoleFromPayload(payload) {
+  return payload?.app_metadata?.role || 'OPERACIONAL';
+}
+
+// Middleware: 403 se user não for GESTOR. Aplicar SEMPRE depois de requireAuth.
+function requireGestor(req, res, next) {
+  // INTERNAL_API_SECRET é tratado como acesso total (uso interno/scripts), bypassa role check
+  if (req.authMode === 'internal') return next();
+  if (getRoleFromPayload(req.user) !== 'GESTOR') {
+    return res.status(403).json({ erro: 'acesso_negado', role_necessario: 'GESTOR' });
+  }
+  next();
 }
 
 function requireAuth(req, res, next) {
@@ -246,6 +267,140 @@ app.post('/api/claude/messages', requireAuth, express.json({limit:'10mb'}), (req
   pr.on('error', e => res.status(500).json({error:e.message}));
   pr.write(body); pr.end();
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// /api/admin/usuarios/* — gestão de usuários (GESTOR only)
+//
+// Usa SUPABASE_SERVICE_ROLE_KEY pra falar com GoTrue admin (criar/deletar/listar
+// usuários em auth.users) e PostgREST (CRUD em public.profiles). Sem essa env,
+// devolve 503.
+//
+// Sempre: requireAuth → requireGestor (cadeia obrigatória).
+// ─────────────────────────────────────────────────────────────────────────
+function requireServiceRoleKey(req, res, next) {
+  if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) {
+    return res.status(503).json({ erro: 'service_role_nao_configurada', detalhe: 'SUPABASE_SERVICE_ROLE_KEY ausente' });
+  }
+  next();
+}
+
+// Helper: chamada HTTP ao Supabase (GoTrue admin ou REST PostgREST) com service_role
+async function supabaseAdminRequest(method, pathStr, body) {
+  const url = new URL(SUPABASE_URL + pathStr);
+  const payload = body ? JSON.stringify(body) : null;
+  const opts = {
+    hostname: url.hostname,
+    path: url.pathname + url.search,
+    method,
+    headers: {
+      'apikey': SUPABASE_SERVICE_ROLE_KEY,
+      'authorization': 'Bearer ' + SUPABASE_SERVICE_ROLE_KEY,
+      'content-type': 'application/json',
+      ...(payload ? { 'content-length': Buffer.byteLength(payload) } : {}),
+      // Pra UPDATEs em PostgREST retornarem o registro afetado
+      ...(method === 'PATCH' || method === 'POST' || method === 'DELETE'
+          ? { 'prefer': 'return=representation' } : {})
+    }
+  };
+  return new Promise((resolve) => {
+    const r = https.request(opts, (resp) => {
+      let d = '';
+      resp.on('data', (c) => d += c);
+      resp.on('end', () => {
+        let json = null;
+        try { json = d ? JSON.parse(d) : null; } catch { json = { raw: d }; }
+        resolve({ status: resp.statusCode, body: json });
+      });
+    });
+    r.on('error', (e) => resolve({ status: 500, body: { erro: e.message } }));
+    if (payload) r.write(payload);
+    r.end();
+  });
+}
+
+// POST /api/admin/usuarios/convidar
+// Body: { email, role: 'GERENTE'|'OPERACIONAL', nome? }
+// Envia magic link de convite via GoTrue. O profile é criado automaticamente pelo
+// trigger handle_new_user com role default OPERACIONAL — depois ajustamos via PATCH
+// se role pedido for diferente.
+app.post('/api/admin/usuarios/convidar',
+  requireAuth, requireGestor, requireServiceRoleKey, express.json(),
+  async (req, res) => {
+    const { email, role, nome } = req.body || {};
+    if (!email || !role) return res.status(400).json({ erro: 'email_e_role_obrigatorios' });
+    if (!['GERENTE', 'OPERACIONAL'].includes(role)) {
+      return res.status(400).json({ erro: 'role_invalido', detalhe: 'Convite só permite GERENTE ou OPERACIONAL. GESTOR é imutável.' });
+    }
+    // GoTrue invite — envia magic link e cria user em auth.users (status: invited)
+    const inv = await supabaseAdminRequest('POST', '/auth/v1/admin/invite', {
+      email,
+      data: { nome: nome || email } // vai pra raw_user_meta_data
+    });
+    if (inv.status >= 400) return res.status(inv.status).json({ erro: 'falha_convite', detalhe: inv.body });
+    // Atualiza role no profile recém-criado (trigger criou com OPERACIONAL default)
+    if (role !== 'OPERACIONAL' && inv.body?.id) {
+      await supabaseAdminRequest('PATCH', `/rest/v1/profiles?id=eq.${inv.body.id}`, { role });
+    }
+    res.status(201).json({ ok: true, user: { id: inv.body?.id, email: inv.body?.email, role } });
+  });
+
+// GET /api/admin/usuarios — lista todos os perfis (com email/role/permissões)
+// Lê direto da tabela profiles via PostgREST. RLS é bypassada pelo service_role,
+// mas a rota só está acessível pra GESTOR via requireGestor.
+app.get('/api/admin/usuarios',
+  requireAuth, requireGestor, requireServiceRoleKey,
+  async (req, res) => {
+    const r = await supabaseAdminRequest('GET',
+      '/rest/v1/profiles?select=id,email,nome,role,pode_convidar,permissoes,criado_em,atualizado_em&order=criado_em.asc');
+    res.status(r.status).json(r.body);
+  });
+
+// PUT /api/admin/usuarios/:id/role
+// Body: { role: 'GERENTE'|'OPERACIONAL' }  (GESTOR não pode ser atribuído via API)
+app.put('/api/admin/usuarios/:id/role',
+  requireAuth, requireGestor, requireServiceRoleKey, express.json(),
+  async (req, res) => {
+    const { role } = req.body || {};
+    if (!['GERENTE', 'OPERACIONAL'].includes(role)) {
+      return res.status(400).json({ erro: 'role_invalido', detalhe: 'Use GERENTE ou OPERACIONAL. GESTOR só via banco.' });
+    }
+    const r = await supabaseAdminRequest('PATCH',
+      `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`,
+      { role });
+    res.status(r.status).json(r.body);
+  });
+
+// PUT /api/admin/usuarios/:id/permissoes
+// Body: { permissoes: {...}, pode_convidar?: bool }
+// Trigger de banco ignora updates em GESTOR (sempre força permissões totais).
+app.put('/api/admin/usuarios/:id/permissoes',
+  requireAuth, requireGestor, requireServiceRoleKey, express.json(),
+  async (req, res) => {
+    const { permissoes, pode_convidar } = req.body || {};
+    if (!permissoes || typeof permissoes !== 'object') {
+      return res.status(400).json({ erro: 'permissoes_obrigatorias' });
+    }
+    const patch = { permissoes };
+    if (typeof pode_convidar === 'boolean') patch.pode_convidar = pode_convidar;
+    const r = await supabaseAdminRequest('PATCH',
+      `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`,
+      patch);
+    res.status(r.status).json(r.body);
+  });
+
+// DELETE /api/admin/usuarios/:id
+// Remove de auth.users — cascateia via FK pro profiles (ON DELETE CASCADE).
+app.delete('/api/admin/usuarios/:id',
+  requireAuth, requireGestor, requireServiceRoleKey,
+  async (req, res) => {
+    const id = req.params.id;
+    // Safety: bloqueia auto-delete do GESTOR que está fazendo a chamada
+    if (req.user?.sub === id) {
+      return res.status(400).json({ erro: 'auto_delete_proibido' });
+    }
+    const r = await supabaseAdminRequest('DELETE', `/auth/v1/admin/users/${encodeURIComponent(id)}`);
+    res.status(r.status).json(r.body || { ok: true });
+  });
 
 // Middleware 404 para rotas /api/* desconhecidas.
 // Posicionado depois de todas as rotas reais de /api e antes do catch-all geral.
