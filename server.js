@@ -341,8 +341,9 @@ app.post('/api/admin/usuarios/convidar',
     if (!['GERENTE', 'OPERACIONAL'].includes(role)) {
       return res.status(400).json({ erro: 'role_invalido', detalhe: 'Convite só permite GERENTE ou OPERACIONAL. GESTOR é imutável.' });
     }
-    // GoTrue invite — envia magic link e cria user em auth.users (status: invited)
-    const inv = await supabaseAdminRequest('POST', '/auth/v1/admin/invite', {
+    // GoTrue invite — POST /auth/v1/invite envia magic link e cria user em auth.users
+    // (status: invited). NÃO usar /auth/v1/admin/invite (404 em GoTrue moderno).
+    const inv = await supabaseAdminRequest('POST', '/auth/v1/invite', {
       email,
       data: { nome: nome || email } // vai pra raw_user_meta_data
     });
