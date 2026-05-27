@@ -5148,7 +5148,81 @@ async function resetDadosTeste() {
   }
 }
 
+// ============================================================
+// APLICAÇÃO DE PERMISSÕES NA UI
+// Após login, busca o profile do user em public.profiles (RLS permite via
+// "ver_proprio_perfil") e guarda window.USER_PERMS = { dashboard:{visivel,acoes}, ... }.
+// Depois esconde nav-items dos módulos com visivel=false.
+// GESTOR sempre vê tudo (trigger de banco força). Loading state: enquanto
+// USER_PERMS é null, mostra tudo (evita flicker).
+// ============================================================
+
+// Mapping: argumento de showPanel() → chave de MODULOS_CATALOGO
+const PANEL_TO_MODULO = {
+  dashboard:      'dashboard',
+  despesas:       'importar_despesas',
+  unidades:       'importar_unidades',
+  boletos:        'boletos',
+  financeiro:     'conciliacao',
+  nf:             'notas_fiscais',
+  prestacao:      'prestacao_contas',
+  atas:           'atas',
+  consumo:        'leitura_consumo',
+  tarefas:        'tarefas',
+  configuracoes:  'configuracoes'
+};
+
+async function carregarPermissoesUser() {
+  const user = window.AUTH_USER;
+  if (!user || !window.__SUPABASE__) return;
+  try {
+    const { data, error } = await window.__SUPABASE__
+      .from('profiles')
+      .select('role, permissoes, pode_convidar')
+      .eq('id', user.id)
+      .single();
+    if (error || !data) {
+      console.warn('[perms] falha ao carregar profile, default OPERACIONAL', error);
+      window.USER_PERMS = null;
+      return;
+    }
+    window.USER_PERMS = data.permissoes || {};
+    window.USER_ROLE = data.role; // sobrescreve fallback do JWT
+    aplicarPermissoesSidebar();
+  } catch (e) {
+    console.warn('[perms] erro carregar permissoes', e);
+  }
+}
+
+function temPermissao(modulo, acao) {
+  if (!window.USER_PERMS) return true; // loading state: mostra tudo
+  const p = window.USER_PERMS[modulo];
+  if (!p || !p.visivel) return false;
+  if (!acao) return true;
+  return (p.acoes || []).includes(acao);
+}
+
+function aplicarPermissoesSidebar() {
+  if (!window.USER_PERMS) return;
+  // Esconde nav-items inteiros se o módulo está invisível
+  document.querySelectorAll('.nav-item').forEach(el => {
+    const handler = el.getAttribute('onclick') || '';
+    const m = handler.match(/showPanel\('([^']+)'\)/);
+    if (!m) return;
+    const modulo = PANEL_TO_MODULO[m[1]];
+    if (!modulo) return;
+    const visivel = window.USER_PERMS[modulo]?.visivel;
+    el.style.display = visivel ? '' : 'none';
+  });
+  // Botão Configurações (não tem .nav-item)
+  const cfgBtn = document.querySelector('.config-btn[onclick*="configuracoes"]');
+  if (cfgBtn) {
+    cfgBtn.style.display = window.USER_PERMS.configuracoes?.visivel ? '' : 'none';
+  }
+}
+
 // Re-avalia visibilidade ao receber sessão e ao abrir o painel Config
+document.addEventListener('auth:ready', carregarPermissoesUser);
 document.addEventListener('auth:ready', atualizarCardSeedDev);
 document.addEventListener('auth:ready', atualizarCardUsuariosAdmin);
 
