@@ -1635,6 +1635,24 @@
 
     <!-- CONFIGURAÇÕES -->
     <div class="panel" id="panel-configuracoes">
+      <!-- Card de seed dev — visível só pra GESTOR em ambiente dev (auto-hide em prod) -->
+      <div class="card" id="card-seed-dev" style="display:none;border:1.5px dashed var(--gs-blue)">
+        <div class="card-header">
+          <span class="card-title">🔄 Ambiente de testes (DEV)</span>
+          <span style="font-size:10px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em">restrito · GESTOR</span>
+        </div>
+        <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:14px;line-height:1.7">
+          Limpa os dados de teste do banco DEV e repopula com 5 condomínios mockup
+          (Buritis, Praia Dourada, Solar das Palmeiras, Vila Nova, Residencial Vitória)
+          + demandas, laudos e histórico. Cada cenário cobre um módulo do roadmap.
+          <br>⚠ Não afeta dados reais (filtra por <code>mockup=true</code>). Indisponível em produção.
+        </p>
+        <button id="btn-reset-dados" class="btn btn-primary" onclick="resetDadosTeste()" style="font-size:13px">
+          🔄 Reset dados de teste
+        </button>
+        <span id="reset-dados-status" style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-left:12px"></span>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <span class="card-title">Credenciais da API Superlógica</span>
@@ -5035,6 +5053,56 @@ async function apiAuthFetch(url, options = {}) {
   if (token) headers['Authorization'] = 'Bearer ' + token;
   return fetch(url, { ...options, headers });
 }
+
+// ============================================================
+// RESET DADOS DE TESTE (dev only, GESTOR only)
+// Card visível em panel-configuracoes só quando ambiente=='dev' E role=='GESTOR'.
+// Backend valida tudo de novo antes de executar o seed.
+// ============================================================
+
+function atualizarCardSeedDev() {
+  const card = document.getElementById('card-seed-dev');
+  if (!card) return;
+  const ambiente = (window.__APP_CONFIG__ || {}).ambiente;
+  const role = window.USER_ROLE;
+  card.style.display = (ambiente === 'dev' && role === 'GESTOR') ? 'block' : 'none';
+}
+
+async function resetDadosTeste() {
+  if (!confirm('Isso apaga todos os dados mockup e recria os 5 condomínios de teste. Confirmar?')) return;
+  const btn = document.getElementById('btn-reset-dados');
+  const status = document.getElementById('reset-dados-status');
+  btn.disabled = true; btn.textContent = '⏳ Resetando...';
+  status.textContent = '';
+  try {
+    const resp = await apiAuthFetch('/api/admin/seed-dev', { method: 'POST' });
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok) throw new Error((data && data.erro) || ('HTTP ' + resp.status));
+    const resumo = Array.isArray(data) ? data.map(r => `${r.tabela}=${r.total}`).join(' · ') : 'OK';
+    status.textContent = '✓ ' + resumo;
+    status.style.color = 'var(--success)';
+    toast('✅ Dados de teste resetados', 'ok');
+  } catch (e) {
+    status.textContent = '✕ ' + (e.message || 'falha');
+    status.style.color = 'var(--danger)';
+    toast('Falha ao resetar: ' + (e.message || 'erro'), 'err');
+  } finally {
+    btn.disabled = false; btn.textContent = '🔄 Reset dados de teste';
+  }
+}
+
+// Re-avalia visibilidade ao receber sessão e ao abrir o painel Config
+document.addEventListener('auth:ready', atualizarCardSeedDev);
+// Hook em showPanel: chama atualização quando entrar no painel-configuracoes
+(function() {
+  const original = window.showPanel;
+  if (typeof original !== 'function') return;
+  window.showPanel = function(name) {
+    const r = original.apply(this, arguments);
+    if (name === 'configuracoes') atualizarCardSeedDev();
+    return r;
+  };
+})();
 
 // ============================================================
 // PRESTACAO DE CONTAS

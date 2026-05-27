@@ -87,10 +87,25 @@
     document.dispatchEvent(new CustomEvent('auth:ready', { detail: { session, user } }));
   }
 
+  // Decodifica payload de um JWT (apenas decode, sem verificação de assinatura —
+  // a verificação real é feita no backend em verifySupabaseJwt). Usado pra ler
+  // app_metadata.role e mostrar/esconder UI de admin no frontend.
+  function decodeJwtPayload(token) {
+    try {
+      const p64 = token.split('.')[1];
+      const json = atob(p64.replace(/-/g, '+').replace(/_/g, '/'));
+      return JSON.parse(decodeURIComponent(escape(json)));
+    } catch (e) { return null; }
+  }
+
   function setSessionGlobals(session, user) {
     window.AUTH_TOKEN = session ? session.access_token : null;
     window.AUTH_USER = user ? { id: user.id, email: user.email, user_metadata: user.user_metadata || {} } : null;
     window.AUTH_LEVEL = (user && user.user_metadata && user.user_metadata.access_level) || 'total';
+    // USER_ROLE vem do JWT (app_metadata.role injetado pelo trigger sync_role_to_metadata).
+    // Fallback OPERACIONAL se o trigger ainda não rodou pra esse user.
+    const payload = session ? decodeJwtPayload(session.access_token) : null;
+    window.USER_ROLE = (payload && payload.app_metadata && payload.app_metadata.role) || 'OPERACIONAL';
     // Atualiza label do botão Sair com email do user (se o botão existir)
     if (user && user.email) {
       const lbl = document.getElementById('logout-label');

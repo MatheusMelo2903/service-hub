@@ -87,6 +87,13 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 // rotas devolvem 503. Setar via `railway variables --set SUPABASE_SERVICE_ROLE_KEY=$VAR`
 // (NUNCA expor no frontend nem em commit — guarda valores em ENV apenas).
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+// Whitelist de project refs Supabase considerados ambiente dev (usado pra liberar
+// /api/admin/seed-dev e expor `ambiente: 'dev'` em /api/config). Adicionar refs de
+// staging aqui se aparecerem.
+const DEV_SUPABASE_REFS = ['ledgyprytkuvgtbunsck'];
+function isSupabaseDev() {
+  return DEV_SUPABASE_REFS.some(ref => SUPABASE_URL.includes(ref));
+}
 
 let JWKS_CACHE = { keys: [], fetchedAt: 0 };
 const JWKS_TTL_MS = 60 * 60 * 1000; // 1h
@@ -228,6 +235,9 @@ app.get('/api/config', (req, res) => {
   res.json({
     supabaseUrl: SUPABASE_URL,
     supabaseAnonKey: SUPABASE_ANON_KEY,
+    // 'dev' habilita botão "Reset dados de teste" no frontend (visível só pra GESTOR).
+    // Em prod, fica 'producao' e o botão não é renderizado.
+    ambiente: isSupabaseDev() ? 'dev' : 'producao'
   });
 });
 
@@ -400,6 +410,31 @@ app.delete('/api/admin/usuarios/:id',
     }
     const r = await supabaseAdminRequest('DELETE', `/auth/v1/admin/users/${encodeURIComponent(id)}`);
     res.status(r.status).json(r.body || { ok: true });
+  });
+
+// ─────────────────────────────────────────────────────────────────────────
+// POST /api/admin/seed-dev — popula 5 condomínios mockup + dados relacionados
+//
+// DUPLA proteção:
+//   1. requireGestor (role no JWT precisa ser GESTOR)
+//   2. SUPABASE_URL precisa apontar pra um project ref de dev (whitelist)
+//
+// Se SUPABASE_URL apontar pro projeto prod, devolve 403 antes de fazer qualquer
+// coisa. Backend rejeita mesmo se alguém forjar JWT/roles — defense in depth.
+//
+// O trabalho real é feito pela RPC public.seed_dev() (PL/pgSQL SECURITY DEFINER).
+// ─────────────────────────────────────────────────────────────────────────
+app.post('/api/admin/seed-dev',
+  requireAuth, requireGestor, requireServiceRoleKey,
+  async (req, res) => {
+    if (!isSupabaseDev()) {
+      return res.status(403).json({
+        erro: 'seed_nao_permitido_em_producao',
+        detalhe: 'SUPABASE_URL não está em DEV_SUPABASE_REFS — rota bloqueada por segurança'
+      });
+    }
+    const r = await supabaseAdminRequest('POST', '/rest/v1/rpc/seed_dev', {});
+    res.status(r.status).json(r.body);
   });
 
 // Middleware 404 para rotas /api/* desconhecidas.
