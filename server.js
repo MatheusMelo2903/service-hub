@@ -423,6 +423,70 @@ marcar "[número de votos a confirmar]" — nunca repetir o número de outro can
 como chute. Por outro lado, quando a transcrição confirma números DIFERENTES para
 candidatos diferentes (ex: Dari 19 e Dani 21), registrar AMBOS literalmente.`;
 
+// Regras de fidelidade factual à transcrição (Tarefa ata-fidelidade-v3).
+// Vêm DEPOIS das regras anti-erro no system prompt para ganhar precedência por ordem.
+// Alvo: corrigir invenção de números, completamento por palpite e fatos omitidos
+// identificados nos testes Happy Days Manguinhos e Lara Hoffman.
+const REGRAS_FIDELIDADE_TRANSCRICAO = `REGRAS DE FIDELIDADE FACTUAL À TRANSCRIÇÃO
+
+Estas regras têm PRIORIDADE MÁXIMA sobre fluência e completude. A ata deve ser fiel ao que a transcrição sustenta, mesmo à custa de um documento com várias marcações [a confirmar]. Prefira a ata "incompleta mas correta" à ata "fluente mas inventada".
+
+FID 1. NUNCA INVENTAR, COMPLETAR OU ADIVINHAR
+Qualquer fato que não esteja explicitamente na transcrição (ou em outra fonte oficial anexada, como edital) precisa ir como [a confirmar] no lugar exato do dado. Isso inclui nomes próprios, sobrenomes, números de votos, valores em reais, datas, números de unidade, cargos, quantidades de parcelas, percentuais e qualquer outro dado pontual. É PROIBIDO substituir uma lacuna por palpite plausível, mesmo que pareça óbvio pelo contexto. Quando o contexto sugere algo mas a transcrição não confirma, registre [a confirmar] e nada além.
+
+FID 2. NÚMEROS SÃO LITERAIS
+Todo número (valor financeiro, quantidade de votos, percentual, número de parcelas, anos, datas) deve ser transcrito exatamente como aparece na transcrição. É PROIBIDO recalcular, arredondar, somar, inferir ou ajustar qualquer número. Se um número aparece de forma ambígua ou parcial, registrar o trecho disponível seguido de [a confirmar]. Se a transcrição não diz o número, escrever [valor a confirmar] ou [número a confirmar] e nada mais.
+
+FID 3. NOMES PRÓPRIOS NÃO SÃO COMPLETADOS
+Se a pessoa é citada apenas pelo primeiro nome, registrar apenas o primeiro nome seguido de [sobrenome a confirmar]. Se há dúvida entre nome civil e apelido (caso real: a transcrição menciona alguém ora como "Wellington", ora como "Eriton"), registrar AMBOS na forma "Wellington (Eriton)" sem escolher um. Nunca completar "Cris" para "Cristina" ou "Cristiano". Nunca substituir o apelido pelo suposto nome civil sem confirmação explícita.
+
+FID 4. VARREDURA PRÉ FECHAMENTO
+Antes de finalizar a ata, varrer a transcrição inteira item por item e garantir que nenhum fato relevante foi omitido. Atenção especial obrigatória a: composição da arrecadação (taxa de condomínio, fundo de reserva, multas, juros), valor total arrecadado no período, número de meses de superávit no exercício, renegociações com concessionárias (CESAN, EDP, Vivo, NET), impacto de obras específicas em meses específicos do período, parcelamentos de inadimplência, esclarecimentos técnicos ou jurídicos dados a condôminos. Se a transcrição menciona, a ata REGISTRA.
+
+FID 5. SEM HÍFEN OU TRAVESSÃO NO CORPO DA ATA
+Proibido usar hífen "-" ou travessão "–" no texto corrido dos itens da ata e na abertura. Use vírgula, ponto e vírgula ou frase nova no lugar. EXCEÇÕES EXPLÍCITAS desta regra, que permanecem regidas pela SKILL.md acima: (a) travessões do cabeçalho de endereço, formato "Logradouro – Bairro – Cidade/UF"; (b) travessões da linha de cargo das assinaturas, formato "Cargo – Tratamento Nome"; (c) travessão do título do anexo, formato "ANEXO I – TÍTULO". Nenhuma OUTRA ocorrência de hífen ou travessão é permitida.`;
+
+// Prompt do segundo passe (auditoria de fidelidade).
+// Roda Sonnet 4.6 sem fallback Opus — auditoria deve ser leve. Se falhar, devolvemos
+// a ata original e logamos warning, sem quebrar a geração.
+const PROMPT_AUDITORIA = `Você é o auditor de fidelidade factual de uma ata condominial já redigida.
+
+Você recebe DOIS blocos:
+1. ATA GERADA (versão atual da ata, ainda não revisada)
+2. TRANSCRIÇÃO ORIGINAL E DADOS DA REUNIÃO (incluindo edital, participantes e demais dados que o usuário enviou)
+
+Sua tarefa é ESTRITAMENTE de auditoria. Não reformule estilo, não melhore redação, não adicione conteúdo novo. SOMENTE corrija o que a transcrição não sustenta e inclua fatos relevantes da transcrição que foram omitidos.
+
+PROCEDIMENTO:
+(a) Liste mentalmente cada número (valor em reais, quantidade de votos, percentual, parcelas, datas), cada nome próprio (incluindo sobrenomes) e cada fato pontual que aparece na ata.
+(b) Para cada item da lista, verifique se a transcrição sustenta literalmente esse item.
+(c) Se a transcrição NÃO sustenta o item, substitua o item pela marcação [a confirmar] entre colchetes, mantendo a estrutura da frase. Exemplos concretos:
+    "Sr. Wellington (Eriton) Pabodo" vira "Sr. Wellington (Eriton) [sobrenome a confirmar]" se Pabodo não aparece na transcrição.
+    "vinte e três (23) votos" vira "[número de votos a confirmar] votos" se a transcrição não confirma esse número exato.
+    "R$ 762.000,00" vira "R$ [valor a confirmar]" se a transcrição não confirma esse valor.
+(d) Se um fato relevante da transcrição foi OMITIDO na ata (composição da arrecadação, número de meses de superávit, renegociação com concessionária, impacto de obras em meses específicos), INCLUA o fato no item correspondente, sempre com base literal na transcrição.
+
+REGRAS DE SAÍDA:
+1. Devolva APENAS a ata corrigida, do cabeçalho até a última linha de assinatura. Nada antes, nada depois. Sem comentários, sem lista de mudanças, sem "Aqui está a ata auditada".
+2. Mantenha exatamente a formatação do documento: prosa corrida, sem markdown, sem bullets, CAIXA ALTA para destaques, ITEM N) para itens, travessões "–" apenas onde a SKILL.md prescreve (endereço, linha de cargo das assinaturas, título de anexo).
+3. Se você conferir que a ata está 100% fiel e nada precisa mudar, devolva a ata idêntica à entrada, sem modificar uma vírgula.`;
+
+// Segundo passe: roda Sonnet 4.6 com a ata + transcrição original e devolve a ata
+// corrigida. Sem fallback. Em caso de erro, retorna null e o caller usa a ata original.
+async function auditarFidelidadeAta(ataGerada, userMessageOriginal) {
+  const auditMessage = '=== ATA GERADA (a auditar) ===\n' + ataGerada +
+    '\n\n=== TRANSCRIÇÃO ORIGINAL E DADOS DA REUNIÃO ===\n' + userMessageOriginal +
+    '\n\nAudite a ata acima contra a transcrição e devolva a ata corrigida seguindo o procedimento e as regras de saída.';
+  // max_tokens alinhado com a tentativa 1 do passe principal (regra reviewer.md: ≤16000).
+  // Auditoria substitui trechos por [a confirmar] e adiciona fatos curtos — não expande conteúdo.
+  const r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, PROMPT_AUDITORIA, auditMessage);
+  if (!r.ok || !r.texto) {
+    console.warn('[engine-ata] Segundo passe de auditoria falhou (status ' + (r.status || 'sem_status') + '): ' + (r.erro || 'sem_texto'));
+    return null;
+  }
+  return r.texto;
+}
+
 // Validação heurística pós-geração — detecta truncamento e formato quebrado.
 // Critérios derivados das atas de referência do handoff:
 //   - tem frase de encerramento padrão
@@ -505,8 +569,32 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
     return res.status(400).json({ erro: 'userMessage_invalido', detalhe: 'envie a transcrição + dados da reunião como string em userMessage (mín 50 chars)' });
   }
 
-  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO;
+  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO;
   const tentativas = [];
+
+  // Helper local pra encadear segundo passe de auditoria e padronizar resposta.
+  // Invariante: toda ata entregue ao frontend passou por validarAta.
+  // Se a auditoria devolver texto que falha na validação heurística (markdown,
+  // pré-análise, encerramento removido, assinaturas perdidas), descartamos a saída
+  // do segundo passe e devolvemos a ata original validada.
+  async function entregarAtaAuditada(texto, modelo_usado, tentativaIdx, extras) {
+    const auditada = await auditarFidelidadeAta(texto, userMessage);
+    let ataFinal = texto;
+    let auditoriaStatus = 'falhou_usou_original';
+    if (auditada) {
+      const vAud = validarAta(auditada);
+      if (vAud.valido) {
+        ataFinal = auditada;
+        auditoriaStatus = 'aplicada';
+      } else {
+        auditoriaStatus = 'rejeitada_validacao_usou_original';
+        tentativas[tentativaIdx].auditoria_validacao = vAud;
+        console.warn('[engine-ata] Segundo passe rejeitado pela validação heurística:', JSON.stringify(vAud));
+      }
+    }
+    tentativas[tentativaIdx].auditoria = auditoriaStatus;
+    return res.json(Object.assign({ ata: ataFinal, modelo_usado, tentativas, auditoria: auditoriaStatus }, extras || {}));
+  }
 
   // Tentativa 1: Sonnet 4.6 + 16k
   let r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, system, userMessage);
@@ -514,7 +602,7 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
   if (r.ok) {
     const v = validarAta(r.texto);
     tentativas[0].validacao = v;
-    if (v.valido) return res.json({ ata: r.texto, modelo_usado: 'claude-sonnet-4-6', tentativas });
+    if (v.valido) return entregarAtaAuditada(r.texto, 'claude-sonnet-4-6', 0);
   }
 
   // Tentativa 2: Sonnet 4.6 + 20k (max_tokens +25%)
@@ -523,7 +611,7 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
   if (r.ok) {
     const v = validarAta(r.texto);
     tentativas[1].validacao = v;
-    if (v.valido) return res.json({ ata: r.texto, modelo_usado: 'claude-sonnet-4-6', tentativas });
+    if (v.valido) return entregarAtaAuditada(r.texto, 'claude-sonnet-4-6', 1);
   }
 
   // Tentativa 3: Opus 4.7 fallback. Logado pra acompanhar frequência em prod.
@@ -533,7 +621,7 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
   if (r.ok) {
     const v = validarAta(r.texto);
     tentativas[2].validacao = v;
-    if (v.valido) return res.json({ ata: r.texto, modelo_usado: 'claude-opus-4-7', tentativas, fallback: true });
+    if (v.valido) return entregarAtaAuditada(r.texto, 'claude-opus-4-7', 2, { fallback: true });
   }
 
   // 3 tentativas falharam — devolve erro estruturado pro frontend explicar o motivo
