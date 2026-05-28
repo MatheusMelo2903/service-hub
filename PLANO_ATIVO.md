@@ -20,6 +20,22 @@
 
 ---
 
+## Entregas fora do plano (registradas durante a sprint)
+
+### ✅ ata-fidelidade-v3 — regras de fidelidade no gerador de atas (28/05)
+**Responsável:** Mateus | **Esforço:** ~1 sessão | **Status:** Concluída (commit `8cec7de`, push pendente)
+
+Elevou a fidelidade factual do gerador de atas para igualar a skill `ata-condominial`. Mudou apenas `server.js` (+92/-4): bloco `REGRAS_FIDELIDADE_TRANSCRICAO` no system prompt + segundo passe de auditoria (`auditarFidelidadeAta` com Sonnet 4.6, max_tokens 16k, revalidado com `validarAta`).
+
+- Teste Happy Days: 3/4 critérios passaram
+- Critério 2 ("Wellington (Eriton)") foi para backlog de iteração
+- Lara Hoffman pendente de arquivo
+- Doc: `tarefas/concluidas/ata-fidelidade-v3.md`
+
+**Dívida agravada:** rate limit dedicado em `/api/atas/gerar` virou pendência crítica pré-piloto (ver MISSION_CONTROL §"Pendências críticas pré-piloto").
+
+---
+
 ## Semana 1 (27/05 a 02/06) — Desbloquear a Fase 1
 
 ### 🔴 Tarefa 1.1 — Seletor de condomínio com ID
@@ -97,6 +113,22 @@ Não bloqueiam segunda, mas precisam ser feitas antes de mais usuários entrarem
 - [ ] Leaked password protection (Studio → Auth → Policies)
 - [ ] OTP expiry < 1h (Studio → Auth → Email)
 - [ ] Deletar user temp `mateus-teste@servicehub.local`
+
+---
+
+## Pendências pré-piloto — IA (geração de atas)
+
+Levantadas durante `ata-fidelidade-v3`. Não bloqueiam a Fase 1, mas precisam ser fechadas antes do piloto com mais de 1 usuário gerando ata simultaneamente.
+
+- [ ] 🔴 **Rate limit dedicado em `/api/atas/gerar`** (ex. 10 req/min por sub do JWT). Segundo passe de auditoria dobra o custo Anthropic por geração (quadruplica no fallback Opus)
+- [ ] 🟡 **Feature flag `ENABLE_ATA_AUDIT`** para desligar o segundo passe via ENV se o rate limit Anthropic apertar
+- [ ] 🟡 **Timeout próprio do segundo passe** (60s em vez do default 120s)
+
+### Backlog de iteração — fidelidade
+
+- [ ] Reforçar FID 3 para resolver caso "Wellington (Eriton)" (exemplo concreto no system prompt ou regra explícita de variações de nome)
+- [ ] Rodar pipeline em Lara Hoffman quando Matheus enviar a transcrição
+- [ ] Consolidar `REGRAS_ANTI_ERRO` + `REGRAS_FIDELIDADE_TRANSCRICAO` em uma constante única
 
 ---
 
