@@ -1001,9 +1001,6 @@
     <div class="nav-item" onclick="showPanel('consumo')">
       <span class="nav-icon">◎</span> Leitura de Consumo
     </div>
-    <div class="nav-item" onclick="showPanel('inadimplencia')">
-      <span class="nav-icon">⚠</span> Inadimplência
-    </div>
     <div class="nav-item" onclick="showPanel('tarefas')">
       <span class="nav-icon">✓</span> Tarefas
       <span class="nav-badge">em breve</span>
@@ -1348,20 +1345,6 @@
 
 
     <!-- ATAS CONDOMINIAIS -->
-    <div class="panel" id="panel-inadimplencia">
-      <div id="banner-cond-inadimplencia"></div>
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">Inadimplência</span>
-          <button class="btn btn-primary" onclick="inadimplenciaCarregar()" id="btn-carregar-inad">
-            Carregar dados
-          </button>
-        </div>
-        <div id="inad-resumo" style="display:none"></div>
-        <div id="inad-tabela" style="margin-top:16px"></div>
-      </div>
-    </div>
-
     <div class="panel" id="panel-prestacao">
 
       <div class="card">
@@ -1931,7 +1914,7 @@ function setCondominioAtivo(obj) {
   // Atualiza card do Dashboard se já estiver no DOM
   if (typeof atualizarDashCond === 'function') atualizarDashCond();
   // Atualiza banners nos painéis que já foram renderizados
-  ['despesas','unidades','boletos','financeiro','inadimplencia'].forEach(function(p) {
+  ['despesas','unidades','boletos','financeiro'].forEach(function(p) {
     if (document.getElementById('banner-cond-' + p)) renderBannerCondAtivo(p);
   });
   // Sincroniza o seletor do topbar quando a troca vem de outro fluxo (dashboard, modal)
@@ -2074,34 +2057,6 @@ function navbarCondChange(id, nome) {
   setCondominioAtivo({ id: id, nome: nome, id_superlogica: idSuperlogica });
   toast('Condomínio: ' + nome, 'ok');
 }
-
-// ============================================================
-// PAINEL INADIMPLÊNCIA (esqueleto, implementação completa na Tarefa 1.4)
-// ============================================================
-async function inadimplenciaCarregar() {
-  const cond = getCondominioAtivo();
-  if (!cond || !cond.id_superlogica) {
-    toast('Selecione um condomínio primeiro', 'err');
-    return;
-  }
-  const btn = document.getElementById('btn-carregar-inad');
-  if (btn) { btn.disabled = true; btn.textContent = 'Carregando...'; }
-  try {
-    // Endpoint previsto via proxy Superlógica (Tarefa 1.4):
-    // /inadimplencia/index?limit=999&comValoresAtualizados=1
-    toast('Inadimplência: implementação completa na Tarefa 1.4', 'ok');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Carregar dados'; }
-  }
-}
-
-// Reage à troca de condomínio para re-renderizar o banner local
-window.addEventListener('condominioAtivo:changed', function() {
-  if (document.getElementById('banner-cond-inadimplencia') &&
-      typeof renderBannerCondAtivo === 'function') {
-    renderBannerCondAtivo('inadimplencia');
-  }
-});
 
 // ============================================================
 const state = {
