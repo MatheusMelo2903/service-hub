@@ -912,7 +912,9 @@ function prestacaoGetGrupo(subcategoria) {
   for (const key in PRESTACAO_SUBCATEGORY_TO_GROUP) {
     if (sub.indexOf(key.toLowerCase()) !== -1) return PRESTACAO_SUBCATEGORY_TO_GROUP[key];
   }
-  // Se não casa com nenhuma chave, usar o nome curado da categoria como fallback.
+  // Fallback: usa o nome curado da categoria. Loga warn para telemetria de cobertura
+  // do dicionário (cada warn em prod indica subcategoria nova do Superlógica a mapear).
+  if (sub) console.warn('[prestacao] subcategoria não mapeada em PRESTACAO_SUBCATEGORY_TO_GROUP:', subcategoria);
   return prestacaoGetCategoryName(subcategoria);
 }
 
@@ -1007,25 +1009,21 @@ function prestacaoAgruparReceitas(categorias) {
     .sort(function(a, b) { return b.total - a.total; });
 }
 
-// Calcula a soma das subcategorias por fonte de receita, devolvendo o array
-// de fontes pronto para o slide Origem da Receita (com nome canônico e valor total).
-
-// Calcula a soma das subcategorias por grupo canônico, devolvendo o array
-// de grupos pronto para o slide Estrutura de Despesas.
+// Consolida grupos em formato { categoria, valor } compatível com o slide
+// Estrutura de Despesas (que originalmente esperava dados.despesasPorCategoria).
 function prestacaoConsolidarDespesasPorGrupo(grupos) {
   return (grupos || []).map(function(g) {
     return { categoria: g.grupo, valor: g.total };
   });
 }
 
-// Calcula a soma das fontes para o slide Origem da Receita.
+// Consolida fontes em formato { categoria, valor } compatível com o slide
+// Origem da Receita (que originalmente esperava dados.receitas.porCategoria).
 function prestacaoConsolidarReceitasPorFonte(fontes) {
   return (fontes || []).map(function(f) {
     return { categoria: f.fonte, valor: f.total };
   });
 }
-
-// Calcula a soma das fontes para o slide Estrutura de Despesas.
 
 // Calcula o superavit mes a mes a partir das duas distribuicoes temporais.
 function prestacaoCalcularSuperavitMensal(receitas, despesas) {
@@ -1077,7 +1075,7 @@ function prestacaoDetectarOutlier(arr12) {
     out.indiceOutlier = maiorIdx;
     out.valorOutlier = maiorVal;
     const pctAcima = ((maiorVal - media) / media) * 100;
-    const nome = PRESTACAO_MESES_CURTO[maiorIdx] || ('Mes ' + (maiorIdx + 1));
+    const nome = PRESTACAO_MESES_CURTO[maiorIdx] || ('Mês ' + (maiorIdx + 1));
     out.descricao = 'Pico em ' + nome + ': ' + prestacaoFmtBRL(maiorVal) + ' (' + prestacaoFmtPct(pctAcima, 0) + ' acima da media mensal).';
   }
   return out;
@@ -1262,7 +1260,7 @@ function prestacaoSlideVisaoGeral(pptx, dados, entidade, ano) {
   prestacaoSlideKpiCard(slide, 8.9, 2.2, 4.0, 1.4, 'Despesa', prestacaoFmtBRL(despT), 'Total pago', PRESTACAO_THEME.blueMid, PRESTACAO_THEME.white);
 
   const corSup = sup < 0 ? PRESTACAO_THEME.negative : PRESTACAO_THEME.positive;
-  const labelSup = sup < 0 ? 'Deficit' : 'Superávit';
+  const labelSup = sup < 0 ? 'Déficit' : 'Superávit';
   prestacaoSlideKpiCard(slide, 0.5, 3.85, 6.1, 1.4, labelSup, prestacaoFmtBRL(sup), 'Receita menos despesa', corSup, PRESTACAO_THEME.white);
   prestacaoSlideKpiCard(slide, 6.8, 3.85, 6.1, 1.4, 'Saldo Final', prestacaoFmtBRL(sFim), 'Caixa em ' + ano, PRESTACAO_THEME.navy, PRESTACAO_THEME.white);
 
@@ -1337,9 +1335,9 @@ function prestacaoSlideEvolucaoMensal(pptx, dados, distRec, distDesp, saldoMensa
   const medDesp = despArr.reduce(function(a, b) { return a + (Number(b) || 0); }, 0) / 12;
   const medEcon = medRec - medDesp;
 
-  prestacaoSlideKpiCard(slide, 0.5, 5.95, 4.0, 0.95, 'Media Receita', prestacaoFmtBRL(medRec), null, PRESTACAO_THEME.positive, PRESTACAO_THEME.white);
-  prestacaoSlideKpiCard(slide, 4.7, 5.95, 4.0, 0.95, 'Media Despesa', prestacaoFmtBRL(medDesp), null, PRESTACAO_THEME.negative, PRESTACAO_THEME.white);
-  prestacaoSlideKpiCard(slide, 8.9, 5.95, 4.0, 0.95, 'Media Economia', prestacaoFmtBRL(medEcon), null, PRESTACAO_THEME.blueMid, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 0.5, 5.95, 4.0, 0.95, 'Média Receita', prestacaoFmtBRL(medRec), null, PRESTACAO_THEME.positive, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 4.7, 5.95, 4.0, 0.95, 'Média Despesa', prestacaoFmtBRL(medDesp), null, PRESTACAO_THEME.negative, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 8.9, 5.95, 4.0, 0.95, 'Média Economia', prestacaoFmtBRL(medEcon), null, PRESTACAO_THEME.blueMid, PRESTACAO_THEME.white);
 
   prestacaoSlideRodape(slide, entidade, ano);
 }
@@ -1365,16 +1363,16 @@ function prestacaoSlidePatrimonio(pptx, dados, saldoMensal, entidade, ano) {
   let labels = [];
   if (Array.isArray(saldoMensal) && saldoMensal.length === 13) {
     serie = saldoMensal;
-    labels = ['Inicio'].concat(PRESTACAO_MESES_CURTO);
+    labels = ['Início'].concat(PRESTACAO_MESES_CURTO);
   } else if (Array.isArray(saldoMensal) && saldoMensal.length === 12) {
     serie = saldoMensal;
     labels = PRESTACAO_MESES_CURTO;
   } else if (Array.isArray(saldoMensal) && saldoMensal.length === 5) {
     serie = saldoMensal;
-    labels = ['Inicio', 'T1', 'T2', 'T3', 'T4'];
+    labels = ['Início', 'T1', 'T2', 'T3', 'T4'];
   } else {
     serie = [sIni, sFim];
-    labels = ['Inicio', 'Fim'];
+    labels = ['Início', 'Fim'];
   }
 
   slide.addChart(pptx.ChartType.line, [
@@ -1388,7 +1386,7 @@ function prestacaoSlidePatrimonio(pptx, dados, saldoMensal, entidade, ano) {
   });
 
   const corCresc = (cresc !== null && cresc < 0) ? PRESTACAO_THEME.negative : PRESTACAO_THEME.amber;
-  const labelCresc = (cresc !== null && cresc < 0) ? 'Retracao' : 'Crescimento';
+  const labelCresc = (cresc !== null && cresc < 0) ? 'Retração' : 'Crescimento';
   let crescStr = 'NA';
   if (cresc !== null) crescStr = (cresc >= 0 ? '+' : '') + cresc.toFixed(0) + '%';
 
@@ -1500,105 +1498,6 @@ function prestacaoSlideEstruturaDespesas(pptx, dados, entidade, ano) {
   }
 
   prestacaoSlideRodape(slide, entidade, ano);
-}
-
-// Slide de detalhamento de uma categoria (despesa ou receita). Card escuro a
-// esquerda com totais e mini barras, tabela de lancamentos a direita, e
-// caixa de aviso na base se houver outlier.
-function prestacaoSlideDetalhamentoCategoria(pptx, cat, idx, tipo, entidade, ano, totalGrupo) {
-  const slide = pptx.addSlide();
-  const numStr = (idx + 7 < 10 ? '0' : '') + (idx + 7);
-  const tituloMain = tipo === 'receita' ? 'Receita' : 'Despesa';
-  const subBaseAccent = String(cat.categoria || 'Sem nome');
-  prestacaoSlideCabecalho(slide, numStr, 'DETALHAMENTO', tituloMain, subBaseAccent, '');
-
-  const valorCat = Number(cat.valor) || 0;
-  const total = Number(totalGrupo) || 0;
-  const pct = total > 0 ? (valorCat / total) * 100 : 0;
-  const corCard = tipo === 'receita' ? PRESTACAO_THEME.positive : PRESTACAO_THEME.navy;
-  const labelGrupo = tipo === 'receita' ? 'DA RECEITA TOTAL' : 'DA DESPESA TOTAL';
-
-  slide.addShape('rect', { x: 0.5, y: 2.2, w: 5.2, h: 4.75, fill: { color: corCard }, line: { color: corCard, width: 0 } });
-  slide.addShape('rect', { x: 0.7, y: 2.4, w: 0.3, h: 0.3, fill: { color: PRESTACAO_THEME.amber }, line: { color: PRESTACAO_THEME.amber, width: 0 } });
-
-  slide.addText('TOTAL DO GRUPO', { x: 0.7, y: 2.8, w: 4.8, h: 0.3, fontSize: 11, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
-  slide.addText(prestacaoFmtBRL(valorCat), { x: 0.7, y: 3.1, w: 4.8, h: 0.6, fontSize: 34, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left' });
-  slide.addText(prestacaoFmtPct(pct, 1) + ' ' + labelGrupo, { x: 0.7, y: 3.78, w: 4.8, h: 0.3, fontSize: 10, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
-
-  slide.addShape('rect', { x: 0.7, y: 4.15, w: 1.0, h: 0.03, fill: { color: PRESTACAO_THEME.bluePale }, line: { color: PRESTACAO_THEME.bluePale, width: 0 } });
-
-  const distArr = (Array.isArray(cat.distribuicaoTemporal) && cat.granularidade === 'mensal') ? cat.distribuicaoTemporal : null;
-  let mesesComLancamento = 0;
-  if (distArr) {
-    for (let i = 0; i < distArr.length; i++) {
-      if (Math.abs(Number(distArr[i]) || 0) > 0) mesesComLancamento++;
-    }
-  }
-  let descricao = '';
-  if (idx === 0) descricao = 'Maior categoria do exercício.';
-  else if (idx <= 2) descricao = 'Categoria de peso significativo no exercício.';
-  else descricao = 'Categoria componente do exercício.';
-  if (distArr && mesesComLancamento > 0) descricao = descricao + ' ' + mesesComLancamento + ' meses com lancamento.';
-
-  slide.addText(descricao, { x: 0.7, y: 4.3, w: 4.8, h: 0.7, fontSize: 11, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left' });
-  slide.addText('DISTRIBUIÇÃO MENSAL', { x: 0.7, y: 5.15, w: 4.8, h: 0.3, fontSize: 10, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
-
-  if (distArr) {
-    prestacaoSlideMiniBars(slide, 0.7, 5.5, 4.8, 1.3, distArr.slice(0, 12), PRESTACAO_THEME.white, PRESTACAO_THEME.bluePale);
-  } else {
-    slide.addText('Sem distribuição mensal disponível', { x: 0.7, y: 5.5, w: 4.8, h: 0.4, fontSize: 11, italic: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left' });
-  }
-
-  const linhas = [];
-  if (distArr) {
-    for (let i = 0; i < distArr.length; i++) {
-      const v = Number(distArr[i]) || 0;
-      if (Math.abs(v) > 0) linhas.push({ rotulo: PRESTACAO_MESES_COMPLETO[i] || ('Mes ' + (i + 1)), valor: v });
-    }
-  }
-  if (linhas.length === 0) {
-    linhas.push({ rotulo: cat.categoria || 'Total', valor: valorCat });
-  }
-
-  const tabelaX = 6.0;
-  const tabelaY = 2.2;
-  const tabelaW = 6.8;
-  const headerH = 0.4;
-  const totalRowH = 0.5;
-  const dispH = 4.75 - headerH - totalRowH;
-  let fontHeader = 11;
-  let fontRow = 10;
-  if (linhas.length > 12 && linhas.length <= 16) { fontHeader = 10; fontRow = 9; }
-  else if (linhas.length > 16) { fontHeader = 9; fontRow = 8; }
-  const rowH = dispH / Math.max(linhas.length, 1);
-
-  slide.addShape('rect', { x: tabelaX, y: tabelaY, w: tabelaW, h: headerH, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 } });
-  slide.addText('LANÇAMENTOS DO PERÍODO', { x: tabelaX + 0.15, y: tabelaY, w: tabelaW * 0.6, h: headerH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle', charSpacing: 3 });
-  slide.addText('VALOR', { x: tabelaX + tabelaW * 0.6, y: tabelaY, w: tabelaW * 0.4 - 0.15, h: headerH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'right', valign: 'middle', charSpacing: 3 });
-
-  for (let i = 0; i < linhas.length; i++) {
-    const yI = tabelaY + headerH + i * rowH;
-    const fill = i % 2 === 0 ? PRESTACAO_THEME.white : PRESTACAO_THEME.grayBg;
-    slide.addShape('rect', { x: tabelaX, y: yI, w: tabelaW, h: rowH, fill: { color: fill }, line: { color: PRESTACAO_THEME.grayLine, width: 0.25 } });
-    slide.addText(String(linhas[i].rotulo), { x: tabelaX + 0.15, y: yI, w: tabelaW * 0.6, h: rowH, fontSize: fontRow, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'left', valign: 'middle' });
-    slide.addText(prestacaoFmtBRL(linhas[i].valor), { x: tabelaX + tabelaW * 0.6, y: yI, w: tabelaW * 0.4 - 0.15, h: rowH, fontSize: fontRow, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'right', valign: 'middle' });
-  }
-
-  const totalY = tabelaY + headerH + linhas.length * rowH;
-  slide.addShape('rect', { x: tabelaX, y: totalY, w: tabelaW, h: totalRowH, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 } });
-  slide.addText('TOTAL', { x: tabelaX + 0.15, y: totalY, w: tabelaW * 0.6, h: totalRowH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle', charSpacing: 3 });
-  slide.addText(prestacaoFmtBRL(valorCat), { x: tabelaX + tabelaW * 0.6, y: totalY, w: tabelaW * 0.4 - 0.15, h: totalRowH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'right', valign: 'middle' });
-
-  if (distArr) {
-    const out = prestacaoDetectarOutlier(distArr);
-    if (out.temOutlier) {
-      prestacaoSlideCaixaAviso(slide, 0.5, 7.05, 5.2, out.descricao);
-    } else {
-      prestacaoSlideRodape(slide, entidade, ano);
-    }
-  } else {
-    prestacaoSlideRodape(slide, entidade, ano);
-  }
 }
 
 // Slide de detalhamento de um GRUPO de despesa (Onda 1).
@@ -1752,16 +1651,16 @@ function prestacaoSlideEncerramento(pptx, dados, saldoMensal, superavitMensal, e
   let labels = [];
   if (Array.isArray(saldoMensal) && saldoMensal.length === 13) {
     serie = saldoMensal;
-    labels = ['Inicio'].concat(PRESTACAO_MESES_CURTO);
+    labels = ['Início'].concat(PRESTACAO_MESES_CURTO);
   } else if (Array.isArray(saldoMensal) && saldoMensal.length === 12) {
     serie = saldoMensal;
     labels = PRESTACAO_MESES_CURTO;
   } else if (Array.isArray(saldoMensal) && saldoMensal.length === 5) {
     serie = saldoMensal;
-    labels = ['Inicio', 'T1', 'T2', 'T3', 'T4'];
+    labels = ['Início', 'T1', 'T2', 'T3', 'T4'];
   } else {
     serie = [sIni, sFim];
-    labels = ['Inicio', 'Fim'];
+    labels = ['Início', 'Fim'];
   }
   const ref = serie.map(function() { return sIni; });
 
