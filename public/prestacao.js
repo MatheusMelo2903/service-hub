@@ -1,5 +1,5 @@
 // ============================================================
-// PRESTACAO DE CONTAS — extraído de public/index.html como
+// PRESTAÇÃO DE CONTAS — extraído de public/index.html como
 // refactor preparatório para a Tarefa prestacao-ondas-1-2-3.
 // Carregado via <script src="/prestacao.js"></script> antes do
 // </body> do index.html. Continua sendo script clássico (não
@@ -8,7 +8,7 @@
 // ============================================================
 
 // ============================================================
-// PRESTACAO DE CONTAS
+// PRESTAÇÃO DE CONTAS
 // Cache de condominios populado via supaFetch ao abrir o painel.
 // Busca filtravel client side. Modo livre permite condominio nao cadastrado.
 // ============================================================
@@ -272,7 +272,7 @@ function prestacaoValidarConsistencia(dados) {
   const difSaldo = saldoCalculado - saldoFim;
   checks.push({
     tipo: 'equacao',
-    titulo: 'Equacao do exercicio',
+    titulo: 'Equação do exercício',
     ok: Math.abs(difSaldo) <= tolerancia,
     esperado: 'Saldo inicial + Receitas - Despesas = Saldo final',
     calculo: prestacaoFmtBRL(saldoIni) + ' + ' + prestacaoFmtBRL(receitaTotal) + ' - ' + prestacaoFmtBRL(despesaTotal) + ' = ' + prestacaoFmtBRL(saldoCalculado),
@@ -399,7 +399,7 @@ function prestacaoPopularFormularios(dados) {
   fc.innerHTML = '';
   const cab = dados.cabecalho || {};
   fc.appendChild(prestacaoCriarCampo('text', 'Condominio', cab.condominio || '', 'condominio'));
-  fc.appendChild(prestacaoCriarCampo('text', 'Periodo', cab.periodo || '', 'periodo'));
+  fc.appendChild(prestacaoCriarCampo('text', 'Período', cab.periodo || '', 'periodo'));
   fc.appendChild(prestacaoCriarCampo('text', 'Data da apresentacao', cab.dataApresentacao || '', 'dataApresentacao'));
 
   const fs = document.getElementById('prestacao-form-saldo');
@@ -544,7 +544,7 @@ function prestacaoRenderizarValidacao(checks) {
     if (c.diferenca !== null && c.diferenca !== undefined) {
       const d = document.createElement('span');
       d.className = 'det';
-      d.textContent = 'Diferenca: ' + prestacaoFmtBRL(c.diferenca);
+      d.textContent = 'Diferença: ' + prestacaoFmtBRL(c.diferenca);
       div.appendChild(d);
     }
     cont.appendChild(div);
@@ -637,7 +637,7 @@ function prestacaoRenderizarPreview(dados) {
   const cab = (dados && dados.cabecalho) || {};
 
   const capa = prestacaoMiniSlide(n++, cab.condominio || 'Condominio', { dark: true });
-  prestacaoMiniCorpo(capa, 'Periodo: ' + (cab.periodo || ''));
+  prestacaoMiniCorpo(capa, 'Período: ' + (cab.periodo || ''));
   lista.appendChild(capa);
 
   const recT = Number(rec.total) || 0;
@@ -645,28 +645,28 @@ function prestacaoRenderizarPreview(dados) {
   const sIni = Number(sal.inicial) || 0;
   const sFim = Number(sal.final) || 0;
   const sup = recT - despT;
-  const visao = prestacaoMiniSlide(n++, 'Visao Geral');
+  const visao = prestacaoMiniSlide(n++, 'Visão Geral');
   prestacaoMiniKpis(visao, [
     { label: 'Saldo inicial', valor: prestacaoFmtBRL(sIni) },
     { label: 'Receita', valor: prestacaoFmtBRL(recT) },
     { label: 'Despesa', valor: prestacaoFmtBRL(despT) },
-    { label: 'Superavit', valor: prestacaoFmtBRL(sup) },
+    { label: 'Superávit', valor: prestacaoFmtBRL(sup) },
     { label: 'Saldo final', valor: prestacaoFmtBRL(sFim) }
   ]);
   lista.appendChild(visao);
 
-  const evo = prestacaoMiniSlide(n++, 'Evolucao Mensal');
+  const evo = prestacaoMiniSlide(n++, 'Evolução Mensal');
   const recDist = Array.isArray(rec.distribuicaoTemporalTotal) ? rec.distribuicaoTemporalTotal : [];
   const despDist = Array.isArray(desp.distribuicaoTemporalTotal) ? desp.distribuicaoTemporalTotal : [];
   if (recDist.length || despDist.length) {
     if (recDist.length) prestacaoMiniBars(evo, recDist);
     if (despDist.length) prestacaoMiniBars(evo, despDist);
   } else {
-    prestacaoMiniCorpo(evo, 'Sem distribuicao temporal disponivel');
+    prestacaoMiniCorpo(evo, 'Sem distribuição temporal disponível');
   }
   lista.appendChild(evo);
 
-  const patrim = prestacaoMiniSlide(n++, 'Patrimonio');
+  const patrim = prestacaoMiniSlide(n++, 'Patrimônio');
   let pct = 0;
   if (sIni !== 0) pct = ((sFim - sIni) / Math.abs(sIni)) * 100;
   prestacaoMiniCorpo(patrim, 'Variacao: ' + prestacaoFmtPct(pct, 1));
@@ -674,7 +674,7 @@ function prestacaoRenderizarPreview(dados) {
   if (saldoMensal.length) prestacaoMiniBars(patrim, saldoMensal);
   lista.appendChild(patrim);
 
-  const supSlide = prestacaoMiniSlide(n++, 'Superavit Mensal');
+  const supSlide = prestacaoMiniSlide(n++, 'Superávit Mensal');
   if (recDist.length === despDist.length && recDist.length > 0) {
     const supArr = [];
     for (let i = 0; i < recDist.length; i++) {
@@ -682,7 +682,7 @@ function prestacaoRenderizarPreview(dados) {
     }
     prestacaoMiniBars(supSlide, supArr);
   } else {
-    prestacaoMiniCorpo(supSlide, 'Sem dados temporais para superavit');
+    prestacaoMiniCorpo(supSlide, 'Sem dados temporais para superávit');
   }
   lista.appendChild(supSlide);
 
@@ -764,7 +764,7 @@ async function prestacaoConfirmarGeracao() {
 // Caminho de excecao para o sindico forcar geracao mesmo com inconsistencias
 // acima de R$ 1,00. Exige duas confirmacoes antes de prosseguir.
 async function prestacaoGerarMesmoAssim() {
-  const conf1 = window.confirm('Existem diferencas maiores que R$ 1,00 entre os valores. Gerar a apresentacao mesmo assim pode levar a erros na assembleia. Tem certeza?');
+  const conf1 = window.confirm('Existem diferenças maiores que R$ 1,00 entre os valores. Gerar a apresentação mesmo assim pode levar a erros na assembleia. Tem certeza?');
   if (!conf1) return;
   const conf2 = window.confirm('Confirma definitivamente que quer gerar com inconsistencias acima de R$ 1,00?');
   if (!conf2) return;
@@ -804,7 +804,228 @@ const PRESTACAO_THEME = {
 
 const PRESTACAO_MESES_INICIAL = ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'];
 const PRESTACAO_MESES_CURTO = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-const PRESTACAO_MESES_COMPLETO = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+const PRESTACAO_MESES_COMPLETO = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+
+// ============================================================
+// ONDA 1 — Dicionários de nomes curados, reroteamento por grupo e
+// descrições curatoriais. Reflete a skill ata-condominial e o
+// template_prestacao.py (referência canônica das 9 categorias de
+// despesa e 5 fontes de receita).
+// ============================================================
+
+// Nomes curados (Superlógica devolve CAPS bruto; aqui virar prosa formal).
+const PRESTACAO_CATEGORY_NAMES = {
+  'DESPESA COM PESSOAL': 'Despesas com pessoal',
+  'DESPESAS COM PESSOAL': 'Despesas com pessoal',
+  'DESPESAS COM CONSUMO': 'Despesas com consumo',
+  'MANUTENÇÃO': 'Contratos de manutenção',
+  'MANUTENCAO': 'Contratos de manutenção',
+  'AQUISIÇÃO DE MATERIAIS': 'Aquisição de materiais',
+  'RETENÇÕES - NOTAS FISCAIS': 'Retenções e tributos',
+  'RETENÇÕES': 'Retenções e tributos',
+  'DESPESA COM ADMINISTRATIVO': 'Despesas administrativas',
+  'ADMINISTRATIVO': 'Despesas administrativas',
+  'SERVIÇOS': 'Serviços contratados',
+  'INVESTIMENTO - IMOBILIZADO': 'Investimento (imobilizado)',
+  'INVESTIMENTO': 'Investimento (imobilizado)',
+  'DESPESAS FINANCEIRAS': 'Despesas financeiras',
+};
+function prestacaoGetCategoryName(raw) {
+  return PRESTACAO_CATEGORY_NAMES[(raw || '').toUpperCase().trim()] || (raw || '').trim();
+}
+
+// Roteamento de subcategoria para grupo canônico. Cobre os agrupamentos do
+// template_prestacao.py (referência). Match por substring lower-case.
+const PRESTACAO_SUBCATEGORY_TO_GROUP = {
+  'Contrato Mão de Obra Terceirizada': 'Despesas com pessoal',
+  'Salários': 'Despesas com pessoal',
+  'Encargos': 'Despesas com pessoal',
+  'INSS Patronal': 'Despesas com pessoal',
+  'Cestas Básicas': 'Despesas com pessoal',
+  'Vale Transporte': 'Despesas com pessoal',
+  'Água e Esgoto': 'Despesas com consumo',
+  'Energia Elétrica': 'Despesas com consumo',
+  'Telefone': 'Despesas com consumo',
+  'Internet': 'Despesas com consumo',
+  'Gás': 'Despesas com consumo',
+  'CFTV': 'Contratos de manutenção',
+  'Elevador': 'Contratos de manutenção',
+  'Bombas': 'Contratos de manutenção',
+  'Piscina': 'Contratos de manutenção',
+  'Jardinagem': 'Contratos de manutenção',
+  'Desinsetização': 'Contratos de manutenção',
+  'Material de Limpeza': 'Aquisição de materiais',
+  'Material de Construção': 'Aquisição de materiais',
+  'Material Elétrico': 'Aquisição de materiais',
+  'Material de Obras': 'Aquisição de materiais',
+  'DARF': 'Retenções e tributos',
+  'ISS': 'Retenções e tributos',
+  'IRRF': 'Retenções e tributos',
+  'Honorários Síndico': 'Despesas administrativas',
+  'Honorários Administrativos': 'Despesas administrativas',
+  'Honorários Advocatícios': 'Despesas administrativas',
+  'Comissão de Cobrança': 'Despesas administrativas',
+  'Cartório': 'Despesas administrativas',
+  'Seguro Condominial': 'Serviços contratados',
+  'Sistema de Incêndio': 'Serviços contratados',
+  'Obras e Melhorias': 'Serviços contratados',
+  'Marcenaria': 'Investimento (imobilizado)',
+  'Móveis': 'Investimento (imobilizado)',
+  'Eletrodomésticos': 'Investimento (imobilizado)',
+  'Tarifas Bancárias': 'Despesas financeiras',
+  'IRRF Poupança': 'Despesas financeiras',
+  'Reembolsos': 'Despesas financeiras',
+};
+
+// Ordem canônica dos 9 grupos no slide Estrutura de Despesas e nos
+// 9 slides de detalhamento. Mantém alinhamento com PRESTACAO_THEME.catColors.
+const PRESTACAO_GRUPOS_ORDEM = [
+  'Despesas com pessoal',
+  'Despesas com consumo',
+  'Contratos de manutenção',
+  'Aquisição de materiais',
+  'Retenções e tributos',
+  'Despesas administrativas',
+  'Serviços contratados',
+  'Investimento (imobilizado)',
+  'Despesas financeiras',
+];
+
+// Roteamento de receita para fonte agrupada (slide Origem da Receita).
+const PRESTACAO_RECEITA_TO_FONTE = {
+  'Taxa de Condomínio': 'Taxa de Condomínio (Ordinária e Fundos)',
+  'Fundo de Reserva': 'Taxa de Condomínio (Ordinária e Fundos)',
+  'Fundo de Inadimplência': 'Taxa de Condomínio (Ordinária e Fundos)',
+  'Água Individual': 'Água e Esgoto',
+  'Parcela Fixa': 'Água e Esgoto',
+  'Água Comum': 'Água e Esgoto',
+  'Acordos': 'Acordos e Negociações',
+  'Energia Comum': 'Energia Repassada',
+  'Energia Bloco': 'Energia Repassada',
+  'Taxa Extra': 'Taxa Extra',
+  'Churrasqueira': 'Áreas Comuns',
+  'Salão de Festas': 'Áreas Comuns',
+};
+
+function prestacaoGetGrupo(subcategoria) {
+  const sub = String(subcategoria || '').toLowerCase();
+  for (const key in PRESTACAO_SUBCATEGORY_TO_GROUP) {
+    if (sub.indexOf(key.toLowerCase()) !== -1) return PRESTACAO_SUBCATEGORY_TO_GROUP[key];
+  }
+  // Se não casa com nenhuma chave, usar o nome curado da categoria como fallback.
+  return prestacaoGetCategoryName(subcategoria);
+}
+
+function prestacaoGetFonte(receita) {
+  const r = String(receita || '').toLowerCase();
+  for (const key in PRESTACAO_RECEITA_TO_FONTE) {
+    if (r.indexOf(key.toLowerCase()) !== -1) return PRESTACAO_RECEITA_TO_FONTE[key];
+  }
+  return 'Outras Receitas e Ajustes';
+}
+
+// Descrições curatoriais. Aparecem no card navy do detalhamento, substituindo
+// os textos genéricos "Maior categoria do exercício" / "Categoria componente".
+const PRESTACAO_DESCRICOES_GRUPO = {
+  'Despesas com pessoal': 'Contrato mensal de mão de obra terceirizada (porteiros, zeladoria, limpeza). Inclui encargos sociais, INSS patronal, vale transporte e benefícios.',
+  'Despesas com consumo': 'Despesas com concessionárias de serviços essenciais: água, esgoto, energia elétrica, telefone, internet e gás.',
+  'Contratos de manutenção': 'Contratos mensais de manutenção preventiva e corretiva: elevadores, bombas, CFTV, piscina, reservatórios, jardinagem e áreas comuns.',
+  'Aquisição de materiais': 'Materiais consumidos nas manutenções e operações do condomínio: limpeza, construção, elétrico, informática e obras.',
+  'Retenções e tributos': 'Tributos retidos sobre notas fiscais de prestadores: INSS via DARF, ISS municipal e IRRF. Recolhimento obrigatório mensal.',
+  'Despesas administrativas': 'Honorários de gestão, assessoria jurídica, cobrança e despesas operacionais da administração: cartório, combustível e material de expediente.',
+  'Serviços contratados': 'Serviços pontuais e contratos de cobertura: seguro condominial, sistema de incêndio, reparos e serviços especializados.',
+  'Investimento (imobilizado)': 'Aquisição de bens duráveis para o patrimônio do condomínio: móveis, eletrodomésticos, equipamentos e benfeitorias.',
+  'Despesas financeiras': 'Tarifas bancárias, IOF, IRRF sobre rendimentos de poupança e eventuais ajustes financeiros do exercício.',
+};
+function prestacaoGetDescricao(grupo) {
+  return PRESTACAO_DESCRICOES_GRUPO[grupo] || ('Despesas do grupo ' + grupo + ' no exercício.');
+}
+
+// Agrupa um array de categorias do JSON em buckets por grupo canônico.
+// Cada bucket carrega o total somado, as subcategorias originais (para a tabela
+// da direita) e a distribuição temporal agregada (para o mini gráfico do card).
+// Retorna lista na ordem de PRESTACAO_GRUPOS_ORDEM, omitindo grupos com total 0.
+function prestacaoAgruparDespesas(categorias) {
+  const buckets = {};
+  (categorias || []).forEach(function(cat) {
+    if (!cat) return;
+    const grupo = prestacaoGetGrupo(cat.categoria);
+    if (!buckets[grupo]) {
+      buckets[grupo] = {
+        grupo: grupo,
+        total: 0,
+        subcategorias: [],
+        distribuicaoTemporal: new Array(12).fill(0),
+        granularidade: 'mensal'
+      };
+    }
+    const v = Number(cat.valor) || 0;
+    buckets[grupo].total += v;
+    buckets[grupo].subcategorias.push({
+      nome: prestacaoGetCategoryName(cat.categoria),
+      valor: v,
+      distribuicaoTemporal: Array.isArray(cat.distribuicaoTemporal) ? cat.distribuicaoTemporal : null
+    });
+    // Soma a distribuição mensal quando disponível.
+    if (Array.isArray(cat.distribuicaoTemporal) && cat.granularidade === 'mensal') {
+      for (let i = 0; i < Math.min(12, cat.distribuicaoTemporal.length); i++) {
+        buckets[grupo].distribuicaoTemporal[i] += Number(cat.distribuicaoTemporal[i]) || 0;
+      }
+    }
+  });
+  // Devolve grupos na ordem canônica, depois grupos não previstos por valor desc.
+  const ordenados = [];
+  PRESTACAO_GRUPOS_ORDEM.forEach(function(g) {
+    if (buckets[g] && buckets[g].total > 0) {
+      ordenados.push(buckets[g]);
+      delete buckets[g];
+    }
+  });
+  Object.keys(buckets)
+    .map(function(k) { return buckets[k]; })
+    .filter(function(b) { return b.total > 0; })
+    .sort(function(a, b) { return b.total - a.total; })
+    .forEach(function(b) { ordenados.push(b); });
+  return ordenados;
+}
+
+// Agrupa receitas em fontes (slide Origem da Receita). Devolve lista ordenada
+// por valor desc, sem ordem canônica.
+function prestacaoAgruparReceitas(categorias) {
+  const buckets = {};
+  (categorias || []).forEach(function(cat) {
+    if (!cat) return;
+    const fonte = prestacaoGetFonte(cat.categoria);
+    if (!buckets[fonte]) buckets[fonte] = { fonte: fonte, total: 0, subcategorias: [] };
+    const v = Number(cat.valor) || 0;
+    buckets[fonte].total += v;
+    buckets[fonte].subcategorias.push({ nome: prestacaoGetCategoryName(cat.categoria), valor: v });
+  });
+  return Object.keys(buckets)
+    .map(function(k) { return buckets[k]; })
+    .filter(function(b) { return b.total > 0; })
+    .sort(function(a, b) { return b.total - a.total; });
+}
+
+// Calcula a soma das subcategorias por fonte de receita, devolvendo o array
+// de fontes pronto para o slide Origem da Receita (com nome canônico e valor total).
+
+// Calcula a soma das subcategorias por grupo canônico, devolvendo o array
+// de grupos pronto para o slide Estrutura de Despesas.
+function prestacaoConsolidarDespesasPorGrupo(grupos) {
+  return (grupos || []).map(function(g) {
+    return { categoria: g.grupo, valor: g.total };
+  });
+}
+
+// Calcula a soma das fontes para o slide Origem da Receita.
+function prestacaoConsolidarReceitasPorFonte(fontes) {
+  return (fontes || []).map(function(f) {
+    return { categoria: f.fonte, valor: f.total };
+  });
+}
+
+// Calcula a soma das fontes para o slide Estrutura de Despesas.
 
 // Calcula o superavit mes a mes a partir das duas distribuicoes temporais.
 function prestacaoCalcularSuperavitMensal(receitas, despesas) {
@@ -908,7 +1129,7 @@ function prestacaoSlideCabecalho(slide, numero, secao, tituloMain, tituloAccent,
 // Rodape institucional com entidade e exercicio. Usa caractere bullet como separador.
 function prestacaoSlideRodape(slide, entidade, exercicio) {
   const sep = ' • ';
-  const txt = String(entidade || '').toUpperCase() + sep + 'EXERCICIO ' + (exercicio || '');
+  const txt = String(entidade || '').toUpperCase() + sep + 'EXERCÍCIO ' + (exercicio || '');
   slide.addText(txt, {
     x: 0.5, y: 7.15, w: 12.3, h: 0.3,
     fontSize: 9, color: PRESTACAO_THEME.grayMuted, fontFace: 'Calibri', align: 'center', charSpacing: 3
@@ -994,7 +1215,7 @@ function prestacaoSlideCaixaAviso(slide, x, y, w, texto) {
 function prestacaoSlideCapa(pptx, dados, ano, entidade, periodo) {
   const slide = pptx.addSlide();
   slide.background = { color: PRESTACAO_THEME.bgDark };
-  slide.addText('PRESTACAO DE CONTAS', {
+  slide.addText('PRESTAÇÃO DE CONTAS', {
     x: 0.7, y: 0.7, w: 12, h: 0.4,
     fontSize: 14, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 6
   });
@@ -1002,7 +1223,7 @@ function prestacaoSlideCapa(pptx, dados, ano, entidade, periodo) {
     x: 0.7, y: 1.6, w: 12, h: 1.4,
     fontSize: 60, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left'
   });
-  slide.addText('EXERCICIO ' + (ano || ''), {
+  slide.addText('EXERCÍCIO ' + (ano || ''), {
     x: 0.7, y: 3.0, w: 12, h: 1.0,
     fontSize: 60, bold: true, color: PRESTACAO_THEME.blueLight, fontFace: 'Calibri', align: 'left'
   });
@@ -1028,7 +1249,7 @@ function prestacaoSlideCapa(pptx, dados, ano, entidade, periodo) {
 // Slide 2: visao geral com 5 KPIs e faixa amber com 3 indicadores na base.
 function prestacaoSlideVisaoGeral(pptx, dados, entidade, ano) {
   const slide = pptx.addSlide();
-  prestacaoSlideCabecalho(slide, '01', 'VISAO GERAL', 'Resultado consolidado do', 'exercicio', 'Numeros principais do periodo apurado.');
+  prestacaoSlideCabecalho(slide, '01', 'VISÃO GERAL', 'Resultado consolidado do', 'exercício', 'Números principais do período apurado.');
 
   const sIni = Number(dados.saldo && dados.saldo.inicial) || 0;
   const sFim = Number(dados.saldo && dados.saldo.final) || 0;
@@ -1041,7 +1262,7 @@ function prestacaoSlideVisaoGeral(pptx, dados, entidade, ano) {
   prestacaoSlideKpiCard(slide, 8.9, 2.2, 4.0, 1.4, 'Despesa', prestacaoFmtBRL(despT), 'Total pago', PRESTACAO_THEME.blueMid, PRESTACAO_THEME.white);
 
   const corSup = sup < 0 ? PRESTACAO_THEME.negative : PRESTACAO_THEME.positive;
-  const labelSup = sup < 0 ? 'Deficit' : 'Superavit';
+  const labelSup = sup < 0 ? 'Deficit' : 'Superávit';
   prestacaoSlideKpiCard(slide, 0.5, 3.85, 6.1, 1.4, labelSup, prestacaoFmtBRL(sup), 'Receita menos despesa', corSup, PRESTACAO_THEME.white);
   prestacaoSlideKpiCard(slide, 6.8, 3.85, 6.1, 1.4, 'Saldo Final', prestacaoFmtBRL(sFim), 'Caixa em ' + ano, PRESTACAO_THEME.navy, PRESTACAO_THEME.white);
 
@@ -1064,7 +1285,7 @@ function prestacaoSlideVisaoGeral(pptx, dados, entidade, ano) {
   slide.addText('COBERTURA DA RECEITA', { x: 0.7, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'center', charSpacing: 3 });
   slide.addText(prestacaoFmtPct(cobertura, 0), { x: 0.7, y: 5.95, w: 4.0, h: 0.55, fontSize: 24, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'center' });
 
-  slide.addText('PERCENTUAL DE SUPERAVIT', { x: 4.8, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'center', charSpacing: 3 });
+  slide.addText('PERCENTUAL DE SUPERÁVIT', { x: 4.8, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'center', charSpacing: 3 });
   slide.addText(prestacaoFmtPct(pctSuperavit, 1), { x: 4.8, y: 5.95, w: 4.0, h: 0.55, fontSize: 24, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'center' });
 
   slide.addText('CRESCIMENTO DO SALDO', { x: 8.9, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'center', charSpacing: 3 });
@@ -1077,7 +1298,7 @@ function prestacaoSlideVisaoGeral(pptx, dados, entidade, ano) {
 // e 3 cards de medias mensais na base.
 function prestacaoSlideEvolucaoMensal(pptx, dados, distRec, distDesp, saldoMensal, entidade, ano) {
   const slide = pptx.addSlide();
-  prestacaoSlideCabecalho(slide, '02', 'EVOLUCAO', 'Receita e despesa', 'mes a mes', 'Acompanhamento mensal do exercicio.');
+  prestacaoSlideCabecalho(slide, '02', 'EVOLUÇÃO', 'Receita e despesa', 'mês a mês', 'Acompanhamento mensal do exercício.');
 
   const sIni = Number(dados.saldo && dados.saldo.inicial) || 0;
   let saldoAc = [];
@@ -1130,15 +1351,15 @@ function prestacaoSlidePatrimonio(pptx, dados, saldoMensal, entidade, ano) {
   const sIni = Number(dados.saldo && dados.saldo.inicial) || 0;
   const sFim = Number(dados.saldo && dados.saldo.final) || 0;
   const cresc = prestacaoCrescimentoPercentual(sIni, sFim);
-  let subDinamico = 'Como o caixa evoluiu durante o exercicio.';
+  let subDinamico = 'Como o caixa evoluiu durante o exercício.';
   if (cresc !== null) {
-    if (cresc >= 100) subDinamico = 'O patrimonio mais que dobrou no exercicio.';
-    else if (cresc >= 50) subDinamico = 'Crescimento expressivo do patrimonio.';
-    else if (cresc >= 10) subDinamico = 'Patrimonio em crescimento solido.';
-    else if (cresc >= 0) subDinamico = 'Patrimonio mantido com leve evolucao.';
-    else subDinamico = 'Patrimonio em retracao no exercicio.';
+    if (cresc >= 100) subDinamico = 'O patrimônio mais que dobrou no exercício.';
+    else if (cresc >= 50) subDinamico = 'Crescimento expressivo do patrimônio.';
+    else if (cresc >= 10) subDinamico = 'Patrimônio em crescimento solido.';
+    else if (cresc >= 0) subDinamico = 'Patrimônio mantido com leve evolução.';
+    else subDinamico = 'Patrimônio em retração no exercício.';
   }
-  prestacaoSlideCabecalho(slide, '03', 'PATRIMONIO', 'Evolucao do', 'caixa', subDinamico);
+  prestacaoSlideCabecalho(slide, '03', 'PATRIMÔNIO', 'Evolução do', 'caixa', subDinamico);
 
   let serie = [];
   let labels = [];
@@ -1177,7 +1398,7 @@ function prestacaoSlidePatrimonio(pptx, dados, saldoMensal, entidade, ano) {
 
   prestacaoSlideKpiCard(slide, 8.3, 3.45, 4.5, 1.05, 'Saldo Inicial', prestacaoFmtBRL(sIni), null, PRESTACAO_THEME.bluePale, PRESTACAO_THEME.navy);
   prestacaoSlideKpiCard(slide, 8.3, 4.6, 4.5, 1.05, 'Saldo Final', prestacaoFmtBRL(sFim), null, PRESTACAO_THEME.blueMid, PRESTACAO_THEME.white);
-  prestacaoSlideKpiCard(slide, 8.3, 5.75, 4.5, 1.05, 'Superavit do Periodo', prestacaoFmtBRL(sFim - sIni), null, PRESTACAO_THEME.positive, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 8.3, 5.75, 4.5, 1.05, 'Superávit do Período', prestacaoFmtBRL(sFim - sIni), null, PRESTACAO_THEME.positive, PRESTACAO_THEME.white);
 
   prestacaoSlideRodape(slide, entidade, ano);
 }
@@ -1185,14 +1406,14 @@ function prestacaoSlidePatrimonio(pptx, dados, saldoMensal, entidade, ano) {
 // Slide 5: superavit mensal em barras. Card grande com X de 12 meses positivos.
 function prestacaoSlideSuperavitMensal(pptx, dados, superavitMensal, entidade, ano) {
   const slide = pptx.addSlide();
-  prestacaoSlideCabecalho(slide, '04', 'RESULTADO LIQUIDO', 'Superavit', 'mensal', 'Diferenca entre receitas e despesas mes a mes.');
+  prestacaoSlideCabecalho(slide, '04', 'RESULTADO LÍQUIDO', 'Superávit', 'mensal', 'Diferença entre receitas e despesas mes a mes.');
 
   const valores = (superavitMensal && superavitMensal.length) ? superavitMensal.slice(0, 12) : new Array(12).fill(0);
   const positivos = prestacaoMesesPositivos(valores);
   const supAnual = valores.reduce(function(a, b) { return a + (Number(b) || 0); }, 0);
 
   slide.addChart(pptx.ChartType.bar, [
-    { name: 'Superavit', labels: PRESTACAO_MESES_CURTO, values: valores }
+    { name: 'Superávit', labels: PRESTACAO_MESES_CURTO, values: valores }
   ], {
     x: 0.5, y: 2.2, w: 8.0, h: 4.5,
     chartColors: [PRESTACAO_THEME.positive],
@@ -1205,7 +1426,7 @@ function prestacaoSlideSuperavitMensal(pptx, dados, superavitMensal, entidade, a
   slide.addText('MESES POSITIVOS', { x: 8.95, y: 2.32, w: 3.7, h: 0.3, fontSize: 11, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
   slide.addText(String(positivos) + ' / 12', { x: 8.8, y: 2.7, w: 4.0, h: 1.85, fontSize: 80, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', valign: 'middle' });
 
-  prestacaoSlideKpiCard(slide, 8.8, 5.05, 4.0, 1.65, 'Superavit Anual', prestacaoFmtBRL(supAnual), null, PRESTACAO_THEME.navy, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 8.8, 5.05, 4.0, 1.65, 'Superávit Anual', prestacaoFmtBRL(supAnual), null, PRESTACAO_THEME.navy, PRESTACAO_THEME.white);
 
   prestacaoSlideRodape(slide, entidade, ano);
 }
@@ -1214,7 +1435,7 @@ function prestacaoSlideSuperavitMensal(pptx, dados, superavitMensal, entidade, a
 // direita ordenada decrescente, faixa amber com insight automatico na base.
 function prestacaoSlideOrigemReceita(pptx, dados, entidade, ano) {
   const slide = pptx.addSlide();
-  prestacaoSlideCabecalho(slide, '05', 'ORIGEM DA RECEITA', 'Como o caixa', 'foi alimentado', 'Receitas por categoria no periodo.');
+  prestacaoSlideCabecalho(slide, '05', 'ORIGEM DA RECEITA', 'Como o caixa', 'foi alimentado', 'Receitas por categoria no período.');
 
   const recT = Number(dados.receitas && dados.receitas.total) || 0;
   const cats = (dados.receitas && Array.isArray(dados.receitas.porCategoria)) ? dados.receitas.porCategoria.slice() : [];
@@ -1222,7 +1443,7 @@ function prestacaoSlideOrigemReceita(pptx, dados, entidade, ano) {
 
   slide.addText('TOTAL', { x: 0.5, y: 2.4, w: 5.5, h: 0.4, fontSize: 12, bold: true, color: PRESTACAO_THEME.grayMuted, fontFace: 'Calibri', align: 'left', charSpacing: 4 });
   slide.addText(prestacaoFmtBRL(recT), { x: 0.5, y: 2.85, w: 5.5, h: 1.2, fontSize: 60, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'left' });
-  slide.addText('Receita total no exercicio', { x: 0.5, y: 4.1, w: 5.5, h: 0.4, fontSize: 12, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'left' });
+  slide.addText('Receita total no exercício', { x: 0.5, y: 4.1, w: 5.5, h: 0.4, fontSize: 12, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'left' });
 
   const listaX = 6.2;
   const itemH = cats.length > 0 ? Math.min(0.5, 4.0 / cats.length) : 0.5;
@@ -1241,7 +1462,7 @@ function prestacaoSlideOrigemReceita(pptx, dados, entidade, ano) {
     const principal = cats[0];
     const pctPrinc = recT > 0 ? ((Number(principal.valor) || 0) / recT) * 100 : 0;
     slide.addShape('rect', { x: 0.5, y: 6.4, w: 12.3, h: 0.5, fill: { color: PRESTACAO_THEME.amberLight }, line: { color: PRESTACAO_THEME.amberLight, width: 0 } });
-    slide.addText(String(principal.categoria || 'Categoria principal') + ' representa ' + prestacaoFmtPct(pctPrinc, 1) + ' da receita do exercicio.', {
+    slide.addText(String(principal.categoria || 'Categoria principal') + ' representa ' + prestacaoFmtPct(pctPrinc, 1) + ' da receita do exercício.', {
       x: 0.7, y: 6.4, w: 11.9, h: 0.5,
       fontSize: 11, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'left', valign: 'middle'
     });
@@ -1254,7 +1475,7 @@ function prestacaoSlideOrigemReceita(pptx, dados, entidade, ano) {
 // a direita ordenada decrescente, com bullet colorido por catColors em ordem.
 function prestacaoSlideEstruturaDespesas(pptx, dados, entidade, ano) {
   const slide = pptx.addSlide();
-  prestacaoSlideCabecalho(slide, '06', 'ESTRUTURA DE DESPESAS', 'Para onde foi', 'o dinheiro', 'Despesas por categoria no periodo.');
+  prestacaoSlideCabecalho(slide, '06', 'ESTRUTURA DE DESPESAS', 'Para onde foi', 'o dinheiro', 'Despesas por categoria no período.');
 
   const despT = Number(dados.despesas && dados.despesas.total) || 0;
   const cats = Array.isArray(dados.despesasPorCategoria) ? dados.despesasPorCategoria.slice() : [];
@@ -1262,7 +1483,7 @@ function prestacaoSlideEstruturaDespesas(pptx, dados, entidade, ano) {
 
   slide.addText('TOTAL', { x: 0.5, y: 2.4, w: 5.5, h: 0.4, fontSize: 12, bold: true, color: PRESTACAO_THEME.grayMuted, fontFace: 'Calibri', align: 'left', charSpacing: 4 });
   slide.addText(prestacaoFmtBRL(despT), { x: 0.5, y: 2.85, w: 5.5, h: 1.2, fontSize: 60, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'left' });
-  slide.addText('Despesa total no exercicio', { x: 0.5, y: 4.1, w: 5.5, h: 0.4, fontSize: 12, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'left' });
+  slide.addText('Despesa total no exercício', { x: 0.5, y: 4.1, w: 5.5, h: 0.4, fontSize: 12, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'left' });
 
   const listaX = 6.2;
   const itemH = cats.length > 0 ? Math.min(0.45, 4.5 / cats.length) : 0.45;
@@ -1314,18 +1535,18 @@ function prestacaoSlideDetalhamentoCategoria(pptx, cat, idx, tipo, entidade, ano
     }
   }
   let descricao = '';
-  if (idx === 0) descricao = 'Maior categoria do exercicio.';
-  else if (idx <= 2) descricao = 'Categoria de peso significativo no exercicio.';
-  else descricao = 'Categoria componente do exercicio.';
+  if (idx === 0) descricao = 'Maior categoria do exercício.';
+  else if (idx <= 2) descricao = 'Categoria de peso significativo no exercício.';
+  else descricao = 'Categoria componente do exercício.';
   if (distArr && mesesComLancamento > 0) descricao = descricao + ' ' + mesesComLancamento + ' meses com lancamento.';
 
   slide.addText(descricao, { x: 0.7, y: 4.3, w: 4.8, h: 0.7, fontSize: 11, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left' });
-  slide.addText('DISTRIBUICAO MENSAL', { x: 0.7, y: 5.15, w: 4.8, h: 0.3, fontSize: 10, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addText('DISTRIBUIÇÃO MENSAL', { x: 0.7, y: 5.15, w: 4.8, h: 0.3, fontSize: 10, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
 
   if (distArr) {
     prestacaoSlideMiniBars(slide, 0.7, 5.5, 4.8, 1.3, distArr.slice(0, 12), PRESTACAO_THEME.white, PRESTACAO_THEME.bluePale);
   } else {
-    slide.addText('Sem distribuicao mensal disponivel', { x: 0.7, y: 5.5, w: 4.8, h: 0.4, fontSize: 11, italic: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left' });
+    slide.addText('Sem distribuição mensal disponível', { x: 0.7, y: 5.5, w: 4.8, h: 0.4, fontSize: 11, italic: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left' });
   }
 
   const linhas = [];
@@ -1352,7 +1573,7 @@ function prestacaoSlideDetalhamentoCategoria(pptx, cat, idx, tipo, entidade, ano
   const rowH = dispH / Math.max(linhas.length, 1);
 
   slide.addShape('rect', { x: tabelaX, y: tabelaY, w: tabelaW, h: headerH, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 } });
-  slide.addText('LANCAMENTOS DO PERIODO', { x: tabelaX + 0.15, y: tabelaY, w: tabelaW * 0.6, h: headerH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle', charSpacing: 3 });
+  slide.addText('LANÇAMENTOS DO PERÍODO', { x: tabelaX + 0.15, y: tabelaY, w: tabelaW * 0.6, h: headerH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle', charSpacing: 3 });
   slide.addText('VALOR', { x: tabelaX + tabelaW * 0.6, y: tabelaY, w: tabelaW * 0.4 - 0.15, h: headerH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'right', valign: 'middle', charSpacing: 3 });
 
   for (let i = 0; i < linhas.length; i++) {
@@ -1380,6 +1601,109 @@ function prestacaoSlideDetalhamentoCategoria(pptx, cat, idx, tipo, entidade, ano
   }
 }
 
+// Slide de detalhamento de um GRUPO de despesa (Onda 1).
+// Substitui o slide por categoria. O lado esquerdo carrega total do grupo,
+// % do total de despesa e descrição curatorial. O lado direito lista as
+// subcategorias do grupo com valor anual, em vez de quebra mensal.
+function prestacaoSlideDetalhamentoGrupo(pptx, grupo, idx, entidade, ano, totalDespesas) {
+  const slide = pptx.addSlide();
+  const numero = idx + 8;
+  const numStr = (numero < 10 ? '0' : '') + numero;
+  // Cabeçalho: usa "Detalhamento" como seção e o nome do grupo como accent.
+  // Quebra o nome em duas partes ("Despesas com" + "pessoal") quando possível
+  // pra preservar a estética do template_prestacao.py.
+  const partes = prestacaoQuebrarNomeGrupo(grupo.grupo);
+  prestacaoSlideCabecalho(slide, numStr, 'DETALHAMENTO DE DESPESAS', partes.main, partes.accent, '');
+
+  const valor = Number(grupo.total) || 0;
+  const total = Number(totalDespesas) || 0;
+  const pct = total > 0 ? (valor / total) * 100 : 0;
+
+  slide.addShape('rect', { x: 0.5, y: 2.2, w: 5.2, h: 4.75, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 } });
+  slide.addShape('rect', { x: 0.7, y: 2.4, w: 0.3, h: 0.3, fill: { color: PRESTACAO_THEME.amber }, line: { color: PRESTACAO_THEME.amber, width: 0 } });
+  slide.addText('TOTAL DO GRUPO', { x: 0.7, y: 2.8, w: 4.8, h: 0.3, fontSize: 11, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addText(prestacaoFmtBRL(valor), { x: 0.7, y: 3.1, w: 4.8, h: 0.6, fontSize: 34, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left' });
+  slide.addText(prestacaoFmtPct(pct, 1) + ' DA DESPESA ANUAL', { x: 0.7, y: 3.78, w: 4.8, h: 0.3, fontSize: 10, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addShape('rect', { x: 0.7, y: 4.15, w: 1.0, h: 0.03, fill: { color: PRESTACAO_THEME.bluePale }, line: { color: PRESTACAO_THEME.bluePale, width: 0 } });
+
+  // Descrição curatorial substitui "Maior categoria do exercício" genérico.
+  const descricao = prestacaoGetDescricao(grupo.grupo);
+  slide.addText(descricao, { x: 0.7, y: 4.3, w: 4.8, h: 0.85, fontSize: 11, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left' });
+  slide.addText('DISTRIBUIÇÃO MENSAL', { x: 0.7, y: 5.25, w: 4.8, h: 0.3, fontSize: 10, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+
+  const distArr = Array.isArray(grupo.distribuicaoTemporal) ? grupo.distribuicaoTemporal : null;
+  if (distArr && distArr.length === 12) {
+    prestacaoSlideMiniBars(slide, 0.7, 5.6, 4.8, 1.2, distArr, PRESTACAO_THEME.white, PRESTACAO_THEME.bluePale);
+  } else {
+    slide.addText('Sem distribuição mensal disponível', { x: 0.7, y: 5.6, w: 4.8, h: 0.4, fontSize: 11, italic: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left' });
+  }
+
+  // Lado direito: subcategorias com valor anual (em vez de quebra mensal).
+  const subs = (grupo.subcategorias || []).slice().sort(function(a, b) { return (Number(b.valor) || 0) - (Number(a.valor) || 0); });
+  const linhas = subs.length > 0
+    ? subs.map(function(s) { return { rotulo: s.nome || 'Sem nome', valor: Number(s.valor) || 0 }; })
+    : [{ rotulo: grupo.grupo, valor: valor }];
+
+  const tabelaX = 6.0;
+  const tabelaY = 2.2;
+  const tabelaW = 6.8;
+  const headerH = 0.4;
+  const totalRowH = 0.5;
+  const dispH = 4.75 - headerH - totalRowH;
+  let fontHeader = 11;
+  let fontRow = 10;
+  if (linhas.length > 12 && linhas.length <= 16) { fontHeader = 10; fontRow = 9; }
+  else if (linhas.length > 16) { fontHeader = 9; fontRow = 8; }
+  const rowH = dispH / Math.max(linhas.length, 1);
+
+  slide.addShape('rect', { x: tabelaX, y: tabelaY, w: tabelaW, h: headerH, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 } });
+  slide.addText('LANÇAMENTOS DO EXERCÍCIO', { x: tabelaX + 0.15, y: tabelaY, w: tabelaW * 0.6, h: headerH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle', charSpacing: 3 });
+  slide.addText('VALOR', { x: tabelaX + tabelaW * 0.6, y: tabelaY, w: tabelaW * 0.4 - 0.15, h: headerH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'right', valign: 'middle', charSpacing: 3 });
+
+  for (let i = 0; i < linhas.length; i++) {
+    const yI = tabelaY + headerH + i * rowH;
+    const fill = i % 2 === 0 ? PRESTACAO_THEME.white : PRESTACAO_THEME.grayBg;
+    slide.addShape('rect', { x: tabelaX, y: yI, w: tabelaW, h: rowH, fill: { color: fill }, line: { color: PRESTACAO_THEME.grayLine, width: 0.25 } });
+    slide.addText(String(linhas[i].rotulo), { x: tabelaX + 0.15, y: yI, w: tabelaW * 0.6, h: rowH, fontSize: fontRow, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'left', valign: 'middle' });
+    slide.addText(prestacaoFmtBRL(linhas[i].valor), { x: tabelaX + tabelaW * 0.6, y: yI, w: tabelaW * 0.4 - 0.15, h: rowH, fontSize: fontRow, color: PRESTACAO_THEME.grayText, fontFace: 'Calibri', align: 'right', valign: 'middle' });
+  }
+
+  const totalY = tabelaY + headerH + linhas.length * rowH;
+  slide.addShape('rect', { x: tabelaX, y: totalY, w: tabelaW, h: totalRowH, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 } });
+  slide.addText('TOTAL ' + (grupo.grupo || '').toUpperCase(), { x: tabelaX + 0.15, y: totalY, w: tabelaW * 0.6, h: totalRowH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle', charSpacing: 3 });
+  slide.addText(prestacaoFmtBRL(valor), { x: tabelaX + tabelaW * 0.6, y: totalY, w: tabelaW * 0.4 - 0.15, h: totalRowH, fontSize: fontHeader, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'right', valign: 'middle' });
+
+  prestacaoSlideRodape(slide, entidade, ano);
+}
+
+// Quebra "Despesas com pessoal" em ("Despesas com", "pessoal") para o cabeçalho
+// bicromático (main em navy + accent em azul médio). Quando o nome não tem
+// estrutura clara, devolve tudo em main e vazio em accent.
+function prestacaoQuebrarNomeGrupo(nome) {
+  const s = String(nome || '').trim();
+  if (!s) return { main: 'Despesas', accent: '' };
+  // Regras pré-definidas espelham o template_prestacao.py.
+  const regras = [
+    { test: /^Despesas com /i, main: 'Despesas com', accentFn: function(x) { return x.slice(13); } },
+    { test: /^Despesas administrativas/i, main: 'Despesas', accentFn: function() { return 'administrativas'; } },
+    { test: /^Despesas financeiras/i, main: 'Despesas', accentFn: function() { return 'financeiras'; } },
+    { test: /^Contratos de manutenção/i, main: 'Contratos de', accentFn: function() { return 'manutenção'; } },
+    { test: /^Aquisição de materiais/i, main: 'Aquisição de', accentFn: function() { return 'materiais'; } },
+    { test: /^Retenções e tributos/i, main: 'Retenções e', accentFn: function() { return 'tributos'; } },
+    { test: /^Serviços contratados/i, main: 'Serviços', accentFn: function() { return 'contratados'; } },
+    { test: /^Investimento/i, main: 'Investimento', accentFn: function(x) { return x.slice(13).trim() || 'imobilizado'; } },
+  ];
+  for (const r of regras) {
+    if (r.test.test(s)) return { main: r.main, accent: r.accentFn(s) };
+  }
+  // Fallback: usa a última palavra como accent.
+  const partes = s.split(' ');
+  if (partes.length >= 2) {
+    return { main: partes.slice(0, -1).join(' '), accent: partes[partes.length - 1] };
+  }
+  return { main: s, accent: '' };
+}
+
 // Slide final: encerramento com fundo escuro, painel grande do saldoMensal a
 // esquerda, mini barras inicio vs fim e cards de crescimento e cobertura a
 // direita, e tira inferior com dois retangulos lado a lado.
@@ -1395,20 +1719,20 @@ function prestacaoSlideEncerramento(pptx, dados, saldoMensal, superavitMensal, e
   const cobertura = despT > 0 ? (recT / despT) * 100 : 0;
   const positivos = prestacaoMesesPositivos(superavitMensal);
 
-  slide.addText('ENCERRAMENTO   BALANCO DO EXERCICIO', {
+  slide.addText('ENCERRAMENTO   BALANÇO DO EXERCÍCIO', {
     x: 0.5, y: 0.5, w: 12.3, h: 0.3,
     fontSize: 12, bold: true, color: PRESTACAO_THEME.amber, fontFace: 'Calibri', align: 'left', charSpacing: 5
   });
 
   slide.addText([
     { text: 'O ano em ', options: { color: PRESTACAO_THEME.white, bold: true } },
-    { text: 'numeros', options: { color: PRESTACAO_THEME.amber, bold: true } }
+    { text: 'números', options: { color: PRESTACAO_THEME.amber, bold: true } }
   ], {
     x: 0.5, y: 0.9, w: 12.3, h: 0.85,
     fontSize: 44, fontFace: 'Calibri', align: 'left'
   });
 
-  slide.addText('Como o patrimonio da entidade evoluiu ao longo do exercicio', {
+  slide.addText('Como o patrimônio do condomínio evoluiu ao longo do exercício', {
     x: 0.5, y: 1.85, w: 12.3, h: 0.4,
     fontSize: 14, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left'
   });
@@ -1419,7 +1743,7 @@ function prestacaoSlideEncerramento(pptx, dados, saldoMensal, superavitMensal, e
     line: { color: PRESTACAO_THEME.navyDeep, width: 0 },
     rectRadius: 0.1
   });
-  slide.addText('EVOLUCAO DO PATRIMONIO EM CAIXA', {
+  slide.addText('EVOLUÇÃO DO PATRIMÔNIO EM CAIXA', {
     x: 0.7, y: 2.65, w: 7.2, h: 0.3,
     fontSize: 11, bold: true, color: PRESTACAO_THEME.amber, fontFace: 'Calibri', align: 'left', charSpacing: 4
   });
@@ -1459,7 +1783,7 @@ function prestacaoSlideEncerramento(pptx, dados, saldoMensal, superavitMensal, e
     line: { color: '0F2342', width: 0 },
     rectRadius: 0.08
   });
-  slide.addText('INICIO', { x: 8.5, y: 2.65, w: 1.8, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'center', charSpacing: 3 });
+  slide.addText('INÍCIO', { x: 8.5, y: 2.65, w: 1.8, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'center', charSpacing: 3 });
   slide.addText('FIM', { x: 10.6, y: 2.65, w: 1.8, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.amber, fontFace: 'Calibri', align: 'center', charSpacing: 3 });
   const maxV = Math.max(Math.abs(sIni), Math.abs(sFim), 1);
   const barAreaH = 1.0;
@@ -1479,10 +1803,10 @@ function prestacaoSlideEncerramento(pptx, dados, saldoMensal, superavitMensal, e
 
   slide.addShape('roundRect', { x: 8.3, y: 5.55, w: 4.5, h: 0.95, fill: { color: PRESTACAO_THEME.positive }, line: { color: PRESTACAO_THEME.positive, width: 0 }, rectRadius: 0.08 });
   slide.addText('RECEITA COBRIU ' + prestacaoFmtPct(cobertura, 0) + ' DA DESPESA', { x: 8.45, y: 5.6, w: 4.2, h: 0.3, fontSize: 9, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
-  slide.addText(positivos + ' meses com superavit', { x: 8.3, y: 5.9, w: 4.5, h: 0.5, fontSize: 14, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', valign: 'middle' });
+  slide.addText(positivos + ' meses com superávit', { x: 8.3, y: 5.9, w: 4.5, h: 0.5, fontSize: 14, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', valign: 'middle' });
 
   slide.addShape('rect', { x: 0.5, y: 6.7, w: 6.4, h: 0.7, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 } });
-  slide.addText('INICIO ANO', { x: 0.7, y: 6.75, w: 2.5, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addText('INÍCIO ANO', { x: 0.7, y: 6.75, w: 2.5, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
   slide.addText(prestacaoFmtBRL(sIni), { x: 0.7, y: 6.97, w: 6.0, h: 0.4, fontSize: 16, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle' });
 
   slide.addShape('rect', { x: 6.95, y: 6.7, w: 6.4, h: 0.7, fill: { color: PRESTACAO_THEME.amber }, line: { color: PRESTACAO_THEME.amber, width: 0 } });
@@ -1508,24 +1832,34 @@ async function prestacaoMontarPptx(dados) {
   const saldoMensal = Array.isArray(dados.saldoMensal) ? dados.saldoMensal : null;
   const superavitMensal = prestacaoCalcularSuperavitMensal(distRec, distDesp);
 
+  // ONDA 1 — agrupamento: consolida subcategorias em até 9 grupos canônicos de
+  // despesa e 5 a 7 fontes de receita. Sem isso, exercícios com Superlógica
+  // detalhado em 30+ subcategorias geravam 49 slides.
+  const gruposDespesa = prestacaoAgruparDespesas(dados.despesasPorCategoria);
+  const fontesReceita = prestacaoAgruparReceitas(dados.receitas && dados.receitas.porCategoria);
+  // Versões consolidadas servem aos slides Origem da Receita e Estrutura de Despesas.
+  const dadosOrigem = Object.assign({}, dados, {
+    receitas: Object.assign({}, dados.receitas || {}, { porCategoria: prestacaoConsolidarReceitasPorFonte(fontesReceita) })
+  });
+  const dadosEstrutura = Object.assign({}, dados, {
+    despesasPorCategoria: prestacaoConsolidarDespesasPorGrupo(gruposDespesa)
+  });
+
   prestacaoSlideCapa(pptx, dados, ano, entidade, periodo);
   prestacaoSlideVisaoGeral(pptx, dados, entidade, ano);
   prestacaoSlideEvolucaoMensal(pptx, dados, distRec, distDesp, saldoMensal, entidade, ano);
   prestacaoSlidePatrimonio(pptx, dados, saldoMensal, entidade, ano);
   prestacaoSlideSuperavitMensal(pptx, dados, superavitMensal, entidade, ano);
-  prestacaoSlideOrigemReceita(pptx, dados, entidade, ano);
-  prestacaoSlideEstruturaDespesas(pptx, dados, entidade, ano);
+  prestacaoSlideOrigemReceita(pptx, dadosOrigem, entidade, ano);
+  prestacaoSlideEstruturaDespesas(pptx, dadosEstrutura, entidade, ano);
 
-  if (Array.isArray(dados.despesasPorCategoria)) {
-    dados.despesasPorCategoria.forEach(function(cat, idx) {
-      prestacaoSlideDetalhamentoCategoria(pptx, cat, idx, 'despesa', entidade, ano, dados.despesas && dados.despesas.total);
-    });
-  }
-  if (dados.receitas && Array.isArray(dados.receitas.porCategoria)) {
-    dados.receitas.porCategoria.forEach(function(cat, idx) {
-      prestacaoSlideDetalhamentoCategoria(pptx, cat, idx, 'receita', entidade, ano, dados.receitas.total);
-    });
-  }
+  // Detalhamento agora é por GRUPO (até 9 slides), não por categoria.
+  // Slides de detalhamento de receita foram removidos — a fonte agrupada já
+  // aparece no slide Origem da Receita.
+  const totalDesp = Number(dados.despesas && dados.despesas.total) || 0;
+  gruposDespesa.forEach(function(grupo, idx) {
+    prestacaoSlideDetalhamentoGrupo(pptx, grupo, idx, entidade, ano, totalDesp);
+  });
 
   prestacaoSlideEncerramento(pptx, dados, saldoMensal, superavitMensal, entidade, ano);
 
@@ -1648,7 +1982,7 @@ async function prestacaoGerar() {
       type: 'text',
       text:
         'Condominio: ' + (prestacaoState.condNome || 'nao informado') + '\n' +
-        'Periodo: ' + (prestacaoState.periodo || 'nao informado') + '\n' +
+        'Período: ' + (prestacaoState.periodo || 'nao informado') + '\n' +
         'Data da apresentacao: ' + (prestacaoState.dataApresentacao || 'nao informada') + '\n' +
         'Observacoes adicionais: ' + (prestacaoState.observacoes || 'nenhuma') + '\n\n' +
         'A seguir vao os arquivos da prestacao de contas. Extraia o JSON conforme as instrucoes do system prompt.'
