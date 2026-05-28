@@ -4423,75 +4423,12 @@ function limparAta() {
 }
 
 // ============================================================
-// GERAR ATA IA — Sonnet 4.6 + prompt formal brasileiro
+// GERAR ATA IA — engine v2 no backend
 // ============================================================
-// Fluxo novo: substitui o "Copiar pro Service Hub IA" gerando a ata direto
-// no Hub via /api/claude/messages. Saída: texto da ata em modal + PDF via
-// window.print (zero dep nova). Fallback "Copiar pro Service Hub IA" segue
-// disponível.
-
-const ATA_SYSTEM_PROMPT = [
-  'Você é um especialista em redação de atas condominiais brasileiras.',
-  'Gere uma ata formal da assembleia com base na transcrição e nos dados fornecidos.',
-  '',
-  'FORMATO DE SAÍDA — INVIOLÁVEL:',
-  '- Texto corrido em prosa, igual a uma ata jurídica de cartório.',
-  '- PROIBIDO usar Markdown de qualquer tipo: nada de **negrito**, *itálico*, `código`, > blockquote.',
-  '- PROIBIDO usar separadores horizontais (---, ___, ===, *** ou linhas equivalentes).',
-  '- PROIBIDO usar subtítulos com # ## ### ou similares.',
-  '- PROIBIDO usar bullets (-, *, +) ou listas numeradas como 1. 2. 3. soltas.',
-  '- Subitens internos dentro da prosa usam (i), (ii), (iii), nunca bullets nem números soltos.',
-  '- Apenas TEXTO PURO com parágrafos separados por uma linha em branco. Sem decoração visual.',
-  '- O cabeçalho do condomínio aparece em linhas separadas no topo, em CAIXA ALTA quando for o nome.',
-  '- Títulos de seção como "ATA DA ASSEMBLEIA GERAL ORDINÁRIA", "ITEM  1)  APROVAÇÃO DAS CONTAS:", "ENCERRAMENTO E PRÓXIMOS PASSOS:" aparecem em CAIXA ALTA dentro do parágrafo, sem marcadores.',
-  '- Não escreva nada fora da ata (sem "Aqui está a ata:", sem comentários do modelo, sem cercas de código).',
-  '',
-  'REGRAS OBRIGATÓRIAS DE REDAÇÃO:',
-  '- Linguagem jurídica formal, narração em 3ª pessoa.',
-  '- Números por extenso na primeira menção + algarismo entre parênteses: "vinte (20)".',
-  '- Horas por extenso: "dezenove horas e trinta minutos (19h30min)".',
-  '- Datas por extenso: "vinte (20) dias do mês de maio de dois mil e vinte e seis (2026)".',
-  '- Valores sempre com centavos no padrão brasileiro: R$ 800,00.',
-  '- Resultado de votações registrado explicitamente ("aprovado por unanimidade", "sem manifestação contrária").',
-  '- Campos desconhecidos marcados como [a confirmar] — NUNCA inventar dados.',
-  '- Seção de encerramento consolidando TODOS os deliberados como (i), (ii), (iii)... dentro da prosa.',
-  '- Frase final padrão: "Nada mais havendo a tratar, o Presidente da Mesa declarou encerrados os trabalhos da [tipo de assembleia], da qual foi lavrada a presente ata."',
-  '- Local e data centralizados após o encerramento, em linha própria, terminando com ponto final.',
-  '',
-  'ORDEM OBRIGATÓRIA NA ABERTURA — INVIOLÁVEL:',
-  '- A frase de abertura DEVE usar a ordem: "reuniram-se os condôminos em Assembleia Geral [Ordinária/Extraordinária], em [primeira/segunda e última] convocação..."',
-  '- PROIBIDO inverter para "reuniram-se em Assembleia Geral [tipo] os condôminos" ou variações.',
-  '',
-  'FORMATO DOS TÍTULOS DE ITEM — INVIOLÁVEL:',
-  '- Sempre "ITEM  N)  TÍTULO EM CAIXA ALTA:" com DOIS espaços após "ITEM" e DOIS espaços após o ")".',
-  '- O título e o início do corpo ficam no MESMO parágrafo, sem quebra de linha entre eles.',
-  '- Sem sub-tópicos visuais dentro do item.',
-  '',
-  'ASSINATURAS — REGRAS INVIOLÁVEIS:',
-  '1. Cada assinatura é um par: linha com cerca de 47 underscores, e na linha imediatamente abaixo a identificação no formato "Papel – Nome Completo".',
-  '2. Separador é TRAVESSÃO ("–"), NUNCA dois-pontos (":") nem hífen ("-"). Exemplo correto: "Síndico – João da Silva".',
-  '3. Ordem obrigatória dos assinantes (omitir somente se confirmado que o papel não existe na assembleia): Síndico → Presidente da Mesa → Secretária da Ata → Representante da Administradora → Conselho Fiscal/Consultivo.',
-  '4. Representante da Administradora: incluir o NOME DA ADMINISTRADORA se constar nos dados — formato "Representante da Administradora – [Nome da Administradora] – [Nome do Representante]" ou, se o representante for desconhecido, "Representante da Administradora – [Nome da Administradora] – [Nome a confirmar]".',
-  '5. Campos sem dado: usar "[Nome a confirmar]" ou "[Administradora a confirmar]". NUNCA inventar.',
-  '6. Entre cada bloco de assinatura (par underscore + identificação) deixe DUAS LINHAS EM BRANCO para dar espaçamento visual no PDF.',
-  '',
-  'LOCAL E DATA — REGRAS INVIOLÁVEIS:',
-  '- Formato exato: "Cidade/UF, DD de mês por extenso de AAAA." — sempre com ponto final.',
-  '- USAR APENAS cidade/UF que estiver EXPLICITAMENTE nos DADOS DA REUNIÃO (campo Cidade ou similar).',
-  '- Se não houver cidade/UF nos dados: escrever literalmente "[Cidade/UF a confirmar], DD de mês de AAAA.".',
-  '- NUNCA inferir cidade pelo nome do condomínio, endereço, administradora ou contexto. "Salvador/BA" é ERRADO para um condomínio em Vitória/ES.',
-  '',
-  'ESTRUTURA SEQUENCIAL DA ATA:',
-  '1) Cabeçalho do condomínio em linhas separadas: nome em CAIXA ALTA, CNPJ, endereço completo.',
-  '2) Linha com "ATA DA ASSEMBLEIA GERAL ORDINÁRIA" ou "ATA DA ASSEMBLEIA GERAL EXTRAORDINÁRIA".',
-  '3) Parágrafo de abertura corrido com data por extenso, local, tipo de convocação, horário, quórum, referência ao edital e lista de presentes (Síndico, administradora, condôminos), seguindo a ORDEM OBRIGATÓRIA NA ABERTURA acima, e terminando com "Feitas as formalidades de abertura, passou-se à deliberação dos itens da pauta, conforme a seguir:".',
-  '4) Itens da pauta numerados em arábicos, no formato "ITEM  N)  TÍTULO EM CAIXA ALTA:" + corpo em prosa corrida no mesmo parágrafo.',
-  '5) Parágrafo "ENCERRAMENTO E PRÓXIMOS PASSOS:" consolidando deliberações em (i), (ii), (iii), terminando com a frase final padrão.',
-  '6) Linha com "Cidade/UF, DD de mês de AAAA." centralizada, seguindo as REGRAS INVIOLÁVEIS de Local e Data.',
-  '7) Bloco de assinaturas, um por par (linha de underscores + identificação no formato "Papel – Nome"), separados por DUAS linhas em branco.',
-  '',
-  'Use APENAS informações da transcrição e dos dados fornecidos. Não complete com suposições.'
-].join('\n');
+// Frontend só monta o userMessage (transcrição + dados + edital) e POSTa em
+// /api/atas/gerar. Backend faz: SKILL.md integral + contexto Grupo Service +
+// regras anti-erro + Sonnet 4.6 → fallback Opus 4.7 + validação pós-geração.
+// Ver server.js (app.post('/api/atas/gerar', ...)) e skills-server/ata-condominial.md.
 
 let _ataTextoGerado = '';
 
@@ -4567,30 +4504,28 @@ async function gerarAtaIA() {
   btn.textContent = '⏳ Gerando ata...';
 
   try {
-    const resp = await apiAuthFetch('/api/claude/messages', {
+    // Engine v2: backend monta system prompt (SKILL.md + contexto Grupo Service
+    // + regras anti-erro) e faz retry Sonnet → Opus com validação pós-geração.
+    const resp = await apiAuthFetch('/api/atas/gerar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 4000,
-        system: ATA_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userMessage }]
-      })
+      body: JSON.stringify({ userMessage })
     });
+    const payload = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-      const erro = await resp.text();
-      throw new Error('IA retornou ' + resp.status + ': ' + erro.slice(0, 200));
+      const detalhe = payload.detalhe || payload.erro || ('HTTP ' + resp.status);
+      throw new Error(detalhe);
     }
-    const data = await resp.json();
-    const texto = data.content && data.content[0] && data.content[0].text ? data.content[0].text.trim() : '';
-    if (!texto) throw new Error('IA não retornou texto');
+    const texto = (payload.ata || '').trim();
+    if (!texto) throw new Error('engine retornou ata vazia');
 
     _ataTextoGerado = texto;
     const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     document.getElementById('ata-gerada-conteudo').innerHTML = renderAtaBlocos(texto, escHtml);
     document.getElementById('ata-gerada-modal').style.display = 'flex';
-    addHistorico('Ata gerada via IA: ' + cond + ' · ' + data);
-    toast('Ata gerada — revise antes de baixar', 'ok');
+    const sufixoModelo = payload.fallback ? ' [fallback Opus 4.7]' : '';
+    addHistorico('Ata gerada via IA: ' + cond + ' · ' + data + sufixoModelo);
+    toast('Ata gerada — revise antes de baixar' + sufixoModelo, 'ok');
   } catch (e) {
     toast('Falha ao gerar ata: ' + (e.message || 'erro'), 'err');
   } finally {
