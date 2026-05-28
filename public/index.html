@@ -1001,6 +1001,9 @@
     <div class="nav-item" onclick="showPanel('consumo')">
       <span class="nav-icon">◎</span> Leitura de Consumo
     </div>
+    <div class="nav-item" onclick="showPanel('inadimplencia')">
+      <span class="nav-icon">⚠</span> Inadimplência
+    </div>
     <div class="nav-item" onclick="showPanel('tarefas')">
       <span class="nav-icon">✓</span> Tarefas
       <span class="nav-badge">em breve</span>
@@ -1025,6 +1028,14 @@
       <div class="page-sub" id="topbar-sub">visão geral do sistema</div>
     </div>
     <div class="topbar-right">
+      <div id="navbar-cond-selector" style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:12px;opacity:0.7">Condomínio:</span>
+        <select id="navbar-cond-select"
+          style="background:transparent;border:1px solid rgba(255,255,255,0.3);color:inherit;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;max-width:200px"
+          onchange="navbarCondChange(this.value, this.options[this.selectedIndex].text)">
+          <option value="">Selecionar...</option>
+        </select>
+      </div>
       <div class="status-dot" id="status-dot"></div>
       <span class="status-label" id="status-label">não configurado</span>
     </div>
@@ -1337,6 +1348,20 @@
 
 
     <!-- ATAS CONDOMINIAIS -->
+    <div class="panel" id="panel-inadimplencia">
+      <div id="banner-cond-inadimplencia"></div>
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Inadimplência</span>
+          <button class="btn btn-primary" onclick="inadimplenciaCarregar()" id="btn-carregar-inad">
+            Carregar dados
+          </button>
+        </div>
+        <div id="inad-resumo" style="display:none"></div>
+        <div id="inad-tabela" style="margin-top:16px"></div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-prestacao">
 
       <div class="card">
@@ -1906,9 +1931,20 @@ function setCondominioAtivo(obj) {
   // Atualiza card do Dashboard se já estiver no DOM
   if (typeof atualizarDashCond === 'function') atualizarDashCond();
   // Atualiza banners nos painéis que já foram renderizados
-  ['despesas','unidades','boletos','financeiro'].forEach(function(p) {
+  ['despesas','unidades','boletos','financeiro','inadimplencia'].forEach(function(p) {
     if (document.getElementById('banner-cond-' + p)) renderBannerCondAtivo(p);
   });
+  // Sincroniza o seletor do topbar quando a troca vem de outro fluxo (dashboard, modal)
+  try {
+    const sel = document.getElementById('navbar-cond-select');
+    if (sel && valido && sel.value !== String(obj.id)) sel.value = obj.id;
+  } catch(_) {}
+  // Evento global para painéis reagirem (Tarefa 1.1)
+  try {
+    window.dispatchEvent(new CustomEvent('condominioAtivo:changed', {
+      detail: valido ? obj : null
+    }));
+  } catch(_) {}
 }
 
 /**
@@ -2000,6 +2036,72 @@ function renderBannerCondAtivo(painelId) {
     }
   }
 }
+
+// ============================================================
+// SELETOR DE CONDOMÍNIO NO TOPBAR (Tarefa 1.1)
+// Fonte de verdade única: condominioAtivo no localStorage.
+// ============================================================
+async function navbarCondInit() {
+  const select = document.getElementById('navbar-cond-select');
+  if (!select) return;
+  try {
+    const lista = await supaFetch(
+      'condominios?select=id,nome,id_superlogica&order=nome.asc&limit=200'
+    );
+    if (!Array.isArray(lista)) return;
+    lista.forEach(function(c) {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.nome;
+      opt.dataset.idSuperlogica = c.id_superlogica || '';
+      select.appendChild(opt);
+    });
+    const atual = getCondominioAtivo();
+    if (atual && atual.id) select.value = atual.id;
+  } catch (e) {
+    console.warn('[navbar-cond] erro ao carregar:', e);
+  }
+}
+
+function navbarCondChange(id, nome) {
+  if (!id) return;
+  const select = document.getElementById('navbar-cond-select');
+  const opt = select ? select.querySelector('option[value="' + id + '"]') : null;
+  const idSuperlogica = opt && opt.dataset.idSuperlogica
+    ? Number(opt.dataset.idSuperlogica) || null
+    : null;
+  // setCondominioAtivo já cuida do localStorage, banners, dashboard e dispatchEvent
+  setCondominioAtivo({ id: id, nome: nome, id_superlogica: idSuperlogica });
+  toast('Condomínio: ' + nome, 'ok');
+}
+
+// ============================================================
+// PAINEL INADIMPLÊNCIA (esqueleto, implementação completa na Tarefa 1.4)
+// ============================================================
+async function inadimplenciaCarregar() {
+  const cond = getCondominioAtivo();
+  if (!cond || !cond.id_superlogica) {
+    toast('Selecione um condomínio primeiro', 'err');
+    return;
+  }
+  const btn = document.getElementById('btn-carregar-inad');
+  if (btn) { btn.disabled = true; btn.textContent = 'Carregando...'; }
+  try {
+    // Endpoint previsto via proxy Superlógica (Tarefa 1.4):
+    // /inadimplencia/index?limit=999&comValoresAtualizados=1
+    toast('Inadimplência: implementação completa na Tarefa 1.4', 'ok');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Carregar dados'; }
+  }
+}
+
+// Reage à troca de condomínio para re-renderizar o banner local
+window.addEventListener('condominioAtivo:changed', function() {
+  if (document.getElementById('banner-cond-inadimplencia') &&
+      typeof renderBannerCondAtivo === 'function') {
+    renderBannerCondAtivo('inadimplencia');
+  }
+});
 
 // ============================================================
 const state = {
@@ -2145,6 +2247,12 @@ const CAMPOS_UNIDADE = [
       }
     }
   } catch(e) {}
+
+  // Carrega o seletor de condomínio do topbar (Tarefa 1.1)
+  // Async: roda depois que o IIFE terminar, sem bloquear o restore de estado
+  setTimeout(function() {
+    if (typeof navbarCondInit === 'function') navbarCondInit();
+  }, 0);
 })();
 
 function saveConfig() {
