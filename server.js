@@ -2,6 +2,7 @@ const express = require('express');
 const path = require('path');
 const https = require('https');
 const crypto = require('crypto');
+const fs = require('fs');
 const app = express();
 
 // Railway opera atrás de proxy reverso. trust proxy faz Express respeitar
@@ -276,6 +277,240 @@ app.post('/api/claude/messages', requireAuth, express.json({limit:'10mb'}), (req
   const pr = https.request(opts, r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ try{res.status(r.statusCode).json(JSON.parse(d))}catch(e){res.status(500).json({error:d})} }); });
   pr.on('error', e => res.status(500).json({error:e.message}));
   pr.write(body); pr.end();
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Engine de geração de ata — Sonnet 4.6 com fallback Opus 4.7
+//
+// Pipeline (até 3 tentativas):
+//   1. Sonnet 4.6 + max_tokens 16000 → validarAta
+//   2. Se inválida: Sonnet 4.6 + max_tokens 20000
+//   3. Se inválida: Opus 4.7 + max_tokens 20000 (fallback)
+//
+// System prompt = SKILL.md integral + contexto fixo Grupo Service + regras anti-erro.
+// SKILL.md carregada no boot e mantida em memória.
+//
+// Refs: CORRECAO_SERVICE_HUB_ATAS.md (handoff Matheus)
+// ─────────────────────────────────────────────────────────────────────────
+let ATA_SKILL_MD = '';
+try {
+  ATA_SKILL_MD = fs.readFileSync(path.join(__dirname, 'skills-server', 'ata-condominial.md'), 'utf8');
+  console.log('SKILL ata-condominial carregada (' + ATA_SKILL_MD.length + ' chars)');
+} catch (e) {
+  console.warn('SKILL ata-condominial NÃO carregada: ' + e.message);
+}
+
+const CONTEXTO_GRUPO_SERVICE = `CONTEXTO FIXO DO GRUPO SERVICE
+
+Administradora: Condomínio Service
+
+Cidades onde a administradora atua:
+Vitória/ES, Serra/ES, Vila Velha/ES, Cariacica/ES, Viana/ES, Guarapari/ES
+
+Mapeamento bairro para cidade (quando o condomínio não declara cidade):
+- Manguinhos, Jacaraípe, Nova Almeida, Carapina, Laranjeiras: Serra/ES
+- Praia do Canto, Jardim Camburi, Mata da Praia, Jardim da Penha, Enseada do Suá: Vitória/ES
+- Praia da Costa, Itapuã, Itaparica, Coqueiral: Vila Velha/ES
+
+Quando o bairro for identificável pela lista, preencher cidade/UF automaticamente.
+Não usar [a confirmar] nesses casos.
+
+Tratamento padrão: Sr. ou Sra. + primeiro nome conhecido.
+Se faltar sobrenome: usar [sobrenome a confirmar].`;
+
+const REGRAS_ANTI_ERRO = `REGRAS ANTI-ERRO NA REDAÇÃO DA ATA
+
+1. CORREÇÕES VERBAIS DA TRANSCRIÇÃO
+Quando há correção em voz alta ("desculpa, é X", "na verdade Y", "errei, são Z votos"),
+PREVALECE o valor corrigido, NUNCA o primeiro.
+
+2. FIDELIDADE AO EDITAL
+Datas, valores, prazos e nomes do edital são LITERAIS. Nunca ajustar mesmo que
+pareçam inconsistentes. Se o edital diz mandato de 1º/jul/2026 a 30/jul/2027,
+registrar exatamente assim, mesmo que não feche 12 meses redondos.
+
+3. NOMES PRÓPRIOS
+NUNCA expandir apelidos em nomes completos.
+- Dani NÃO É Daniel
+- Cris NÃO É Cristina nem Cristiano
+- Bel NÃO É Isabel
+Preservar o nome exatamente como aparece na transcrição.
+
+4. GÊNERO
+NUNCA atribuir Sr. ou Sra. por palpite linguístico.
+Quando o gênero não estiver explicitamente claro na transcrição:
+usar [Sr./Sra. a confirmar] Nome.
+
+5. ANTI-INVENÇÃO
+Não inventar fatos para preencher lacunas. Se a transcrição não confirma um evento
+(ex: "a primeira convocação não atingiu quórum"), NÃO escrever esse evento.
+Usar [a confirmar] ou simplesmente omitir.
+
+6. BLOCO DE ASSINATURAS
+Uma linha INDIVIDUAL para cada assinante.
+Formato: Cargo – Tratamento Nome
+NUNCA agrupar dois assinantes na mesma linha.
+O bloco precisa estar COMPLETO até o fim do documento (sem truncar).
+
+7. SAÍDA PURA — NENHUMA PALAVRA FORA DA ATA
+A resposta deve começar IMEDIATAMENTE com o cabeçalho da ata (nome do condomínio em
+CAIXA ALTA, seguido de CNPJ e endereço). Não escrever "Aqui está a ata", "Vou processar",
+"Mapeamento", "Análise", "Reconstituindo", tabelas de dados extraídos, observações
+finais nem qualquer comentário do modelo. Também NÃO usar separadores horizontais
+(---, ___, ===) em hipótese alguma. Saída = APENAS o documento final, do cabeçalho à
+última assinatura. Se precisar pensar, faça internamente sem materializar.
+
+8. SEM MARKDOWN — DOCUMENTO É PROSA PURA
+PROIBIDO **negrito**, *itálico*, # headers, > blockquote, \`código\`, listas com -, *, +,
+tabelas com | colunas |, ou QUALQUER sintaxe de markdown. O documento será renderizado
+como PDF a partir de texto plano. CAIXA ALTA substitui negrito quando precisar destacar
+(ex: "ATA DA ASSEMBLEIA GERAL ORDINÁRIA", "ITEM  1)  TÍTULO:"). Subitens internos
+usam (i), (ii), (iii) dentro da prosa.
+
+9. REGISTRO DE VOTAÇÕES INDIVIDUAIS
+Quando a transcrição contém contagem de votos por candidato, REGISTRAR cada candidato
+com seu número de votos exato.
+- Não omitir nomes que receberam votos mesmo que não tenham sido eleitos
+- Não arredondar nem agrupar contagens
+- Formato em prosa formal: "[Nome], com [N por extenso] ([N]) votos"
+- Aplica-se a eleições de síndico, subsíndico, conselheiros e qualquer outra votação
+  nominal individual da assembleia
+
+ATENÇÃO À CORREÇÃO VERBAL DE NOMES DURANTE A CONTAGEM:
+Quando o speaker diz "X pra [nome]. É [outro nome], desculpa. ... [contagem refeita]
+para [nome]" — isso é UMA CONTAGEM ÚNICA com correção do nome no meio, NÃO duas
+contagens separadas. O número final pertence ao nome CORRIGIDO.
+
+Exemplo real desta administradora:
+Transcrição: "19 pra Dani. É Dari, desculpa. 1, 2, 3... 21 para Dani."
+Interpretação CORRETA: Dari recebeu 21 votos (uma contagem só, o nome foi corrigido).
+Interpretação ERRADA: Dari = 19 votos E Dani = 21 votos (duas contagens — proibido).
+
+Regra de ouro: quando há "desculpa" / "é X, na verdade" / "errei" entre dois números,
+é correção de UM dado, não acúmulo de dois. O speaker pode continuar dizendo o nome
+errado por hábito após a correção — IGNORE a inércia, USE o nome corrigido com o
+número FINAL recontado.`;
+
+// Validação heurística pós-geração — detecta truncamento e formato quebrado.
+// Critérios derivados das atas de referência do handoff:
+//   - tem frase de encerramento padrão
+//   - termina com ponto final (não foi cortada no meio)
+//   - tem pelo menos 4 blocos de assinatura (Síndico, Presidente, Secretária, Administradora)
+//   - tem tamanho mínimo plausível (atas reais têm 6000+ chars)
+function validarAta(resposta) {
+  if (!resposta || typeof resposta !== 'string') return { valido: false, motivo: 'resposta_vazia' };
+  const temEncerramento = resposta.includes('Nada mais havendo a tratar');
+  const blocosAssinatura = (resposta.match(/_{30,}/g) || []).length;
+  const tamanhoOk = resposta.length > 6000;
+  // Markdown count — qualquer marcador acima do limiar invalida (forçando retry/Opus)
+  const headers = (resposta.match(/^#{1,6} /gm) || []).length;
+  const negritos = (resposta.match(/\*\*[^*]+\*\*/g) || []).length;
+  const tabelas = (resposta.match(/^\|/gm) || []).length;
+  const separadores = (resposta.match(/^---+$/gm) || []).length;
+  // Pré-análise: ata real começa com "ATA DA ASSEMBLEIA" ou nome do condomínio em CAIXA ALTA.
+  // Se a resposta começa com "Vou processar", "Mapeamento", "##", etc → pré-conteúdo presente
+  const inicio = resposta.trim().slice(0, 200).toLowerCase();
+  const temPreAnalise = /vou (processar|analisar|redigir|mapear)|mapeamento|reconstituindo|aqui (est[aá]|vai)|^##|^---|^an[aá]lise/m.test(inicio);
+
+  if (!temEncerramento) return { valido: false, motivo: 'sem_encerramento' };
+  if (blocosAssinatura < 4) return { valido: false, motivo: 'assinaturas_insuficientes', encontradas: blocosAssinatura };
+  if (!tamanhoOk) return { valido: false, motivo: 'muito_curta', tamanho: resposta.length };
+  if (temPreAnalise) return { valido: false, motivo: 'pre_analise_presente', inicio: resposta.trim().slice(0, 100) };
+  if (headers > 0) return { valido: false, motivo: 'markdown_headers', count: headers };
+  if (negritos > 5) return { valido: false, motivo: 'markdown_negritos_excessivos', count: negritos };
+  if (tabelas > 0) return { valido: false, motivo: 'markdown_tabelas', count: tabelas };
+  if (separadores > 0) return { valido: false, motivo: 'markdown_separadores', count: separadores };
+  return { valido: true };
+}
+
+// Wrapper Promise pra chamada Anthropic /v1/messages com timeout 120s.
+// Retorna { ok, status, texto, raw, erro }.
+function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
+  return new Promise((resolve) => {
+    const body = JSON.stringify({
+      model: modelo,
+      max_tokens: maxTokens,
+      system,
+      messages: [{ role: 'user', content: userMessage }]
+    });
+    const opts = {
+      hostname: 'api.anthropic.com',
+      path: '/v1/messages',
+      method: 'POST',
+      headers: {
+        'x-api-key': ANTHROPIC_KEY,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body)
+      },
+      timeout: 120000
+    };
+    const r = https.request(opts, (resp) => {
+      let d = '';
+      resp.on('data', (c) => d += c);
+      resp.on('end', () => {
+        try {
+          const j = JSON.parse(d);
+          const texto = (j.content && j.content[0] && j.content[0].text || '').trim();
+          resolve({ ok: resp.statusCode === 200 && !!texto, status: resp.statusCode, texto, raw: j });
+        } catch (e) {
+          resolve({ ok: false, status: resp.statusCode || 500, erro: 'parse_falhou', raw: d.slice(0, 500) });
+        }
+      });
+    });
+    r.on('error', (e) => resolve({ ok: false, status: 500, erro: e.message }));
+    r.on('timeout', () => { r.destroy(); resolve({ ok: false, status: 504, erro: 'timeout_120s' }); });
+    r.write(body); r.end();
+  });
+}
+
+app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
+  if (!ANTHROPIC_KEY) return res.status(500).json({ erro: 'anthropic_key_ausente' });
+  if (!ATA_SKILL_MD) return res.status(500).json({ erro: 'skill_md_nao_carregada', detalhe: 'skills-server/ata-condominial.md não encontrada no servidor' });
+
+  const userMessage = (req.body && req.body.userMessage) || '';
+  if (typeof userMessage !== 'string' || userMessage.length < 50) {
+    return res.status(400).json({ erro: 'userMessage_invalido', detalhe: 'envie a transcrição + dados da reunião como string em userMessage (mín 50 chars)' });
+  }
+
+  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO;
+  const tentativas = [];
+
+  // Tentativa 1: Sonnet 4.6 + 16k
+  let r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, system, userMessage);
+  tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 16000, status: r.status, erro: r.erro || null });
+  if (r.ok) {
+    const v = validarAta(r.texto);
+    tentativas[0].validacao = v;
+    if (v.valido) return res.json({ ata: r.texto, modelo_usado: 'claude-sonnet-4-6', tentativas });
+  }
+
+  // Tentativa 2: Sonnet 4.6 + 20k (max_tokens +25%)
+  r = await chamarAnthropicAta('claude-sonnet-4-6', 20000, system, userMessage);
+  tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 20000, status: r.status, erro: r.erro || null });
+  if (r.ok) {
+    const v = validarAta(r.texto);
+    tentativas[1].validacao = v;
+    if (v.valido) return res.json({ ata: r.texto, modelo_usado: 'claude-sonnet-4-6', tentativas });
+  }
+
+  // Tentativa 3: Opus 4.7 fallback. Logado pra acompanhar frequência em prod.
+  console.warn('[engine-ata] Fallback Opus 4.7 acionado após 2 tentativas Sonnet inválidas. Tentativas:', JSON.stringify(tentativas));
+  r = await chamarAnthropicAta('claude-opus-4-7', 20000, system, userMessage);
+  tentativas.push({ modelo: 'claude-opus-4-7', max_tokens: 20000, status: r.status, erro: r.erro || null });
+  if (r.ok) {
+    const v = validarAta(r.texto);
+    tentativas[2].validacao = v;
+    if (v.valido) return res.json({ ata: r.texto, modelo_usado: 'claude-opus-4-7', tentativas, fallback: true });
+  }
+
+  // 3 tentativas falharam — devolve erro estruturado pro frontend explicar o motivo
+  return res.status(502).json({
+    erro: 'engine_falhou_3x',
+    detalhe: 'Nenhuma das 3 tentativas produziu ata válida',
+    tentativas,
+    ultima_resposta: r.texto ? r.texto.slice(0, 2000) + (r.texto.length > 2000 ? '...[truncado]' : '') : null
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
