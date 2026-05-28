@@ -2,7 +2,7 @@
 
 > Arquivo gerenciado pelo agente. Atualizar ao fim de cada task ou fase.
 
-**Última atualização:** 2026-05-27
+**Última atualização:** 2026-05-28
 **Branch padrão:** main
 **Repo:** https://github.com/MatheusMelo2903/service-hub
 **Deploy:** Railway (`eloquent-love`) · https://service-hub-production.up.railway.app
@@ -13,6 +13,11 @@
 
 **Plano completo:** `PLANO_ATIVO.md`
 **Status:** 🟢 Em execução
+
+### Entregas extras desta sprint (fora do plano original)
+| Task | Status | Entrega |
+|---|---|---|
+| ata-fidelidade-v3 — regras de fidelidade no system prompt + segundo passe de auditoria | ✅ | branch `feat/ata-fidelidade-v3` · commit `8cec7de` (server.js +92/-4) · teste Happy Days 3/4 passou · doc em `tarefas/concluidas/ata-fidelidade-v3.md` |
 
 ### Próxima tarefa
 🔴 **1.1 — Seletor de condomínio com ID** (4h, bloqueador da Fase 1)
@@ -135,6 +140,26 @@ Nenhum.
 
 ---
 
+## 🟠 Pendências críticas pré-piloto
+
+| Item | Origem | Próximo passo | Prioridade |
+|---|---|---|---|
+| **Rate limit dedicado em `/api/atas/gerar`** | Dívida pré-existente agravada por `ata-fidelidade-v3` (segundo passe dobra custo Anthropic; quadruplica no fallback Opus) | Rate limit por session (ex. 10 req/min por sub do JWT) em rotas de IA antes do piloto com mais de 1 usuário gerando ata simultaneamente | 🔴 alta |
+| **Feature flag `ENABLE_ATA_AUDIT`** | Arquiteto registrou como dívida em `ata-fidelidade-v3` | Permitir desligar o segundo passe via ENV se rate limit Anthropic apertar em produção | 🟡 média |
+| **Timeout próprio do segundo passe** | Arquiteto registrou como dívida em `ata-fidelidade-v3` | Reduzir de 120s default para 60s na chamada de auditoria | 🟡 média |
+
+---
+
+## 🟡 Backlog de iteração — ata fidelidade
+
+| Item | Origem | Próximo passo |
+|---|---|---|
+| **Critério 2 Happy Days — "Wellington (Eriton)"** | Teste 2026-05-28 (3/4 critérios) | Reforçar FID 3 com exemplo concreto do caso Happy Days no system prompt OU adicionar regra "qualquer variação do nome do síndico → registrar TODAS entre parênteses". Refazer teste depois. |
+| **Lara Hoffman não testado** | Transcrição não estava no repo nem em `~/Downloads/` em 2026-05-28 | Quando Matheus passar o arquivo, rodar o mesmo pipeline (`outputs/run-teste-happy-days.sh` adaptado) e validar com `outputs/validar-fidelidade-v3.js` |
+| **Consolidar `REGRAS_ANTI_ERRO` e `REGRAS_FIDELIDADE_TRANSCRICAO`** | Arquiteto apontou sobreposição semântica entre anti-invenção e FID 1/2/3 | Refatorar em uma única constante coesa na próxima iteração |
+
+---
+
 ## 📋 Próxima sessão — sugestão de pauta
 
 1. **Tarefa 1.1 — Seletor de condomínio** (4h)
@@ -152,6 +177,7 @@ Nenhum.
 
 ## Log de atividade
 
+- **2026-05-28** — Tarefa `ata-fidelidade-v3` concluída. Adicionadas regras de fidelidade (FID 1–5) no system prompt do gerador de atas + segundo passe de auditoria (Sonnet 4.6, max_tokens 16k, re-validado com `validarAta`). Teste real Happy Days: 3/4 critérios passaram (critério 2 "Wellington (Eriton)" falhou — backlog). Lara Hoffman pendente (arquivo não disponível). Dívida agravada: rate limit dedicado em `/api/atas/gerar` virou pendência crítica pré-piloto. Branch `feat/ata-fidelidade-v3`, commit `8cec7de` (server.js +92/-4). Doc em `tarefas/concluidas/ata-fidelidade-v3.md`. Commit e push pendentes (Claude principal fará).
 - **2026-05-27** — Sistema de usuários Fase 0 fechada E2E. Migração dev→Grupo Service org (consolidou prod `mtucxdfepkwsfnqpfydb` + dev `ledgyprytkuvgtbunsck`). Merge `main→dev` fast-forward + deploy dev validado (login + aba Usuários OK). PLANO_ATIVO sprint 27/05–09/06 definido.
 - **2026-05-25** — Sessão de bootstrap (5 fases + final). Pasta direcional criada do zero espelhando padrão `clinicmanager-erp`. Skills MC adaptadas: frontend-design (literal), ops (Superlógica), service-hub (com padrão integracoes). 6 subagentes copiados + validator-v2 novo. 6 commits SH `aa4de04..(próximo)`; 1 PR MC #9.
 
