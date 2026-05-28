@@ -338,8 +338,21 @@ Preservar o nome exatamente como aparece na transcrição.
 
 4. GÊNERO
 NUNCA atribuir Sr. ou Sra. por palpite linguístico.
-Quando o gênero não estiver explicitamente claro na transcrição:
-usar [Sr./Sra. a confirmar] Nome.
+Aplicação consistente em TODAS as menções (corpo do texto E bloco de assinaturas):
+
+(a) Gênero explícito na transcrição (presença de pronomes/artigos diretos sem
+    ambiguidade, ex: "ela", "a candidata") → usar Sr. ou Sra.
+(b) Apenas contexto fraco (nome aparentemente feminino/masculino, sem confirmação
+    explícita) → usar "[Sra. a confirmar]" ou "[Sr. a confirmar]" + Nome
+(c) Sem nenhuma pista → usar "[Sr./Sra. a confirmar]" + Nome
+
+Exemplo real Happy Days: Dari e Dani não têm gênero confirmado por pronome explícito
+na transcrição. Mesmo que o nome "pareça" feminino, escrever:
+- No corpo: "[Sra. a confirmar] Dari recebeu dezenove (19) votos"
+- Na assinatura: "Conselheira titular da Torre 1 – [Sra. a confirmar] Dari [sobrenome a confirmar]"
+
+NÃO escrever "Sra. Dari" como se fosse fato confirmado. NÃO omitir o tratamento. A
+marca "[Sra./Sr. a confirmar]" sinaliza ao usuário que o gênero precisa ser validado.
 
 5. ANTI-INVENÇÃO
 Não inventar fatos para preencher lacunas. Se a transcrição não confirma um evento
@@ -376,20 +389,39 @@ com seu número de votos exato.
 - Aplica-se a eleições de síndico, subsíndico, conselheiros e qualquer outra votação
   nominal individual da assembleia
 
-ATENÇÃO À CORREÇÃO VERBAL DE NOMES DURANTE A CONTAGEM:
-Quando o speaker diz "X pra [nome]. É [outro nome], desculpa. ... [contagem refeita]
-para [nome]" — isso é UMA CONTAGEM ÚNICA com correção do nome no meio, NÃO duas
-contagens separadas. O número final pertence ao nome CORRIGIDO.
+ATENÇÃO À CORREÇÃO DE ATRIBUIÇÃO DE NOMES NA APURAÇÃO:
+Quando o speaker conta votos, atribui ao nome errado, percebe o engano, corrige a
+atribuição e em seguida recomeça uma NOVA contagem para o outro candidato — isso
+é DUAS contagens distintas para DUAS pessoas diferentes, NÃO uma contagem única.
 
-Exemplo real desta administradora:
-Transcrição: "19 pra Dani. É Dari, desculpa. 1, 2, 3... 21 para Dani."
-Interpretação CORRETA: Dari recebeu 21 votos (uma contagem só, o nome foi corrigido).
-Interpretação ERRADA: Dari = 19 votos E Dani = 21 votos (duas contagens — proibido).
+Exemplo real desta administradora (Happy Days 18/05/2026):
+Transcrição: "1, 2, ... 19 pra Dani. É Dari, desculpa. 1, 2, ... 21 para Dani."
 
-Regra de ouro: quando há "desculpa" / "é X, na verdade" / "errei" entre dois números,
-é correção de UM dado, não acúmulo de dois. O speaker pode continuar dizendo o nome
-errado por hábito após a correção — IGNORE a inércia, USE o nome corrigido com o
-número FINAL recontado.`;
+Leitura correta:
+(a) "19 pra Dani" — o contador atribuiu 19 votos a "Dani" por engano.
+(b) "É Dari, desculpa" — correção da ATRIBUIÇÃO: esses 19 votos eram da Dari, não da
+    Dani.
+(c) "1, 2, ... 21 para Dani" — NOVA contagem, agora corretamente para Dani, totalizando
+    21 votos.
+
+Resultado: Dari = 19 votos, Dani = 21 votos. São DUAS pessoas distintas (Dari é
+candidata da Torre 1, Dani da Torre 2 — confirmação adiante na transcrição:
+"Torre 1 — Dari. Dani Torre 2, Presidente.").
+
+Regra de ouro: a frase "é X, desculpa" corrige a ATRIBUIÇÃO do número anterior (esse
+número vai para X), e a contagem subsequente é uma NOVA apuração para o nome
+mencionado em seguida. Preservar AMBOS os candidatos com seus respectivos números.
+
+10. NÃO REPLICAR NÚMEROS DE VOTOS ENTRE CANDIDATOS
+Quando a transcrição confirma EXPLICITAMENTE o número de votos de UM candidato, NÃO
+usar o mesmo número para outro candidato sem confirmação explícita na transcrição.
+
+Regra de ouro: se um número está explícito apenas para o candidato X, atribuir esse
+mesmo número também ao candidato Y é INVENTAR — viola a regra 5 (anti-invenção).
+Quando não houver número explícito para um candidato, registrar APENAS a eleição e
+marcar "[número de votos a confirmar]" — nunca repetir o número de outro candidato
+como chute. Por outro lado, quando a transcrição confirma números DIFERENTES para
+candidatos diferentes (ex: Dari 19 e Dani 21), registrar AMBOS literalmente.`;
 
 // Validação heurística pós-geração — detecta truncamento e formato quebrado.
 // Critérios derivados das atas de referência do handoff:
