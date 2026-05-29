@@ -1055,6 +1055,32 @@ function prestacaoCrescimentoPercentual(inicial, final) {
   return ((fim - ini) / Math.abs(ini)) * 100;
 }
 
+// Detecta se ha um mes outlier no array (acima de 150% da media dos meses
+// com valor maior que zero) e devolve metadados para uma caixa de aviso.
+function prestacaoDetectarOutlier(arr12) {
+  const out = { temOutlier: false, indiceOutlier: -1, valorOutlier: 0, media: 0, descricao: '' };
+  if (!Array.isArray(arr12) || arr12.length === 0) return out;
+  const positivos = arr12.map(function(v) { return Math.abs(Number(v) || 0); }).filter(function(v) { return v > 0; });
+  if (positivos.length === 0) return out;
+  const media = positivos.reduce(function(a, b) { return a + b; }, 0) / positivos.length;
+  out.media = media;
+  let maiorIdx = -1;
+  let maiorVal = 0;
+  for (let i = 0; i < arr12.length; i++) {
+    const v = Math.abs(Number(arr12[i]) || 0);
+    if (v > maiorVal) { maiorVal = v; maiorIdx = i; }
+  }
+  if (maiorIdx >= 0 && maiorVal > media * 1.5) {
+    out.temOutlier = true;
+    out.indiceOutlier = maiorIdx;
+    out.valorOutlier = maiorVal;
+    const pctAcima = ((maiorVal - media) / media) * 100;
+    const nome = PRESTACAO_MESES_CURTO[maiorIdx] || ('Mês ' + (maiorIdx + 1));
+    out.descricao = 'Pico em ' + nome + ': ' + prestacaoFmtBRL(maiorVal) + ' (' + prestacaoFmtPct(pctAcima, 0) + ' acima da media mensal).';
+  }
+  return out;
+}
+
 // Formata um indice de mes (0 a 11) e ano numerico como "Janeiro/2025".
 function prestacaoFmtMesAno(indiceMes, ano) {
   const idx = Number(indiceMes);
@@ -1168,40 +1194,19 @@ function prestacaoSlideMiniBars(slide, x, y, w, h, valores, corBar, corLabel) {
   }
 }
 
-// ONDA 3 — formata "Maio/2025" / "Abr/2026" para mês BR canônico usado nos
-// sublabels dos KPIs da Visão Geral e no subtítulo do Encerramento.
-const PRESTACAO_MES_LONGO = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-const PRESTACAO_MES_CURTO_LOWER = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
-
-function prestacaoExtrairBordasPeriodo(periodo) {
-  const s = String(periodo || '');
-  // Padrão "Mes/AAAA a Mes/AAAA" (Mai/2025 a Abr/2026 ou Maio/2025 a Abril/2026)
-  const m = s.match(/(\w+)\/(\d{4})[^\d]+(\w+)\/(\d{4})/);
-  if (m) return { inicio: prestacaoNormalizarMesAno(m[1], m[2]), fim: prestacaoNormalizarMesAno(m[3], m[4]) };
-  // Fallback ISO "AAAA-MM a AAAA-MM" (2025-05 a 2026-04)
-  const m2 = s.match(/(\d{4})-(\d{2})[^\d]+(\d{4})-(\d{2})/);
-  if (m2) {
-    const mi = Math.max(0, Math.min(11, parseInt(m2[2], 10) - 1));
-    const mf = Math.max(0, Math.min(11, parseInt(m2[4], 10) - 1));
-    return { inicio: PRESTACAO_MES_LONGO[mi] + '/' + m2[1], fim: PRESTACAO_MES_LONGO[mf] + '/' + m2[3] };
-  }
-  return { inicio: '', fim: '' };
-}
-
-function prestacaoNormalizarMesAno(mes, ano) {
-  const mLower = String(mes || '').toLowerCase().slice(0, 3);
-  const idx = PRESTACAO_MES_CURTO_LOWER.indexOf(mLower);
-  if (idx === -1) return String(mes || '') + '/' + String(ano || '');
-  return PRESTACAO_MES_LONGO[idx] + '/' + String(ano || '');
-}
-
-// ONDA 2C — Decide formato da tabela direita: 'mes_a_mes' para Pessoal e
-// grupos com 1-2 subcategorias, 'subcategoria' para 3+ subs.
-function prestacaoDecidirTabelaGrupo(grupo) {
-  if (!grupo || !grupo.grupo) return 'subcategoria';
-  if (/pessoal/i.test(grupo.grupo)) return 'mes_a_mes';
-  const subs = Array.isArray(grupo.subcategorias) ? grupo.subcategorias : [];
-  return subs.length <= 2 ? 'mes_a_mes' : 'subcategoria';
+// Caixa amber light com borda amber e simbolo de aviso para destacar outliers.
+function prestacaoSlideCaixaAviso(slide, x, y, w, texto) {
+  const h = 0.4;
+  slide.addShape('roundRect', {
+    x: x, y: y, w: w, h: h,
+    fill: { color: PRESTACAO_THEME.amberLight },
+    line: { color: PRESTACAO_THEME.amber, width: 0.75 },
+    rectRadius: 0.05
+  });
+  slide.addText('!  ' + (texto || ''), {
+    x: x + 0.18, y: y, w: w - 0.36, h: h,
+    fontSize: 10, color: '8B5A00', fontFace: 'Calibri', align: 'left', valign: 'middle'
+  });
 }
 
 // Slide 1: capa do deck com fundo escuro, titulo grande e periodo.
@@ -1231,10 +1236,12 @@ function prestacaoSlideCapa(pptx, dados, ano, entidade, periodo) {
       fontSize: 18, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left'
     });
   }
-  slide.addText('Apresentação em Assembleia', {
-    x: 0.7, y: 6.7, w: 12, h: 0.4,
-    fontSize: 11, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left'
-  });
+  if (dados.cabecalho && dados.cabecalho.dataApresentacao) {
+    slide.addText('Apresentado em ' + dados.cabecalho.dataApresentacao, {
+      x: 0.7, y: 6.7, w: 12, h: 0.4,
+      fontSize: 11, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left'
+    });
+  }
 }
 
 // Slide 2: visao geral com 5 KPIs e faixa amber com 3 indicadores na base.
@@ -1248,49 +1255,39 @@ function prestacaoSlideVisaoGeral(pptx, dados, entidade, ano) {
   const despT = Number(dados.despesas && dados.despesas.total) || 0;
   const sup = recT - despT;
 
-  // ONDA 3A — sublabels com base no período real, não em "Caixa em <ano>"
-  const periodoVG = (dados.cabecalho && dados.cabecalho.periodo) || '';
-  const bordas = prestacaoExtrairBordasPeriodo(periodoVG);
-  const subSaldoIni = bordas.inicio ? ('Em ' + bordas.inicio) : ('Caixa em ' + (ano - 1));
-  const subSaldoFim = bordas.fim ? ('Reserva em ' + bordas.fim) : ('Caixa em ' + ano);
-  const coberturaVG = despT > 0 ? (recT / despT) * 100 : 0;
-  const pctSuperavitVG = recT > 0 ? (sup / recT) * 100 : 0;
-  const crescSaldoVG = prestacaoCrescimentoPercentual(sIni, sFim);
-
-  prestacaoSlideKpiCard(slide, 0.5, 2.2, 4.0, 1.4, 'Saldo Inicial', prestacaoFmtBRL(sIni), subSaldoIni, PRESTACAO_THEME.blue, PRESTACAO_THEME.white);
-  prestacaoSlideKpiCard(slide, 4.7, 2.2, 4.0, 1.4, 'Receita', prestacaoFmtBRL(recT), '12 meses', PRESTACAO_THEME.navyDeep, PRESTACAO_THEME.white);
-  prestacaoSlideKpiCard(slide, 8.9, 2.2, 4.0, 1.4, 'Despesa', prestacaoFmtBRL(despT), '12 meses', PRESTACAO_THEME.blueMid, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 0.5, 2.2, 4.0, 1.4, 'Saldo Inicial', prestacaoFmtBRL(sIni), 'Caixa em ' + (ano - 1), PRESTACAO_THEME.blue, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 4.7, 2.2, 4.0, 1.4, 'Receita', prestacaoFmtBRL(recT), 'Total arrecadado', PRESTACAO_THEME.navyDeep, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 8.9, 2.2, 4.0, 1.4, 'Despesa', prestacaoFmtBRL(despT), 'Total pago', PRESTACAO_THEME.blueMid, PRESTACAO_THEME.white);
 
   const corSup = sup < 0 ? PRESTACAO_THEME.negative : PRESTACAO_THEME.positive;
   const labelSup = sup < 0 ? 'Déficit' : 'Superávit';
-  const subSup = recT > 0 ? ('Margem de ' + prestacaoFmtPct(pctSuperavitVG, 1) + ' sobre receitas') : 'Receita menos despesa';
-  prestacaoSlideKpiCard(slide, 0.5, 3.85, 6.1, 1.4, labelSup, prestacaoFmtBRL(sup), subSup, corSup, PRESTACAO_THEME.white);
-  prestacaoSlideKpiCard(slide, 6.8, 3.85, 6.1, 1.4, 'Saldo Final', prestacaoFmtBRL(sFim), subSaldoFim, PRESTACAO_THEME.navy, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 0.5, 3.85, 6.1, 1.4, labelSup, prestacaoFmtBRL(sup), 'Receita menos despesa', corSup, PRESTACAO_THEME.white);
+  prestacaoSlideKpiCard(slide, 6.8, 3.85, 6.1, 1.4, 'Saldo Final', prestacaoFmtBRL(sFim), 'Caixa em ' + ano, PRESTACAO_THEME.navy, PRESTACAO_THEME.white);
 
-  // ONDA 2A — Faixa laranja SÓLIDA (#E88B1A) com 3 pilares separados por linhas brancas
   slide.addShape('rect', {
     x: 0.5, y: 5.6, w: 12.3, h: 1.0,
-    fill: { color: PRESTACAO_THEME.amber },
-    line: { color: PRESTACAO_THEME.amber, width: 0 }
+    fill: { color: PRESTACAO_THEME.amberLight },
+    line: { color: PRESTACAO_THEME.amberLight, width: 0 }
   });
 
-  let pilar3Txt;
-  if (crescSaldoVG === null) pilar3Txt = 'NA';
-  else if (crescSaldoVG >= 200) pilar3Txt = 'Quase triplicou';
-  else if (crescSaldoVG >= 100) pilar3Txt = 'Quase dobrou';
-  else pilar3Txt = (crescSaldoVG >= 0 ? '+' : '') + crescSaldoVG.toFixed(1) + '%';
+  const cobertura = despT > 0 ? (recT / despT) * 100 : 0;
+  const pctSuperavit = recT > 0 ? (sup / recT) * 100 : 0;
+  const crescSaldo = prestacaoCrescimentoPercentual(sIni, sFim);
 
-  slide.addShape('rect', { x: 0.5 + 12.3 / 3, y: 5.75, w: 0.015, h: 0.7, fill: { color: PRESTACAO_THEME.white }, line: { color: PRESTACAO_THEME.white, width: 0 } });
-  slide.addShape('rect', { x: 0.5 + 12.3 * 2 / 3, y: 5.75, w: 0.015, h: 0.7, fill: { color: PRESTACAO_THEME.white }, line: { color: PRESTACAO_THEME.white, width: 0 } });
+  let crescTxt = '0%';
+  if (crescSaldo === null) crescTxt = 'NA';
+  else if (crescSaldo >= 200) crescTxt = 'Quase triplicou';
+  else if (crescSaldo >= 100) crescTxt = 'Quase dobrou';
+  else crescTxt = (crescSaldo >= 0 ? '+' : '') + crescSaldo.toFixed(1) + '%';
 
-  slide.addText('RECEITA COBRIU', { x: 0.7, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', charSpacing: 3 });
-  slide.addText(prestacaoFmtPct(coberturaVG, 0) + ' DAS DESPESAS', { x: 0.7, y: 5.98, w: 4.0, h: 0.55, fontSize: 26, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center' });
+  slide.addText('COBERTURA DA RECEITA', { x: 0.7, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'center', charSpacing: 3 });
+  slide.addText(prestacaoFmtPct(cobertura, 0), { x: 0.7, y: 5.95, w: 4.0, h: 0.55, fontSize: 24, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'center' });
 
-  slide.addText('SUPERÁVIT DE', { x: 4.8, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', charSpacing: 3 });
-  slide.addText(prestacaoFmtPct(pctSuperavitVG, 1) + ' DA RECEITA', { x: 4.8, y: 5.98, w: 4.0, h: 0.55, fontSize: 26, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center' });
+  slide.addText('PERCENTUAL DE SUPERÁVIT', { x: 4.8, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'center', charSpacing: 3 });
+  slide.addText(prestacaoFmtPct(pctSuperavit, 1), { x: 4.8, y: 5.95, w: 4.0, h: 0.55, fontSize: 24, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'center' });
 
-  slide.addText('SALDO EM CAIXA', { x: 8.9, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', charSpacing: 3 });
-  slide.addText(pilar3Txt, { x: 8.9, y: 5.98, w: 4.0, h: 0.55, fontSize: 26, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center' });
+  slide.addText('CRESCIMENTO DO SALDO', { x: 8.9, y: 5.7, w: 4.0, h: 0.28, fontSize: 9, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'center', charSpacing: 3 });
+  slide.addText(crescTxt, { x: 8.9, y: 5.95, w: 4.0, h: 0.55, fontSize: 24, bold: true, color: PRESTACAO_THEME.navy, fontFace: 'Calibri', align: 'center' });
 
   prestacaoSlideRodape(slide, entidade, ano);
 }
@@ -1331,7 +1328,7 @@ function prestacaoSlideEvolucaoMensal(pptx, dados, distRec, distDesp, saldoMensa
     chartColors: [PRESTACAO_THEME.positive, PRESTACAO_THEME.negative, PRESTACAO_THEME.blueMid],
     showLegend: true, legendPos: 'b', legendFontSize: 10,
     catAxisLabelFontSize: 9, valAxisLabelFontSize: 9,
-    lineSize: 2, lineDataSymbolSize: 0
+    lineSize: 2, lineDataSymbolSize: 5
   });
 
   const medRec = recArr.reduce(function(a, b) { return a + (Number(b) || 0); }, 0) / 12;
@@ -1352,14 +1349,13 @@ function prestacaoSlidePatrimonio(pptx, dados, saldoMensal, entidade, ano) {
   const sIni = Number(dados.saldo && dados.saldo.inicial) || 0;
   const sFim = Number(dados.saldo && dados.saldo.final) || 0;
   const cresc = prestacaoCrescimentoPercentual(sIni, sFim);
-  // ONDA 3B — subtítulo "destaque do exercício" com tom proporcional ao crescimento
   let subDinamico = 'Como o caixa evoluiu durante o exercício.';
   if (cresc !== null) {
-    if (cresc > 100) subDinamico = 'O destaque do exercício foi o fortalecimento expressivo do patrimônio do condomínio.';
-    else if (cresc > 50) subDinamico = 'O destaque do exercício foi o crescimento significativo do patrimônio do condomínio.';
-    else if (cresc > 0) subDinamico = 'O destaque do exercício foi o crescimento do patrimônio do condomínio.';
-    else if (cresc < 0) subDinamico = 'O exercício encerrou com redução no patrimônio do condomínio.';
-    else subDinamico = 'O exercício encerrou com patrimônio estável.';
+    if (cresc >= 100) subDinamico = 'O patrimônio mais que dobrou no exercício.';
+    else if (cresc >= 50) subDinamico = 'Crescimento expressivo do patrimônio.';
+    else if (cresc >= 10) subDinamico = 'Patrimônio em crescimento solido.';
+    else if (cresc >= 0) subDinamico = 'Patrimônio mantido com leve evolução.';
+    else subDinamico = 'Patrimônio em retração no exercício.';
   }
   prestacaoSlideCabecalho(slide, '03', 'PATRIMÔNIO', 'Evolução do', 'caixa', subDinamico);
 
@@ -1386,7 +1382,7 @@ function prestacaoSlidePatrimonio(pptx, dados, saldoMensal, entidade, ano) {
     chartColors: [PRESTACAO_THEME.blueMid],
     showLegend: false,
     catAxisLabelFontSize: 9, valAxisLabelFontSize: 9,
-    lineSize: 3, lineDataSymbolSize: 0
+    lineSize: 3, lineDataSymbolSize: 6
   });
 
   const corCresc = (cresc !== null && cresc < 0) ? PRESTACAO_THEME.negative : PRESTACAO_THEME.amber;
@@ -1426,7 +1422,7 @@ function prestacaoSlideSuperavitMensal(pptx, dados, superavitMensal, entidade, a
 
   slide.addShape('roundRect', { x: 8.8, y: 2.2, w: 4.0, h: 2.7, fill: { color: PRESTACAO_THEME.positive }, line: { color: PRESTACAO_THEME.positive, width: 0 }, rectRadius: 0.08 });
   slide.addText('MESES POSITIVOS', { x: 8.95, y: 2.32, w: 3.7, h: 0.3, fontSize: 11, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
-  slide.addText(String(positivos) + ' de 12', { x: 8.8, y: 2.7, w: 4.0, h: 1.4, fontSize: 60, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', valign: 'middle' });
+  slide.addText(String(positivos) + ' / 12', { x: 8.8, y: 2.7, w: 4.0, h: 1.85, fontSize: 80, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', valign: 'middle' });
 
   prestacaoSlideKpiCard(slide, 8.8, 5.05, 4.0, 1.65, 'Superávit Anual', prestacaoFmtBRL(supAnual), null, PRESTACAO_THEME.navy, PRESTACAO_THEME.white);
 
@@ -1466,7 +1462,7 @@ function prestacaoSlideOrigemReceita(pptx, dados, entidade, ano) {
     slide.addShape('rect', { x: 0.5, y: 6.4, w: 12.3, h: 0.5, fill: { color: PRESTACAO_THEME.amberLight }, line: { color: PRESTACAO_THEME.amberLight, width: 0 } });
     slide.addText(String(principal.categoria || 'Categoria principal') + ' representa ' + prestacaoFmtPct(pctPrinc, 1) + ' da receita do exercício.', {
       x: 0.7, y: 6.4, w: 11.9, h: 0.5,
-      fontSize: 10, bold: true, color: 'C46E0A', fontFace: 'Calibri', align: 'left', valign: 'middle'
+      fontSize: 11, bold: true, color: '8B5A00', fontFace: 'Calibri', align: 'left', valign: 'middle'
     });
   }
 
@@ -1541,24 +1537,11 @@ function prestacaoSlideDetalhamentoGrupo(pptx, grupo, idx, entidade, ano, totalD
     slide.addText('Sem distribuição mensal disponível', { x: 0.7, y: 5.6, w: 4.8, h: 0.4, fontSize: 11, italic: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left' });
   }
 
-  // ONDA 2C — Lado direito alterna entre subcategoria anual (3+ subs) e mês a mês
-  const modoTabela = prestacaoDecidirTabelaGrupo(grupo);
-  let linhas;
-  if (modoTabela === 'mes_a_mes') {
-    // Reusa distArr já avaliado acima (mini-bars). Em granularidade trimestral/anual fica array nula.
-    const distMes = Array.isArray(distArr) ? distArr : (Array.isArray(grupo.distribuicaoTemporal) ? grupo.distribuicaoTemporal : []);
-    linhas = [];
-    for (let mi = 0; mi < 12; mi++) {
-      const v = Number(distMes[mi]) || 0;
-      if (Math.abs(v) > 0.005) linhas.push({ rotulo: (PRESTACAO_MES_LONGO[mi] || ('Mês ' + (mi + 1))) + '/' + ano, valor: v });
-    }
-    if (linhas.length === 0) linhas = [{ rotulo: grupo.grupo, valor: valor }];
-  } else {
-    const subs = (grupo.subcategorias || []).slice().sort(function(a, b) { return (Number(b.valor) || 0) - (Number(a.valor) || 0); });
-    linhas = subs.length > 0
-      ? subs.map(function(s) { return { rotulo: s.nome || 'Sem nome', valor: Number(s.valor) || 0 }; })
-      : [{ rotulo: grupo.grupo, valor: valor }];
-  }
+  // Lado direito: subcategorias com valor anual (em vez de quebra mensal).
+  const subs = (grupo.subcategorias || []).slice().sort(function(a, b) { return (Number(b.valor) || 0) - (Number(a.valor) || 0); });
+  const linhas = subs.length > 0
+    ? subs.map(function(s) { return { rotulo: s.nome || 'Sem nome', valor: Number(s.valor) || 0 }; })
+    : [{ rotulo: grupo.grupo, valor: valor }];
 
   const tabelaX = 6.0;
   const tabelaY = 2.2;
@@ -1648,11 +1631,7 @@ function prestacaoSlideEncerramento(pptx, dados, saldoMensal, superavitMensal, e
     fontSize: 44, fontFace: 'Calibri', align: 'left'
   });
 
-  const bordasEnc = prestacaoExtrairBordasPeriodo((dados.cabecalho && dados.cabecalho.periodo) || '');
-  const subEnc = (bordasEnc.inicio && bordasEnc.fim)
-    ? 'Como o patrimônio do condomínio evoluiu de ' + bordasEnc.inicio + ' a ' + bordasEnc.fim
-    : 'Como o patrimônio do condomínio evoluiu ao longo do exercício';
-  slide.addText(subEnc, {
+  slide.addText('Como o patrimônio do condomínio evoluiu ao longo do exercício', {
     x: 0.5, y: 1.85, w: 12.3, h: 0.4,
     fontSize: 14, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left'
   });
@@ -1694,7 +1673,7 @@ function prestacaoSlideEncerramento(pptx, dados, saldoMensal, superavitMensal, e
     showLegend: false,
     catAxisLabelFontSize: 9, catAxisLabelColor: PRESTACAO_THEME.bluePale,
     valAxisLabelFontSize: 9, valAxisLabelColor: PRESTACAO_THEME.bluePale,
-    lineSize: 4, lineDataSymbolSize: 0
+    lineSize: 4, lineDataSymbolSize: 6
   });
 
   slide.addShape('roundRect', {
@@ -1725,14 +1704,13 @@ function prestacaoSlideEncerramento(pptx, dados, saldoMensal, superavitMensal, e
   slide.addText('RECEITA COBRIU ' + prestacaoFmtPct(cobertura, 0) + ' DA DESPESA', { x: 8.45, y: 5.6, w: 4.2, h: 0.3, fontSize: 9, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
   slide.addText(positivos + ' meses com superávit', { x: 8.3, y: 5.9, w: 4.5, h: 0.5, fontSize: 14, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'center', valign: 'middle' });
 
-  // ONDA 2E — tira ANTES x DEPOIS arredondada lado a lado
-  slide.addShape('roundRect', { x: 0.5, y: 6.7, w: 6.0, h: 0.45, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 }, rectRadius: 0.06 });
-  slide.addText('INÍCIO', { x: 0.7, y: 6.75, w: 1.2, h: 0.35, fontSize: 10, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', valign: 'middle', charSpacing: 3 });
-  slide.addText(prestacaoFmtBRL(sIni), { x: 1.9, y: 6.75, w: 4.4, h: 0.35, fontSize: 13, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'right', valign: 'middle' });
+  slide.addShape('rect', { x: 0.5, y: 6.7, w: 6.4, h: 0.7, fill: { color: PRESTACAO_THEME.navy }, line: { color: PRESTACAO_THEME.navy, width: 0 } });
+  slide.addText('INÍCIO ANO', { x: 0.7, y: 6.75, w: 2.5, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.bluePale, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addText(prestacaoFmtBRL(sIni), { x: 0.7, y: 6.97, w: 6.0, h: 0.4, fontSize: 16, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle' });
 
-  slide.addShape('roundRect', { x: 6.85, y: 6.7, w: 6.0, h: 0.45, fill: { color: PRESTACAO_THEME.amber }, line: { color: PRESTACAO_THEME.amber, width: 0 }, rectRadius: 0.06 });
-  slide.addText('FIM', { x: 7.05, y: 6.75, w: 1.2, h: 0.35, fontSize: 10, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle', charSpacing: 3 });
-  slide.addText(prestacaoFmtBRL(sFim), { x: 8.25, y: 6.75, w: 4.4, h: 0.35, fontSize: 13, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'right', valign: 'middle' });
+  slide.addShape('rect', { x: 6.95, y: 6.7, w: 6.4, h: 0.7, fill: { color: PRESTACAO_THEME.amber }, line: { color: PRESTACAO_THEME.amber, width: 0 } });
+  slide.addText('FIM ANO', { x: 7.15, y: 6.75, w: 2.5, h: 0.25, fontSize: 9, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', charSpacing: 3 });
+  slide.addText(prestacaoFmtBRL(sFim), { x: 7.15, y: 6.97, w: 6.0, h: 0.4, fontSize: 16, bold: true, color: PRESTACAO_THEME.white, fontFace: 'Calibri', align: 'left', valign: 'middle' });
 }
 
 // Funcao principal do B5: monta o pptx completo a partir do JSON em
