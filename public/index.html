@@ -2203,11 +2203,18 @@ const CAMPOS_UNIDADE = [
     }
   } catch(e) {}
 
-  // Carrega o seletor de condomínio do topbar (Tarefa 1.1)
-  // Async: roda depois que o IIFE terminar, sem bloquear o restore de estado
-  setTimeout(function() {
+  // Carrega o seletor de condomínio do topbar (Tarefa 1.1).
+  // Espera o auth-bootstrap setar window.AUTH_TOKEN antes de consultar o Supabase,
+  // senão supaFetch cai no anon key e a RLS retorna lista vazia (bug original do PR #13).
+  // Se a sessão já estiver pronta no momento desta IIFE, dispara imediato — caso contrário
+  // aguarda o evento auth:ready emitido por auth-bootstrap.js.
+  if (window.AUTH_TOKEN) {
     if (typeof navbarCondInit === 'function') navbarCondInit();
-  }, 0);
+  } else {
+    document.addEventListener('auth:ready', function() {
+      if (typeof navbarCondInit === 'function') navbarCondInit();
+    }, { once: true });
+  }
 })();
 
 function saveConfig() {
