@@ -26,6 +26,18 @@ window.addEventListener('condominioAtivo:changed', function() {
   previsaoOnCondominioChange();
 });
 
+// === Ouvinte de auth pronta ===
+// O auth-bootstrap.js dispara auth:ready em document quando window.AUTH_TOKEN esta
+// setado. Sem isso, a primeira chamada a previsaoCarregarRascunhos (via restorePanel
+// no boot) sai sem Bearer e o /api/previsao/listar retorna 401, escondendo o card.
+// Quando auth fica pronta, se o painel ativo for previsao, recarrega rascunhos.
+document.addEventListener('auth:ready', function() {
+  var painel = document.getElementById('panel-previsao');
+  if (!painel || !painel.classList.contains('active')) return;
+  var cond = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
+  if (cond && cond.id) previsaoCarregarRascunhos(cond.id);
+});
+
 // Autosave ao fechar ou recarregar a aba. Nao bloqueia o unload (best-effort).
 window.addEventListener('beforeunload', previsaoAutosaveAoSairDoPainel);
 
@@ -659,35 +671,69 @@ async function previsaoSalvarRascunho(silencioso) {
   }
 }
 
-// Busca lista de rascunhos do condominioId e renderiza os cards na secao de rascunhos.
+// Busca lista de rascunhos do condominioId e renderiza um card de retomada destacado.
+// Em caso de erro de rede ou 401 (token ainda nao pronto), loga no console mas nao
+// quebra a UI; o listener de auth:ready re-chama essa funcao quando o token estiver pronto.
 async function previsaoCarregarRascunhos(condominioId) {
   var secao = document.getElementById('prev-secao-rascunhos');
   if (!secao) return;
   try {
     var resp = await apiAuthFetch('/api/previsao/listar?condominio_id=' + encodeURIComponent(condominioId));
-    if (!resp.ok) { secao.style.display = 'none'; return; }
+    if (!resp.ok) {
+      console.warn('[previsao] /listar retornou HTTP', resp.status, '(token ainda nao pronto?)');
+      secao.style.display = 'none';
+      return;
+    }
     var lista = await resp.json();
-    if (!Array.isArray(lista) || !lista.length) { secao.style.display = 'none'; secao.innerHTML = ''; return; }
+    console.log('[previsao] rascunhos encontrados:', Array.isArray(lista) ? lista.length : 0);
+    if (!Array.isArray(lista) || !lista.length) {
+      secao.style.display = 'none';
+      secao.innerHTML = '';
+      return;
+    }
+    var esc = previsaoEsc;
+    // Card de destaque: usa o mais recente (lista vem ordenada desc por atualizado_em).
+    var r = lista[0];
+    var dataStr = '';
+    if (r.atualizado_em) {
+      var d = new Date(r.atualizado_em);
+      dataStr = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(d);
+    }
+    var periodoStr = r.periodo ? esc(r.periodo) : '';
+    var html = ''
+      + '<div style="background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);'
+      + 'border-radius:12px;padding:16px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">'
+      + '<div style="flex:1;min-width:220px">'
+      + '<div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);'
+      + 'text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">Rascunho encontrado</div>'
+      + '<div style="font-size:14px;font-weight:600;color:var(--text)">Previsao ' + esc(String(r.ano_referencia))
+      + (periodoStr ? ' &middot; ' + periodoStr : '') + '</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:2px">Salvo em ' + esc(dataStr) + '</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px">'
+      + '<button onclick="previsaoRetomarRascunho(\'' + esc(r.id) + '\')" '
+      + 'style="padding:8px 18px;background:var(--gs-blue);color:#fff;border:none;'
+      + 'border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Retomar</button>'
+      + '<button onclick="previsaoCriarNovo()" '
+      + 'style="padding:8px 18px;background:transparent;color:var(--gs-blue);border:1px solid var(--gs-blue-mid);'
+      + 'border-radius:8px;font-size:12px;font-weight:600;cursor:pointer">Criar novo</button>'
+      + '</div>'
+      + '</div>';
     secao.style.display = '';
-    var html = '<div style="display:flex;flex-wrap:wrap;gap:10px">';
-    lista.forEach(function(r) {
-      var esc = previsaoEsc;
-      var dataStr = '';
-      if (r.atualizado_em) {
-        var d = new Date(r.atualizado_em);
-        dataStr = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(d);
-      }
-      html += '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 16px;min-width:180px">'
-        + '<div style="font-size:12px;font-weight:600;color:var(--text)">Rascunho ' + esc(String(r.ano_referencia)) + '</div>'
-        + '<div style="font-size:10px;color:var(--muted);margin-top:2px">Salvo em ' + esc(dataStr) + '</div>'
-        + '<button onclick="previsaoRetomarRascunho(\'' + esc(r.id) + '\')" '
-        + 'style="margin-top:8px;padding:4px 12px;background:var(--gs-blue);color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Retomar</button>'
-        + '</div>';
-    });
-    html += '</div>';
     secao.innerHTML = html;
-  } catch (_) {
+  } catch (e) {
+    console.error('[previsao] erro ao carregar rascunhos:', e);
     secao.style.display = 'none';
+  }
+}
+
+// Fecha o card de rascunho e foca o dropzone de upload (criar previsao do zero).
+function previsaoCriarNovo() {
+  var secao = document.getElementById('prev-secao-rascunhos');
+  if (secao) { secao.style.display = 'none'; secao.innerHTML = ''; }
+  var dz = document.getElementById('prev-dropzone');
+  if (dz && typeof dz.scrollIntoView === 'function') {
+    dz.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 }
 
