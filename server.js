@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const https = require('https');
+const http = require('http');
 const crypto = require('crypto');
 const fs = require('fs');
 const app = express();
@@ -15,6 +16,9 @@ const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY || '';
 // Auth dos endpoints /api/* — pelo menos UM destes precisa estar configurado
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || '';
+// URL do microserviço de Previsão Orçamentária (FastAPI). Em prod, setar via
+// Railway ENV apontando para a URL interna do serviço previsao-api.
+const PREVISAO_API_URL = process.env.PREVISAO_API_URL || 'http://localhost:8000';
 // Origens permitidas (separadas por vírgula). Se vazio, qualquer origem passa
 // (dev mode). Em prod, setar pra "https://service-hub-production.up.railway.app"
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -792,6 +796,75 @@ app.post('/api/admin/seed-dev',
     const r = await supabaseAdminRequest('POST', '/rest/v1/rpc/seed_dev', {});
     res.status(r.status).json(r.body);
   });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Módulo: Previsão Orçamentária
+// Proxy autenticado para o microserviço FastAPI previsao-api.
+// O body multipart vai puro pelo pipe — NÃO passar por express.json().
+// Timeout: 120s (PDFs grandes podem demorar na extração pdfplumber).
+// ─────────────────────────────────────────────────────────────────────────
+
+// Retorna http ou https baseado no protocolo da URL alvo.
+// Necessário porque o microserviço local roda em HTTP, não HTTPS.
+function clienteHttpDe(protocolo) {
+  return protocolo === 'https:' ? https : http;
+}
+
+app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
+  if (!INTERNAL_API_SECRET) {
+    res.status(503).json({ erro: 'previsao_api_nao_configurada' });
+    return;
+  }
+  const target = new URL('/extrair-pdfs', PREVISAO_API_URL);
+  const cliente = clienteHttpDe(target.protocol);
+  const opts = {
+    hostname: target.hostname,
+    port: target.port || (target.protocol === 'https:' ? 443 : 80),
+    path: target.pathname,
+    method: 'POST',
+    headers: {
+      'X-Internal-Secret': INTERNAL_API_SECRET,
+      'Content-Type': req.headers['content-type'] || 'application/octet-stream',
+    },
+  };
+  if (req.headers['content-length']) {
+    opts.headers['Content-Length'] = req.headers['content-length'];
+  }
+  const upstream = cliente.request(opts, r => {
+    res.status(r.statusCode);
+    Object.entries(r.headers).forEach(([k, v]) => {
+      if (!['connection', 'transfer-encoding'].includes(k.toLowerCase())) {
+        res.setHeader(k, v);
+      }
+    });
+    r.pipe(res);
+  });
+  upstream.setTimeout(120000, () => {
+    upstream.destroy();
+    if (!res.headersSent) res.status(504).json({ erro: 'timeout_extracao' });
+  });
+  upstream.on('error', e => {
+    if (!res.headersSent) {
+      // Serviço inacessível (recusa, timeout de rede, DNS) → 503.
+      // Erros de protocolo/resposta inválida → 502.
+      const indisponivel = ['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EHOSTUNREACH'].includes(e.code);
+      const statusCode = indisponivel ? 503 : 502;
+      // Expor apenas o código Node (sem IP/hostname) para não vazar topologia interna.
+      res.status(statusCode).json({ erro: 'previsao_api_indisponivel', detalhe: e.code || 'erro_desconhecido' });
+    }
+  });
+
+  // Limite de 50MB: PDFs do Superlógica raramente passam de 5MB.
+  // Validado após requireAuth — não vale checar tamanho de quem não autenticou.
+  const TAMANHO_MAX_UPLOAD = 50 * 1024 * 1024;
+  const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+  if (!contentLength || contentLength > TAMANHO_MAX_UPLOAD) {
+    res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'PDFs do Superlógica raramente passam de 5MB. Limite: 50MB.' });
+    return;
+  }
+
+  req.pipe(upstream);
+});
 
 // Middleware 404 para rotas /api/* desconhecidas.
 // Posicionado depois de todas as rotas reais de /api e antes do catch-all geral.
