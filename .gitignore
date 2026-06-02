@@ -25,6 +25,13 @@ supabase/
 # Variaveis de ambiente
 .env*
 
+# Artefatos Python (microservico previsao-api)
+.venv/
+.venv*/
+__pycache__/
+*.pyc
+.pytest_cache/
+
 # Claude Code direcional (privado)
 .claude/settings.local.json
 .claude/SESSION_LOG.md
