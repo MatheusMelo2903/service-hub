@@ -995,6 +995,9 @@
     <div class="nav-item" onclick="showPanel('prestacao')">
       <span class="nav-icon">📊</span> Prestação de Contas
     </div>
+    <div class="nav-item" onclick="showPanel('previsao')">
+      <span class="nav-icon">◫</span> Previsão Orçamentária
+    </div>
     <div class="nav-item" onclick="showPanel('atas')">
       <span class="nav-icon">✎</span> Atas Condominiais
     </div>
@@ -1430,6 +1433,102 @@
           </button>
           <button class="btn btn-ghost" onclick="prestacaoLimparTudo()">Limpar tudo</button>
         </div>
+      </div>
+
+    </div>
+
+    <div class="panel" id="panel-previsao">
+
+      <!-- Banner do condomínio ativo (renderizado dinamicamente por renderBannerCondAtivo) -->
+      <div id="banner-cond-previsao"></div>
+
+      <!-- Fallback quando não há condomínio selecionado -->
+      <div id="prev-fallback-sem-cond" style="display:none;padding:24px;text-align:center;color:var(--muted)">
+        <p style="font-size:13px;font-family:var(--mono);margin:0">Selecione um condomínio para começar.</p>
+      </div>
+
+      <!-- Corpo principal -->
+      <div id="prev-corpo">
+
+        <!-- Card 1: Upload -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Upload dos PDFs</span>
+          </div>
+
+          <div id="prev-dropzone" class="dropzone"
+               ondragover="previsaoOnDragOver(event)"
+               ondragleave="previsaoOnDragLeave(event)"
+               ondrop="previsaoOnDrop(event)"
+               style="cursor:pointer"
+               onclick="document.getElementById('prev-file-input').click()">
+            <input type="file" id="prev-file-input" multiple accept="application/pdf,.pdf"
+                   style="display:none"
+                   onchange="previsaoOnFileInput(event)">
+            <div style="font-size:32px;color:var(--muted);margin-bottom:8px">◫</div>
+            <div style="font-size:14px;color:var(--text);margin-bottom:4px">Arraste os PDFs aqui</div>
+            <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">
+              ou clique para selecionar. Somente PDF. W011A obrigatório, W045A opcional.
+            </div>
+          </div>
+
+          <div id="prev-chips" style="margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
+
+          <div style="display:flex;gap:10px;margin-top:14px;justify-content:flex-end">
+            <button id="prev-btn-limpar" class="btn btn-ghost" onclick="previsaoLimpar()">Limpar</button>
+            <button id="prev-btn-gerar" class="btn btn-primary" onclick="previsaoGerarPlanilha()" disabled>
+              Gerar Planilha
+            </button>
+          </div>
+        </div>
+
+        <!-- Card 2: Resultado (oculto até receber JSON) -->
+        <div id="prev-resultado" style="display:none">
+
+          <div class="card">
+            <div id="prev-cabecalho" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:6px 0"></div>
+          </div>
+
+          <div id="prev-avisos" class="card" style="display:none;background:rgba(214,158,46,0.08);border:1px solid rgba(214,158,46,0.3)"></div>
+
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">Grupos de despesa</span>
+            </div>
+            <div style="overflow-x:auto">
+              <table id="prev-tabela" style="width:100%;border-collapse:collapse;font-size:12px"></table>
+            </div>
+          </div>
+
+          <div id="prev-secao-fora-grupo" class="card" style="display:none">
+            <div class="card-header">
+              <span class="card-title">Itens fora do rateio</span>
+            </div>
+            <table id="prev-tabela-fora-grupo" style="width:100%;border-collapse:collapse;font-size:12px"></table>
+          </div>
+
+          <div class="card" id="prev-secao-fracoes">
+            <div class="card-header">
+              <span class="card-title">Frações ideais</span>
+            </div>
+            <div id="prev-fracoes-resumo" style="font-family:var(--mono);font-size:12px;padding:8px 0"></div>
+            <button id="prev-btn-toggle-fracoes" class="btn btn-ghost" onclick="previsaoToggleFracoes()"
+                    style="margin-top:6px">Ver lista de frações</button>
+            <div id="prev-fracoes-lista" style="display:none;margin-top:12px;overflow-x:auto"></div>
+          </div>
+
+          <div class="card" style="display:flex;justify-content:flex-end;gap:10px">
+            <button id="prev-btn-baixar-csv" class="btn btn-ghost" onclick="previsaoBaixarCSV()">
+              Baixar Planilha CSV
+            </button>
+            <button id="prev-btn-pdf" class="btn btn-ghost" disabled
+                    title="Disponível na Fase 4. Aguarde a próxima versão.">
+              Gerar PDF
+            </button>
+          </div>
+
+        </div>
+
       </div>
 
     </div>
@@ -1914,7 +2013,7 @@ function setCondominioAtivo(obj) {
   // Atualiza card do Dashboard se já estiver no DOM
   if (typeof atualizarDashCond === 'function') atualizarDashCond();
   // Atualiza banners nos painéis que já foram renderizados
-  ['despesas','unidades','boletos','financeiro'].forEach(function(p) {
+  ['despesas','unidades','boletos','financeiro','previsao'].forEach(function(p) {
     if (document.getElementById('banner-cond-' + p)) renderBannerCondAtivo(p);
   });
   // Sincroniza o seletor do topbar quando a troca vem de outro fluxo (dashboard, modal)
@@ -2286,6 +2385,7 @@ const PAGE_META = {
   tarefas:       { title: 'Tarefas', sub: 'em breve' },
   configuracoes: { title: 'Configurações', sub: 'credenciais e preferências' },
   prestacao:     { title: 'Prestação de Contas', sub: 'gerar apresentação financeira anual' },
+  previsao:      { title: 'Previsão Orçamentária', sub: 'PDFs W011A e W045A geram planilha editável' },
   atas:          { title: 'Atas Condominiais', sub: 'geração automática com IA' },
   consumo:       { title: 'Leitura de Consumo', sub: 'fotos de medidores → Superlógica' },
 };
@@ -2311,6 +2411,9 @@ function showPanel(name) {
   }
   if (name === 'prestacao') {
     prestacaoInit();
+  }
+  if (name === 'previsao') {
+    if (typeof previsaoInit === 'function') previsaoInit();
   }
 }
 
@@ -5521,5 +5624,7 @@ async function deletarUsuario(userId, email) {
 
 <!-- Prestação de contas: bloco JS extraído (refactor preparatório das ondas 1, 2, 3) -->
 <script src="/prestacao.js"></script>
+<!-- Previsão Orçamentária: frontend fase 2 -->
+<script src="/previsao.js"></script>
 </body>
 </html>
