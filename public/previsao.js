@@ -18,7 +18,8 @@ var previsaoState = {
 };
 
 // === Ouvinte de troca de condominio (no topo, fora de funcao) ===
-document.addEventListener('condominioAtivo:changed', function() {
+// O evento condominioAtivo:changed e disparado em window (index.html), nao em document.
+window.addEventListener('condominioAtivo:changed', function() {
   previsaoOnCondominioChange();
 });
 
@@ -106,7 +107,7 @@ function previsaoClassificarArquivo(file) {
   return 'desconhecido';
 }
 
-// Renderiza chips com nome, seletor de tipo e botao remover.
+// Renderiza chips de cada arquivo adicionado com nome, seletor de tipo e botao remover.
 function previsaoRenderizarChips() {
   var box = document.getElementById('prev-chips');
   if (!box) return;
@@ -163,6 +164,8 @@ function previsaoAtualizarBotao() {
 }
 
 // === Chamada ao proxy ===
+
+// Envia os PDFs selecionados para o microservico de extracao e renderiza a planilha com o resultado.
 async function previsaoGerarPlanilha() {
   var arqW011 = previsaoState.arquivos.find(function(a) { return a.tipo === 'w011a'; });
   if (!arqW011) {
@@ -210,7 +213,7 @@ function previsaoTratarErroHttp(status) {
   var msg;
   if (status === 401) msg = 'Sua sessao expirou. Faca login novamente.';
   else if (status === 413) msg = 'Arquivo muito grande. O limite e 50 MB por PDF.';
-  else if (status === 422) msg = 'PDF invalido ou nao reconhecido como W011A ou W045A do Superlogica.';
+  else if (status === 422) msg = 'PDF inválido ou não reconhecido como W011A ou W045A do Superlógica.';
   else if (status === 503) msg = 'Servico de previsao temporariamente indisponivel. Tente em alguns minutos.';
   else if (status === 504) msg = 'Tempo esgotado. PDFs muito grandes podem precisar de processamento manual.';
   else msg = 'Erro inesperado (' + status + '). Tente novamente.';
@@ -229,19 +232,20 @@ function previsaoRenderizarPlanilha(resp) {
   previsaoRenderizarFracoes(resp.fracoes || []);
 }
 
+// Preenche o bloco de cabecalho com condominio, periodo, total anual e mensal medio.
 function previsaoRenderizarCabecalho(resp) {
   var box = document.getElementById('prev-cabecalho');
   if (!box) return;
   var esc = previsaoEsc;
   box.innerHTML =
-    '<div><div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Condominio</div>'
+    '<div><div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Condomínio</div>'
     + '<div style="font-size:14px;color:var(--text);font-weight:600">' + esc(resp.condominio || '') + '</div></div>'
-    + '<div><div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Periodo</div>'
+    + '<div><div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Período</div>'
     + '<div style="font-size:14px;color:var(--text)">' + esc(resp.periodo || '') + '</div></div>'
     + '<div><div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Total anual base</div>'
     + '<div style="font-size:14px;color:var(--text);font-weight:600" id="prev-total-geral-base">' + previsaoFmtBRL(resp.total_geral) + '</div>'
     + '<div style="font-size:11px;color:var(--gs-blue);font-weight:600;margin-top:2px" id="prev-total-geral-novo"></div></div>'
-    + '<div><div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Mensal medio</div>'
+    + '<div><div style="font-size:10px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Mensal médio</div>'
     + '<div style="font-size:14px;color:var(--text)" id="prev-mensal-medio-base">' + previsaoFmtBRL(resp.total_mensal_medio) + '</div>'
     + '<div style="font-size:11px;color:var(--gs-blue);margin-top:2px" id="prev-mensal-medio-novo"></div></div>';
 }
@@ -254,10 +258,11 @@ function previsaoRenderizarAvisos(avisos) {
   box.style.display = '';
   box.innerHTML = '<div class="card-header"><span class="card-title" style="color:rgb(214,158,46)">Avisos do parser</span></div>'
     + avisos.map(function(a) {
-        return '<p style="font-size:12px;color:var(--text);margin:6px 0">Atencao: ' + esc(a) + '</p>';
+        return '<p style="font-size:12px;color:var(--text);margin:6px 0">Atenção: ' + esc(a) + '</p>';
       }).join('');
 }
 
+// Renderiza a tabela principal de grupos orcamentarios com campos de reajuste editaveis.
 function previsaoRenderizarTabelaGrupos(grupos) {
   var tbl = document.getElementById('prev-tabela');
   if (!tbl) return;
@@ -295,6 +300,7 @@ function previsaoRenderizarTabelaGrupos(grupos) {
   tbl.innerHTML = html;
 }
 
+// Expande ou colapsa as subcategorias de um grupo, inserindo linhas em ordem correta.
 function previsaoToggleGrupo(grupoId) {
   if (!previsaoState.resposta) return;
   var expandido = !!previsaoState.gruposExpandidos[grupoId];
@@ -315,8 +321,10 @@ function previsaoToggleGrupo(grupoId) {
   var grupoRow = tbody.querySelector('tr.prev-grupo-row[data-grupo-id="' + grupoId + '"]');
   if (!grupoRow) return;
   var esc = previsaoEsc;
+  // referencia movente: garante que cada subcategoria e inserida APOS a anterior, mantendo a ordem correta
+  var referencia = grupoRow;
   grupo.subcategorias.forEach(function(sub) {
-    var rateioLabel = sub.rateio === 'uso-real' ? 'por uso' : 'por fracao';
+    var rateioLabel = sub.rateio === 'uso-real' ? 'por uso' : 'por fração';
     var tr = document.createElement('tr');
     tr.className = 'prev-subrow';
     tr.setAttribute('data-grupo-id', grupoId);
@@ -328,7 +336,8 @@ function previsaoToggleGrupo(grupoId) {
       + '<td style="text-align:right;padding:8px 6px;font-family:var(--mono);font-size:11px">' + previsaoFmtBRL(sub.total_anual) + '</td>'
       + '<td style="text-align:center;padding:8px 6px;font-size:10px;color:var(--muted);font-family:var(--mono)">' + rateioLabel + '</td>'
       + '<td></td><td></td>';
-    grupoRow.parentNode.insertBefore(tr, grupoRow.nextSibling);
+    referencia.parentNode.insertBefore(tr, referencia.nextSibling);
+    referencia = tr;
   });
 }
 
@@ -371,6 +380,7 @@ function previsaoRecalcular() {
   }
 }
 
+// Renderiza a secao de itens que nao foram classificados em nenhum grupo orcamentario.
 function previsaoRenderizarForaGrupo(itens) {
   var sec = document.getElementById('prev-secao-fora-grupo');
   var tbl = document.getElementById('prev-tabela-fora-grupo');
@@ -379,13 +389,13 @@ function previsaoRenderizarForaGrupo(itens) {
   sec.style.display = '';
   var esc = previsaoEsc;
   var motivoLabel = function(m) {
-    if (m === 'divida-especifica') return 'Divida especifica';
-    if (m === 'obra-extraordinaria') return 'Obra extraordinaria';
-    return 'Nao classificado';
+    if (m === 'divida-especifica') return 'Dívida específica';
+    if (m === 'obra-extraordinaria') return 'Obra extraordinária';
+    return 'Não classificado';
   };
   var html = '<thead><tr style="border-bottom:2px solid var(--border)">'
     + '<th style="text-align:left;padding:8px 6px;font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Data</th>'
-    + '<th style="text-align:left;padding:8px 6px;font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Descricao</th>'
+    + '<th style="text-align:left;padding:8px 6px;font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Descrição</th>'
     + '<th style="text-align:right;padding:8px 6px;font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Valor</th>'
     + '<th style="text-align:left;padding:8px 6px;font-size:11px;color:var(--muted);font-family:var(--mono);text-transform:uppercase">Motivo</th>'
     + '</tr></thead><tbody>';
@@ -401,6 +411,7 @@ function previsaoRenderizarForaGrupo(itens) {
   tbl.innerHTML = html;
 }
 
+// Renderiza o resumo e a lista detalhada de fracoes ideais das unidades do condominio.
 function previsaoRenderizarFracoes(fracoes) {
   var resumo = document.getElementById('prev-fracoes-resumo');
   var lista = document.getElementById('prev-fracoes-lista');
@@ -411,7 +422,7 @@ function previsaoRenderizarFracoes(fracoes) {
   var esc = previsaoEsc;
   var html = '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="border-bottom:1px solid var(--border)">'
     + '<th style="text-align:left;padding:6px;color:var(--muted);font-family:var(--mono);font-size:11px;text-transform:uppercase">Unidade</th>'
-    + '<th style="text-align:right;padding:6px;color:var(--muted);font-family:var(--mono);font-size:11px;text-transform:uppercase">Fracao</th></tr></thead><tbody>';
+    + '<th style="text-align:right;padding:6px;color:var(--muted);font-family:var(--mono);font-size:11px;text-transform:uppercase">Fração</th></tr></thead><tbody>';
   fracoes.forEach(function(f) {
     html += '<tr style="border-bottom:1px solid var(--border)">'
       + '<td style="padding:6px;font-family:var(--mono);font-size:11px">' + esc(f.unidade) + '</td>'
@@ -427,40 +438,52 @@ function previsaoToggleFracoes() {
   var lista = document.getElementById('prev-fracoes-lista');
   var btn = document.getElementById('prev-btn-toggle-fracoes');
   if (lista) lista.style.display = previsaoState.fracoesVisiveis ? '' : 'none';
-  if (btn) btn.textContent = previsaoState.fracoesVisiveis ? 'Ocultar lista de fracoes' : 'Ver lista de fracoes';
+  if (btn) btn.textContent = previsaoState.fracoesVisiveis ? 'Ocultar lista de frações' : 'Ver lista de frações';
 }
 
 // === Download CSV ===
+
+// Protege campos do CSV contra injecao de formula no Excel.
+// Se a string comeca com =, +, -, @, tab ou CR, prefixa com apostrofo
+// para o Excel interpretar como texto literal.
+function previsaoCsvSafe(s) {
+  if (s == null) return '';
+  var str = String(s);
+  if (/^[=+\-@\t\r]/.test(str)) return "'" + str;
+  return str;
+}
+
+// Gera e dispara o download de um arquivo CSV com BOM UTF-8 e CRLF (compativel com Excel BR).
 function previsaoBaixarCSV() {
   if (!previsaoState.resposta) return;
   var r = previsaoState.resposta;
   var sep = ';';
   var linhas = [];
-  linhas.push('Condominio' + sep + (r.condominio || ''));
-  linhas.push('Periodo' + sep + (r.periodo || ''));
+  linhas.push('Condomínio' + sep + previsaoCsvSafe(r.condominio));
+  linhas.push('Período' + sep + previsaoCsvSafe(r.periodo));
   linhas.push('Total anual base' + sep + (r.total_geral || 0).toFixed(2).replace('.', ','));
   var totalNovo = (r.grupos || []).reduce(function(s, g) {
     var rj = previsaoState.reajustes[g.id] || 0;
     return s + (g.total_anual || 0) * (1 + rj);
   }, 0);
   linhas.push('Total anual ajustado' + sep + totalNovo.toFixed(2).replace('.', ','));
-  linhas.push('Mensal medio base' + sep + (r.total_mensal_medio || 0).toFixed(2).replace('.', ','));
+  linhas.push('Mensal médio base' + sep + (r.total_mensal_medio || 0).toFixed(2).replace('.', ','));
   linhas.push('');
   linhas.push(['Grupo', 'Total anual', 'Reajuste %', 'Novo total', 'Peso %'].join(sep));
   (r.grupos || []).forEach(function(g) {
     var rj = previsaoState.reajustes[g.id] || 0;
     var novo = (g.total_anual || 0) * (1 + rj);
     linhas.push([
-      g.nome,
+      previsaoCsvSafe(g.nome),
       (g.total_anual || 0).toFixed(2).replace('.', ','),
       (rj * 100).toFixed(1).replace('.', ','),
       novo.toFixed(2).replace('.', ','),
       ((g.peso_pct || 0) * 100).toFixed(1).replace('.', ',')
     ].join(sep));
     (g.subcategorias || []).forEach(function(sub) {
-      var rateioLabel = sub.rateio === 'uso-real' ? 'por uso' : 'por fracao';
+      var rateioLabel = sub.rateio === 'uso-real' ? 'por uso' : 'por fração';
       linhas.push([
-        '  ' + sub.nome,
+        '  ' + previsaoCsvSafe(sub.nome),
         (sub.total_anual || 0).toFixed(2).replace('.', ','),
         rateioLabel,
         '',
@@ -468,8 +491,8 @@ function previsaoBaixarCSV() {
       ].join(sep));
     });
   });
-  // BOM UTF-8 para Excel BR reconhecer acentuacao
-  var conteudo = '﻿' + linhas.join('\n');
+  // BOM UTF-8 para Excel BR reconhecer acentuacao; CRLF para compatibilidade Windows/Excel
+  var conteudo = '﻿' + linhas.join('\r\n');
   var nomeArq = 'previsao_' + (r.condominio || 'condominio').replace(/[^a-zA-Z0-9]+/g, '_') + '_'
     + new Date().toISOString().slice(0, 10).replace(/-/g, '') + '.csv';
   var blob = new Blob([conteudo], { type: 'text/csv;charset=utf-8' });
