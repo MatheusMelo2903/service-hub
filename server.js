@@ -798,6 +798,30 @@ app.post('/api/admin/seed-dev',
   });
 
 // ─────────────────────────────────────────────────────────────────────────
+// Helpers de cache hash para o módulo Previsão Orçamentária.
+// Calculam MD5 deterministico do payload com keys ordenadas recursivamente.
+// Evitam escrita no banco quando o usuário salva sem ter alterado nada.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Serializa objeto com chaves ordenadas recursivamente em todos os niveis.
+// Garante que o hash do payload seja deterministico independente da ordem
+// em que JavaScript construiu o objeto. Usado apenas para detectar mudanca
+// de conteudo, nao para seguranca.
+function previsaoSerializarOrdenado(obj) {
+  if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+  if (Array.isArray(obj)) return '[' + obj.map(previsaoSerializarOrdenado).join(',') + ']';
+  var chaves = Object.keys(obj).sort();
+  return '{' + chaves.map(function(k) {
+    return JSON.stringify(k) + ':' + previsaoSerializarOrdenado(obj[k]);
+  }).join(',') + '}';
+}
+
+// MD5 hex do payload serializado com keys ordenadas.
+function previsaoMd5Deterministico(obj) {
+  return crypto.createHash('md5').update(previsaoSerializarOrdenado(obj)).digest('hex');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Módulo: Previsão Orçamentária
 // Proxy autenticado para o microserviço FastAPI previsao-api.
 // O body multipart vai puro pelo pipe — NÃO passar por express.json().
@@ -865,6 +889,153 @@ app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
 
   req.pipe(upstream);
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Módulo: Previsão Orçamentária — Persistência Supabase (Fase 3)
+//
+// Três rotas de rascunho com cache hash MD5:
+//   POST /api/previsao/salvar-rascunho  — upsert com detecção de mudança
+//   GET  /api/previsao/listar           — lista rascunhos do condomínio
+//   GET  /api/previsao/rascunho/:id     — carrega rascunho individual
+//
+// Todas exigem auth Supabase (JWT). authMode 'internal' é bloqueado porque
+// rascunhos precisam de um usuario real (criado_por = auth.uid()).
+// service_role bypassa RLS, portanto o filtro por criado_por é replicado
+// no Express para respeitar a Opção C de visibilidade por role.
+// ─────────────────────────────────────────────────────────────────────────
+
+// POST /api/previsao/salvar-rascunho
+// Upsert de rascunho com detecção de mudança via hash MD5. Se o hash armazenado
+// for igual ao calculado, retorna sem_alteracoes sem escrever no banco.
+// Body: { condominio_id, ano_referencia, periodo, payload_json }
+app.post('/api/previsao/salvar-rascunho',
+  requireAuth, requireServiceRoleKey, express.json({ limit: '10mb' }),
+  async (req, res) => {
+    // authMode internal não tem usuario real; criado_por seria null
+    if (req.authMode === 'internal') {
+      return res.status(400).json({ erro: 'usuario_obrigatorio', detalhe: 'Esta rota exige autenticação Supabase (JWT de usuário real).' });
+    }
+    const { condominio_id, ano_referencia, periodo, payload_json } = req.body || {};
+    if (!condominio_id || typeof condominio_id !== 'string') {
+      return res.status(400).json({ erro: 'condominio_id_obrigatorio' });
+    }
+    if (typeof ano_referencia !== 'number' || ano_referencia < 2000 || ano_referencia > 2100) {
+      return res.status(400).json({ erro: 'ano_referencia_invalido', detalhe: 'Deve ser número entre 2000 e 2100.' });
+    }
+    if (!periodo || typeof periodo !== 'string') {
+      return res.status(400).json({ erro: 'periodo_obrigatorio' });
+    }
+    if (!payload_json || typeof payload_json !== 'object' || Array.isArray(payload_json)) {
+      return res.status(400).json({ erro: 'payload_json_obrigatorio', detalhe: 'Deve ser um objeto JSON.' });
+    }
+
+    const userId = req.user.sub;
+    // Reajustes entram no hash para que mudanças só neles também disparem escrita
+    const hashCalculado = previsaoMd5Deterministico(payload_json);
+
+    // Busca rascunho existente para o condomínio + ano
+    const busca = await supabaseAdminRequest('GET',
+      `/rest/v1/previsoes_orcamentarias?condominio_id=eq.${encodeURIComponent(condominio_id)}&ano_referencia=eq.${ano_referencia}&status=eq.rascunho&select=id,payload_hash,criado_por&limit=1`);
+
+    if (busca.status >= 400) {
+      return res.status(502).json({ erro: 'erro_busca_rascunho', detalhe: busca.body });
+    }
+
+    const existentes = Array.isArray(busca.body) ? busca.body : [];
+    const existente = existentes[0] || null;
+
+    // Controle de acesso: OPERACIONAL só pode atualizar o próprio rascunho
+    const role = getRoleFromPayload(req.user);
+    if (existente && !['GESTOR', 'GERENTE'].includes(role) && existente.criado_por !== userId) {
+      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Rascunho pertence a outro usuário.' });
+    }
+
+    // Cache hit: payload não mudou, sem escrita
+    if (existente && existente.payload_hash === hashCalculado) {
+      return res.status(200).json({ status: 'sem_alteracoes', id: existente.id, payload_hash: hashCalculado });
+    }
+
+    if (existente) {
+      // Atualiza registro existente
+      const upd = await supabaseAdminRequest('PATCH',
+        `/rest/v1/previsoes_orcamentarias?id=eq.${encodeURIComponent(existente.id)}`,
+        { periodo, payload_json, payload_hash: hashCalculado });
+      if (upd.status >= 400) {
+        return res.status(502).json({ erro: 'erro_atualizar_rascunho', detalhe: upd.body });
+      }
+      const registro = Array.isArray(upd.body) ? upd.body[0] : upd.body;
+      return res.status(200).json({ status: 'atualizado', id: registro?.id || existente.id, payload_hash: hashCalculado });
+    }
+
+    // Insere novo rascunho
+    const ins = await supabaseAdminRequest('POST',
+      '/rest/v1/previsoes_orcamentarias',
+      { condominio_id, ano_referencia, periodo, status: 'rascunho', payload_json, payload_hash: hashCalculado, criado_por: userId });
+    if (ins.status >= 400) {
+      return res.status(502).json({ erro: 'erro_inserir_rascunho', detalhe: ins.body });
+    }
+    const novo = Array.isArray(ins.body) ? ins.body[0] : ins.body;
+    return res.status(201).json({ status: 'criado', id: novo?.id, payload_hash: hashCalculado });
+  });
+
+// GET /api/previsao/listar?condominio_id=<uuid>
+// Lista rascunhos do condomínio ativo. GESTOR/GERENTE veem todos;
+// OPERACIONAL vê apenas os próprios (filtro explícito no Express, pois
+// service_role bypassa RLS).
+app.get('/api/previsao/listar',
+  requireAuth, requireServiceRoleKey,
+  async (req, res) => {
+    if (req.authMode === 'internal') {
+      return res.status(400).json({ erro: 'usuario_obrigatorio' });
+    }
+    const condominioId = req.query.condominio_id;
+    if (!condominioId || typeof condominioId !== 'string') {
+      return res.status(400).json({ erro: 'condominio_id_obrigatorio' });
+    }
+
+    const role = getRoleFromPayload(req.user);
+    const userId = req.user.sub;
+    let filtro = `/rest/v1/previsoes_orcamentarias?condominio_id=eq.${encodeURIComponent(condominioId)}&status=eq.rascunho&select=id,ano_referencia,periodo,payload_hash,criado_por,atualizado_em&order=atualizado_em.desc`;
+    // OPERACIONAL: aplica filtro adicional pelo proprio userId
+    if (!['GESTOR', 'GERENTE'].includes(role)) {
+      filtro += `&criado_por=eq.${encodeURIComponent(userId)}`;
+    }
+
+    const r = await supabaseAdminRequest('GET', filtro);
+    if (r.status >= 400) {
+      return res.status(502).json({ erro: 'erro_listar_rascunhos', detalhe: r.body });
+    }
+    return res.status(200).json(Array.isArray(r.body) ? r.body : []);
+  });
+
+// GET /api/previsao/rascunho/:id
+// Carrega um rascunho individual pelo UUID. OPERACIONAL recebe 404 se não
+// for o dono (evita vazar que o registro existe).
+app.get('/api/previsao/rascunho/:id',
+  requireAuth, requireServiceRoleKey,
+  async (req, res) => {
+    if (req.authMode === 'internal') {
+      return res.status(400).json({ erro: 'usuario_obrigatorio' });
+    }
+    const id = req.params.id;
+    const r = await supabaseAdminRequest('GET',
+      `/rest/v1/previsoes_orcamentarias?id=eq.${encodeURIComponent(id)}&select=*&limit=1`);
+    if (r.status >= 400) {
+      return res.status(502).json({ erro: 'erro_buscar_rascunho', detalhe: r.body });
+    }
+    const registros = Array.isArray(r.body) ? r.body : [];
+    if (!registros.length) {
+      return res.status(404).json({ erro: 'rascunho_nao_encontrado' });
+    }
+    const registro = registros[0];
+    // Controle de visibilidade: OPERACIONAL só vê o próprio
+    const role = getRoleFromPayload(req.user);
+    const userId = req.user.sub;
+    if (!['GESTOR', 'GERENTE'].includes(role) && registro.criado_por !== userId) {
+      return res.status(404).json({ erro: 'rascunho_nao_encontrado' });
+    }
+    return res.status(200).json(registro);
+  });
 
 // Middleware 404 para rotas /api/* desconhecidas.
 // Posicionado depois de todas as rotas reais de /api e antes do catch-all geral.
