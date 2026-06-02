@@ -935,10 +935,11 @@ app.post('/api/previsao/salvar-rascunho',
 
     // Busca rascunho existente para o condomínio + ano
     const busca = await supabaseAdminRequest('GET',
-      `/rest/v1/previsoes_orcamentarias?condominio_id=eq.${encodeURIComponent(condominio_id)}&ano_referencia=eq.${ano_referencia}&status=eq.rascunho&select=id,payload_hash,criado_por&limit=1`);
+      `/rest/v1/previsoes_orcamentarias?condominio_id=eq.${encodeURIComponent(condominio_id)}&ano_referencia=eq.${encodeURIComponent(ano_referencia)}&status=eq.rascunho&select=id,payload_hash,criado_por&limit=1`);
 
     if (busca.status >= 400) {
-      return res.status(502).json({ erro: 'erro_busca_rascunho', detalhe: busca.body });
+      console.error('[previsao] erro busca rascunho:', JSON.stringify(busca.body));
+      return res.status(502).json({ erro: 'erro_busca_rascunho' });
     }
 
     const existentes = Array.isArray(busca.body) ? busca.body : [];
@@ -947,7 +948,7 @@ app.post('/api/previsao/salvar-rascunho',
     // Controle de acesso: OPERACIONAL só pode atualizar o próprio rascunho
     const role = getRoleFromPayload(req.user);
     if (existente && !['GESTOR', 'GERENTE'].includes(role) && existente.criado_por !== userId) {
-      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Rascunho pertence a outro usuário.' });
+      return res.status(404).json({ erro: 'rascunho_nao_encontrado' });
     }
 
     // Cache hit: payload não mudou, sem escrita
@@ -961,7 +962,8 @@ app.post('/api/previsao/salvar-rascunho',
         `/rest/v1/previsoes_orcamentarias?id=eq.${encodeURIComponent(existente.id)}`,
         { periodo, payload_json, payload_hash: hashCalculado });
       if (upd.status >= 400) {
-        return res.status(502).json({ erro: 'erro_atualizar_rascunho', detalhe: upd.body });
+        console.error('[previsao] erro patch rascunho:', JSON.stringify(upd.body));
+        return res.status(502).json({ erro: 'erro_atualizar_rascunho' });
       }
       const registro = Array.isArray(upd.body) ? upd.body[0] : upd.body;
       return res.status(200).json({ status: 'atualizado', id: registro?.id || existente.id, payload_hash: hashCalculado });
@@ -972,7 +974,8 @@ app.post('/api/previsao/salvar-rascunho',
       '/rest/v1/previsoes_orcamentarias',
       { condominio_id, ano_referencia, periodo, status: 'rascunho', payload_json, payload_hash: hashCalculado, criado_por: userId });
     if (ins.status >= 400) {
-      return res.status(502).json({ erro: 'erro_inserir_rascunho', detalhe: ins.body });
+      console.error('[previsao] erro insert rascunho:', JSON.stringify(ins.body));
+      return res.status(502).json({ erro: 'erro_inserir_rascunho' });
     }
     const novo = Array.isArray(ins.body) ? ins.body[0] : ins.body;
     return res.status(201).json({ status: 'criado', id: novo?.id, payload_hash: hashCalculado });
@@ -995,7 +998,8 @@ app.get('/api/previsao/listar',
 
     const role = getRoleFromPayload(req.user);
     const userId = req.user.sub;
-    let filtro = `/rest/v1/previsoes_orcamentarias?condominio_id=eq.${encodeURIComponent(condominioId)}&status=eq.rascunho&select=id,ano_referencia,periodo,payload_hash,criado_por,atualizado_em&order=atualizado_em.desc`;
+    const limite = Math.min(parseInt(req.query.limit || '50', 10) || 50, 200);
+    let filtro = `/rest/v1/previsoes_orcamentarias?condominio_id=eq.${encodeURIComponent(condominioId)}&status=eq.rascunho&select=id,ano_referencia,periodo,payload_hash,atualizado_em&order=atualizado_em.desc&limit=${limite}`;
     // OPERACIONAL: aplica filtro adicional pelo proprio userId
     if (!['GESTOR', 'GERENTE'].includes(role)) {
       filtro += `&criado_por=eq.${encodeURIComponent(userId)}`;
@@ -1003,7 +1007,8 @@ app.get('/api/previsao/listar',
 
     const r = await supabaseAdminRequest('GET', filtro);
     if (r.status >= 400) {
-      return res.status(502).json({ erro: 'erro_listar_rascunhos', detalhe: r.body });
+      console.error('[previsao] erro listar rascunhos:', JSON.stringify(r.body));
+      return res.status(502).json({ erro: 'erro_listar_rascunhos' });
     }
     return res.status(200).json(Array.isArray(r.body) ? r.body : []);
   });
@@ -1021,7 +1026,8 @@ app.get('/api/previsao/rascunho/:id',
     const r = await supabaseAdminRequest('GET',
       `/rest/v1/previsoes_orcamentarias?id=eq.${encodeURIComponent(id)}&select=*&limit=1`);
     if (r.status >= 400) {
-      return res.status(502).json({ erro: 'erro_buscar_rascunho', detalhe: r.body });
+      console.error('[previsao] erro get rascunho:', JSON.stringify(r.body));
+      return res.status(502).json({ erro: 'erro_buscar_rascunho' });
     }
     const registros = Array.isArray(r.body) ? r.body : [];
     if (!registros.length) {

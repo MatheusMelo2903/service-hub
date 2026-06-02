@@ -606,14 +606,14 @@ function previsaoMontarPayloadParaSalvar() {
 
 // Salva o rascunho atual no servidor via POST /api/previsao/salvar-rascunho.
 // Trata os tres estados possiveis: sem_alteracoes, atualizado, criado.
-async function previsaoSalvarRascunho() {
+async function previsaoSalvarRascunho(silencioso) {
   var cond = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
   if (!cond || !cond.id) {
     if (typeof toast === 'function') toast('Selecione um condominio antes de salvar.', 'warn');
     return;
   }
   if (!previsaoState.resposta) {
-    if (typeof toast === 'function') toast('Gere a planilha antes de salvar.', 'warn');
+    if (!silencioso && typeof toast === 'function') toast('Gere a planilha antes de salvar.', 'warn');
     return;
   }
   if (previsaoState.salvandoRascunho) return;
@@ -638,21 +638,21 @@ async function previsaoSalvarRascunho() {
       })
     });
     if (!resp.ok) {
-      if (typeof toast === 'function') toast('Erro ao salvar rascunho. Tente novamente.', 'err');
+      if (!silencioso && typeof toast === 'function') toast('Erro ao salvar rascunho. Tente novamente.', 'err');
       return;
     }
     var data = await resp.json();
     previsaoState.ultimoHashSalvo = data.payload_hash || null;
     if (data.id) previsaoState.rascunhoId = data.id;
     if (data.status === 'sem_alteracoes') {
-      if (typeof toast === 'function') toast('Sem alteracoes desde o ultimo salvamento.', 'info');
+      if (!silencioso && typeof toast === 'function') toast('Sem alteracoes desde o ultimo salvamento.', 'info');
     } else if (data.status === 'atualizado') {
-      if (typeof toast === 'function') toast('Rascunho atualizado.', 'ok');
+      if (!silencioso && typeof toast === 'function') toast('Rascunho atualizado.', 'ok');
     } else {
-      if (typeof toast === 'function') toast('Rascunho salvo.', 'ok');
+      if (!silencioso && typeof toast === 'function') toast('Rascunho salvo.', 'ok');
     }
   } catch (err) {
-    if (typeof toast === 'function') toast('Sem conexao ao salvar.', 'err');
+    if (!silencioso && typeof toast === 'function') toast('Sem conexao ao salvar.', 'err');
   } finally {
     previsaoState.salvandoRascunho = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Salvar Rascunho'; }
@@ -746,5 +746,5 @@ function previsaoAutosaveAoSairDoPainel() {
   // Verifica se ha condominio ativo antes de tentar salvar
   var cond = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
   if (!cond || !cond.id) return;
-  previsaoSalvarRascunho();
+  previsaoSalvarRascunho(true);
 }
