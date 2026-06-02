@@ -52,6 +52,8 @@ CREATE TRIGGER trigger_previsao_atualizado_em
 
 ALTER TABLE public.previsoes_orcamentarias ENABLE ROW LEVEL SECURITY;
 
+-- SELECT: GESTOR e GERENTE veem todas as previsoes; OPERACIONAL ve apenas as que criou.
+-- Padrao Opcao C: sem tenant_id, controle por role do JWT app_metadata.
 DROP POLICY IF EXISTS "previsao_select" ON public.previsoes_orcamentarias;
 CREATE POLICY "previsao_select" ON public.previsoes_orcamentarias
   FOR SELECT TO authenticated
@@ -60,19 +62,13 @@ CREATE POLICY "previsao_select" ON public.previsoes_orcamentarias
     OR criado_por = auth.uid()
   );
 
-COMMENT ON POLICY "previsao_select" ON public.previsoes_orcamentarias IS
-  'Entrega 1 (2026-06-02): GESTOR/GERENTE veem todas as previsões; ' ||
-  'OPERACIONAL vê apenas as que ele criou. ' ||
-  'Padrão Opção C — sem tenant_id, controle por role do JWT app_metadata.';
-
+-- INSERT: qualquer usuario autenticado pode inserir, mas so com criado_por = auth.uid().
 DROP POLICY IF EXISTS "previsao_insert" ON public.previsoes_orcamentarias;
 CREATE POLICY "previsao_insert" ON public.previsoes_orcamentarias
   FOR INSERT TO authenticated
   WITH CHECK (criado_por = auth.uid());
 
-COMMENT ON POLICY "previsao_insert" ON public.previsoes_orcamentarias IS
-  'Qualquer usuário autenticado pode inserir, mas só com criado_por = auth.uid().';
-
+-- UPDATE: GESTOR e GERENTE editam qualquer; OPERACIONAL so o que criou.
 DROP POLICY IF EXISTS "previsao_update" ON public.previsoes_orcamentarias;
 CREATE POLICY "previsao_update" ON public.previsoes_orcamentarias
   FOR UPDATE TO authenticated
@@ -85,12 +81,10 @@ CREATE POLICY "previsao_update" ON public.previsoes_orcamentarias
     OR criado_por = auth.uid()
   );
 
+-- DELETE: somente GESTOR pode deletar rascunhos. GERENTE e OPERACIONAL nao deletam.
 DROP POLICY IF EXISTS "previsao_delete" ON public.previsoes_orcamentarias;
 CREATE POLICY "previsao_delete" ON public.previsoes_orcamentarias
   FOR DELETE TO authenticated
   USING (
     COALESCE(auth.jwt() -> 'app_metadata' ->> 'role', '') = 'GESTOR'
   );
-
-COMMENT ON POLICY "previsao_delete" ON public.previsoes_orcamentarias IS
-  'Somente GESTOR pode deletar rascunhos. GERENTE e OPERACIONAL não deletam.';
