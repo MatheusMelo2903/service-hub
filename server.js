@@ -845,10 +845,24 @@ app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
   });
   upstream.on('error', e => {
     if (!res.headersSent) {
-      const status = e.code === 'ECONNREFUSED' ? 503 : 502;
-      res.status(status).json({ erro: 'previsao_api_indisponivel', detalhe: e.message });
+      // Serviço inacessível (recusa, timeout de rede, DNS) → 503.
+      // Erros de protocolo/resposta inválida → 502.
+      const indisponivel = ['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EHOSTUNREACH'].includes(e.code);
+      const statusCode = indisponivel ? 503 : 502;
+      // Expor apenas o código Node (sem IP/hostname) para não vazar topologia interna.
+      res.status(statusCode).json({ erro: 'previsao_api_indisponivel', detalhe: e.code || 'erro_desconhecido' });
     }
   });
+
+  // Limite de 50MB: PDFs do Superlógica raramente passam de 5MB.
+  // Validado após requireAuth — não vale checar tamanho de quem não autenticou.
+  const TAMANHO_MAX_UPLOAD = 50 * 1024 * 1024;
+  const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+  if (!contentLength || contentLength > TAMANHO_MAX_UPLOAD) {
+    res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'PDFs do Superlógica raramente passam de 5MB. Limite: 50MB.' });
+    return;
+  }
+
   req.pipe(upstream);
 });
 

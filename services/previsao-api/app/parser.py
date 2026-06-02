@@ -308,27 +308,41 @@ def montar_response(
 
         # Se nenhuma subcategoria real detectada para este grupo: cria espelho
         if not subcats_do_grupo:
-            # Subcategoria espelho: mesmo id/nome do grupo, lancamentos vazios
-            meta_esp = SUBCATEGORIAS.get(id_grupo)
-            if meta_esp:
+            if id_grupo == 'consumo-taxas':
+                # Caso explícito: consumo-taxas vazio recebe espelho com fracao-ideal.
+                # Utilidades só faz sentido com rateio uso-real se houver lançamentos
+                # de utilidade detectados; sem lançamentos, fracao-ideal é o default
+                # semântico correto para o grupo agregado.
                 espelho = Subcategoria(
-                    id=id_grupo,
-                    nome=meta_esp['nome'],
-                    descritivo=meta_esp['descritivo'],
-                    total_anual=0.0,
-                    rateio=meta_esp['rateio'],
-                    lancamentos=[],
-                )
-            else:
-                # Grupo sem meta (nao deveria ocorrer, mas fallback seguro)
-                espelho = Subcategoria(
-                    id=id_grupo,
-                    nome=defn_grupo['nome'],
+                    id='consumo-taxas',
+                    nome='Consumo e Taxas',
                     descritivo=defn_grupo['descritivo'],
                     total_anual=0.0,
                     rateio='fracao-ideal',
                     lancamentos=[],
                 )
+            else:
+                # Subcategoria espelho: mesmo id/nome do grupo, lancamentos vazios
+                meta_esp = SUBCATEGORIAS.get(id_grupo)
+                if meta_esp:
+                    espelho = Subcategoria(
+                        id=id_grupo,
+                        nome=meta_esp['nome'],
+                        descritivo=meta_esp['descritivo'],
+                        total_anual=0.0,
+                        rateio=meta_esp['rateio'],
+                        lancamentos=[],
+                    )
+                else:
+                    # Grupo sem meta (nao deveria ocorrer, mas fallback seguro)
+                    espelho = Subcategoria(
+                        id=id_grupo,
+                        nome=defn_grupo['nome'],
+                        descritivo=defn_grupo['descritivo'],
+                        total_anual=0.0,
+                        rateio='fracao-ideal',
+                        lancamentos=[],
+                    )
             subcats_do_grupo = [espelho]
 
         total_anual_grupo = round(sum(s.total_anual for s in subcats_do_grupo), 2)

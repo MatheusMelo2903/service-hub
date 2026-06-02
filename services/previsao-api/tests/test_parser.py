@@ -189,6 +189,39 @@ def test_w045a_fracoes_entre_limites(mocks_gerados):
         )
 
 
+# ─── Teste: espelho consumo-taxas quando subcategorias vazias ─────────────
+
+def test_espelho_consumo_taxas_vazio():
+    """Quando não há lançamentos de Consumo e Taxas, o espelho deve usar fracao-ideal.
+
+    Monta dados_w011 com subcategorias_extraidas vazio e chama montar_response
+    diretamente. Verifica que consumo-taxas tem 1 subcategoria espelho com
+    id='consumo-taxas', rateio='fracao-ideal' e total_anual=0.
+    """
+    dados_w011 = {
+        'condominio': 'Cond. Teste',
+        'periodo': 'Jan/2025 a Dez/2025',
+        'subcategorias_extraidas': {},  # nenhum lançamento classificado
+        'itens_fora_grupo': [],
+        'nao_classificados': [],
+        'avisos': [],
+    }
+    response = montar_response(dados_w011, [], duracao_ms=0)
+
+    consumo = next((g for g in response.grupos if g.id == 'consumo-taxas'), None)
+    assert consumo is not None, 'Grupo consumo-taxas ausente na resposta'
+    assert len(consumo.subcategorias) == 1, (
+        f'Esperado 1 subcategoria espelho, encontrado {len(consumo.subcategorias)}'
+    )
+    esp = consumo.subcategorias[0]
+    assert esp.id == 'consumo-taxas', f'id do espelho incorreto: {esp.id}'
+    assert esp.rateio == 'fracao-ideal', (
+        f'Espelho vazio deve usar fracao-ideal, recebeu {esp.rateio}'
+    )
+    assert esp.total_anual == 0.0, f'Espelho vazio deve ter total=0, recebeu {esp.total_anual}'
+    assert esp.lancamentos == [], 'Espelho vazio deve ter lancamentos=[]'
+
+
 # ─── Testes de metadados ──────────────────────────────────────────────────
 
 def test_metadados_versao_correta(mocks_gerados):

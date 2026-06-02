@@ -16,4 +16,9 @@ COPY app/ ./app/
 ENV PORT=8000
 EXPOSE 8000
 
+# Não rodar como root: Railway cria container efêmero, mas é prática padrão.
+RUN adduser --disabled-password --gecos "" --no-create-home appuser \
+ && chown -R appuser:appuser /app
+USER appuser
+
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

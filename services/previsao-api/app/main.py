@@ -88,15 +88,12 @@ async def extrair_pdfs(
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         import traceback
+        # Stack completo vai pro stderr (logs internos do Railway).
+        # Cliente recebe apenas mensagem genérica pra não vazar caminhos ou módulos internos.
         traceback.print_exc()
-        if not hasattr(e, 'status_code'):
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    'erro': 'extracao_falhou',
-                    'detalhe': str(e)[:200],
-                },
-            )
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={'erro': 'extracao_falhou'},
+        )
