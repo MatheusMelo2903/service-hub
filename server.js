@@ -1114,7 +1114,9 @@ app.get('/api/previsao/rascunho/:id',
 //   7. INSERT em previsoes_geracoes
 //   8. Retorna { pptx_url, pdf_url, gerado_em, cached, duracao_ms }
 // ─────────────────────────────────────────────────────────────────────────
-app.post('/api/previsao/gerar-pdf', requireAuth, async (req, res) => {
+app.post('/api/previsao/gerar-pdf',
+  requireAuth, requireServiceRoleKey, express.json({ limit: '2mb' }),
+  async (req, res) => {
   // Bloqueia authMode internal - precisa de usuario real para gerado_por
   if (req.authMode === 'internal') {
     return res.status(400).json({ erro: 'usuario_obrigatorio', detalhe: 'gerar-pdf requer autenticacao Supabase' });

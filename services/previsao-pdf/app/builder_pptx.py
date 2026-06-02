@@ -1,35 +1,22 @@
-"""
-Gerador de Previsão Orçamentária Condominial — versão data-driven.
+"""Builder de apresentacao PPTX para Previsao Orcamentaria.
 
-REGRA CRÍTICA: o fundo de reserva NÃO entra no rateio.
-A taxa é calculada exclusivamente como: Despesa Operacional ÷ 12 ÷ Unidades Equivalentes.
-O fundo aparece apenas como informação institucional na apresentação.
+Copia adaptada do skill standalone em skills-server/previsao-orcamentaria/scripts/
+gerar_previsao.py com 5 modificacoes:
+  1. FONT = 'Carlito' (substitute libre de Calibri, disponivel no Linux)
+  2. carregar_planilha() removido (microservico recebe dict do adapter)
+  3. _provavel_categoria() removido (so usado por carregar_planilha)
+  4. main() + bloco __main__ removidos (microservico expoe via FastAPI)
+  5. import argparse / openpyxl / sys removidos
 
-COMO USAR:
-    python3 gerar_previsao.py <planilha.xlsx> [--condominio "Nome"] [--output saida.pptx]
+API publica (importavel via app.builder_pptx):
+  - Builder(dados, taxas, logo_path).build() -> Presentation
+  - calcular_taxas(dados) -> dict de taxas (apto, cobertura, impacto)
+  - FONT (constante)
 
-A planilha deve ter as 4 abas padrão:
-  - Reajustes
-  - Previsao Anual
-  - Previsao Mensal
-  - Resumo Assembleia
-
-Os reajustes são lidos DINAMICAMENTE da planilha, em qualquer combinação.
-Pode haver:
-  - Reajuste só em Funcionários
-  - Reajuste em 6 categorias diferentes
-  - Reajuste em itens específicos com % diferente da categoria
-  - Reajuste em zero categorias (caso de manutenção da taxa)
-
-A skill se adapta ao que estiver na planilha.
-
-Slides 7+ (detalhamento) variam: uma para cada categoria com reajuste,
-ordenados por peso decrescente. Se houver muitas categorias reajustadas,
-gera múltiplos slides de detalhamento.
+Skill standalone NAO foi tocado (uso CLI continua funcionando).
 """
 
 import os
-import sys
 from pptx import Presentation
 from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
