@@ -14,7 +14,10 @@ var previsaoState = {
   resposta: null,        // PrevisaoResponse parseado
   reajustes: {},         // { [grupoId]: float decimal, ex: 0.05 = 5% }
   gruposExpandidos: {},
-  fracoesVisiveis: false
+  fracoesVisiveis: false,
+  ultimoHashSalvo: null,  // hash MD5 retornado pelo servidor no ultimo save bem-sucedido
+  rascunhoId: null,       // UUID do rascunho persistido (null ate o primeiro save)
+  salvandoRascunho: false // mutex para evitar saves concorrentes
 };
 
 // === Ouvinte de troca de condominio (no topo, fora de funcao) ===
@@ -23,6 +26,9 @@ window.addEventListener('condominioAtivo:changed', function() {
   previsaoOnCondominioChange();
 });
 
+// Autosave ao fechar ou recarregar a aba. Nao bloqueia o unload (best-effort).
+window.addEventListener('beforeunload', previsaoAutosaveAoSairDoPainel);
+
 // Chamado pelo showPanel('previsao') a cada abertura do painel.
 function previsaoInit() {
   if (typeof renderBannerCondAtivo === 'function') {
@@ -30,11 +36,30 @@ function previsaoInit() {
   }
   previsaoAtualizarFallback();
   previsaoAtualizarBotao();
+  // Carrega rascunhos salvos do condominio ativo ao abrir o painel
+  var cond = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
+  if (cond && cond.id) previsaoCarregarRascunhos(cond.id);
 }
 
 function previsaoOnCondominioChange() {
+  // Salva rascunho do condominio anterior antes de trocar
+  previsaoAutosaveAoSairDoPainel();
+  // Limpa state do condominio anterior (mantém apenas campos nao relacionados a dados)
+  previsaoState.resposta = null;
+  previsaoState.reajustes = {};
+  previsaoState.gruposExpandidos = {};
+  previsaoState.fracoesVisiveis = false;
+  previsaoState.ultimoHashSalvo = null;
+  previsaoState.rascunhoId = null;
+  previsaoState.salvandoRascunho = false;
+  // Oculta resultado anterior
+  var box = document.getElementById('prev-resultado');
+  if (box) box.style.display = 'none';
   // Banner e fallback sao atualizados pelo setCondominioAtivo e pelo evento.
   previsaoAtualizarFallback();
+  // Carrega rascunhos do novo condominio
+  var cond = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
+  if (cond && cond.id) previsaoCarregarRascunhos(cond.id);
 }
 
 // Mostra/oculta o corpo do painel conforme ha condominio ativo.
@@ -512,6 +537,9 @@ function previsaoLimpar() {
   previsaoState.reajustes = {};
   previsaoState.gruposExpandidos = {};
   previsaoState.fracoesVisiveis = false;
+  previsaoState.ultimoHashSalvo = null;
+  previsaoState.rascunhoId = null;
+  previsaoState.salvandoRascunho = false;
   var box = document.getElementById('prev-resultado');
   if (box) box.style.display = 'none';
   previsaoRenderizarChips();
@@ -549,4 +577,174 @@ function previsaoEsc(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// ============================================================
+// PERSISTENCIA — Fase 3: salvar/carregar/retomar rascunhos
+// ============================================================
+
+// Extrai o ano de referencia do campo periodo (ex: "Jan/2026 a Dez/2026" => 2026).
+// Pega o ultimo grupo de 4 digitos na string. Fallback: ano corrente.
+function previsaoExtrairAnoReferencia(periodo) {
+  if (!periodo) return new Date().getFullYear();
+  var m = String(periodo).match(/(\d{4})\s*$/);
+  if (m) return parseInt(m[1], 10);
+  // Tenta qualquer grupo de 4 digitos
+  var qualquer = String(periodo).match(/\d{4}/g);
+  if (qualquer && qualquer.length) return parseInt(qualquer[qualquer.length - 1], 10);
+  return new Date().getFullYear();
+}
+
+// Monta o payload completo para salvar, incluindo reajustes_aplicados dentro do objeto.
+// Reajustes entram no JSON para que o hash reflita mudancas neles tambem.
+function previsaoMontarPayloadParaSalvar() {
+  if (!previsaoState.resposta) return null;
+  return Object.assign({}, previsaoState.resposta, {
+    reajustes_aplicados: Object.assign({}, previsaoState.reajustes)
+  });
+}
+
+// Salva o rascunho atual no servidor via POST /api/previsao/salvar-rascunho.
+// Trata os tres estados possiveis: sem_alteracoes, atualizado, criado.
+async function previsaoSalvarRascunho() {
+  var cond = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
+  if (!cond || !cond.id) {
+    if (typeof toast === 'function') toast('Selecione um condominio antes de salvar.', 'warn');
+    return;
+  }
+  if (!previsaoState.resposta) {
+    if (typeof toast === 'function') toast('Gere a planilha antes de salvar.', 'warn');
+    return;
+  }
+  if (previsaoState.salvandoRascunho) return;
+  previsaoState.salvandoRascunho = true;
+
+  var payload = previsaoMontarPayloadParaSalvar();
+  var periodo = (previsaoState.resposta && previsaoState.resposta.periodo) || '';
+  var anoRef = previsaoExtrairAnoReferencia(periodo);
+
+  var btn = document.getElementById('prev-btn-salvar');
+  if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+
+  try {
+    var resp = await apiAuthFetch('/api/previsao/salvar-rascunho', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        condominio_id: cond.id,
+        ano_referencia: anoRef,
+        periodo: periodo,
+        payload_json: payload
+      })
+    });
+    if (!resp.ok) {
+      if (typeof toast === 'function') toast('Erro ao salvar rascunho. Tente novamente.', 'err');
+      return;
+    }
+    var data = await resp.json();
+    previsaoState.ultimoHashSalvo = data.payload_hash || null;
+    if (data.id) previsaoState.rascunhoId = data.id;
+    if (data.status === 'sem_alteracoes') {
+      if (typeof toast === 'function') toast('Sem alteracoes desde o ultimo salvamento.', 'info');
+    } else if (data.status === 'atualizado') {
+      if (typeof toast === 'function') toast('Rascunho atualizado.', 'ok');
+    } else {
+      if (typeof toast === 'function') toast('Rascunho salvo.', 'ok');
+    }
+  } catch (err) {
+    if (typeof toast === 'function') toast('Sem conexao ao salvar.', 'err');
+  } finally {
+    previsaoState.salvandoRascunho = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Salvar Rascunho'; }
+  }
+}
+
+// Busca lista de rascunhos do condominioId e renderiza os cards na secao de rascunhos.
+async function previsaoCarregarRascunhos(condominioId) {
+  var secao = document.getElementById('prev-secao-rascunhos');
+  if (!secao) return;
+  try {
+    var resp = await apiAuthFetch('/api/previsao/listar?condominio_id=' + encodeURIComponent(condominioId));
+    if (!resp.ok) { secao.style.display = 'none'; return; }
+    var lista = await resp.json();
+    if (!Array.isArray(lista) || !lista.length) { secao.style.display = 'none'; secao.innerHTML = ''; return; }
+    secao.style.display = '';
+    var html = '<div style="display:flex;flex-wrap:wrap;gap:10px">';
+    lista.forEach(function(r) {
+      var esc = previsaoEsc;
+      var dataStr = '';
+      if (r.atualizado_em) {
+        var d = new Date(r.atualizado_em);
+        dataStr = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(d);
+      }
+      html += '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 16px;min-width:180px">'
+        + '<div style="font-size:12px;font-weight:600;color:var(--text)">Rascunho ' + esc(String(r.ano_referencia)) + '</div>'
+        + '<div style="font-size:10px;color:var(--muted);margin-top:2px">Salvo em ' + esc(dataStr) + '</div>'
+        + '<button onclick="previsaoRetomarRascunho(\'' + esc(r.id) + '\')" '
+        + 'style="margin-top:8px;padding:4px 12px;background:var(--gs-blue);color:#fff;border:none;border-radius:6px;font-size:11px;cursor:pointer">Retomar</button>'
+        + '</div>';
+    });
+    html += '</div>';
+    secao.innerHTML = html;
+  } catch (_) {
+    secao.style.display = 'none';
+  }
+}
+
+// Busca um rascunho pelo ID, hidrata o state e renderiza a tabela.
+async function previsaoRetomarRascunho(id) {
+  try {
+    var resp = await apiAuthFetch('/api/previsao/rascunho/' + encodeURIComponent(id));
+    if (!resp.ok) {
+      if (typeof toast === 'function') toast('Rascunho nao encontrado ou sem acesso.', 'err');
+      return;
+    }
+    var reg = await resp.json();
+    if (!reg || !reg.payload_json) {
+      if (typeof toast === 'function') toast('Rascunho sem dados.', 'warn');
+      return;
+    }
+    var payload = reg.payload_json;
+    // Extrai reajustes_aplicados do payload e separa do restante
+    var reajustes = payload.reajustes_aplicados || {};
+    // Remove o campo auxiliar antes de hidratar resposta (nao faz parte do schema FastAPI)
+    var resposta = Object.assign({}, payload);
+    delete resposta.reajustes_aplicados;
+    previsaoState.resposta = resposta;
+    previsaoState.reajustes = reajustes;
+    previsaoState.gruposExpandidos = {};
+    previsaoState.fracoesVisiveis = false;
+    previsaoState.ultimoHashSalvo = reg.payload_hash || null;
+    previsaoState.rascunhoId = reg.id;
+    previsaoState.salvandoRascunho = false;
+    // Renderiza a planilha com os dados do rascunho
+    previsaoRenderizarPlanilha(resposta);
+    // Reaplica os reajustes salvos nos inputs e recalcula totais
+    previsaoReaplicarReajustesNaTela();
+    if (typeof toast === 'function') toast('Rascunho retomado.', 'ok');
+  } catch (err) {
+    if (typeof toast === 'function') toast('Erro ao retomar rascunho.', 'err');
+  }
+}
+
+// Popula os campos de reajuste na tela com os valores do state.reajustes e dispara recalculo.
+// Chamado apos previsaoRenderizarPlanilha quando vem de um rascunho salvo.
+function previsaoReaplicarReajustesNaTela() {
+  var inputs = document.querySelectorAll('.prev-reajuste-input[data-grupo-id]');
+  inputs.forEach(function(el) {
+    var grupoId = el.getAttribute('data-grupo-id');
+    var val = previsaoState.reajustes[grupoId] || 0;
+    el.textContent = previsaoFmtPct(val * 100, 1);
+  });
+  previsaoRecalcular();
+}
+
+// Dispara salvamento silencioso ao sair do painel ou fechar a aba.
+// Nao exibe toast (o usuario esta saindo) e nao bloqueia o evento.
+function previsaoAutosaveAoSairDoPainel() {
+  if (!previsaoState.resposta || previsaoState.salvandoRascunho) return;
+  // Verifica se ha condominio ativo antes de tentar salvar
+  var cond = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
+  if (!cond || !cond.id) return;
+  previsaoSalvarRascunho();
 }
