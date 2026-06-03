@@ -618,12 +618,17 @@ function previsaoExtrairAnoReferencia(periodo) {
   return new Date().getFullYear();
 }
 
-// Monta o payload completo para salvar, incluindo reajustes_aplicados dentro do objeto.
-// Reajustes entram no JSON para que o hash reflita mudancas neles tambem.
+// Monta o payload completo para salvar, incluindo reajustes_aplicados e config_rateio
+// dentro do objeto. Ambos entram no JSON para que o hash reflita mudancas neles e
+// para que o retomar restaure o estado completo (incluindo apartamentos do rateio).
 function previsaoMontarPayloadParaSalvar() {
   if (!previsaoState.resposta) return null;
+  // Le os inputs do form de rateio (se visiveis) antes de salvar, garantindo que o
+  // payload reflita o estado atual da UI mesmo sem o usuario ter clicado em Gerar.
+  if (document.getElementById('prev-cfg-aptos')) previsaoLerConfigRateio();
   return Object.assign({}, previsaoState.resposta, {
-    reajustes_aplicados: Object.assign({}, previsaoState.reajustes)
+    reajustes_aplicados: Object.assign({}, previsaoState.reajustes),
+    config_rateio: Object.assign({}, previsaoState.configRateio)
   });
 }
 
@@ -765,11 +770,13 @@ async function previsaoRetomarRascunho(id) {
       return;
     }
     var payload = reg.payload_json;
-    // Extrai reajustes_aplicados do payload e separa do restante
+    // Extrai campos auxiliares (reajustes + config_rateio) do payload e separa do restante
     var reajustes = payload.reajustes_aplicados || {};
-    // Remove o campo auxiliar antes de hidratar resposta (nao faz parte do schema FastAPI)
+    var configSalvo = payload.config_rateio || null;
+    // Remove os campos auxiliares antes de hidratar resposta (nao fazem parte do schema FastAPI)
     var resposta = Object.assign({}, payload);
     delete resposta.reajustes_aplicados;
+    delete resposta.config_rateio;
     previsaoState.resposta = resposta;
     previsaoState.reajustes = reajustes;
     previsaoState.gruposExpandidos = {};
@@ -777,12 +784,24 @@ async function previsaoRetomarRascunho(id) {
     previsaoState.ultimoHashSalvo = reg.payload_hash || null;
     previsaoState.rascunhoId = reg.id;
     previsaoState.salvandoRascunho = false;
+    // Restaura config_rateio salvo (preserva defaults se vier vazio/parcial)
+    if (configSalvo) {
+      var c = previsaoState.configRateio;
+      if (configSalvo.apartamentos != null) c.apartamentos = configSalvo.apartamentos;
+      if (configSalvo.coberturas != null) c.coberturas = configSalvo.coberturas;
+      if (configSalvo.fator_cobertura != null) c.fator_cobertura = configSalvo.fator_cobertura;
+      if (configSalvo.fundo_reserva != null) c.fundo_reserva = configSalvo.fundo_reserva;
+      if (configSalvo.fundo_pct != null) c.fundo_pct = configSalvo.fundo_pct;
+    }
     // Renderiza a planilha com os dados do rascunho
     previsaoRenderizarPlanilha(resposta);
     // Reaplica os reajustes salvos nos inputs e recalcula totais
     previsaoReaplicarReajustesNaTela();
-    // Mostra config de rateio e atualiza botao de geracao
+    // Mostra config de rateio (precisa estar visivel antes de popular inputs)
     previsaoMostrarConfigRateio();
+    // Popula os 5 inputs do form de rateio com os valores restaurados do state
+    previsaoPopularInputsConfigRateio();
+    // Atualiza estado do botao de geracao (habilita se config_rateio veio com apartamentos salvos)
     previsaoAtualizarBotaoGerar();
     if (typeof toast === 'function') toast('Rascunho retomado.', 'ok');
   } catch (err) {
@@ -824,6 +843,22 @@ function previsaoLerConfigRateio() {
   c.fator_cobertura = parseFloat(document.getElementById('prev-cfg-fator').value) || 1.5;
   c.fundo_reserva = parseFloat(document.getElementById('prev-cfg-fundo').value) || 0;
   c.fundo_pct = (parseFloat(document.getElementById('prev-cfg-fundo-pct').value) || 5) / 100;
+}
+
+// Popula os 5 inputs do form de rateio a partir do state.configRateio. Usado no retomar
+// de rascunho para evitar que o usuario precise re-digitar apartamentos toda sessao.
+function previsaoPopularInputsConfigRateio() {
+  var c = previsaoState.configRateio;
+  var aptos = document.getElementById('prev-cfg-aptos');
+  var cob = document.getElementById('prev-cfg-cob');
+  var fator = document.getElementById('prev-cfg-fator');
+  var fundo = document.getElementById('prev-cfg-fundo');
+  var fundoPct = document.getElementById('prev-cfg-fundo-pct');
+  if (aptos && c.apartamentos != null) aptos.value = c.apartamentos;
+  if (cob) cob.value = c.coberturas != null ? c.coberturas : 0;
+  if (fator) fator.value = c.fator_cobertura != null ? c.fator_cobertura : 1.5;
+  if (fundo) fundo.value = c.fundo_reserva != null ? c.fundo_reserva : 0;
+  if (fundoPct) fundoPct.value = c.fundo_pct != null ? (c.fundo_pct * 100) : 5;
 }
 
 // Habilita/desabilita o botao Gerar Previsao conforme estado.
@@ -883,6 +918,11 @@ async function previsaoGerarPdf() {
     var data = await resp.json();
     previsaoState.ultimaGeracao = data;
     previsaoRenderizarArquivos(data);
+    // Autosave silencioso: garante que o config_rateio que o usuario digitou fique
+    // persistido no rascunho, evitando que ele precise re-digitar apartamentos ao
+    // retomar de uma sessao futura. Idempotente: se nao mudou nada, servidor responde
+    // 'sem_alteracoes' e o cache de geracao nao e invalidado.
+    previsaoSalvarRascunho(true);
   } catch (e) {
     console.error('[previsao] erro ao gerar pdf:', e);
     if (typeof toast === 'function') toast('Sem conexao ao gerar.', 'err');
