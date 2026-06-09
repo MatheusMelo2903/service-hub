@@ -19,6 +19,9 @@ const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || '';
 // URL do microserviço de Previsão Orçamentária (FastAPI). Em prod, setar via
 // Railway ENV apontando para a URL interna do serviço previsao-api.
 const PREVISAO_API_URL = process.env.PREVISAO_API_URL || 'http://localhost:8000';
+// URL do microservico de geracao de PPTX/PDF (previsao-pdf FastAPI). Em prod, setar via
+// Railway ENV apontando para a URL interna do servico. Opcional: sem ela o endpoint /gerar-pdf retorna 503.
+const PREVISAO_PDF_API_URL = process.env.PREVISAO_PDF_API_URL || '';
 // Origens permitidas (separadas por vírgula). Se vazio, qualquer origem passa
 // (dev mode). Em prod, setar pra "https://service-hub-production.up.railway.app"
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -687,6 +690,61 @@ async function supabaseAdminRequest(method, pathStr, body) {
   });
 }
 
+// Upload binario para Supabase Storage via REST com service_role.
+// Diferente de supabaseAdminRequest (que serializa JSON), este envia o Buffer
+// cru com Content-Type apropriado. Path no bucket: <previsao_id>/<hash>.<ext>.
+async function supabaseStorageUpload(bucket, objectPath, buffer, contentType) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('supabase_nao_configurado');
+  }
+  const url = new URL(`${SUPABASE_URL}/storage/v1/object/${bucket}/${objectPath}`);
+  const cliente = url.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const opts = {
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + SUPABASE_SERVICE_ROLE_KEY,
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Content-Type': contentType,
+        'Content-Length': buffer.length,
+        'x-upsert': 'true',
+      },
+    };
+    const reqUp = cliente.request(opts, r => {
+      let body = '';
+      r.on('data', c => { body += c; });
+      r.on('end', () => {
+        if (r.statusCode >= 200 && r.statusCode < 300) {
+          try { resolve(JSON.parse(body)); } catch { resolve({}); }
+        } else {
+          reject(new Error(`storage_upload_status_${r.statusCode}: ${body.slice(0, 200)}`));
+        }
+      });
+    });
+    reqUp.on('error', reject);
+    reqUp.write(buffer);
+    reqUp.end();
+  });
+}
+
+// Gera signed URL para um objeto privado do Storage (expira em N segundos).
+async function supabaseStorageSignedUrl(bucket, objectPath, expiresIn = 600) {
+  const r = await supabaseAdminRequest(
+    'POST',
+    `/storage/v1/object/sign/${bucket}/${objectPath}`,
+    { expiresIn }
+  );
+  if (r.status >= 400 || !r.body || !r.body.signedURL) {
+    throw new Error('signed_url_falhou');
+  }
+  // O retorno e relativo: { signedURL: "/object/sign/..." } - precisa prefixar com SUPABASE_URL.
+  const rel = r.body.signedURL.startsWith('/') ? r.body.signedURL : '/' + r.body.signedURL;
+  return SUPABASE_URL.replace(/\/$/, '') + '/storage/v1' + rel;
+}
+
 // POST /api/admin/usuarios/convidar
 // Body: { email, role: 'GERENTE'|'OPERACIONAL', nome? }
 // Envia magic link de convite via GoTrue. O profile é criado automaticamente pelo
@@ -1042,6 +1100,201 @@ app.get('/api/previsao/rascunho/:id',
     }
     return res.status(200).json(registro);
   });
+
+// ─────────────────────────────────────────────────────────────────────────
+// POST /api/previsao/gerar-pdf
+//
+// Orquestrador de geracao de PPTX + PDF:
+//   1. Valida auth (apenas Supabase JWT - sem internal)
+//   2. Busca previsao no banco (controle de visibilidade por role)
+//   3. Checa cache em previsoes_geracoes por (previsao_id, payload_hash)
+//   4. Cache hit: regenera signed URLs (10min) e retorna cached: true
+//   5. Cache miss: chama microservico previsao-pdf com timeout 180s
+//   6. Upload PPTX + PDF para Storage privado (bucket previsao-arquivos)
+//   7. INSERT em previsoes_geracoes
+//   8. Retorna { pptx_url, pdf_url, gerado_em, cached, duracao_ms }
+// ─────────────────────────────────────────────────────────────────────────
+app.post('/api/previsao/gerar-pdf',
+  requireAuth, requireServiceRoleKey, express.json({ limit: '2mb' }),
+  async (req, res) => {
+  // Bloqueia authMode internal - precisa de usuario real para gerado_por
+  if (req.authMode === 'internal') {
+    return res.status(400).json({ erro: 'usuario_obrigatorio', detalhe: 'gerar-pdf requer autenticacao Supabase' });
+  }
+
+  if (!PREVISAO_PDF_API_URL) {
+    return res.status(503).json({ erro: 'previsao_pdf_nao_configurado' });
+  }
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return res.status(503).json({ erro: 'storage_nao_configurado' });
+  }
+
+  const { previsao_id, config_rateio } = req.body || {};
+
+  // Validacao basica
+  if (!previsao_id || typeof previsao_id !== 'string' || !/^[0-9a-f-]{36}$/.test(previsao_id)) {
+    return res.status(400).json({ erro: 'previsao_id_invalido' });
+  }
+  if (!config_rateio || typeof config_rateio.apartamentos !== 'number' || config_rateio.apartamentos < 1) {
+    return res.status(400).json({ erro: 'config_rateio_invalido', detalhe: 'apartamentos obrigatorio e >= 1' });
+  }
+
+  const userId = req.user.sub;
+  const role = getRoleFromPayload(req.user);
+
+  try {
+    // 1) Busca previsao no banco
+    const buscaPrev = await supabaseAdminRequest('GET',
+      `/rest/v1/previsoes_orcamentarias?id=eq.${encodeURIComponent(previsao_id)}&select=id,payload_json,payload_hash,criado_por`
+    );
+    if (buscaPrev.status >= 400 || !Array.isArray(buscaPrev.body) || !buscaPrev.body.length) {
+      return res.status(404).json({ erro: 'previsao_nao_encontrada' });
+    }
+    const previsao = buscaPrev.body[0];
+
+    // Controle de visibilidade: OPERACIONAL so ve o proprio
+    if (!['GESTOR', 'GERENTE'].includes(role) && previsao.criado_por !== userId) {
+      return res.status(404).json({ erro: 'previsao_nao_encontrada' });
+    }
+
+    const payloadHash = previsao.payload_hash;
+    const payloadJson = previsao.payload_json;
+
+    // Monta config completa com defaults
+    const configCompleto = {
+      apartamentos: config_rateio.apartamentos,
+      coberturas: config_rateio.coberturas != null ? config_rateio.coberturas : 0,
+      fator_cobertura: config_rateio.fator_cobertura != null ? config_rateio.fator_cobertura : 1.5,
+      fundo_reserva: config_rateio.fundo_reserva != null ? config_rateio.fundo_reserva : 0.0,
+      fundo_pct: config_rateio.fundo_pct != null ? config_rateio.fundo_pct : 0.05,
+    };
+
+    // 2) Checa cache em previsoes_geracoes
+    const cacheKey = payloadHash + ':' + JSON.stringify(configCompleto);
+    const hashCache = require('crypto').createHash('md5').update(cacheKey).digest('hex');
+    const buscaCache = await supabaseAdminRequest('GET',
+      `/rest/v1/previsoes_geracoes?previsao_id=eq.${encodeURIComponent(previsao_id)}&payload_hash=eq.${encodeURIComponent(hashCache)}&order=gerado_em.desc&limit=1&select=id,pptx_url,pdf_url,gerado_em,duracao_ms`
+    );
+    if (buscaCache.status < 400 && Array.isArray(buscaCache.body) && buscaCache.body.length) {
+      const cached = buscaCache.body[0];
+      // Extrai objectPath do pptx_url original (armazenado como path, nao como signed URL)
+      // Formato armazenado: "previsao_id/hashCache.pptx" e "previsao_id/hashCache.pdf"
+      const pptxPath = `${previsao_id}/${hashCache}.pptx`;
+      const pdfPath = `${previsao_id}/${hashCache}.pdf`;
+      try {
+        const pptxUrl = await supabaseStorageSignedUrl('previsao-arquivos', pptxPath, 600);
+        const pdfUrl = await supabaseStorageSignedUrl('previsao-arquivos', pdfPath, 600);
+        return res.status(200).json({
+          pptx_url: pptxUrl,
+          pdf_url: pdfUrl,
+          gerado_em: cached.gerado_em,
+          cached: true,
+          duracao_ms: cached.duracao_ms,
+        });
+      } catch (signErr) {
+        console.warn('[previsao/gerar-pdf] signed url cache falhou, regenerando:', signErr.message);
+        // Continua para regenerar
+      }
+    }
+
+    // 3) Cache miss: chama microservico
+    const microPayload = JSON.stringify({
+      previsao_id,
+      payload_json: payloadJson,
+      payload_hash: payloadHash,
+      config_rateio: configCompleto,
+    });
+
+    const microUrl = new URL('/gerar', PREVISAO_PDF_API_URL);
+    const microCliente = microUrl.protocol === 'https:' ? https : http;
+
+    const microResp = await new Promise((resolve, reject) => {
+      const opts = {
+        hostname: microUrl.hostname,
+        port: microUrl.port || (microUrl.protocol === 'https:' ? 443 : 80),
+        path: microUrl.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(microPayload),
+          'X-Internal-Secret': INTERNAL_API_SECRET,
+        },
+      };
+      const timer = setTimeout(() => reject(new Error('timeout_microservico')), 180000);
+      const mReq = microCliente.request(opts, r => {
+        let d = '';
+        r.on('data', c => { d += c; });
+        r.on('end', () => {
+          clearTimeout(timer);
+          let body = null;
+          try { body = JSON.parse(d); } catch { body = { raw: d.slice(0, 200) }; }
+          resolve({ status: r.statusCode, body });
+        });
+      });
+      mReq.on('error', e => { clearTimeout(timer); reject(e); });
+      mReq.write(microPayload);
+      mReq.end();
+    });
+
+    if (microResp.status === 422) {
+      return res.status(422).json({ erro: 'payload_invalido_para_geracao' });
+    }
+    if (microResp.status !== 200 || !microResp.body || !microResp.body.pptx_b64 || !microResp.body.pdf_b64) {
+      console.error('[previsao/gerar-pdf] microservico retornou erro:', microResp.status);
+      return res.status(503).json({ erro: 'geracao_falhou' });
+    }
+
+    const pptxBuffer = Buffer.from(microResp.body.pptx_b64, 'base64');
+    const pdfBuffer = Buffer.from(microResp.body.pdf_b64, 'base64');
+    const duracaoMs = microResp.body.duracao_ms || 0;
+
+    // 4) Upload pro Storage
+    const pptxPath = `${previsao_id}/${hashCache}.pptx`;
+    const pdfPath = `${previsao_id}/${hashCache}.pdf`;
+    const MIME_PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+
+    await Promise.all([
+      supabaseStorageUpload('previsao-arquivos', pptxPath, pptxBuffer, MIME_PPTX),
+      supabaseStorageUpload('previsao-arquivos', pdfPath, pdfBuffer, 'application/pdf'),
+    ]);
+
+    // 5) INSERT em previsoes_geracoes
+    const geradoEm = new Date().toISOString();
+    const ins = await supabaseAdminRequest('POST', '/rest/v1/previsoes_geracoes', {
+      previsao_id,
+      payload_hash: hashCache,
+      pptx_url: pptxPath,
+      pdf_url: pdfPath,
+      gerado_por: userId,
+      gerado_em: geradoEm,
+      duracao_ms: duracaoMs,
+    });
+    if (ins.status >= 400) {
+      console.error('[previsao/gerar-pdf] erro insert geracao:', ins.status);
+      // Nao aborta: arquivos ja foram salvos, erro na auditoria nao deve bloquear usuario
+    }
+
+    // 6) Gera signed URLs (10min)
+    const [pptxUrl, pdfUrl] = await Promise.all([
+      supabaseStorageSignedUrl('previsao-arquivos', pptxPath, 600),
+      supabaseStorageSignedUrl('previsao-arquivos', pdfPath, 600),
+    ]);
+
+    return res.status(200).json({
+      pptx_url: pptxUrl,
+      pdf_url: pdfUrl,
+      gerado_em: geradoEm,
+      cached: false,
+      duracao_ms: duracaoMs,
+    });
+  } catch (e) {
+    if (e.message === 'timeout_microservico') {
+      return res.status(504).json({ erro: 'timeout_geracao' });
+    }
+    console.error('[previsao/gerar-pdf] erro inesperado:', e.message);
+    return res.status(500).json({ erro: 'erro_interno' });
+  }
+});
 
 // Middleware 404 para rotas /api/* desconhecidas.
 // Posicionado depois de todas as rotas reais de /api e antes do catch-all geral.

@@ -1527,11 +1527,47 @@
             <button id="prev-btn-baixar-csv" class="btn btn-ghost" onclick="previsaoBaixarCSV()">
               Baixar Planilha CSV
             </button>
-            <button id="prev-btn-pdf" class="btn btn-ghost" disabled
-                    title="Disponível na Fase 4. Aguarde a próxima versão.">
-              Gerar PDF
-            </button>
           </div>
+
+          <!-- Configuracoes de rateio (visivel quando ha rascunho salvo) -->
+          <div id="prev-config-rateio" class="card" style="display:none;margin-top:14px">
+            <div class="card-header">
+              <span class="card-title">Configurações de rateio</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;font-size:12px">
+              <label>Apartamentos
+                <input type="number" id="prev-cfg-aptos" min="1" step="1" placeholder="ex: 24"
+                  style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px">
+              </label>
+              <label>Coberturas
+                <input type="number" id="prev-cfg-cob" min="0" step="1" value="0"
+                  style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px">
+              </label>
+              <label>Fator cobertura
+                <input type="number" id="prev-cfg-fator" min="1" step="0.1" value="1.5"
+                  style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px">
+              </label>
+              <label>Fundo reserva R$
+                <input type="number" id="prev-cfg-fundo" min="0" step="0.01" value="0"
+                  style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px">
+              </label>
+              <label>% Fundo
+                <input type="number" id="prev-cfg-fundo-pct" min="0" max="100" step="0.1" value="5"
+                  style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px">
+              </label>
+            </div>
+          </div>
+
+          <!-- Botao Gerar Previsao (habilitado quando ha rascunho salvo + apartamentos preenchido) -->
+          <button id="prev-btn-pdf" class="btn btn-primary" onclick="previsaoGerarPdf()" style="margin-top:14px" disabled>
+            Gerar Previsão (PPTX + PDF)
+          </button>
+
+          <!-- Loading + mensagem -->
+          <div id="prev-status-geracao" style="display:none;margin-top:14px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--muted);font-family:var(--mono)"></div>
+
+          <!-- Area dos arquivos gerados (oculta ate gerar) -->
+          <div id="prev-area-arquivos" style="display:none;margin-top:14px"></div>
 
         </div>
 

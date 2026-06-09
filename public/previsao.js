@@ -17,7 +17,10 @@ var previsaoState = {
   fracoesVisiveis: false,
   ultimoHashSalvo: null,  // hash MD5 retornado pelo servidor no ultimo save bem-sucedido
   rascunhoId: null,       // UUID do rascunho persistido (null ate o primeiro save)
-  salvandoRascunho: false // mutex para evitar saves concorrentes
+  salvandoRascunho: false, // mutex para evitar saves concorrentes
+  gerandoArquivos: false,
+  configRateio: { apartamentos: null, coberturas: 0, fator_cobertura: 1.5, fundo_reserva: 0, fundo_pct: 0.05 },
+  ultimaGeracao: null
 };
 
 // === Ouvinte de troca de condominio (no topo, fora de funcao) ===
@@ -51,6 +54,14 @@ function previsaoInit() {
   // Carrega rascunhos salvos do condominio ativo ao abrir o painel
   var cond = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
   if (cond && cond.id) previsaoCarregarRascunhos(cond.id);
+  previsaoMostrarConfigRateio();
+  previsaoAtualizarBotaoGerar();
+  // Listener nos campos de config pra habilitar botao quando aptos preenchido
+  var aptosInput = document.getElementById('prev-cfg-aptos');
+  if (aptosInput && !aptosInput._previsaoListenerAdded) {
+    aptosInput.addEventListener('input', previsaoAtualizarBotaoGerar);
+    aptosInput._previsaoListenerAdded = true;
+  }
 }
 
 function previsaoOnCondominioChange() {
@@ -607,12 +618,17 @@ function previsaoExtrairAnoReferencia(periodo) {
   return new Date().getFullYear();
 }
 
-// Monta o payload completo para salvar, incluindo reajustes_aplicados dentro do objeto.
-// Reajustes entram no JSON para que o hash reflita mudancas neles tambem.
+// Monta o payload completo para salvar, incluindo reajustes_aplicados e config_rateio
+// dentro do objeto. Ambos entram no JSON para que o hash reflita mudancas neles e
+// para que o retomar restaure o estado completo (incluindo apartamentos do rateio).
 function previsaoMontarPayloadParaSalvar() {
   if (!previsaoState.resposta) return null;
+  // Le os inputs do form de rateio (se visiveis) antes de salvar, garantindo que o
+  // payload reflita o estado atual da UI mesmo sem o usuario ter clicado em Gerar.
+  if (document.getElementById('prev-cfg-aptos')) previsaoLerConfigRateio();
   return Object.assign({}, previsaoState.resposta, {
-    reajustes_aplicados: Object.assign({}, previsaoState.reajustes)
+    reajustes_aplicados: Object.assign({}, previsaoState.reajustes),
+    config_rateio: Object.assign({}, previsaoState.configRateio)
   });
 }
 
@@ -656,6 +672,9 @@ async function previsaoSalvarRascunho(silencioso) {
     var data = await resp.json();
     previsaoState.ultimoHashSalvo = data.payload_hash || null;
     if (data.id) previsaoState.rascunhoId = data.id;
+    // Exibe config de rateio e habilita botao de geracao apos primeiro save bem-sucedido
+    previsaoMostrarConfigRateio();
+    previsaoAtualizarBotaoGerar();
     if (data.status === 'sem_alteracoes') {
       if (!silencioso && typeof toast === 'function') toast('Sem alteracoes desde o ultimo salvamento.', 'info');
     } else if (data.status === 'atualizado') {
@@ -751,11 +770,13 @@ async function previsaoRetomarRascunho(id) {
       return;
     }
     var payload = reg.payload_json;
-    // Extrai reajustes_aplicados do payload e separa do restante
+    // Extrai campos auxiliares (reajustes + config_rateio) do payload e separa do restante
     var reajustes = payload.reajustes_aplicados || {};
-    // Remove o campo auxiliar antes de hidratar resposta (nao faz parte do schema FastAPI)
+    var configSalvo = payload.config_rateio || null;
+    // Remove os campos auxiliares antes de hidratar resposta (nao fazem parte do schema FastAPI)
     var resposta = Object.assign({}, payload);
     delete resposta.reajustes_aplicados;
+    delete resposta.config_rateio;
     previsaoState.resposta = resposta;
     previsaoState.reajustes = reajustes;
     previsaoState.gruposExpandidos = {};
@@ -763,10 +784,25 @@ async function previsaoRetomarRascunho(id) {
     previsaoState.ultimoHashSalvo = reg.payload_hash || null;
     previsaoState.rascunhoId = reg.id;
     previsaoState.salvandoRascunho = false;
+    // Restaura config_rateio salvo (preserva defaults se vier vazio/parcial)
+    if (configSalvo) {
+      var c = previsaoState.configRateio;
+      if (configSalvo.apartamentos != null) c.apartamentos = configSalvo.apartamentos;
+      if (configSalvo.coberturas != null) c.coberturas = configSalvo.coberturas;
+      if (configSalvo.fator_cobertura != null) c.fator_cobertura = configSalvo.fator_cobertura;
+      if (configSalvo.fundo_reserva != null) c.fundo_reserva = configSalvo.fundo_reserva;
+      if (configSalvo.fundo_pct != null) c.fundo_pct = configSalvo.fundo_pct;
+    }
     // Renderiza a planilha com os dados do rascunho
     previsaoRenderizarPlanilha(resposta);
     // Reaplica os reajustes salvos nos inputs e recalcula totais
     previsaoReaplicarReajustesNaTela();
+    // Mostra config de rateio (precisa estar visivel antes de popular inputs)
+    previsaoMostrarConfigRateio();
+    // Popula os 5 inputs do form de rateio com os valores restaurados do state
+    previsaoPopularInputsConfigRateio();
+    // Atualiza estado do botao de geracao (habilita se config_rateio veio com apartamentos salvos)
+    previsaoAtualizarBotaoGerar();
     if (typeof toast === 'function') toast('Rascunho retomado.', 'ok');
   } catch (err) {
     if (typeof toast === 'function') toast('Erro ao retomar rascunho.', 'err');
@@ -793,4 +829,137 @@ function previsaoAutosaveAoSairDoPainel() {
   var cond = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
   if (!cond || !cond.id) return;
   previsaoSalvarRascunho(true);
+}
+
+// ============================================================
+// GERACAO DE ARQUIVOS - Fase 4: PPTX + PDF via microservico
+// ============================================================
+
+// Atualiza state.configRateio lendo os inputs do formulario de rateio.
+function previsaoLerConfigRateio() {
+  var c = previsaoState.configRateio;
+  c.apartamentos = parseInt(document.getElementById('prev-cfg-aptos').value, 10) || null;
+  c.coberturas = parseInt(document.getElementById('prev-cfg-cob').value, 10) || 0;
+  c.fator_cobertura = parseFloat(document.getElementById('prev-cfg-fator').value) || 1.5;
+  c.fundo_reserva = parseFloat(document.getElementById('prev-cfg-fundo').value) || 0;
+  c.fundo_pct = (parseFloat(document.getElementById('prev-cfg-fundo-pct').value) || 5) / 100;
+}
+
+// Popula os 5 inputs do form de rateio a partir do state.configRateio. Usado no retomar
+// de rascunho para evitar que o usuario precise re-digitar apartamentos toda sessao.
+function previsaoPopularInputsConfigRateio() {
+  var c = previsaoState.configRateio;
+  var aptos = document.getElementById('prev-cfg-aptos');
+  var cob = document.getElementById('prev-cfg-cob');
+  var fator = document.getElementById('prev-cfg-fator');
+  var fundo = document.getElementById('prev-cfg-fundo');
+  var fundoPct = document.getElementById('prev-cfg-fundo-pct');
+  if (aptos && c.apartamentos != null) aptos.value = c.apartamentos;
+  if (cob) cob.value = c.coberturas != null ? c.coberturas : 0;
+  if (fator) fator.value = c.fator_cobertura != null ? c.fator_cobertura : 1.5;
+  if (fundo) fundo.value = c.fundo_reserva != null ? c.fundo_reserva : 0;
+  if (fundoPct) fundoPct.value = c.fundo_pct != null ? (c.fundo_pct * 100) : 5;
+}
+
+// Habilita/desabilita o botao Gerar Previsao conforme estado.
+function previsaoAtualizarBotaoGerar() {
+  var btn = document.getElementById('prev-btn-pdf');
+  if (!btn) return;
+  var temRascunho = !!previsaoState.rascunhoId;
+  var aptos = parseInt(document.getElementById('prev-cfg-aptos') ? document.getElementById('prev-cfg-aptos').value : '', 10);
+  var temAptos = !isNaN(aptos) && aptos >= 1;
+  btn.disabled = !(temRascunho && temAptos && !previsaoState.gerandoArquivos);
+}
+
+// Mostra a area de config de rateio quando existe rascunho salvo.
+function previsaoMostrarConfigRateio() {
+  var box = document.getElementById('prev-config-rateio');
+  if (box && previsaoState.rascunhoId) box.style.display = '';
+}
+
+// Gera PPTX + PDF via /api/previsao/gerar-pdf. Mostra status e renderiza arquivos.
+async function previsaoGerarPdf() {
+  if (!previsaoState.rascunhoId) {
+    if (typeof toast === 'function') toast('Salve o rascunho antes de gerar.', 'warn');
+    return;
+  }
+  previsaoLerConfigRateio();
+  if (!previsaoState.configRateio.apartamentos || previsaoState.configRateio.apartamentos < 1) {
+    if (typeof toast === 'function') toast('Informe o numero de apartamentos.', 'warn');
+    return;
+  }
+  if (previsaoState.gerandoArquivos) return;
+
+  previsaoState.gerandoArquivos = true;
+  previsaoAtualizarBotaoGerar();
+  var status = document.getElementById('prev-status-geracao');
+  if (status) {
+    status.style.display = '';
+    status.textContent = 'Gerando apresentacao, pode levar ate 60s na primeira vez...';
+  }
+
+  try {
+    var resp = await apiAuthFetch('/api/previsao/gerar-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        previsao_id: previsaoState.rascunhoId,
+        config_rateio: previsaoState.configRateio
+      })
+    });
+    if (!resp.ok) {
+      var msg = 'Erro ao gerar arquivos (' + resp.status + ').';
+      if (resp.status === 503) msg = 'Servico de geracao indisponivel. Tente em alguns minutos.';
+      if (resp.status === 504) msg = 'Tempo esgotado. Tente novamente.';
+      if (resp.status === 422) msg = 'Dados invalidos para geracao.';
+      if (typeof toast === 'function') toast(msg, 'err');
+      return;
+    }
+    var data = await resp.json();
+    previsaoState.ultimaGeracao = data;
+    previsaoRenderizarArquivos(data);
+    // Autosave silencioso: garante que o config_rateio que o usuario digitou fique
+    // persistido no rascunho, evitando que ele precise re-digitar apartamentos ao
+    // retomar de uma sessao futura. Idempotente: se nao mudou nada, servidor responde
+    // 'sem_alteracoes' e o cache de geracao nao e invalidado.
+    previsaoSalvarRascunho(true);
+  } catch (e) {
+    console.error('[previsao] erro ao gerar pdf:', e);
+    if (typeof toast === 'function') toast('Sem conexao ao gerar.', 'err');
+  } finally {
+    previsaoState.gerandoArquivos = false;
+    previsaoAtualizarBotaoGerar();
+    var s = document.getElementById('prev-status-geracao');
+    if (s) s.style.display = 'none';
+  }
+}
+
+// Renderiza 2 cards lado a lado (PPTX + PDF) com links de download.
+function previsaoRenderizarArquivos(data) {
+  var area = document.getElementById('prev-area-arquivos');
+  if (!area) return;
+  var esc = previsaoEsc;
+  var dataStr = '';
+  if (data.gerado_em) {
+    var d = new Date(data.gerado_em);
+    dataStr = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(d);
+  }
+  var cacheBadge = data.cached
+    ? '<span style="font-size:10px;padding:2px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--muted);margin-left:8px">cache</span>'
+    : '';
+  area.innerHTML = ''
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">'
+    + '<a href="' + esc(data.pptx_url) + '" target="_blank" rel="noopener" '
+    + 'style="display:block;padding:18px 20px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:12px;text-decoration:none">'
+    + '<div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">Apresentação</div>'
+    + '<div style="font-size:16px;font-weight:600;color:var(--text)">Baixar PPTX</div>'
+    + '</a>'
+    + '<a href="' + esc(data.pdf_url) + '" target="_blank" rel="noopener" '
+    + 'style="display:block;padding:18px 20px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:12px;text-decoration:none">'
+    + '<div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">PDF</div>'
+    + '<div style="font-size:16px;font-weight:600;color:var(--text)">Baixar PDF</div>'
+    + '</a>'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:8px">Gerado em ' + esc(dataStr) + cacheBadge + '</div>';
+  area.style.display = '';
 }
