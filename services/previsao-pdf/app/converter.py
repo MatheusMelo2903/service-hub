@@ -22,9 +22,16 @@ def converter_para_pdf(pptx_path: str, outdir: str | None = None) -> str:
     if outdir is None:
         outdir = str(Path(pptx_path).parent)
 
+    # O container roda como appuser SEM home (--no-create-home no Dockerfile).
+    # Sem um perfil gravavel, o soffice morre com "cannot be started" (exit 77).
+    # Damos a ele um UserInstallation dentro do tmpdir da requisicao (sempre
+    # gravavel) e setamos HOME pra cache do fontconfig. Perfil isolado por
+    # request tambem evita contencao de lock entre chamadas concorrentes.
+    profile_dir = os.path.join(outdir, '.lo_profile')
     cmd = [
         'libreoffice',
         '--headless',
+        f'-env:UserInstallation=file://{profile_dir}',
         '--convert-to', 'pdf',
         '--outdir', outdir,
         pptx_path,
@@ -35,6 +42,7 @@ def converter_para_pdf(pptx_path: str, outdir: str | None = None) -> str:
         capture_output=True,
         timeout=120,
         check=False,
+        env={**os.environ, 'HOME': outdir},
     )
 
     if proc.returncode != 0:
