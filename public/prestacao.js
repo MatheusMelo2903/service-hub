@@ -1822,6 +1822,79 @@ function prestacaoArquivoParaBloco(file) {
 // Handler principal do botao Gerar.
 // Le todos os arquivos do prestacaoState, monta payload Anthropic com instrucoes
 // para extrair a estrutura JSON da prestacao de contas e envia para o proxy
+// ── Caminho padrao: microservico prestacao-pdf via /api/prestacao/gerar-deck ──
+// Envia os W016A pro backend (parser deterministico + skill + auditoria) e
+// recebe PPTX e PDF prontos. O PptxGenJS abaixo permanece como fallback
+// OFFLINE: so e oferecido quando o servico esta indisponivel (503/504/rede).
+// Erro 422 e degradacao graciosa: o relatorio precisa de revisao humana e o
+// fallback NAO e oferecido, porque geraria o mesmo dado ruim com menos checagem.
+
+// Decodifica base64 em Blob e dispara o download no browser.
+function prestacaoBaixarBlob(b64, mime, nomeArquivo) {
+  var bin = atob(b64);
+  var bytes = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  var url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  var a = document.createElement('a');
+  a.href = url; a.download = nomeArquivo;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+}
+
+async function prestacaoGerarServico() {
+  var btn = document.getElementById('prest-btn-gerar');
+  if (!btn) return;
+  var textoOriginal = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Gerando no servidor (pode levar até 2 minutos)...';
+  try {
+    if (!prestacaoState.arquivos || prestacaoState.arquivos.length === 0) {
+      throw new Error('Nenhum arquivo carregado.');
+    }
+    var form = new FormData();
+    for (var i = 0; i < prestacaoState.arquivos.length; i++) {
+      form.append('arquivos', prestacaoState.arquivos[i]);
+    }
+    var resp = await apiAuthFetch('/api/prestacao/gerar-deck', { method: 'POST', body: form });
+
+    if (resp.status === 422) {
+      // Degradacao graciosa: relatorio invalido ou auditoria reprovada.
+      // Nao entrega slide quebrado; sinaliza revisao humana com o motivo.
+      var corpo422 = await resp.json().catch(function() { return {}; });
+      var det = (corpo422.detail || corpo422);
+      console.error('[prestacao] geracao retida para revisao humana:', det);
+      toast('Geração retida para revisão humana: ' + (det.erro || 'relatório fora do padrão')
+        + '. Detalhe no console. Confira o relatório no Superlógica antes de tentar de novo.', 'err');
+      return;
+    }
+    if (!resp.ok) {
+      var ehIndisponivel = resp.status === 503 || resp.status === 504 || resp.status === 502;
+      throw Object.assign(new Error('Falha na geração (' + resp.status + ')'), { indisponivel: ehIndisponivel });
+    }
+    var dados = await resp.json();
+    var base = 'Prestacao_' + (prestacaoState.condNome || 'Condominio').replace(/[^\w]+/g, '_');
+    prestacaoBaixarBlob(dados.pdf_b64, 'application/pdf', base + '.pdf');
+    prestacaoBaixarBlob(dados.pptx_b64,
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation', base + '.pptx');
+    toast('Prestação gerada: ' + dados.blocos + ' bloco(s), PDF e PPTX baixados.', 'ok');
+  } catch (err) {
+    console.error('[prestacao] erro no caminho padrao:', err);
+    if (err && err.indisponivel) {
+      var usarFallback = window.confirm(
+        'O serviço de geração está indisponível no momento. Quer usar o gerador local (modo offline)? '
+        + 'Ele usa extração por IA e não passa pela auditoria do servidor.');
+      if (usarFallback) { prestacaoGerar(); return; }
+    } else {
+      toast('Erro: ' + (err && err.message ? err.message : String(err)), 'err');
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = textoOriginal || 'Gerar prestação de contas';
+  }
+}
+
+// ── Fallback offline (PptxGenJS no browser) ──
 // /api/claude/messages. Em sucesso salva em prestacaoState.dadosExtraidos, loga
 // no console e troca o botao para acionar prestacaoGerarPptx (B5). Em erro,
 // restaura o botao original e mostra toast com a mensagem.

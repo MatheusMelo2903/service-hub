@@ -226,9 +226,25 @@ def parsear(caminho_pdf: str) -> EstruturaW016A:
                         grupo_atual.lancamentos.append(Lancamento(texto, valor))
                     continue
 
+    # Documento que não tem a anatomia do W016A detalhado (cabeçalho com
+    # período, totais de receita e despesa, grupos) é rejeitado com motivo
+    # legível — é o que aparece no log e na sinalização de revisão humana.
+    faltas = []
+    if not est.data_inicial or not est.data_final:
+        faltas.append("período do cabeçalho")
+    if not est.receita_total:
+        faltas.append("Total de Receitas")
+    if not est.despesa_total:
+        faltas.append("Total de Despesas")
+    if not est.grupos:
+        faltas.append("grupos de despesa")
+    if faltas:
+        raise ValueError(
+            "documento não reconhecido como W016A detalhado; ausente: "
+            + ", ".join(faltas))
+
     # Derivados e validações estruturais do próprio relatório
-    if est.data_inicial and est.data_final:
-        est.n_meses = _meses_entre(est.data_inicial, est.data_final)
+    est.n_meses = _meses_entre(est.data_inicial, est.data_final)
 
     # Valores monetários são decimais exatos: as somas fecham ao centavo.
     # Tolerância fixa de R$ 0,01 só para ruído de float.
