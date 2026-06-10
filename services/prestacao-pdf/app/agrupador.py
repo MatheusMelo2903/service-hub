@@ -33,8 +33,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-MAX_LINHAS_DESPESA = 20   # tabela de lançamentos comporta 20 a 0,20" por linha
+MAX_LINHAS_DESPESA = 20   # limiar de fusão: acima disso entra fusão por radical
 MAX_LINHAS_RECEITA = 11   # lista de receitas comporta 11 a partir de 2,45"
+# O TETO de rubricas exibidas por slide é decisão editorial e vem do chamador
+# (pipeline.TETO_RUBRICAS, default 12 = fronteira da fonte 10/11pt do design
+# system). Categoria que cabe inteira sob o teto é nomeada por completo.
 ISS_PRESTADOR_MIN_PCT = 0.009   # prestador < 0,9% da categoria vai pra cauda
 COLAPSO_CAUDA_PCT = {"Financeiras": 0.01}  # cauda editorial por categoria
 

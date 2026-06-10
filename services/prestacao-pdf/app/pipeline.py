@@ -17,7 +17,12 @@ VENDOR = os.path.join(os.path.dirname(__file__), "..", "vendor",
 sys.path.insert(0, os.path.abspath(VENDOR))
 
 from . import parser_w016a as P
-from .agrupador import agrupar, MAX_LINHAS_DESPESA, MAX_LINHAS_RECEITA
+from .agrupador import agrupar, MAX_LINHAS_RECEITA
+
+# Teto editorial de rubricas por slide de detalhamento (linhas nomeadas +
+# "Demais"). 12 é a fronteira confortável da fonte 10/11pt do design system;
+# categoria com até 12 rubricas reais é nomeada inteira, sem "Demais" forçado.
+TETO_RUBRICAS = 12
 
 # Títulos dos slides de detalhamento por categoria canônica.
 TITULOS = {
@@ -44,7 +49,8 @@ def _pct(valor: float, total: float) -> float:
     return round(valor / total * 100, 1) if total else 0.0
 
 
-def montar_config(est: P.EstruturaW016A, num_bloco: str | None = None) -> dict:
+def montar_config(est: P.EstruturaW016A, num_bloco: str | None = None,
+                  teto_rubricas: int = TETO_RUBRICAS) -> dict:
     """Converte a estrutura parseada num CONFIG completo (números + rótulos
     determinísticos). A prosa entra depois, por um ProsaProvider."""
     rot = P.rotulos_periodo(est)
@@ -65,7 +71,7 @@ def montar_config(est: P.EstruturaW016A, num_bloco: str | None = None) -> dict:
 
     detalhes = {}
     for g in grupos_ordenados:
-        linhas = agrupar(g.lancamentos, g.total, g.categoria, MAX_LINHAS_DESPESA,
+        linhas = agrupar(g.lancamentos, g.total, g.categoria, teto_rubricas,
                          ROTULO_DEMAIS.get(g.categoria, f"Demais {g.categoria.lower()}"))
         t1, t2 = TITULOS.get(g.categoria, (g.categoria, ""))
         detalhes[g.categoria] = {
@@ -122,6 +128,59 @@ def gerar_deck(configs: list, saida_pptx: str, capa: dict | None = None) -> str:
     if problemas:
         raise RuntimeError(f"auditoria reprovou: {problemas}")
     return saida_pptx
+
+
+def _data_chave(d: str):
+    return (int(d[6:10]), int(d[3:5]), int(d[0:2]))
+
+
+def orquestrar(caminhos_pdf: list, teto_rubricas: int = TETO_RUBRICAS,
+               prosa=None) -> tuple:
+    """Fase 3: um bloco por demonstrativo de entrada.
+
+    N PDFs -> N CONFIGs em ordem cronológica, com divisor de bloco quando
+    N > 1 (um único demonstrativo gera deck sem divisor). Valida a
+    continuidade de caixa entre blocos (saldo final de um == saldo inicial
+    do seguinte) — se não fechar, os demonstrativos não são contíguos e a
+    geração PARA em vez de apresentar uma sequência falsa.
+
+    Retorna (configs, capa) prontos pro gerar_deck.
+    """
+    estruturas = [P.parsear(c) for c in caminhos_pdf]
+    estruturas.sort(key=lambda e: _data_chave(e.data_inicial))
+
+    for ant, seg in zip(estruturas, estruturas[1:]):
+        if abs(ant.saldo_final - seg.saldo_anterior) > 0.011:
+            raise ValueError(
+                "blocos nao contiguos: saldo final de "
+                f"{ant.data_final} ({ant.saldo_final:.2f}) difere do saldo "
+                f"inicial de {seg.data_inicial} ({seg.saldo_anterior:.2f})")
+
+    multi = len(estruturas) > 1
+    configs = []
+    for i, est in enumerate(estruturas, start=1):
+        num = str(i).zfill(2) if multi else None
+        cfg = montar_config(est, num_bloco=num, teto_rubricas=teto_rubricas)
+        if prosa is not None:
+            cfg = (prosa[i - 1] if isinstance(prosa, (list, tuple)) else prosa).aplicar(cfg)
+        configs.append(cfg)
+
+    capa = None
+    if multi:
+        prim, ult = estruturas[0], estruturas[-1]
+        r0, r1 = P.rotulos_periodo(prim), P.rotulos_periodo(ult)
+        ext0 = r0["periodo_extenso"].split(" a ")[0]
+        ext1 = r1["periodo_extenso"].split(" a ")[1]
+        rotulos = " e ".join(
+            f"Bloco {i} ({P.rotulos_periodo(e)['periodo_label']})"
+            for i, e in enumerate(estruturas, start=1))
+        capa = {
+            "exercicio_titulo": f"Exercício de {ext0} a {ext1}",
+            "periodo_extenso": (
+                f"Apresentação em {len(estruturas)} blocos • {rotulos}"
+                "\nApresentação em Assembleia"),
+        }
+    return configs, capa
 
 
 def converter_pdf(pptx: str, outdir: str, soffice: str = "libreoffice") -> str:
