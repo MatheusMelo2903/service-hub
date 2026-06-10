@@ -1869,8 +1869,13 @@ async function prestacaoGerarServico() {
       return;
     }
     if (!resp.ok) {
+      // So indisponibilidade real abre a porta do fallback. 401/500 e afins
+      // sao erro de configuracao ou bug: mostrar claro e parar.
       var ehIndisponivel = resp.status === 503 || resp.status === 504 || resp.status === 502;
-      throw Object.assign(new Error('Falha na geração (' + resp.status + ')'), { indisponivel: ehIndisponivel });
+      var corpoErr = await resp.json().catch(function() { return {}; });
+      var naoConfigurada = (corpoErr.erro === 'prestacao_api_nao_configurada');
+      throw Object.assign(new Error('Falha na geração (' + resp.status + (corpoErr.erro ? ': ' + corpoErr.erro : '') + ')'),
+        { indisponivel: ehIndisponivel, naoConfigurada: naoConfigurada });
     }
     var dados = await resp.json();
     var base = 'Prestacao_' + (prestacaoState.condNome || 'Condominio').replace(/[^\w]+/g, '_');
@@ -1881,8 +1886,15 @@ async function prestacaoGerarServico() {
   } catch (err) {
     console.error('[prestacao] erro no caminho padrao:', err);
     if (err && err.indisponivel) {
+      // DECISAO DE PRODUTO (Matheus, 2026-06-09): o fallback offline usa
+      // extracao por IA e relaxa deliberadamente a regra "numero nao passa
+      // por LLM". So e oferecido com o servico indisponivel, exige
+      // confirmacao e nao passa pela auditoria do servidor.
+      var msgServico = err.naoConfigurada
+        ? 'O serviço de geração ainda não está configurado neste ambiente.'
+        : 'O serviço de geração está indisponível no momento.';
       var usarFallback = window.confirm(
-        'O serviço de geração está indisponível no momento. Quer usar o gerador local (modo offline)? '
+        msgServico + ' Quer usar o gerador local (modo offline)? '
         + 'Ele usa extração por IA e não passa pela auditoria do servidor.');
       if (usarFallback) { prestacaoGerar(); return; }
     } else {
@@ -2004,9 +2016,9 @@ async function prestacaoGerar() {
     console.log('[prestacao] dados extraidos:', dados);
 
     btn.disabled = false;
-    btn.textContent = 'Dados extraidos. Gerar pptx';
+    btn.textContent = 'Dados extraídos. Gerar PPTX';
     btn.onclick = prestacaoGerarPptx;
-    toast('Extracao concluida. Veja prestacaoState.dadosExtraidos no console.', 'ok');
+    toast('Extração concluída. Veja prestacaoState.dadosExtraidos no console.', 'ok');
   } catch (err) {
     console.error('[prestacao] erro ao gerar:', err);
     btn.disabled = false;

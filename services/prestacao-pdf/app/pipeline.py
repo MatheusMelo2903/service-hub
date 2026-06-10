@@ -136,6 +136,13 @@ def orquestrar(caminhos_pdf: list, prosa=None) -> tuple:
     estruturas.sort(key=lambda e: _data_chave(e.data_inicial))
 
     for ant, seg in zip(estruturas, estruturas[1:]):
+        # Sobreposição de períodos (achado da revisão): dois W016A do mesmo
+        # mês podem ter saldos coincidentes e passariam só pela checagem de
+        # caixa, duplicando valores no deck.
+        if _data_chave(seg.data_inicial) <= _data_chave(ant.data_final):
+            raise ValueError(
+                "periodos sobrepostos: bloco seguinte inicia em "
+                f"{seg.data_inicial}, antes do fim do anterior ({ant.data_final})")
         if abs(ant.saldo_final - seg.saldo_anterior) > 0.011:
             raise ValueError(
                 "blocos nao contiguos: saldo final de "

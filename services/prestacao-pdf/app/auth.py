@@ -1,4 +1,4 @@
-"""Middleware de autenticacao do microservico Previsao Orcamentaria.
+"""Middleware de autenticacao do microservico Prestacao de Contas.
 
 Valida o header X-Internal-Secret usando hmac.compare_digest (timing-safe).
 O segredo eh lido da variavel de ambiente INTERNAL_API_SECRET, que deve ser

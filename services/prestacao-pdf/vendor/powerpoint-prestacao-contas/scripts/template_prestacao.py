@@ -436,9 +436,14 @@ def aplicar_config(cfg):
     SUPERAVIT = REC_TOTAL - DESP_TOTAL
     SALDO_FIM = SALDO_ANT + SUPERAVIT
     N = CONFIG["n_meses"]
-    COBERTURA = REC_TOTAL / DESP_TOTAL * 100
-    MARGEM = SUPERAVIT / REC_TOTAL * 100
-    CRESC = (SALDO_FIM - SALDO_ANT) / SALDO_ANT * 100
+    # Guardas de divisao por zero (achado da revisao): condominio novo pode
+    # abrir o periodo com saldo zero; receita/despesa zerada ja barra no
+    # parser, mas o template nao pode explodir com 500 opaco.
+    COBERTURA = (REC_TOTAL / DESP_TOTAL * 100) if DESP_TOTAL else 0.0
+    MARGEM = (SUPERAVIT / REC_TOTAL * 100) if REC_TOTAL else 0.0
+    # Crescimento partindo de zero e indefinido: exibe 0% e os valores
+    # absolutos (cards de saldo) contam a historia correta.
+    CRESC = ((SALDO_FIM - SALDO_ANT) / SALDO_ANT * 100) if SALDO_ANT else 0.0
     TEM_MENSAL = bool(CONFIG.get("receitas_mes") and CONFIG.get("despesas_mes"))
     if TEM_MENSAL:
         SUP_MES = [r - d for r, d in zip(CONFIG["receitas_mes"], CONFIG["despesas_mes"])]
@@ -447,15 +452,18 @@ def aplicar_config(cfg):
         SUP_MES = []
         MESES_POS = 0
 
-    # Validacoes (param se inconsistente)
-    assert abs(SALDO_ANT + REC_TOTAL - DESP_TOTAL - CONFIG["saldo_final"]) < 1.0, "Falha: conservacao de caixa"
-    assert abs(sum(v for _, v, _ in CONFIG["receitas_cat"]) - REC_TOTAL) < 1.0, "Falha: soma receitas"
-    assert abs(sum(v for _, v, _ in CONFIG["despesas_cat"]) - DESP_TOTAL) < 1.0, "Falha: soma despesas"
+    # Validacoes (param se inconsistente). Tolerancia 0.02 alinhada com o
+    # parser (0.011): a folga antiga de R$ 1,00 deixava passar furo de ate
+    # R$ 0,99 sem ninguem ver (achado da revisao).
+    TOL = 0.02
+    assert abs(SALDO_ANT + REC_TOTAL - DESP_TOTAL - CONFIG["saldo_final"]) < TOL, "Falha: conservacao de caixa"
+    assert abs(sum(v for _, v, _ in CONFIG["receitas_cat"]) - REC_TOTAL) < TOL, "Falha: soma receitas"
+    assert abs(sum(v for _, v, _ in CONFIG["despesas_cat"]) - DESP_TOTAL) < TOL, "Falha: soma despesas"
     for cat, total, _ in CONFIG["despesas_cat"]:
         det = CONFIG.get("detalhes", {}).get(cat)
         if det and det.get("lancamentos"):
             soma = sum(v for _, v in det["lancamentos"])
-            assert abs(soma - total) < 1.0, f"Falha: soma lancamentos de {cat} ({soma:.2f} != {total:.2f})"
+            assert abs(soma - total) < TOL, f"Falha: soma lancamentos de {cat} ({soma:.2f} != {total:.2f})"
 
 # =====================================================================
 # DECK
@@ -590,7 +598,7 @@ def slide_patrimonio(num="03"):
         add_rounded_rect(s, px, py, pw, ph, RGBColor(0x12,0x22,0x48), 0.03)
         add_text_box(s, px+Inches(0.35), py+Inches(0.25), pw-Inches(0.7), Inches(0.3), "COMPARATIVO DO SALDO EM CAIXA", 11, True, C_AMBER)
         by = py + ph - Inches(0.7); mh = Inches(2.4)
-        prop = SALDO_ANT / SALDO_FIM
+        prop = (SALDO_ANT / SALDO_FIM) if SALDO_FIM else 0.0
         hi = Emu(int(mh.emu*prop)); bw = Inches(1.7); gp = Inches(1.3)
         bs = px + (pw - (bw*2+gp))/2
         b1 = add_rect(s, bs, by-hi, bw, hi, C_BLUE_MID)
@@ -837,7 +845,8 @@ def slide_encerramento():
         else: pd.set('val','dash')
         style_axes(ch, dark=True)
     else:
-        by = py+ph-Inches(0.75); mh = Inches(2.4); prop = SALDO_ANT/SALDO_FIM
+        by = py+ph-Inches(0.75); mh = Inches(2.4)
+        prop = (SALDO_ANT/SALDO_FIM) if SALDO_FIM else 0.0
         hi = Emu(int(mh.emu*prop)); bw = Inches(1.6); gp = Inches(1.3)
         bs = px + (pw-(bw*2+gp))/2
         add_rect(s, bs, by-hi, bw, hi, C_BLUE_MID)

@@ -60,15 +60,23 @@ async def gerar(
     tmpdir = tempfile.mkdtemp(prefix="prestacao_")
     try:
         caminhos = []
+        total_bytes = 0
+        LIMITE_TOTAL = 50 * 1024 * 1024  # defesa em profundidade: o proxy ja limita 50MB
         for i, up in enumerate(arquivos):
             if not (up.filename or "").lower().endswith(".pdf"):
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail={"erro": "arquivo_nao_pdf", "arquivo": up.filename,
                             "acao": "revisao_humana"})
+            conteudo = await up.read()
+            total_bytes += len(conteudo)
+            if total_bytes > LIMITE_TOTAL:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail={"erro": "upload_muito_grande", "limite_mb": 50})
             destino = os.path.join(tmpdir, f"w016a_{i:02d}.pdf")
             with open(destino, "wb") as f:
-                f.write(await up.read())
+                f.write(conteudo)
             caminhos.append(destino)
 
         # 1) Parse deterministico + orquestracao (um bloco por demonstrativo).

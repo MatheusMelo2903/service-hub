@@ -40,6 +40,9 @@ MAX_LINHAS_RECEITA = 11   # lista de receitas comporta 11 a partir de 2,45"
 # system). Categoria que cabe inteira sob o teto é nomeada por completo.
 
 # "Ref." sempre tem ponto no W016A; pode vir sem espaço depois ("Ref.Torre").
+# O (?:a\s+) e nao capturante de proposito: consome o "a" conectivo
+# ("Ref. a 01/2026") sem participar do split, e exige espaco depois pra
+# nao comer a primeira letra de palavras como "avaria".
 RE_REF_SPLIT = re.compile(r"\s*[-–]?\s*\b[Rr]efs?\.\s*(?:a\s+)?|\s+obs:\s*")
 RE_COMPETENCIA = re.compile(r"\b(\d{2})/(\d{4})\b")
 RE_COMPETENCIA_COLADA = re.compile(r"\b(0[1-9]|1[0-2])(20\d{2})\b")

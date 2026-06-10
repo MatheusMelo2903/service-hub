@@ -901,6 +901,22 @@ app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
     res.status(503).json({ erro: 'previsao_api_nao_configurada' });
     return;
   }
+
+  // Limite de 50MB: PDFs do Superlógica raramente passam de 5MB.
+  // Validado após requireAuth e ANTES de abrir a conexão com o upstream —
+  // abrir o socket antes deixava conexão TCP pendurada a cada request
+  // rejeitado (achado da revisão da prestação, mesmo padrão aqui).
+  const TAMANHO_MAX_UPLOAD = 50 * 1024 * 1024;
+  const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+  if (!contentLength) {
+    res.status(411).json({ erro: 'content_length_obrigatorio' });
+    return;
+  }
+  if (contentLength > TAMANHO_MAX_UPLOAD) {
+    res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'PDFs do Superlógica raramente passam de 5MB. Limite: 50MB.' });
+    return;
+  }
+
   const target = new URL('/extrair-pdfs', PREVISAO_API_URL);
   const cliente = clienteHttpDe(target.protocol);
   const opts = {
@@ -911,11 +927,9 @@ app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
     headers: {
       'X-Internal-Secret': INTERNAL_API_SECRET,
       'Content-Type': req.headers['content-type'] || 'application/octet-stream',
+      'Content-Length': req.headers['content-length'],
     },
   };
-  if (req.headers['content-length']) {
-    opts.headers['Content-Length'] = req.headers['content-length'];
-  }
   const upstream = cliente.request(opts, r => {
     res.status(r.statusCode);
     Object.entries(r.headers).forEach(([k, v]) => {
@@ -940,15 +954,6 @@ app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
     }
   });
 
-  // Limite de 50MB: PDFs do Superlógica raramente passam de 5MB.
-  // Validado após requireAuth — não vale checar tamanho de quem não autenticou.
-  const TAMANHO_MAX_UPLOAD = 50 * 1024 * 1024;
-  const contentLength = parseInt(req.headers['content-length'] || '0', 10);
-  if (!contentLength || contentLength > TAMANHO_MAX_UPLOAD) {
-    res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'PDFs do Superlógica raramente passam de 5MB. Limite: 50MB.' });
-    return;
-  }
-
   req.pipe(upstream);
 });
 
@@ -969,6 +974,23 @@ app.post('/api/prestacao/gerar-deck', requireAuth, (req, res) => {
     res.status(503).json({ erro: 'prestacao_api_nao_configurada' });
     return;
   }
+
+  // Validação de tamanho ANTES de abrir a conexão com o upstream — abrir o
+  // socket antes deixaria uma conexão TCP pendurada por até 240s a cada
+  // request rejeitado (achado da revisão). Sem Content-Length: 411 explícito
+  // (fetch com FormData sempre envia o header; a ausência indica cliente
+  // fora do fluxo normal, não upload grande).
+  const TAMANHO_MAX_PRESTACAO = 50 * 1024 * 1024;
+  const tamanho = parseInt(req.headers['content-length'] || '0', 10);
+  if (!tamanho) {
+    res.status(411).json({ erro: 'content_length_obrigatorio' });
+    return;
+  }
+  if (tamanho > TAMANHO_MAX_PRESTACAO) {
+    res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'Limite: 50MB.' });
+    return;
+  }
+
   const target = new URL('/gerar', PRESTACAO_PDF_API_URL);
   const cliente = clienteHttpDe(target.protocol);
   const opts = {
@@ -979,11 +1001,9 @@ app.post('/api/prestacao/gerar-deck', requireAuth, (req, res) => {
     headers: {
       'X-Internal-Secret': INTERNAL_API_SECRET,
       'Content-Type': req.headers['content-type'] || 'application/octet-stream',
+      'Content-Length': req.headers['content-length'],
     },
   };
-  if (req.headers['content-length']) {
-    opts.headers['Content-Length'] = req.headers['content-length'];
-  }
   const upstream = cliente.request(opts, r => {
     res.status(r.statusCode);
     Object.entries(r.headers).forEach(([k, v]) => {
@@ -1003,14 +1023,6 @@ app.post('/api/prestacao/gerar-deck', requireAuth, (req, res) => {
       res.status(indisponivel ? 503 : 502).json({ erro: 'prestacao_api_indisponivel', detalhe: e.code || 'erro_desconhecido' });
     }
   });
-
-  // Mesmo limite do módulo Previsão: PDFs do Superlógica raramente passam de 5MB.
-  const TAMANHO_MAX_PRESTACAO = 50 * 1024 * 1024;
-  const tamanho = parseInt(req.headers['content-length'] || '0', 10);
-  if (!tamanho || tamanho > TAMANHO_MAX_PRESTACAO) {
-    res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'Limite: 50MB.' });
-    return;
-  }
 
   req.pipe(upstream);
 });
