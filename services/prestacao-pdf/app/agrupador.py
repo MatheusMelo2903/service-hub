@@ -13,16 +13,16 @@ Regras (calibradas contra o golden CONFIG do Naturale, Fase 2):
    normalizada (texto antes de "Ref."/"obs:", sem parcelas e competências).
 3. Especiais determinísticos:
    - Retenções: DARF vira grupo único; ISS com competência (MM/AAAA) vira
-     "ISS (competências)"; ISS sobre NF agrupa por prestador, e prestadores
-     abaixo de 0,9% do total da categoria colapsam em "ISS - demais
-     prestadores" (resíduo).
+     "ISS (competências)"; ISS sobre NF agrupa por prestador (TODOS os
+     prestadores nomeados — fidelidade total, sem corte por tamanho).
    - Financeiras: linhas de devolução/reembolso de RESERVA viram um grupo
-     semântico único; demais linhas abaixo de 1% do total colapsam em
-     "Demais despesas financeiras" (resíduo).
-4. Teto da tabela (20 despesas, 11 receitas): mantém as maiores linhas e o
-   resto vira "Demais <X>" cujo valor é o RESÍDUO (total da categoria menos
-   as nomeadas) — reconciliação garantida por construção.
-5. Ordenação maior→menor; resíduos sempre por último.
+     semântico único (confirmado pelo Matheus na Fase 2).
+4. FIDELIDADE TOTAL nas despesas (decisão de produto, 2026-06): TODAS as
+   rubricas distintas são nomeadas, maior→menor, sem teto nem "as N
+   maiores". Quando não couber no slide, o template PAGINA a categoria.
+   "Demais" não é ferramenta de corte; só existe pra receitas (cauda curta
+   da lista de fontes, regra própria do slide de Origem da Receita).
+5. Ordenação maior→menor; resíduo de receitas sempre por último.
 
 A soma das linhas de saída é validada contra o total da categoria. O LLM,
 quando entrar (Fase 4), só poderá reescrever rótulos e propor fusões que
@@ -38,8 +38,6 @@ MAX_LINHAS_RECEITA = 11   # lista de receitas comporta 11 a partir de 2,45"
 # O TETO de rubricas exibidas por slide é decisão editorial e vem do chamador
 # (pipeline.TETO_RUBRICAS, default 12 = fronteira da fonte 10/11pt do design
 # system). Categoria que cabe inteira sob o teto é nomeada por completo.
-ISS_PRESTADOR_MIN_PCT = 0.009   # prestador < 0,9% da categoria vai pra cauda
-COLAPSO_CAUDA_PCT = {"Financeiras": 0.01}  # cauda editorial por categoria
 
 # "Ref." sempre tem ponto no W016A; pode vir sem espaço depois ("Ref.Torre").
 RE_REF_SPLIT = re.compile(r"\s*[-–]?\s*\b[Rr]efs?\.\s*(?:a\s+)?|\s+obs:\s*")
@@ -162,9 +160,11 @@ def _rotulo(chave, base: str, refs: list, info: dict, n: int) -> str:
     return rotulo + _sufixo(info, n)
 
 
-def agrupar(lancamentos, total: float, categoria: str, max_linhas: int,
-            rotulo_demais: str) -> list:
-    """Retorna Linhas agregadas, maior→menor, com resíduo por construção."""
+def agrupar(lancamentos, total: float, categoria: str, max_linhas: int = 0,
+            rotulo_demais: str = "") -> list:
+    """Retorna Linhas agregadas, maior→menor. max_linhas=0 significa sem
+    teto (fidelidade total); valor positivo ativa a cauda residual (uso
+    exclusivo da lista de receitas)."""
     fusao_radical = len(lancamentos) > MAX_LINHAS_DESPESA
 
     grupos = {}
@@ -206,24 +206,9 @@ def agrupar(lancamentos, total: float, categoria: str, max_linhas: int,
                     break
 
     linhas = []
-    residuos_membros = {"iss": [], "cauda": []}
-    soma_iss_cauda = 0.0
-    soma_colapso = 0.0
-    pct_colapso = COLAPSO_CAUDA_PCT.get(categoria)
-
     for chave in ordem:
         g = grupos[chave]
         especial = chave[0] != "_"
-        # ISS de prestador pequeno -> cauda propria
-        if chave[0] == "ISS_NF" and g["valor"] < ISS_PRESTADOR_MIN_PCT * total:
-            soma_iss_cauda += g["valor"]
-            residuos_membros["iss"].extend(g["descs"])
-            continue
-        # cauda editorial da categoria (so linhas nao especiais)
-        if pct_colapso and not especial and g["valor"] < pct_colapso * total:
-            soma_colapso += g["valor"]
-            residuos_membros["cauda"].extend(g["descs"])
-            continue
         info = _info_temporal(g["descs"])
         rotulo = _rotulo(chave if especial else None, g["base"], g["refs"],
                          info, len(g["descs"]))
@@ -231,23 +216,11 @@ def agrupar(lancamentos, total: float, categoria: str, max_linhas: int,
 
     linhas.sort(key=lambda x: -x.valor)
 
-    # cauda editorial so existe se colapsou 2+ grupos; senao volta nomeada
-    if residuos_membros["cauda"]:
-        if len(residuos_membros["cauda"]) >= 2 or soma_colapso >= 2:
-            linhas.append(Linha(rotulo_demais, round(soma_colapso, 2),
-                                residuos_membros["cauda"], residuo=True))
-        else:
-            d = residuos_membros["cauda"][0]
-            base, ref = desmontar(d)
-            linhas.append(Linha(_rotulo(None, base, [ref], _info_temporal([d]), 1),
-                                round(soma_colapso, 2), [d]))
-    if soma_iss_cauda > 0.005:
-        linhas.append(Linha("ISS - demais prestadores", round(soma_iss_cauda, 2),
-                            residuos_membros["iss"], residuo=True))
-
-    # Teto da tabela: mantem as maiores nomeadas, resto vira residuo "Demais X"
-    if len(linhas) > max_linhas:
-        nomeadas = [l for l in linhas if not l.residuo][:max_linhas - 1]
+    # Cauda "Demais" SO para receitas (max_linhas informado): a lista de
+    # Origem da Receita mantem a cauda curta do molde da skill. Despesas
+    # passam sem teto (fidelidade total; o template pagina o que nao couber).
+    if max_linhas and len(linhas) > max_linhas:
+        nomeadas = linhas[:max_linhas - 1]
         ids = {id(l) for l in nomeadas}
         soma_nomeadas = round(sum(l.valor for l in nomeadas), 2)
         residuo = round(total - soma_nomeadas, 2)

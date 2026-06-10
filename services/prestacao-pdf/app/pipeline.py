@@ -19,11 +19,6 @@ sys.path.insert(0, os.path.abspath(VENDOR))
 from . import parser_w016a as P
 from .agrupador import agrupar, MAX_LINHAS_RECEITA
 
-# Teto editorial de rubricas por slide de detalhamento (linhas nomeadas +
-# "Demais"). 12 é a fronteira confortável da fonte 10/11pt do design system;
-# categoria com até 12 rubricas reais é nomeada inteira, sem "Demais" forçado.
-TETO_RUBRICAS = 12
-
 # Títulos dos slides de detalhamento por categoria canônica.
 TITULOS = {
     "Pessoal": ("Despesas com", "pessoal"),
@@ -38,19 +33,11 @@ TITULOS = {
     "Taxas": ("Taxas e", "recolhimentos"),
 }
 
-ROTULO_DEMAIS = {
-    "Serviços": "Demais serviços",
-    "Materiais": "Demais materiais",
-    "Financeiras": "Demais despesas financeiras",
-}
-
-
 def _pct(valor: float, total: float) -> float:
     return round(valor / total * 100, 1) if total else 0.0
 
 
-def montar_config(est: P.EstruturaW016A, num_bloco: str | None = None,
-                  teto_rubricas: int = TETO_RUBRICAS) -> dict:
+def montar_config(est: P.EstruturaW016A, num_bloco: str | None = None) -> dict:
     """Converte a estrutura parseada num CONFIG completo (números + rótulos
     determinísticos). A prosa entra depois, por um ProsaProvider."""
     rot = P.rotulos_periodo(est)
@@ -71,8 +58,8 @@ def montar_config(est: P.EstruturaW016A, num_bloco: str | None = None,
 
     detalhes = {}
     for g in grupos_ordenados:
-        linhas = agrupar(g.lancamentos, g.total, g.categoria, teto_rubricas,
-                         ROTULO_DEMAIS.get(g.categoria, f"Demais {g.categoria.lower()}"))
+        # Fidelidade total: todas as rubricas nomeadas; quem pagina e o template.
+        linhas = agrupar(g.lancamentos, g.total, g.categoria)
         t1, t2 = TITULOS.get(g.categoria, (g.categoria, ""))
         detalhes[g.categoria] = {
             "titulo1": t1, "titulo2": t2,
@@ -134,8 +121,7 @@ def _data_chave(d: str):
     return (int(d[6:10]), int(d[3:5]), int(d[0:2]))
 
 
-def orquestrar(caminhos_pdf: list, teto_rubricas: int = TETO_RUBRICAS,
-               prosa=None) -> tuple:
+def orquestrar(caminhos_pdf: list, prosa=None) -> tuple:
     """Fase 3: um bloco por demonstrativo de entrada.
 
     N PDFs -> N CONFIGs em ordem cronológica, com divisor de bloco quando
@@ -160,7 +146,7 @@ def orquestrar(caminhos_pdf: list, teto_rubricas: int = TETO_RUBRICAS,
     configs = []
     for i, est in enumerate(estruturas, start=1):
         num = str(i).zfill(2) if multi else None
-        cfg = montar_config(est, num_bloco=num, teto_rubricas=teto_rubricas)
+        cfg = montar_config(est, num_bloco=num)
         if prosa is not None:
             cfg = (prosa[i - 1] if isinstance(prosa, (list, tuple)) else prosa).aplicar(cfg)
         configs.append(cfg)
