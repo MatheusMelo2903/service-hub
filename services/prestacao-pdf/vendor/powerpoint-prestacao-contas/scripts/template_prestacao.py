@@ -483,8 +483,16 @@ def slide_capa():
     r2.font.name=FONT; r2.font.size=Pt(54); r2.font.bold=True; r2.font.color.rgb=C_BLUE_LIGHT
     add_line(s, Inches(0.8), Inches(5.15), Inches(2.0), Inches(5.15), C_AMBER, 3)
     add_text_box(s, Inches(0.8), Inches(5.45), Inches(11), Inches(0.4), CONFIG["exercicio_titulo"], 20, True, C_WHITE)
-    add_text_box(s, Inches(0.8), Inches(5.95), Inches(11), Inches(0.4),
-                 CONFIG["periodo_extenso"] + "  \u2022  Apresentação em Assembleia", 13, False, C_BLUE_PALE)
+    # Suporta quebra de linha no subtitulo: decks multi-bloco poem
+    # "Apresentação em Assembleia" em linha propria, como nas referencias.
+    sub = CONFIG["periodo_extenso"]
+    if "Apresentação em Assembleia" not in sub:
+        sub += "  \u2022  Apresentação em Assembleia"
+    suby = 5.95
+    for linha in sub.split("\n"):
+        add_text_box(s, Inches(0.8), Inches(suby), Inches(11), Inches(0.4),
+                     linha, 13, False, C_BLUE_PALE)
+        suby += 0.60
 
 # ---------- VISAO GERAL ----------
 def slide_visao_geral():
@@ -639,9 +647,12 @@ def slide_receita(num="05"):
     add_text_box(s, Inches(0.5), Inches(3.55), Inches(4.5), Inches(0.3), "RECEITA TOTAL", 11, True, C_GRAY_MUTED)
     lst = CONFIG["receitas_cat"]; lx = Inches(5.2); lw = Inches(7.6)
     n = len(lst)
-    avail = 4.0  # polegadas verticais p/ a lista
-    rh = min(0.55, max(0.32, (avail - 0.05*(n-1)) / n))
-    ly = 2.5
+    # Calibrado pelas referencias aprovadas: avail 3.75 a partir de 2.45 faz a
+    # lista terminar no maximo em 6.20, com folga para a faixa de insight em
+    # 6.35 (o upstream usava 4.0/2.5 e invadia a faixa com 10+ fontes).
+    avail = 3.75  # polegadas verticais p/ a lista
+    rh = min(0.55, max(0.28, (avail - 0.05*(n-1)) / n))
+    ly = 2.45
     for i,(fonte,val,pct) in enumerate(lst):
         y = Inches(ly + i*(rh+0.05))
         col = C_POSITIVE if i==0 else C_BLUE
@@ -728,11 +739,14 @@ def slide_detalhe(num, cat, total, pct):
     add_text_box(s, tx+tw-Inches(1.5), ty+Inches(0.1), Inches(1.2), Inches(0.28), "VALOR", 10, True, C_WHITE, PP_ALIGN.RIGHT)
     lanc = d.get("lancamentos", [])
     nL = max(len(lanc), 1)
-    avail = Inches(4.30).emu; reserve = Inches(0.55).emu
-    # Piso 0.17" (era 0.26"): com mais de 14 lancamentos a tabela estourava o
-    # slide. A fonte de 8pt para 17+ itens ja existe; 0.17" comporta ate ~22
-    # linhas sem invadir a faixa de total nem o rodape.
-    lh_emu = max(int((avail-reserve)/nL), Inches(0.17).emu); lh = Emu(lh_emu)
+    avail = Inches(4.30).emu; reserve = Inches(0.30).emu
+    # Altura de linha calibrada pelas referencias aprovadas (medida nos decks
+    # de referencia): teto de 0.42" (tabela curta nao estica) e piso de 0.17"
+    # (fonte de 8pt para 17+ itens ja existe). Com 20 itens a 0.20" a faixa
+    # de total termina exatamente na linha do rodape (7.10"). O max() puro do
+    # upstream esticava tabelas curtas e estourava o slide nas longas.
+    lh_emu = max(min(int((avail-reserve)/nL), Inches(0.42).emu), Inches(0.17).emu)
+    lh = Emu(lh_emu)
     cur = ty + hh
     fd = 10 if nL<=12 else (9 if nL<=16 else 8)
     fv = 11 if nL<=12 else (10 if nL<=16 else 9)
