@@ -40,3 +40,4 @@ __pycache__/
 docs/handoffs/*
 !docs/handoffs/.gitkeep
 *.local
+_handoff/

@@ -22,6 +22,10 @@ const PREVISAO_API_URL = process.env.PREVISAO_API_URL || 'http://localhost:8000'
 // URL do microservico de geracao de PPTX/PDF (previsao-pdf FastAPI). Em prod, setar via
 // Railway ENV apontando para a URL interna do servico. Opcional: sem ela o endpoint /gerar-pdf retorna 503.
 const PREVISAO_PDF_API_URL = process.env.PREVISAO_PDF_API_URL || '';
+// URL do microservico de prestacao de contas (prestacao-pdf FastAPI). Opcional:
+// sem ela o endpoint /api/prestacao/gerar-deck retorna 503 e o Hub usa o
+// fallback offline (PptxGenJS no browser).
+const PRESTACAO_PDF_API_URL = process.env.PRESTACAO_PDF_API_URL || '';
 // Origens permitidas (separadas por vírgula). Se vazio, qualquer origem passa
 // (dev mode). Em prod, setar pra "https://service-hub-production.up.railway.app"
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -897,6 +901,22 @@ app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
     res.status(503).json({ erro: 'previsao_api_nao_configurada' });
     return;
   }
+
+  // Limite de 50MB: PDFs do Superlógica raramente passam de 5MB.
+  // Validado após requireAuth e ANTES de abrir a conexão com o upstream —
+  // abrir o socket antes deixava conexão TCP pendurada a cada request
+  // rejeitado (achado da revisão da prestação, mesmo padrão aqui).
+  const TAMANHO_MAX_UPLOAD = 50 * 1024 * 1024;
+  const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+  if (!contentLength) {
+    res.status(411).json({ erro: 'content_length_obrigatorio' });
+    return;
+  }
+  if (contentLength > TAMANHO_MAX_UPLOAD) {
+    res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'PDFs do Superlógica raramente passam de 5MB. Limite: 50MB.' });
+    return;
+  }
+
   const target = new URL('/extrair-pdfs', PREVISAO_API_URL);
   const cliente = clienteHttpDe(target.protocol);
   const opts = {
@@ -907,11 +927,9 @@ app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
     headers: {
       'X-Internal-Secret': INTERNAL_API_SECRET,
       'Content-Type': req.headers['content-type'] || 'application/octet-stream',
+      'Content-Length': req.headers['content-length'],
     },
   };
-  if (req.headers['content-length']) {
-    opts.headers['Content-Length'] = req.headers['content-length'];
-  }
   const upstream = cliente.request(opts, r => {
     res.status(r.statusCode);
     Object.entries(r.headers).forEach(([k, v]) => {
@@ -936,14 +954,75 @@ app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
     }
   });
 
-  // Limite de 50MB: PDFs do Superlógica raramente passam de 5MB.
-  // Validado após requireAuth — não vale checar tamanho de quem não autenticou.
-  const TAMANHO_MAX_UPLOAD = 50 * 1024 * 1024;
-  const contentLength = parseInt(req.headers['content-length'] || '0', 10);
-  if (!contentLength || contentLength > TAMANHO_MAX_UPLOAD) {
-    res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'PDFs do Superlógica raramente passam de 5MB. Limite: 50MB.' });
+  req.pipe(upstream);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Módulo: Prestação de Contas
+// Proxy autenticado para o microserviço prestacao-pdf (FastAPI).
+// O Hub envia os W016A (multipart) e recebe { pptx_b64, pdf_b64, blocos }.
+// O body multipart vai puro pelo pipe — NÃO passar por express.json().
+// Timeout 240s: parse + render + LibreOffice frio chegam a 90s no primeiro
+// request do dia. Erros 422 do microserviço passam direto pro Hub com o
+// motivo estruturado (degradação graciosa: revisão humana, nunca slide
+// quebrado).
+// ─────────────────────────────────────────────────────────────────────────
+
+app.post('/api/prestacao/gerar-deck', requireAuth, (req, res) => {
+  if (!INTERNAL_API_SECRET || !PRESTACAO_PDF_API_URL) {
+    // Sem microserviço configurado o Hub cai no fallback offline (PptxGenJS).
+    res.status(503).json({ erro: 'prestacao_api_nao_configurada' });
     return;
   }
+
+  // Validação de tamanho ANTES de abrir a conexão com o upstream — abrir o
+  // socket antes deixaria uma conexão TCP pendurada por até 240s a cada
+  // request rejeitado (achado da revisão). Sem Content-Length: 411 explícito
+  // (fetch com FormData sempre envia o header; a ausência indica cliente
+  // fora do fluxo normal, não upload grande).
+  const TAMANHO_MAX_PRESTACAO = 50 * 1024 * 1024;
+  const tamanho = parseInt(req.headers['content-length'] || '0', 10);
+  if (!tamanho) {
+    res.status(411).json({ erro: 'content_length_obrigatorio' });
+    return;
+  }
+  if (tamanho > TAMANHO_MAX_PRESTACAO) {
+    res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'Limite: 50MB.' });
+    return;
+  }
+
+  const target = new URL('/gerar', PRESTACAO_PDF_API_URL);
+  const cliente = clienteHttpDe(target.protocol);
+  const opts = {
+    hostname: target.hostname,
+    port: target.port || (target.protocol === 'https:' ? 443 : 80),
+    path: target.pathname,
+    method: 'POST',
+    headers: {
+      'X-Internal-Secret': INTERNAL_API_SECRET,
+      'Content-Type': req.headers['content-type'] || 'application/octet-stream',
+      'Content-Length': req.headers['content-length'],
+    },
+  };
+  const upstream = cliente.request(opts, r => {
+    res.status(r.statusCode);
+    Object.entries(r.headers).forEach(([k, v]) => {
+      if (!['connection', 'transfer-encoding'].includes(k.toLowerCase())) {
+        res.setHeader(k, v);
+      }
+    });
+    r.pipe(res);
+  });
+  upstream.setTimeout(240000, () => {
+    upstream.destroy();
+    if (!res.headersSent) res.status(504).json({ erro: 'timeout_geracao' });
+  });
+  upstream.on('error', e => {
+    if (!res.headersSent) {
+      const indisponivel = ['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EHOSTUNREACH'].includes(e.code);
+      res.status(indisponivel ? 503 : 502).json({ erro: 'prestacao_api_indisponivel', detalhe: e.code || 'erro_desconhecido' });
+    }
+  });
 
   req.pipe(upstream);
 });
