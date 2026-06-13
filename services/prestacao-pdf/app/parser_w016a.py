@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 
 import pdfplumber
 
-RE_DINHEIRO = re.compile(r"^\(?\d{1,3}(?:\.\d{3})*,\d{2}\)?$")
+RE_DINHEIRO = re.compile(r"^-?\(?\d{1,3}(?:\.\d{3})*,\d{2}\)?$")
 RE_PERIODO = re.compile(r"De (\d{2}/\d{2}/\d{4}) até (\d{2}/\d{2}/\d{4})")
 RE_SALDO = re.compile(r"^Saldo em (\d{2}/\d{2}/\d{4})$")
 RE_TOTAL_GRUPO = re.compile(r"^Total de (.+)$")
@@ -89,9 +89,11 @@ class EstruturaW016A:
 
 
 def _para_float(token: str) -> float:
-    neg = token.startswith("(")
-    v = float(token.strip("()").replace(".", "").replace(",", "."))
-    return -v if neg else v
+    # Negativo em dois formatos: contábil "(2.155,18)" e sinal de menos à
+    # esquerda "-4.298,95" (descontos, estornos e tarifas lançados na receita).
+    neg = token.startswith("(") or token.startswith("-")
+    limpo = token.strip("()").lstrip("-").replace(".", "").replace(",", ".")
+    return -float(limpo) if neg else float(limpo)
 
 
 def _e_caixa_alta(texto: str) -> bool:
@@ -225,6 +227,16 @@ def parsear(caminho_pdf: str) -> EstruturaW016A:
                     if grupo_atual is not None:
                         grupo_atual.lancamentos.append(Lancamento(texto, valor))
                     continue
+
+    # Caso específico e legível pro gestor: relatório bem formado (período,
+    # despesas e grupos presentes) mas sem nenhuma receita lançada — mês só de
+    # despesa. Mensagem clara em vez do erro técnico genérico abaixo. Suporte
+    # total a mês-zero-receita fica como backlog (decisão de produto).
+    if (est.data_inicial and est.data_final and est.despesa_total and est.grupos
+            and not est.receita_total and not est.receitas):
+        raise ValueError(
+            "Mês sem receitas lançadas: a prestação precisa de receitas e "
+            "despesas. Verifique a competência.")
 
     # Documento que não tem a anatomia do W016A detalhado (cabeçalho com
     # período, totais de receita e despesa, grupos) é rejeitado com motivo
