@@ -47,10 +47,26 @@ def montar_config(est: P.EstruturaW016A, num_bloco: str | None = None) -> dict:
     linha1 = " ".join(partes[:2]) if len(partes) > 2 else nome
     linha2 = " ".join(partes[2:]) if len(partes) > 2 else ""
 
-    rec_linhas = agrupar(est.receitas, est.receita_total, "Receitas",
-                         MAX_LINHAS_RECEITA, "Demais Receitas")
+    # Rubricas negativas na seção de receita (descontos, estornos, tarifas) são
+    # REDUTORES, não fontes. Vão para uma linha própria "Descontos e Estornos",
+    # claramente rotulada, em vez de poluir a Origem da Receita com uma linha de
+    # receita negativa (lê pessimamente numa assembleia). A receita total no
+    # topo permanece líquida (já abatido o redutor); só a composição exibida
+    # separa o bruto positivo do redutor — a soma das linhas continua = total.
+    redutores = [l for l in est.receitas if l.valor < 0]
+    positivas = [l for l in est.receitas if l.valor >= 0]
+    soma_redutores = round(sum(l.valor for l in redutores), 2)
+    soma_positivas = round(sum(l.valor for l in positivas), 2)
+    # Capacidade do slide é fixa (11 linhas): reserva uma pro redutor quando há.
+    max_pos = MAX_LINHAS_RECEITA - 1 if redutores else MAX_LINHAS_RECEITA
+    rec_linhas = agrupar(positivas, soma_positivas, "Receitas",
+                         max_pos, "Demais Receitas")
     receitas_cat = [(l.rotulo, l.valor, _pct(l.valor, est.receita_total))
                     for l in rec_linhas]
+    if redutores:
+        receitas_cat.append(
+            ("Descontos e Estornos", soma_redutores,
+             _pct(soma_redutores, est.receita_total)))
 
     grupos_ordenados = sorted(est.grupos, key=lambda g: -g.total)
     despesas_cat = [(g.categoria, g.total, _pct(g.total, est.despesa_total))
