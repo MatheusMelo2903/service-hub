@@ -1,0 +1,11 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "environments": {
+    "dev": {
+      "deploy": {
+        "startCommand": "python -m app.sync",
+        "cronSchedule": "0 9 * * *"
+      }
+    }
+  }
+}
