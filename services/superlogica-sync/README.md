@@ -4,15 +4,15 @@ Serviço de sincronização Superlógica → Supabase do Service Hub. **Só leit
 
 ## Estado
 
-Frente B, em construção por fases com checkpoint. **Fase 1 (atual): esqueleto** — pastas, `/healthz`, sem lógica de sync.
+Frente B **implementada e ativa em dev**. Sync completo da Camada A + cron diário agendado (06:00 BRT / `0 9 * * *` UTC). O serviço roda como **cron puro** no Railway: o container executa `python -m app.sync` e morre. Não há HTTP server permanente.
 
-| Fase | Entrega |
-|---|---|
-| 1 | Fundação: migrações Camada A/B + esqueleto (esta) |
-| 2 | Leitura e validação por id (sem escrever no banco) |
-| 3 | Diff + escrita Camada A (primeira escrita real em dev) |
-| 4 | Camada B: briefing `.md` determinístico |
-| 5 | Sync completo + cron em dev |
+| Fase | Entrega | Status |
+|---|---|---|
+| 1 | Fundação: migrações Camada A/B + esqueleto | Concluída |
+| 2 | Leitura e validação por id (sem escrever no banco) | Concluída |
+| 3 | Diff + escrita Camada A (primeira escrita real em dev) | Concluída |
+| 4 | Camada B: briefing `.md` determinístico | Pendente |
+| 5 | Cron diário em dev | Concluída (implantada junto à Fase 3) |
 
 ## Arquitetura
 
@@ -43,8 +43,13 @@ O `/healthz` mostra quais estão setadas sem revelar valor.
 
 ```
 pip install -r requirements.txt
+
+# Conferir ENVs via healthz (utilitário local; NAO e o modo de producao):
 uvicorn app.main:app --reload --port 8000
 curl localhost:8000/healthz
+
+# Executar o sync manualmente (equivalente ao que o Railway dispara no cron):
+python -m app.sync
 ```
 
 ## Deploy (Railway, env dev)

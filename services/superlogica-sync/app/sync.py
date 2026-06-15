@@ -58,7 +58,6 @@ def montar_row(reg: dict, idsl) -> dict:
         "endereco": endereco or None,
         "raw_hash": raw_hash(reg),
         "mockup": False,
-        "proposito_teste": "sync Camada A (superlogica-sync)",
     }
 
 
@@ -86,9 +85,9 @@ def _upsert(client: httpx.Client, row: dict) -> str:
         return "NO-OP"
     patch = {k: v for k, v in row.items() if v is not None}
     patch.update({"synced_at": agora, "updated_at": agora})
-    client.patch(_BASE, headers=_headers(),
-                 params={"id_superlogica": f"eq.{idsl}"}, json=patch)
-    return "ATUALIZADO"
+    rr = client.patch(_BASE, headers=_headers(),
+                      params={"id_superlogica": f"eq.{idsl}"}, json=patch)
+    return "ATUALIZADO" if rr.status_code in (200, 204) else f"ERRO_{rr.status_code}"
 
 
 def sincronizar() -> dict:
@@ -100,7 +99,9 @@ def sincronizar() -> dict:
     inicio = dt.datetime.now(dt.timezone.utc).isoformat()
     print(f"[sync] inicio={inicio}")
     sincronizados, pulados = [], []
-    with httpx.Client(timeout=30) as client:
+    # client  → Supabase (base e headers distintos do client da Superlógica)
+    # sl_client → Superlógica (reutilizado em todo o loop; evita abrir conexão por id)
+    with httpx.Client(timeout=30) as client, httpx.Client(timeout=30) as sl_client:
         lista = _listar(client)
         print(f"[sync] condominios listados: {len(lista)}")
         for c in lista:
@@ -110,7 +111,7 @@ def sincronizar() -> dict:
                 pulados.append((nome, None, "sem id_superlogica (mockup sem id real)"))
                 continue
             try:
-                status, reg = ler_condominio(idsl)
+                status, reg = ler_condominio(idsl, client=sl_client)
                 if status == 200 and isinstance(reg, dict) and reg:
                     acao = _upsert(client, montar_row(reg, idsl))
                     sincronizados.append((nome, idsl, acao))
@@ -151,7 +152,7 @@ def gravar_status(resultado: str, resumo: dict, erro_msg: str | None) -> None:
             print(f"[sync] status gravado: resultado={resultado}")
         else:
             print(f"[sync] AVISO: nao gravou status (HTTP {r.status_code}). "
-                  f"Tabela sync_status existe? (migracao 011). Corpo: {r.text[:160]}",
+                  f"Tabela sync_status existe? (migracao 011).",
                   file=sys.stderr)
     except Exception as e:
         print(f"[sync] AVISO: falha ao gravar status: {type(e).__name__}", file=sys.stderr)

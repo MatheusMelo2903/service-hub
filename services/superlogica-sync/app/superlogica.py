@@ -62,42 +62,58 @@ def _get(client: httpx.Client, path: str, params: dict) -> httpx.Response:
     return resp
 
 
-def ler_condominio(cid: int | str) -> tuple[int, dict | None]:
+def ler_condominio(
+    cid: int | str,
+    client: httpx.Client | None = None,
+) -> tuple[int, dict | None]:
     """GET /condominios?id=cid. Retorna (status_http, registro_cru | None).
 
     Desaninha o payload [{ "condominio": [ {..} ] }] para o dict de campos.
+    Se `client` for passado, reutiliza-o (evita abrir conexão por condomínio no
+    loop do sync). Se None, cria um próprio (mantém compatibilidade com smoke).
     """
-    with httpx.Client() as client:
-        resp = _get(client, '/condominios', {'id': cid})
-    if resp.status_code != 200:
-        return resp.status_code, None
-    try:
-        data = resp.json()
-    except ValueError:
-        return resp.status_code, None
-    reg = None
-    if isinstance(data, list) and data:
-        bloco = data[0]
-        if isinstance(bloco, dict):
-            cond = bloco.get('condominio')
-            if isinstance(cond, list) and cond:
-                reg = cond[0]
-            else:
-                reg = bloco
-    return resp.status_code, reg
+    def _executar(c: httpx.Client) -> tuple[int, dict | None]:
+        resp = _get(c, '/condominios', {'id': cid})
+        if resp.status_code != 200:
+            return resp.status_code, None
+        try:
+            data = resp.json()
+        except ValueError:
+            return resp.status_code, None
+        reg = None
+        if isinstance(data, list) and data:
+            bloco = data[0]
+            if isinstance(bloco, dict):
+                cond = bloco.get('condominio')
+                if isinstance(cond, list) and cond:
+                    reg = cond[0]
+                else:
+                    reg = bloco
+        return resp.status_code, reg
+
+    if client is not None:
+        return _executar(client)
+    with httpx.Client() as c:
+        return _executar(c)
 
 
-def ler_unidades(cid: int | str, max_paginas: int = 400) -> list[dict]:
+def ler_unidades(
+    cid: int | str,
+    max_paginas: int = 400,
+    client: httpx.Client | None = None,
+) -> list[dict]:
     """GET /unidades?idCondominio=cid paginado (base 0). Retorna lista crua.
 
     Para na última página (len < PAGINA_TAMANHO), em status != 200, ou no 429
     (que sobe como RateLimitError). Dorme REQ_INTERVALO_S entre páginas.
+    Se `client` for passado, reutiliza-o (evita abrir conexão por condomínio no
+    loop do sync). Se None, cria um próprio (mantém compatibilidade com smoke).
     """
-    out: list[dict] = []
-    with httpx.Client() as client:
+    def _executar(c: httpx.Client) -> list[dict]:
+        out: list[dict] = []
         for pg in range(max_paginas):
             resp = _get(
-                client,
+                c,
                 '/unidades',
                 {'idCondominio': cid, 'itensPorPagina': PAGINA_TAMANHO, 'pagina': pg},
             )
@@ -113,4 +129,10 @@ def ler_unidades(cid: int | str, max_paginas: int = 400) -> list[dict]:
             if len(lst) < PAGINA_TAMANHO:
                 break
             time.sleep(REQ_INTERVALO_S)
-    return out
+        return out
+
+    if client is not None:
+        return _executar(client)
+    out: list[dict] = []
+    with httpx.Client() as c:
+        return _executar(c)
