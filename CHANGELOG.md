@@ -1,5 +1,31 @@
 # Changelog Service Hub
 
+## 2026-06-23 — Prosa rica deterministica + Bloco A (Prestacao de Contas)
+
+### Adicionado
+- `services/prestacao-pdf/app/prosa.py`: engine de prosa por template 100% deterministica, sem IA. Gera descricao por categoria com percentual e ordenacao por peso em tres moldes: dominancia (uma categoria acima de 50%), dois equilibrados (duas maiores somam mais de 70%) e pulverizado (demais casos). Limite de 160 caracteres por descricao. Insight de receita coerente entre texto e destaque visual.
+- `public/prestacao.js`: texto da UI e do system prompt do fallback padronizado para W016A obrigatorio. Download de PDF e PPTX isolados, falha de um nao derruba o outro; decodificacao base64 via `Uint8Array.from` sem travar a thread. Estado reseta apos sucesso. Toast de erro quando a lista de condominios falha.
+- `public/index.html`: ajustes de UI na aba de Prestacao de Contas alinhados ao padrao W016A.
+
+### Follow-ups registrados (nao implementar antes do ciclo indicado)
+- `console.log`/`console.error` de dados financeiros no caminho de fallback (`prestacao.js` aprox. linhas 1871, 2059, 2063): remover antes de release de producao.
+- Toast do `catch` externo (`prestacao.js` aprox. linha 1952) exibe `err.message` bruto: substituir por mensagem fixa no proximo ciclo.
+- Aviso opcional do W011A na dropzone entra somente junto com a feature de ingestao de serie mensal (W011A despesa mensal + W015A receita mensal), nunca antes.
+
+### Validado
+- Revisor: APROVADO
+- Auditor de seguranca: APROVADO
+- Validador: smoke da prosa nos 3 moldes passou
+
+### Arquivos modificados
+- `public/index.html`
+- `public/prestacao.js`
+- `services/prestacao-pdf/app/prosa.py`
+
+Implementado por: subagente programador
+
+---
+
 ## 30/04/2026 — Suporte a Inquilino e Dependente na importação de unidades
 
 ### Adicionado

@@ -18,6 +18,7 @@
 | Task | Status | Entrega |
 |---|---|---|
 | ata-fidelidade-v3 — regras de fidelidade no system prompt + segundo passe de auditoria | ✅ | branch `feat/ata-fidelidade-v3` · commit `8cec7de` (server.js +92/-4) · teste Happy Days 3/4 passou · doc em `tarefas/concluidas/ata-fidelidade-v3.md` |
+| prestacao-bloco-a-prosa-rica — prosa rica deterministica (3 moldes) + Bloco A com download robusto PDF/PPTX e padrao W016A | ✅ | commit `ad2439c` · 3 arquivos (+222/-18 linhas) · revisor, auditor e validador aprovados · 2026-06-23 |
 
 ### Próxima tarefa
 🔴 **1.1 — Seletor de condomínio com ID** (4h, bloqueador da Fase 1)
