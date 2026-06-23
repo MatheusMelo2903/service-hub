@@ -1,3 +1,19 @@
+REGRAS DE AMBIENTE — LEIA ANTES DE QUALQUER TAREFA
+
+Este projeto tem dois ambientes no mesmo repositorio (MatheusMelo2903/service-hub):
+- Branch dev = ambiente de TESTE. Roda em service-hub-dev.up.railway.app. E onde todo desenvolvimento acontece.
+- Branch main = PRODUCAO. Roda em service-hub-production.up.railway.app. E intocavel sem autorizacao explicita.
+
+Regras absolutas:
+1. No inicio de toda sessao, rode `git status` e confirme que estou na branch dev. Se nao estiver, rode `git checkout dev` e me avise antes de continuar.
+2. Todo desenvolvimento, edicao e teste acontece SOMENTE na branch dev.
+3. NUNCA faca commit, merge ou push para a branch main. Producao so e atualizada quando EU autorizar explicitamente com a frase "sobe para producao".
+4. Quando eu autorizar subir para producao, o fluxo e: commit na dev, push da dev, e so entao merge dev para main com minha confirmacao.
+5. Antes de comecar a editar, rode `git fetch` para sincronizar com o remoto e evitar conflito entre os varios clones locais.
+6. Se em algum momento detectar que estou em pasta diferente de v8s/service-hub, me avise imediatamente.
+
+Quando eu disser "estou na versao teste" ou "trabalha no dev", confirme que estamos na branch dev e prossiga normalmente nela.
+
 # CLAUDE.md — Service Hub V8S
 
 Este arquivo é a fonte de verdade do projeto Service Hub. Leia INTEIRO antes de qualquer tarefa.
