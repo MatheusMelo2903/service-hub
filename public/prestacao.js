@@ -32,6 +32,10 @@ async function prestacaoInit() {
     const r = await supaFetch('condominios?select=id,nome,id_superlogica&order=nome.asc');
     if (Array.isArray(r)) prestacaoState.condominios = r;
   } catch (e) {
+    // Informa o usuário que a lista não carregou para ele poder tentar recarregar,
+    // em vez de deixar o campo de busca silenciosamente vazio.
+    // prestacaoState.condominios já foi inicializado como [] antes do try.
+    toast('Não foi possível carregar a lista de condomínios. Tente recarregar a página.', 'err');
   }
   var hoje = new Date();
   var iso = hoje.getFullYear() + '-' +
@@ -1830,10 +1834,11 @@ function prestacaoArquivoParaBloco(file) {
 // fallback NAO e oferecido, porque geraria o mesmo dado ruim com menos checagem.
 
 // Decodifica base64 em Blob e dispara o download no browser.
+// Usa Uint8Array.from com charCodeAt como callback para converter em O(n) sem
+// loop explícito: evita travar a thread em decks com muitas imagens ou slides.
 function prestacaoBaixarBlob(b64, mime, nomeArquivo) {
   var bin = atob(b64);
-  var bytes = new Uint8Array(bin.length);
-  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  var bytes = Uint8Array.from(bin, function(c) { return c.charCodeAt(0); });
   var url = URL.createObjectURL(new Blob([bytes], { type: mime }));
   var a = document.createElement('a');
   a.href = url; a.download = nomeArquivo;
@@ -1879,10 +1884,56 @@ async function prestacaoGerarServico() {
     }
     var dados = await resp.json();
     var base = 'Prestacao_' + (prestacaoState.condNome || 'Condominio').replace(/[^\w]+/g, '_');
-    prestacaoBaixarBlob(dados.pdf_b64, 'application/pdf', base + '.pdf');
-    prestacaoBaixarBlob(dados.pptx_b64,
-      'application/vnd.openxmlformats-officedocument.presentationml.presentation', base + '.pptx');
-    toast('Prestação gerada: ' + dados.blocos + ' bloco(s), PDF e PPTX baixados.', 'ok');
+    var algumBaixou = false;
+    var baixados = [];
+
+    // Valida pdf_b64 antes de tentar decodificar; falha no PDF não deve impedir o PPTX.
+    if (dados.pdf_b64 && typeof dados.pdf_b64 === 'string' && dados.pdf_b64.length > 0) {
+      try {
+        prestacaoBaixarBlob(dados.pdf_b64, 'application/pdf', base + '.pdf');
+        algumBaixou = true;
+        baixados.push('PDF');
+      } catch (errPdf) {
+        // Detalhe técnico só no console; o usuário vê mensagem acionável sem ruído técnico.
+        console.error('[prestacao] falha ao baixar PDF:', errPdf);
+        toast('PDF não pôde ser baixado. Tente gerar novamente.', 'warn');
+      }
+    } else {
+      toast('PDF não disponível na resposta do servidor.', 'warn');
+    }
+
+    // Valida pptx_b64 independentemente do resultado do PDF.
+    if (dados.pptx_b64 && typeof dados.pptx_b64 === 'string' && dados.pptx_b64.length > 0) {
+      try {
+        prestacaoBaixarBlob(dados.pptx_b64,
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation', base + '.pptx');
+        algumBaixou = true;
+        baixados.push('PPTX');
+      } catch (errPptx) {
+        // Detalhe técnico só no console; o usuário vê mensagem acionável sem ruído técnico.
+        console.error('[prestacao] falha ao baixar PPTX:', errPptx);
+        toast('PPTX não pôde ser baixado. Tente gerar novamente.', 'warn');
+      }
+    } else {
+      toast('PPTX não disponível na resposta do servidor.', 'warn');
+    }
+
+    // Só reseta o estado (lista de arquivos e campos) se pelo menos um download
+    // foi iniciado sem erro de decodificação base64. Não há garantia de que o
+    // arquivo chegou ao disco (um bloqueador de popup pode ter interceptado),
+    // mas é o sinal mais confiável disponível no browser. Se ambos falharem,
+    // o usuário pode tentar de novo sem precisar reanexar os PDFs do W016A.
+    if (algumBaixou) {
+      prestacaoState.arquivos = [];
+      var filesList = document.getElementById('prest-files-list');
+      if (filesList) filesList.innerHTML = '';
+      var fileInput = document.getElementById('prest-file-input');
+      if (fileInput) fileInput.value = '';
+      prestacaoAtualizarBotao();
+      toast('Prestação gerada: ' + dados.blocos + ' bloco(s). ' + baixados.join(' e ') + ' baixado(s).', 'ok');
+    } else {
+      toast('Nenhum arquivo foi baixado. Tente novamente ou contate o suporte.', 'err');
+    }
   } catch (err) {
     console.error('[prestacao] erro no caminho padrao:', err);
     if (err && err.indisponivel) {
@@ -1930,11 +1981,11 @@ async function prestacaoGerar() {
     btn.textContent = 'Consultando IA...';
 
     // System prompt orienta o modelo a devolver JSON estruturado seguindo o
-    // padrao da skill powerpoint prestacao contas, com base nos relatorios
-    // W011A (despesas por categoria) e W015A (extrato bancario) do Superlogica.
+    // padrao da skill powerpoint prestacao contas, com base no relatorio
+    // W016A do Superlogica (demonstrativo de receitas e despesas).
     var systemPrompt = [
       'Voce e um assistente especializado em montar prestacao de contas condominial em formato pptx.',
-      'O usuario vai fornecer relatorios do Superlogica, em especial W011A (despesas por categoria) e W015A (extrato bancario com receitas e saldos).',
+      'O usuario vai fornecer o relatorio W016A do Superlogica (demonstrativo de receitas e despesas).',
       'Sua tarefa e extrair os dados em JSON estruturado para alimentar a skill powerpoint prestacao contas.',
       'Devolva SEMPRE um unico bloco JSON valido, dentro de cercas tripla com a tag json (```json ... ```), sem texto antes nem depois.',
       'Estrutura obrigatoria do JSON:',
