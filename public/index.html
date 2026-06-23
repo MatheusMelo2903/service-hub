@@ -7,6 +7,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/docx@9.5.1/dist/index.iife.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/auth-bootstrap.js" defer></script>
 <style>
@@ -1734,6 +1735,7 @@
             <div style="display:flex;gap:8px">
               <button class="btn btn-ghost" onclick="copiarAtaTexto()" style="font-size:12px;padding:6px 12px">⎘ Copiar texto</button>
               <button class="btn btn-primary" onclick="baixarAtaPDF()" style="font-size:12px;padding:6px 12px">⬇ Baixar PDF</button>
+              <button class="btn btn-primary" onclick="baixarAtaWord()" style="font-size:12px;padding:6px 12px">⬇ Baixar Word</button>
               <button class="btn btn-ghost" onclick="fecharAtaGerada()" style="font-size:12px;padding:6px 12px">✕ Fechar</button>
             </div>
           </div>
@@ -4878,6 +4880,113 @@ function baixarAtaPDF() {
 </html>`);
   w.document.close();
   toast('No diálogo de impressão: desmarque "Cabeçalhos e rodapés" e salve como PDF', 'ok');
+}
+
+// Gera a MESMA ata em .docx editável, em paralelo ao PDF (não altera baixarAtaPDF
+// nem renderAtaBlocos). Parser próprio replica a segmentação em blocos do PDF.
+// Formatação equivalente: Arial 12pt, line-height 1.5, A4, margens 2.54/3.17cm,
+// cabeçalho e local/data centralizados, corpo e itens justificados (ITEM não
+// corta entre páginas via keepLines), assinaturas à esquerda. Título SEM negrito.
+function baixarAtaWord() {
+  if (!_ataTextoGerado) { toast('Nada pra baixar', 'err'); return; }
+  if (!window.docx || !window.docx.Document) {
+    toast('Biblioteca Word não carregou (verifique a conexão). Use Baixar PDF.', 'err');
+    return;
+  }
+
+  // Mesma lógica de blocos do renderAtaBlocos(), replicada aqui para não tocar nele.
+  const reItem      = /^ITEM\s+\d+\)/;
+  const reEnc       = /^ENCERRAMENTO\b/i;
+  const reTituloATA = /^ATA DA ASSEMBLEIA/i;
+  const reLocalData = /^[^/\n]+\/[A-Z]{2},\s*\d+\s+de\s+\S+\s+de\s+\d{4}\.?\s*$/i;
+  const reUnderline = /^_{10,}\s*$/;
+
+  const linhas = _ataTextoGerado.split('\n');
+  const cabCentro = [], cabJust = [], items = [], encJust = [], encAssin = [];
+  let encLocalData = '';
+  let modo = 'cabCentro', buf = null;
+
+  for (const ln of linhas) {
+    if (modo === 'cabCentro') { cabCentro.push(ln); if (reTituloATA.test(ln)) modo = 'cabJust'; continue; }
+    if (modo === 'cabJust')   { if (reItem.test(ln)) { modo = 'item'; buf = [ln]; continue; } cabJust.push(ln); continue; }
+    if (modo === 'item') {
+      if (reItem.test(ln)) { if (buf) items.push(buf); buf = [ln]; continue; }
+      if (reEnc.test(ln))  { if (buf) { items.push(buf); buf = null; } modo = 'encJust'; encJust.push(ln); continue; }
+      buf.push(ln); continue;
+    }
+    if (modo === 'encJust') {
+      if (reLocalData.test(ln.trim())) { encLocalData = ln; modo = 'encAssin'; continue; }
+      if (reUnderline.test(ln.trim())) { modo = 'encAssin'; encAssin.push(ln); continue; }
+      encJust.push(ln); continue;
+    }
+    encAssin.push(ln);
+  }
+  if (buf) items.push(buf);
+
+  const D = window.docx;
+  const ALIGN = D.AlignmentType;
+
+  // Texto multilinha -> UM parágrafo com quebras de linha reais (texto editável).
+  // Arial 12pt = size 24 (half-points); line-height 1.5 = spacing.line 360.
+  function paragrafo(texto, align, keepLines) {
+    const linhasP = String(texto).split('\n');
+    const runs = linhasP.map((l, i) => new D.TextRun(
+      i === 0 ? { text: l, font: 'Arial', size: 24 }
+              : { text: l, font: 'Arial', size: 24, break: 1 }
+    ));
+    return new D.Paragraph({
+      alignment: align,
+      spacing: { line: 360 },
+      keepLines: !!keepLines,
+      children: runs,
+    });
+  }
+
+  const children = [];
+  if (items.length === 0) {
+    // Mesmo fallback do renderAtaBlocos: texto inteiro como um bloco justificado.
+    children.push(paragrafo(_ataTextoGerado, ALIGN.JUSTIFIED, false));
+  } else {
+    if (cabCentro.length) children.push(paragrafo(cabCentro.join('\n'), ALIGN.CENTER, false));
+    if (cabJust.length)   children.push(paragrafo(cabJust.join('\n'), ALIGN.JUSTIFIED, false));
+    for (const it of items) children.push(paragrafo(it.join('\n'), ALIGN.JUSTIFIED, true));
+    if (encJust.length)   children.push(paragrafo(encJust.join('\n'), ALIGN.JUSTIFIED, false));
+    if (encLocalData)     children.push(paragrafo(encLocalData, ALIGN.CENTER, false));
+    if (encAssin.length)  children.push(paragrafo(encAssin.join('\n'), ALIGN.LEFT, false));
+  }
+
+  // A4 em twips (11906x16838). Margens: 2.54cm=1440, 3.17cm=1797 (igual ao @page do PDF).
+  const doc = new D.Document({
+    sections: [{
+      properties: {
+        page: {
+          size: { width: 11906, height: 16838 },
+          margin: { top: 1440, right: 1440, bottom: 1440, left: 1797 },
+        },
+      },
+      children,
+    }],
+  });
+
+  // Nome do arquivo a partir dos campos do formulário (fallback "ata.docx").
+  const slug = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const cond = (document.getElementById('ata-cond') || {}).value || '';
+  const data = (document.getElementById('ata-data') || {}).value || '';
+  let nome = [slug(cond), slug(data)].filter(Boolean).join('_');
+  nome = (nome ? 'Ata_' + nome : 'ata') + '.docx';
+
+  D.Packer.toBlob(doc).then((blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    toast('✓ Word (.docx) gerado: ' + nome, 'ok');
+  }).catch((e) => {
+    toast('Erro ao gerar Word: ' + (e && e.message ? e.message : e), 'err');
+  });
 }
 
 async function copiarProClaude() {
