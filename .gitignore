@@ -34,6 +34,7 @@ __pycache__/
 
 # Claude Code direcional (privado)
 .claude/settings.local.json
+.claude/hooks/
 .claude/SESSION_LOG.md
 .claude/logs/
 .claude/worktrees/
