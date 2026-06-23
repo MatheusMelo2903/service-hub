@@ -42,3 +42,6 @@ docs/handoffs/*
 !docs/handoffs/.gitkeep
 *.local
 _handoff/
+
+# Fixtures locais com dados reais de condominio (NUNCA commitar)
+services/prestacao-pdf/tests/fixtures_local/

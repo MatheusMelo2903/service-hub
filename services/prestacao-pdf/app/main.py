@@ -30,7 +30,8 @@ import traceback
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
 
 from .auth import verificar_secret
-from .pipeline import converter_pdf, gerar_deck, orquestrar
+from .detector import detectar_tipo
+from .pipeline import converter_pdf, gerar_deck, orquestrar, orquestrar_multi_fonte
 from .prosa import ProsaDeterministica
 
 _VERSAO = "1.0.0"
@@ -60,6 +61,7 @@ async def gerar(
     tmpdir = tempfile.mkdtemp(prefix="prestacao_")
     try:
         caminhos = []
+        caminhos_e_tipos = []
         total_bytes = 0
         LIMITE_TOTAL = 50 * 1024 * 1024  # defesa em profundidade: o proxy ja limita 50MB
         for i, up in enumerate(arquivos):
@@ -74,21 +76,53 @@ async def gerar(
                 raise HTTPException(
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                     detail={"erro": "upload_muito_grande", "limite_mb": 50})
-            destino = os.path.join(tmpdir, f"w016a_{i:02d}.pdf")
+            destino = os.path.join(tmpdir, f"relatorio_{i:02d}.pdf")
             with open(destino, "wb") as f:
                 f.write(conteudo)
             caminhos.append(destino)
 
-        # 1) Parse deterministico + orquestracao (um bloco por demonstrativo).
-        #    ValueError aqui = relatorio fora do formato ou blocos nao
-        #    contiguos -> falha explicita, nunca deck improvisado.
+        # Detecta o tipo de cada arquivo enviado.
+        # Arquivo desconhecido dispara 422 imediato (nunca gera deck com dado duvidoso).
+        fontes_detectadas = {"W011A": False, "W015A": False, "W016A": False}
+        for cam in caminhos:
+            tipo = detectar_tipo(cam)
+            if tipo == "DESCONHECIDO":
+                _log("tipo_desconhecido", arquivo=os.path.basename(cam))
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"erro": "tipo_desconhecido",
+                            "arquivo": os.path.basename(cam),
+                            "acao": "revisao_humana"})
+            caminhos_e_tipos.append((cam, tipo))
+            fontes_detectadas[tipo] = True
+
+        # Roteamento: todos W016A → fluxo legado (multi-período por W016A).
+        # Qualquer W011A ou W015A → fluxo multi-fonte (único período).
+        todos_w016a = all(t == "W016A" for _, t in caminhos_e_tipos)
+        serie_mensal_ativa = False
+        avisos_reconciliacao: list = []
+
+        # 1) Parse deterministico + orquestracao.
         try:
-            configs, capa = orquestrar(caminhos, prosa=ProsaDeterministica())
+            if todos_w016a:
+                configs, capa = orquestrar(caminhos, prosa=ProsaDeterministica())
+            else:
+                configs, capa, serie_mensal_ativa, avisos_reconciliacao = \
+                    orquestrar_multi_fonte(caminhos_e_tipos, prosa=ProsaDeterministica())
         except ValueError as e:
-            _log("relatorio_invalido", motivo=str(e)[:300])
+            motivo = str(e)
+            # Distingue bloqueio de reconciliação de erro genérico de relatório
+            if motivo.startswith("reconciliacao_bloqueante"):
+                _log("reconciliacao_bloqueante", motivo=motivo[:300])
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"erro": "reconciliacao_bloqueante",
+                            "alertas": motivo.replace("reconciliacao_bloqueante: ", "").split("; "),
+                            "acao": "revisao_humana"})
+            _log("relatorio_invalido", motivo=motivo[:300])
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"erro": "relatorio_invalido", "detalhe": str(e)[:300],
+                detail={"erro": "relatorio_invalido", "detalhe": motivo[:300],
                         "acao": "revisao_humana"})
 
         # 2) Deck + auditoria visual obrigatoria. Reprovou -> nao entrega.
@@ -113,12 +147,17 @@ async def gerar(
 
         duracao_ms = int((time.perf_counter() - inicio) * 1000)
         _log("gerado", blocos=len(configs), duracao_ms=duracao_ms,
-             pdf_kb=len(pdf_bytes) // 1024)
+             pdf_kb=len(pdf_bytes) // 1024,
+             serie_mensal=serie_mensal_ativa,
+             avisos=len(avisos_reconciliacao))
         return {
             "pptx_b64": base64.b64encode(pptx_bytes).decode("ascii"),
             "pdf_b64": base64.b64encode(pdf_bytes).decode("ascii"),
             "blocos": len(configs),
             "duracao_ms": duracao_ms,
+            "fontes_detectadas": fontes_detectadas,
+            "serie_mensal_ativa": serie_mensal_ativa,
+            "avisos_reconciliacao": avisos_reconciliacao,
         }
     except HTTPException:
         raise

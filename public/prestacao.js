@@ -1930,7 +1930,30 @@ async function prestacaoGerarServico() {
       var fileInput = document.getElementById('prest-file-input');
       if (fileInput) fileInput.value = '';
       prestacaoAtualizarBotao();
-      toast('Prestação gerada: ' + dados.blocos + ' bloco(s). ' + baixados.join(' e ') + ' baixado(s).', 'ok');
+
+      // Monta resumo de fontes detectadas e série mensal para informar o usuário.
+      // Usa somente campos que o servidor garante (sem inventar dado ausente).
+      var partesStatus = [];
+      if (dados.fontes_detectadas) {
+        var fontesList = [];
+        if (dados.fontes_detectadas.W011A) fontesList.push('W011A');
+        if (dados.fontes_detectadas.W015A) fontesList.push('W015A');
+        if (dados.fontes_detectadas.W016A) fontesList.push('W016A');
+        if (fontesList.length > 0) {
+          partesStatus.push('Fontes: ' + fontesList.join(', '));
+        }
+      }
+      if (dados.serie_mensal_ativa) {
+        partesStatus.push('Série mensal: ativa');
+      }
+      if (dados.avisos_reconciliacao && dados.avisos_reconciliacao.length > 0) {
+        // Aviso de reconciliação: exibe como toast separado (âmbar) sem bloquear o download.
+        toast('Atenção: diferença entre fontes detectada. Verifique os totais.', 'warn');
+        console.warn('[prestacao] avisos de reconciliação:', dados.avisos_reconciliacao);
+      }
+
+      var msgStatus = partesStatus.length > 0 ? ' ' + partesStatus.join('. ') + '.' : '';
+      toast('Prestação gerada: ' + dados.blocos + ' bloco(s). ' + baixados.join(' e ') + ' baixado(s).' + msgStatus, 'ok');
     } else {
       toast('Nenhum arquivo foi baixado. Tente novamente ou contate o suporte.', 'err');
     }
