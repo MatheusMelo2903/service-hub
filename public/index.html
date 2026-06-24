@@ -139,6 +139,16 @@
 
   .nav-icon { font-size: 15px; width: 18px; text-align: center; }
 
+  /* Seletor de formato de saida da prestacao (PDF / PowerPoint / Ambos) */
+  .prest-formato { display: flex; flex-wrap: wrap; gap: 8px; }
+  .prest-formato-opcao {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 12px; border: 1px solid var(--border2); border-radius: 8px;
+    background: var(--bg3); color: var(--text); font-size: 13px; cursor: pointer;
+  }
+  .prest-formato-opcao:has(input:checked) { border-color: var(--accent); }
+  .prest-formato-opcao input { accent-color: var(--accent); cursor: pointer; }
+
   .nav-badge {
     margin-left: auto;
     background: rgba(59,154,199,0.12);
@@ -994,7 +1004,7 @@
 
     <div class="nav-section">Gestão</div>
     <div class="nav-item" onclick="showPanel('prestacao')">
-      <span class="nav-icon">📊</span> Prestação de Contas
+      <span class="nav-icon">▤</span> Prestação de Contas
     </div>
     <div class="nav-item" onclick="showPanel('previsao')">
       <span class="nav-icon">◫</span> Previsão Orçamentária
@@ -1427,6 +1437,15 @@
                     placeholder="ex: ressaltar economia em energia, destacar obras concluídas em 2024"
                     style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;color:var(--text);font-family:var(--mono);font-size:13px;resize:vertical;outline:none"
                     oninput="prestacaoAtualizarObservacoes(this.value)"></textarea>
+        </div>
+
+        <div style="margin-top:12px">
+          <label style="display:block;margin-bottom:6px;font-size:13px;color:var(--muted)">Formato de saída</label>
+          <div class="prest-formato" role="radiogroup" aria-label="Formato de saída">
+            <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="ambos" checked> Ambos (PDF + PowerPoint)</label>
+            <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="pdf"> Somente PDF</label>
+            <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="pptx"> Somente PowerPoint</label>
+          </div>
         </div>
 
         <div style="display:flex;gap:8px;margin-top:8px">

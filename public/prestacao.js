@@ -1887,8 +1887,16 @@ async function prestacaoGerarServico() {
     var algumBaixou = false;
     var baixados = [];
 
+    // Formato escolhido pelo usuario: 'ambos' (padrao), 'pdf' ou 'pptx'. O servidor
+    // sempre devolve os dois; aqui so decidimos o que baixar. Default seguro = ambos,
+    // entao qualquer valor inesperado (ou ausencia do seletor) mantem o comportamento antigo.
+    var fmtSel = document.querySelector('input[name="prest-formato"]:checked');
+    var formato = fmtSel ? fmtSel.value : 'ambos';
+    var querPdf = (formato === 'ambos' || formato === 'pdf');
+    var querPptx = (formato === 'ambos' || formato === 'pptx');
+
     // Valida pdf_b64 antes de tentar decodificar; falha no PDF não deve impedir o PPTX.
-    if (dados.pdf_b64 && typeof dados.pdf_b64 === 'string' && dados.pdf_b64.length > 0) {
+    if (querPdf && dados.pdf_b64 && typeof dados.pdf_b64 === 'string' && dados.pdf_b64.length > 0) {
       try {
         prestacaoBaixarBlob(dados.pdf_b64, 'application/pdf', base + '.pdf');
         algumBaixou = true;
@@ -1898,12 +1906,13 @@ async function prestacaoGerarServico() {
         console.error('[prestacao] falha ao baixar PDF:', errPdf);
         toast('PDF não pôde ser baixado. Tente gerar novamente.', 'warn');
       }
-    } else {
+    } else if (querPdf) {
+      // So alerta ausencia de PDF se o usuario realmente pediu PDF.
       toast('PDF não disponível na resposta do servidor.', 'warn');
     }
 
     // Valida pptx_b64 independentemente do resultado do PDF.
-    if (dados.pptx_b64 && typeof dados.pptx_b64 === 'string' && dados.pptx_b64.length > 0) {
+    if (querPptx && dados.pptx_b64 && typeof dados.pptx_b64 === 'string' && dados.pptx_b64.length > 0) {
       try {
         prestacaoBaixarBlob(dados.pptx_b64,
           'application/vnd.openxmlformats-officedocument.presentationml.presentation', base + '.pptx');
@@ -1914,7 +1923,8 @@ async function prestacaoGerarServico() {
         console.error('[prestacao] falha ao baixar PPTX:', errPptx);
         toast('PPTX não pôde ser baixado. Tente gerar novamente.', 'warn');
       }
-    } else {
+    } else if (querPptx) {
+      // So alerta ausencia de PPTX se o usuario realmente pediu PowerPoint.
       toast('PPTX não disponível na resposta do servidor.', 'warn');
     }
 

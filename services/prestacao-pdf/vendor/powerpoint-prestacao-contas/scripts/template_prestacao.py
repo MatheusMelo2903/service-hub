@@ -283,6 +283,12 @@ C_BLUE_PALE  = RGBColor(0x7F, 0xB5, 0xE3)
 C_GRAY_TEXT  = RGBColor(0x3E, 0x56, 0x76)
 C_GRAY_MUTED = RGBColor(0x8B, 0x9A, 0xB8)
 C_GRAY_BG    = RGBColor(0xF7, 0xF9, 0xFC)
+# Tabela de lancamentos: tons calibrados para LEITURA EM PROJECAO (parede, sala
+# clara). A zebra antiga (quase branco sobre branco) sumia de longe. Bandas com
+# luminancia real + texto quase navy resolvem a legibilidade sem mudar layout.
+C_ROW_BAND   = RGBColor(0xC5, 0xD8, 0xEE)  # linha impar: azul claro visivel
+C_ROW_ALT    = RGBColor(0xE8, 0xF0, 0xF9)  # linha par: azul palido (antes era branco puro)
+C_INK        = RGBColor(0x16, 0x27, 0x44)  # texto da tabela: quase navy/preto, le de longe
 C_WHITE      = RGBColor(0xFF, 0xFF, 0xFF)
 C_POSITIVE   = RGBColor(0x22, 0x8B, 0x54)
 C_NEGATIVE   = RGBColor(0xC0, 0x3B, 0x3B)
@@ -777,9 +783,11 @@ def _detalhe_pagina(num, d, total, pct, lanc, primeira, ultima):
     fd = 10 if nL<=12 else (9 if nL<=16 else 8)
     fv = 11 if nL<=12 else (10 if nL<=16 else 9)
     for i,(desc,val) in enumerate(lanc):
-        if i%2==1: add_rect(s, tx, cur, tw, lh, C_GRAY_BG)
-        add_text_box(s, tx+Inches(0.3), cur+Emu(int(lh_emu/2)-int(Inches(0.13).emu)), Inches(4.6), Inches(0.26), desc, fd, False, C_GRAY_TEXT)
-        add_text_box(s, tx+tw-Inches(1.8), cur+Emu(int(lh_emu/2)-int(Inches(0.13).emu)), Inches(1.5), Inches(0.26), fmt_brl(val), fv, True, C_NAVY, PP_ALIGN.RIGHT)
+        # Banda em TODAS as linhas (nao so as impares) com tom visivel a distancia;
+        # texto quase navy no lugar do cinza medio que lavava na projecao.
+        add_rect(s, tx, cur, tw, lh, C_ROW_ALT if i%2==0 else C_ROW_BAND)
+        add_text_box(s, tx+Inches(0.3), cur+Emu(int(lh_emu/2)-int(Inches(0.13).emu)), Inches(4.6), Inches(0.26), desc, fd, False, C_INK)
+        add_text_box(s, tx+tw-Inches(1.8), cur+Emu(int(lh_emu/2)-int(Inches(0.13).emu)), Inches(1.5), Inches(0.26), fmt_brl(val), fv, True, C_NAVY_DEEP, PP_ALIGN.RIGHT)
         cur = cur + lh
     if ultima:
         add_rect(s, tx, cur+Inches(0.05), tw, Inches(0.45), C_NAVY)
