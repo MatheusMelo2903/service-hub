@@ -2,7 +2,7 @@
 
 > Arquivo gerenciado pelo agente. Atualizar ao fim de cada task ou fase.
 
-**Última atualização:** 2026-06-23
+**Última atualização:** 2026-06-24
 **Branch padrão:** main
 **Repo:** https://github.com/MatheusMelo2903/service-hub
 **Deploy:** Railway (`eloquent-love`) · https://service-hub-production.up.railway.app
@@ -20,9 +20,13 @@
 | ata-fidelidade-v3 — regras de fidelidade no system prompt + segundo passe de auditoria | ✅ | branch `feat/ata-fidelidade-v3` · commit `8cec7de` (server.js +92/-4) · teste Happy Days 3/4 passou · doc em `tarefas/concluidas/ata-fidelidade-v3.md` |
 | prestacao-bloco-a-prosa-rica — prosa rica deterministica (3 moldes) + Bloco A com download robusto PDF/PPTX e padrao W016A | ✅ | commit `ad2439c` · 3 arquivos (+222/-18 linhas) · revisor, auditor e validador aprovados · 2026-06-23 · deploy dev (service-hub `49083866` + prestacao-pdf `31257000`) |
 | prestacao-serie-mensal — ingestão multi-fonte W011A/W015A/W016A + série mensal real + reconciliação entre fontes | ✅ | commit `69ec74b` · 9 arquivos (+2083/-16 linhas) · detector.py + parser_w011a.py + parser_w015a.py novos · 28/28 testes · revisor, auditor e validador aprovados · 2026-06-23 · deploy dev pendente (aguarda Matheus testar) |
+| **prestacao-entrega-1** — contraste projeção + ícone mono + seletor de formato de saída | 🟡 **no dev, aguardando teste prático** | commit `6b2d888` · 4 arquivos (+98/-8 linhas) · revisor, auditor e validador aprovados · 2026-06-24 · deploy dev (prestacao-pdf `ed3fea8b` + service-hub `15df9825` SUCCESS) · aguarda Matheus testar legibilidade na parede antes de produção |
+| **prestacao-entrega-2** — botão Refinar prestação com IA (somente texto) | 🔴 **pendente de plano do arquiteto** | tarefa em `tarefas/em-andamento/prestacao-botao-refinar-ia.md` · aguarda arquiteto planejar antes de implementar |
 
 ### Feature da Tarefa 2 — aguardando validação do Matheus
 🟡 **prestacao-serie-mensal** — implementada, deploy dev pendente. Commit `69ec74b`. Aguarda Matheus testar no dev. Correção de rota: W011A é matriz de receitas E despesas (não só despesas); W016A é opcional; Superávit calculado do W011A. Doc: `tarefas/em-andamento/prestacao-serie-mensal.md`.
+
+🟡 **prestacao-entrega-1** — contraste projeção + ícone mono + seletor de formato. Commit `6b2d888`. Deploy dev SUCCESS (prestacao-pdf `ed3fea8b` + service-hub `15df9825`). Aguarda Matheus testar legibilidade na parede antes de produção. Pendência pré-produção: remover `console.log` com dados financeiros em `public/prestacao.js` (~linha 2100, função `prestacaoGerarClientSide`) — achado do auditor, não bloqueante na dev.
 
 ### Próxima tarefa
 🔴 **1.1 — Seletor de condomínio com ID** (4h, bloqueador da Fase 1)
@@ -182,6 +186,7 @@ Nenhum.
 
 ## Log de atividade
 
+- **2026-06-24** — Prestação Entrega 1 commitada e enviada para dev. 3 ajustes visuais/UX: (1) contraste da tabela de lançamentos no slide de detalhamento melhorado para projeção em parede (3 tokens C_ROW_BAND/C_ROW_ALT/C_INK, bandas azuis, texto escurecido, 28/28 testes ok); (2) ícone da aba trocado para ▤ monocromático; (3) seletor de formato de saída Ambos/Somente PDF/Somente PowerPoint adicionado (frontend-only, backend inalterado). Deploy dev SUCCESS (prestacao-pdf `ed3fea8b` + service-hub `15df9825`). Commit `6b2d888`, push origin/dev. Aguarda teste prático do Matheus antes de produção. Pendência pré-produção registrada: remover console.log financeiro em `prestacao.js` ~linha 2100. Entrega 2 (botão Refinar com IA) registrada em `tarefas/em-andamento/prestacao-botao-refinar-ia.md`, aguarda plano do arquiteto.
 - **2026-06-23** — Tarefa `prestacao-serie-mensal` implementada e deployada na dev. Engine de prestação passa a aceitar 1 a 3 PDFs (W011A + W015A + W016A), detecta tipo por conteúdo, reconcilia totais entre fontes (aviso >= 1%, bloqueio >= 5%) e gera série mensal real de Evolução de despesas e Superávit mensal. Correção de rota descoberta nos PDFs reais: W011A é matriz de receitas E despesas; W016A é opcional; Superávit calculado inteiramente do W011A. 28/28 testes. Commit `69ec74b`, 9 arquivos (+2083/-16 linhas). Dados reais de condomínio não entram no git. Deploy dev pendente (aguarda Matheus testar). Follow-ups registrados: dedup de helpers, console.log financeiro no fallback, bug 422 W016A em tarefa separada.
 - **2026-05-28** — Tarefa `ata-fidelidade-v3` concluída. Adicionadas regras de fidelidade (FID 1–5) no system prompt do gerador de atas + segundo passe de auditoria (Sonnet 4.6, max_tokens 16k, re-validado com `validarAta`). Teste real Happy Days: 3/4 critérios passaram (critério 2 "Wellington (Eriton)" falhou — backlog). Lara Hoffman pendente (arquivo não disponível). Dívida agravada: rate limit dedicado em `/api/atas/gerar` virou pendência crítica pré-piloto. Branch `feat/ata-fidelidade-v3`, commit `8cec7de` (server.js +92/-4). Doc em `tarefas/concluidas/ata-fidelidade-v3.md`. Commit e push pendentes (Claude principal fará).
 - **2026-05-27** — Sistema de usuários Fase 0 fechada E2E. Migração dev→Grupo Service org (consolidou prod `mtucxdfepkwsfnqpfydb` + dev `ledgyprytkuvgtbunsck`). Merge `main→dev` fast-forward + deploy dev validado (login + aba Usuários OK). PLANO_ATIVO sprint 27/05–09/06 definido.

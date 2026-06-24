@@ -2,6 +2,27 @@
 
 ---
 
+## [2026-06-24] — Prestação Entrega 1: contraste projeção + ícone mono + seletor de formato
+
+- Contraste da tabela de lançamentos no slide de detalhamento melhorado para projeção em parede: 3 tokens novos (`C_ROW_BAND`, `C_ROW_ALT`, `C_INK`) com bandas azuis em todas as linhas e texto escurecido. Demais slides intactos. 28/28 testes seguem passando.
+- Ícone da aba Prestação de Contas trocado de 📊 (emoji colorido) para ▤ (monocromático), alinhando com o padrão visual das demais abas.
+- Seletor de formato de saída adicionado à interface: radio group com opções Ambos / Somente PDF / Somente PowerPoint (default Ambos). `prestacaoGerarServico` lê o radio e baixa apenas o formato escolhido (`querPdf`/`querPptx`). Backend inalterado.
+- Arquivo `tarefas/em-andamento/prestacao-botao-refinar-ia.md` criado registrando a Entrega 2 (botão Refinar prestação com IA), pendente de plano do arquiteto.
+
+**Status:** Deployado no dev (prestacao-pdf `ed3fea8b` SUCCESS + service-hub `15df9825` SUCCESS). Aguarda teste de legibilidade na parede pelo Matheus antes de subir para produção.
+
+**Arquivos modificados:** `public/index.html`, `public/prestacao.js`, `services/prestacao-pdf/vendor/powerpoint-prestacao-contas/scripts/template_prestacao.py`
+
+**Arquivo criado:** `tarefas/em-andamento/prestacao-botao-refinar-ia.md`
+
+**Commit:** `6b2d888` — branch `dev`
+
+**Implementado por:** subagente programador (Claude Opus 4.8)
+
+**Pendência registrada (achado do auditor, não bloqueante):** remover `console.log` com dados financeiros em `public/prestacao.js` (~linha 2100, função `prestacaoGerarClientSide`) antes de ir para produção com dados reais.
+
+---
+
 ## [2026-06-23] — Prestação multi-fonte W011A/W015A/W016A + série mensal real
 
 - Adicionado detector de tipo de PDF por conteúdo (`detector.py`): identifica cada arquivo como W011A, W015A ou W016A sem depender do nome do arquivo.
