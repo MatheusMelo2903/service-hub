@@ -847,3 +847,29 @@ def test_passo2_augusta_sem_ate_rotulos_por_posicao():
         labels = _extrair_rotulos_por_posicao(page, cols, idx, deriv)
     assert labels[0] == "Dez/2025", f"primeiro mes errado: {labels[0]}"
     assert labels[-1] == "Nov/2026", f"ultimo mes errado: {labels[-1]}"
+
+
+# ── Passo 3: Loja Maconica (classe separada) cai em 422 especifico ──
+
+def _encontrar_pdf_augusta_qualquer() -> str | None:
+    if not os.path.isdir(FIXTURES):
+        return None
+    e = sorted(glob.glob(os.path.join(FIXTURES, "w011a_augusta*.pdf")))
+    return e[0] if e else None
+
+
+def test_passo3_loja_maconica_422_especifico():
+    """A Loja Maconica (Augusta, hierarquia Ordinarias/Extraordinarias) cai em
+    422 ESPECIFICO que identifica a causa, nunca generico. Assim o Matheus sabe
+    na hora que e o caso da hierarquia (classe separada) e nao um bug."""
+    pdf_path = _encontrar_pdf_augusta_qualquer()
+    if pdf_path is None:
+        pytest.skip("w011a_augusta nao encontrado em fixtures_local/")
+    from app.parser_w011a import parsear
+    with pytest.raises(ValueError) as exc:
+        parsear(pdf_path)
+    msg = str(exc.value)
+    assert "Loja" in msg, f"422 deve identificar a classe Loja: {msg}"
+    assert ("Ordinarias" in msg or "hierarquica" in msg), (
+        f"422 deve citar a hierarquia de dois niveis: {msg}"
+    )

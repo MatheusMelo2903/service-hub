@@ -735,6 +735,10 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
     _cells_despesa_total: list | None = None
     _cells_mov_liquido: list | None = None
     _cells_saldo_final: list | None = None
+    # Sinal de classe Loja Maçônica: hierarquia de dois níveis com super-grupos
+    # Ordinárias/Extraordinárias (condomínio nunca tem). Quando detectado, o
+    # relatório cai em 422 específico (não suportado), não em erro genérico.
+    lodge_detectado = False
 
     with pdfplumber.open(caminho_pdf) as pdf:
         # Rodapé detectado por repetição estrutural (uma passada prévia),
@@ -801,6 +805,11 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
 
                 if not label and all(c is None for c in cells):
                     continue
+
+                # Classe Loja Maçônica: super-grupos Ordinárias/Extraordinárias.
+                # Marca para 422 específico no fim (estrutura de dois níveis).
+                if "rdinárias" in label.lower():
+                    lodge_detectado = True
 
                 # Filtra cabeçalhos de página e linha de meses
                 if RE_CABECALHO.match(label):
@@ -1054,6 +1063,17 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
                     elif grupo_atual.lancamentos:
                         grupo_atual.lancamentos[-1].descricao += " " + label
                     continue
+
+    # Classe Loja Maçônica (Ordinárias/Extraordinárias): hierarquia de dois
+    # níveis não suportada. 422 ESPECÍFICO (não genérico) para o Matheus saber
+    # na hora que é o caso da hierarquia, não um bug, e abrir sessão dedicada.
+    if lodge_detectado:
+        raise ValueError(
+            "estrutura hierarquica de dois niveis nao suportada (classe Loja "
+            "Maconica: super-grupos Ordinarias/Extraordinarias). Classe de "
+            "documento separada, sem demanda atual; abrir sessao dedicada se "
+            "precisar processar."
+        )
 
     # ── Pós-processamento: detecta cut_date e recalcula séries e totais ──────
     #
