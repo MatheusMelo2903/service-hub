@@ -26,6 +26,7 @@ Saída: dataclass EstruturaW011A com campos completos para o pipeline multi-font
 """
 from __future__ import annotations
 
+import calendar
 import re
 import statistics
 import sys
@@ -739,6 +740,11 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
     # Ordinárias/Extraordinárias (condomínio nunca tem). Quando detectado, o
     # relatório cai em 422 específico (não suportado), não em erro genérico.
     lodge_detectado = False
+    # Corte por data no meio do mês (cabeçalho DD/MM com dia inicial != 01 ou dia
+    # final != último dia do mês, ex 26/12 a 26/06): os meses cheios das colunas
+    # não reconciliam com a janela parcial. Cai em 422 específico. Fronteira de mês
+    # (01 ao último dia) é suportada e trunca a projeção normalmente.
+    corte_meio_mes = False
 
     with pdfplumber.open(caminho_pdf) as pdf:
         # Rodapé detectado por repetição estrutural (uma passada prévia),
@@ -773,6 +779,20 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
                             k = int(m_curto.group(3))
                             # K meses adicionais + o mês inicial = K+1 meses totais
                             n_meses_header = k + 1
+                        # Cabeçalho DD/MM/AAAA: detecta corte por data no meio do mês.
+                        # Fronteira de mês = dia inicial 01 E dia final = último dia
+                        # do mês. Qualquer outra coisa (ex 26 a 26) é meio do mês.
+                        m_data = re.search(
+                            r"Comparativo de (\d{2})/(\d{2})/(\d{4}) at[ée] "
+                            r"(\d{2})/(\d{2})/(\d{4})", linha)
+                        if m_data:
+                            d_ini = int(m_data.group(1))
+                            d_fim, mes_fim, ano_fim = (int(m_data.group(4)),
+                                                       int(m_data.group(5)),
+                                                       int(m_data.group(6)))
+                            ultimo_dia = calendar.monthrange(ano_fim, mes_fim)[1]
+                            if d_ini != 1 or d_fim != ultimo_dia:
+                                corte_meio_mes = True
                 # Detecta idx_total e deriva_primeiro a partir dos clusters e do cabeçalho
                 idx_total, deriva_primeiro = _detectar_formato(cols, n_meses_header)
                 n_meses = n_meses_header
@@ -1073,6 +1093,19 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
             "Maconica: super-grupos Ordinarias/Extraordinarias). Classe de "
             "documento separada, sem demanda atual; abrir sessao dedicada se "
             "precisar processar."
+        )
+
+    # Corte por data no meio do mês (ex 26/12 a 26/06): NÃO suportado. Os meses
+    # cheios das colunas não reconciliam com a janela parcial (Dez/Jun parciais),
+    # e o PDF não fornece receita e despesa da janela real separadas (só o net no
+    # col0 do Mov. Líquido). 422 ESPECÍFICO. Fronteira de mês (01 ao último dia)
+    # reconcilia e segue para o truncamento da projeção abaixo.
+    if corte_meio_mes:
+        raise ValueError(
+            "corte por data no meio do mes nao suportado (ex 26/12 a 26/06): os "
+            "meses cheios das colunas nao reconciliam com a janela parcial, e o "
+            "PDF nao fornece receita e despesa da janela real separadas. Use "
+            "fronteira de mes (01 ao ultimo dia). Tratamento futuro sob demanda."
         )
 
     # ── Pós-processamento: detecta cut_date e recalcula séries e totais ──────

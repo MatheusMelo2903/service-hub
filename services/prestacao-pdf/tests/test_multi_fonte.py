@@ -873,3 +873,47 @@ def test_passo3_loja_maconica_422_especifico():
     assert ("Ordinarias" in msg or "hierarquica" in msg), (
         f"422 deve citar a hierarquia de dois niveis: {msg}"
     )
+
+
+# ── Passo 4: cut-date so em fronteira de mes; meio do mes cai em 422 ──
+
+def _encontrar_pdf_buritis_cortado() -> str | None:
+    if not os.path.isdir(FIXTURES):
+        return None
+    e = sorted(glob.glob(os.path.join(FIXTURES, "w011a_buritis_cortado*.pdf")))
+    return e[0] if e else None
+
+
+def test_passo4_corte_meio_mes_422_especifico():
+    """Corte por data no meio do mes (Buritis 26/12 a 26/06) cai em 422
+    ESPECIFICO: meses cheios nao reconciliam com a janela parcial e o PDF nao da
+    receita/despesa da janela real separadas. So fronteira de mes e suportada."""
+    pdf_path = _encontrar_pdf_buritis_cortado()
+    if pdf_path is None:
+        pytest.skip("w011a_buritis_cortado nao encontrado em fixtures_local/")
+    from app.parser_w011a import parsear
+    with pytest.raises(ValueError) as exc:
+        parsear(pdf_path)
+    msg = str(exc.value)
+    assert "meio do mes" in msg, f"422 deve identificar corte no meio do mes: {msg}"
+    assert "fronteira de mes" in msg, f"422 deve indicar a alternativa suportada: {msg}"
+
+
+@SKIP_W011A_ANO_CHEIO
+@SKIP_W011A_TRIMESTRE
+def test_passo4_condominios_fechados_intactos():
+    """Os 4 condominios (Praia Dourada, Quattro, Buritis 12m, Leblon) seguem
+    verdes; o cut-date e a deteccao de meio do mes nao podem afeta-los."""
+    from app.parser_w011a import parsear
+    for finder in (_encontrar_pdf_ano_cheio_w011a, _encontrar_pdf_trimestre_w011a,
+                   _encontrar_pdf_leblon_w011a):
+        p = finder()
+        if p is None:
+            continue
+        est = parsear(p)  # nao pode levantar
+        caixa = est.saldo_anterior + est.receita_total - est.despesa_total
+        assert abs(caixa - est.saldo_final) < 0.02, f"caixa nao fecha em {p}"
+    bur = os.path.join(FIXTURES, "w011a_buritis_12m_julho.pdf")
+    if os.path.isfile(bur):
+        est = parsear(bur)
+        assert len(est.meses_labels) == 12
