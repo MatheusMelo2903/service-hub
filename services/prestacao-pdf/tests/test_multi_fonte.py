@@ -796,3 +796,54 @@ def test_passo1_praia_dourada_estrutura_preservada():
     assert len(est.grupos) == 10, f"esperado 10 grupos, veio {len(est.grupos)}"
     total_lanc = sum(len(g.lancamentos) for g in est.grupos)
     assert total_lanc == 79, f"esperado 79 lancamentos, veio {total_lanc}"
+
+
+# ── Passo 2: rotulos de mes lidos por posicao X da coluna (nao do cabecalho) ──
+
+def _encontrar_pdf_augusta_dez11() -> str | None:
+    if not os.path.isdir(FIXTURES):
+        return None
+    e = sorted(glob.glob(os.path.join(FIXTURES, "w011a_augusta_dez11*.pdf")))
+    return e[0] if e else None
+
+
+@SKIP_W011A_LEBLON
+def test_passo2_leblon_rotulos_do_periodo_real():
+    """Leblon comeca em Jun/2025: os rotulos tem que sair Jun/2025..Mai/2026
+    lidos da coluna, nao o fallback generico Jul..Mes11 que vazava antes."""
+    from app.parser_w011a import parsear
+    est = parsear(_encontrar_pdf_leblon_w011a())
+    assert len(est.meses_labels) == 12, f"esperado 12 meses, veio {len(est.meses_labels)}"
+    assert est.meses_labels[0] == "Jun/2025", f"primeiro mes errado: {est.meses_labels[0]}"
+    assert est.meses_labels[-1] == "Mai/2026", f"ultimo mes errado: {est.meses_labels[-1]}"
+    assert "Mês1" not in est.meses_labels, f"fallback generico vazou: {est.meses_labels}"
+
+
+@SKIP_W011A_ANO_CHEIO
+@SKIP_W011A_TRIMESTRE
+def test_passo2_rotulos_preservados_nao_regride():
+    """Os rotulos de Praia Dourada (ano cheio Jul) e Quattro (trimestre Abr)
+    nao podem mudar ao trocar a leitura para por-posicao."""
+    from app.parser_w011a import parsear
+    pd = parsear(_encontrar_pdf_ano_cheio_w011a())
+    assert pd.meses_labels[0] == "Jul/2025" and pd.meses_labels[-1] == "Jun/2026"
+    qt = parsear(_encontrar_pdf_trimestre_w011a())
+    assert qt.meses_labels == ["Abr/2026", "Mai/2026", "Jun/2026"], qt.meses_labels
+
+
+def test_passo2_augusta_sem_ate_rotulos_por_posicao():
+    """Cabecalho 'sem ate' (Dez/2025 com os proximos 11 meses): os rotulos
+    saem da coluna (Dez/2025..Nov/2026), nao de calculo do cabecalho."""
+    pdf_path = _encontrar_pdf_augusta_dez11()
+    if pdf_path is None:
+        pytest.skip("w011a_augusta_dez11 nao encontrado em fixtures_local/")
+    import pdfplumber
+    from app.parser_w011a import (_clusterizar_colunas, _detectar_formato,
+                                  _extrair_rotulos_por_posicao)
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        cols = _clusterizar_colunas(page)
+        idx, deriv = _detectar_formato(cols, 12)
+        labels = _extrair_rotulos_por_posicao(page, cols, idx, deriv)
+    assert labels[0] == "Dez/2025", f"primeiro mes errado: {labels[0]}"
+    assert labels[-1] == "Nov/2026", f"ultimo mes errado: {labels[-1]}"

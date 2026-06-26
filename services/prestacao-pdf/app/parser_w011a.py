@@ -634,6 +634,57 @@ def _e_fragmento_continuacao(label: str, grupo_atual, grupos: list) -> bool:
     return False
 
 
+_MESES_ORD = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+              "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+RE_MES_TOKEN = re.compile(
+    r"^(Jan|Fev|Mar|Abr|Mai|Jun|Jul|Ago|Set|Out|Nov|Dez)/(\d{4})$")
+
+
+def _rotulo_mes_anterior(label: str) -> str:
+    """Mês imediatamente anterior, com virada de ano. Ago/2025 -> Jul/2025;
+    Jan/2026 -> Dez/2025. Usado só para o mês inicial derivado (sem coluna)."""
+    m = RE_MES_TOKEN.match(label or "")
+    if not m:
+        return label
+    i = _MESES_ORD.index(m.group(1))
+    ano = int(m.group(2))
+    return f"Dez/{ano - 1}" if i == 0 else f"{_MESES_ORD[i - 1]}/{ano}"
+
+
+def _extrair_rotulos_por_posicao(page, cols, idx_total, deriva_primeiro) -> list:
+    """Lê os rótulos de mês DIRETO da tabela, por posição X de cada coluna.
+
+    Nunca deriva do cabeçalho (o cabeçalho vira só texto de período pro slide).
+    A ordem de texto do pdfplumber vem embaralhada; só a posição X desambigua.
+    Cada coluna de mês tem o rótulo Mmm/AAAA escrito acima dela. Mantém apenas
+    os tokens alinhados a uma coluna de mês (remove o ruído do cabeçalho
+    "Comparativo de X até Y", que fica fora das colunas). Quando há coluna líder
+    derivada (sem rótulo no PDF, ano cheio), seu rótulo é o mês anterior ao
+    primeiro rótulo explícito — calculado a partir do RÓTULO, não do cabeçalho.
+    """
+    tol = GAP_COLUNA * 2.5
+    explicit_cols = sorted(cols[1:idx_total])  # colunas de mês (exclui col0 e total)
+    toks = []
+    for w in page.extract_words():
+        if RE_MES_TOKEN.match(w["text"]):
+            xc = (w["x0"] + w["x1"]) / 2.0
+            if any(abs(xc - c) < tol for c in explicit_cols):
+                toks.append((xc, w["text"]))
+    toks.sort()
+    if len(toks) == len(explicit_cols):
+        explicitos = [t[1] for t in toks]            # alinhamento 1:1 por ordem de X
+    else:
+        explicitos = []                               # fallback: token mais próximo
+        for c in explicit_cols:
+            cand = [t for t in toks if abs(t[0] - c) < tol]
+            explicitos.append(min(cand, key=lambda t: abs(t[0] - c))[1] if cand else None)
+    if deriva_primeiro:
+        primeiro = next((e for e in explicitos if e), None)
+        derivado = _rotulo_mes_anterior(primeiro) if primeiro else None
+        return [derivado] + explicitos
+    return explicitos
+
+
 def parsear(caminho_pdf: str) -> EstruturaW011A:
     """Parseia um PDF W011A e retorna EstruturaW011A completa e validada.
 
@@ -721,7 +772,11 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
                 # Detecta idx_total e deriva_primeiro a partir dos clusters e do cabeçalho
                 idx_total, deriva_primeiro = _detectar_formato(cols, n_meses_header)
                 n_meses = n_meses_header
-                est.meses_labels = _extrair_labels_meses(texto_pag1, n_meses)
+                # Rótulos lidos DIRETO das colunas da tabela (por posição X),
+                # nunca derivados do cabeçalho. Resolve Leblon (início Jun) e
+                # cabeçalhos "sem até" sem cálculo a partir do texto do período.
+                est.meses_labels = _extrair_rotulos_por_posicao(
+                    page, cols, idx_total, deriva_primeiro)
 
             # No ano cheio revalida se cols mudou de página (comportamento original).
             # No período curto aceita qualquer número de clusters consistente com
