@@ -1022,6 +1022,13 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
 
                 # Seção de Receitas
                 if secao == "receitas" and label:
+                    # Subtotais intermediários (ex "Total de Grande Loja", "Total de
+                    # Contribuições dos") NÃO são lançamentos de receita: somam os
+                    # itens acima e duplicariam a soma. O grão "Total de Receitas" já
+                    # foi tratado antes. Estrutural: toda linha "Total de ..." na seção
+                    # de receitas é subtotal, não lançamento.
+                    if label.startswith("Total de"):
+                        continue
                     col_total = _total_de_cells(cells, idx_total)
                     if col_total is not None:
                         serie = _serie_n(col_total, cells, idx_total, deriva_primeiro)
