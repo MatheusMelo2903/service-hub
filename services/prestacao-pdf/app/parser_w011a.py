@@ -678,7 +678,15 @@ def _extrair_rotulos_por_posicao(page, cols, idx_total, deriva_primeiro) -> list
         explicitos = []                               # fallback: token mais próximo
         for c in explicit_cols:
             cand = [t for t in toks if abs(t[0] - c) < tol]
-            explicitos.append(min(cand, key=lambda t: abs(t[0] - c))[1] if cand else None)
+            if cand:
+                explicitos.append(min(cand, key=lambda t: abs(t[0] - c))[1])
+            else:
+                # Coluna sem rótulo no fallback: avisa em vez de virar None
+                # silencioso (label errado no deck). Não afeta reconciliação.
+                print("[parser_w011a] AVISO: coluna de mes sem rotulo alinhado "
+                      f"(x={round(c)}); rotulo do deck pode ficar incompleto",
+                      file=sys.stderr)
+                explicitos.append(None)
     if deriva_primeiro:
         primeiro = next((e for e in explicitos if e), None)
         derivado = _rotulo_mes_anterior(primeiro) if primeiro else None
@@ -790,8 +798,14 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
                             d_fim, mes_fim, ano_fim = (int(m_data.group(4)),
                                                        int(m_data.group(5)),
                                                        int(m_data.group(6)))
-                            ultimo_dia = calendar.monthrange(ano_fim, mes_fim)[1]
-                            if d_ini != 1 or d_fim != ultimo_dia:
+                            # Guard de mês válido: PDF malformado (ex mês 13) não
+                            # pode crashar calendar.monthrange; trata como corte
+                            # não suportado (422 específico, não erro da stdlib).
+                            if 1 <= mes_fim <= 12:
+                                ultimo_dia = calendar.monthrange(ano_fim, mes_fim)[1]
+                                if d_ini != 1 or d_fim != ultimo_dia:
+                                    corte_meio_mes = True
+                            else:
                                 corte_meio_mes = True
                 # Detecta idx_total e deriva_primeiro a partir dos clusters e do cabeçalho
                 idx_total, deriva_primeiro = _detectar_formato(cols, n_meses_header)
@@ -828,7 +842,11 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
 
                 # Classe Loja Maçônica: super-grupos Ordinárias/Extraordinárias.
                 # Marca para 422 específico no fim (estrutura de dois níveis).
-                if "rdinárias" in label.lower():
+                # SO em linha de CABEÇALHO (sem valores): os super-grupos da Loja
+                # aparecem como cabeçalho sem números. Assim uma rubrica monetária
+                # legítima de condomínio (ex "Taxas Extraordinárias" com valores)
+                # NÃO dispara um 422-Loja falso.
+                if "rdinárias" in label.lower() and all(c is None for c in cells):
                     lodge_detectado = True
 
                 # Filtra cabeçalhos de página e linha de meses
