@@ -40,6 +40,38 @@ def _encontrar_pdf_por_tipo(tipo: str) -> str | None:
     return encontrados[0] if encontrados else None
 
 
+def _encontrar_pdf_ano_cheio_w011a() -> str | None:
+    """Localiza especificamente o PDF W011A de ano cheio (praia_dourada).
+
+    Busca pelo nome exato w011a_praia_dourada.pdf porque agora há múltiplos
+    PDFs w011a* na pasta (Augusta, Buritis, Leblon, cortados). A seleção por
+    exclusão de sufixos é frágil quando novos condomínios entram. O praia_dourada
+    é o fixture de referência de ano cheio padrão (Praia Dourada 12m Jul/2025).
+    """
+    # Prioridade 1: fixture nominal de referência (Praia Dourada, 12m Jul/2025)
+    caminho_nominal = os.path.join(FIXTURES, "w011a_praia_dourada.pdf")
+    if os.path.isfile(caminho_nominal):
+        return caminho_nominal
+    # Fallback: qualquer w011a de ano cheio excluindo padroes conhecidos de variante
+    if not os.path.isdir(FIXTURES):
+        return None
+    padrao = os.path.join(FIXTURES, "w011a*.pdf")
+    encontrados = sorted(glob.glob(padrao))
+    _excluir = ("trimestre", "curto", "cortado", "_12m_", "_jan", "_dez", "_buritis", "_augusta", "_leblon")
+    ano_cheio = [p for p in encontrados
+                 if not any(s in os.path.basename(p).lower() for s in _excluir)]
+    return ano_cheio[0] if ano_cheio else None
+
+
+def _encontrar_pdf_trimestre_w011a() -> str | None:
+    """Localiza especificamente o PDF W011A de trimestre (período curto)."""
+    if not os.path.isdir(FIXTURES):
+        return None
+    padrao = os.path.join(FIXTURES, "w011a_trimestre*.pdf")
+    encontrados = sorted(glob.glob(padrao))
+    return encontrados[0] if encontrados else None
+
+
 # Guards de skip para testes que dependem de PDFs reais
 def _skip_sem_pdf(tipo: str):
     """Retorna mark de skip se o PDF do tipo indicado não estiver disponível."""
@@ -50,7 +82,17 @@ def _skip_sem_pdf(tipo: str):
     )
 
 
-SKIP_W011A = _skip_sem_pdf("w011a")
+# SKIP específico para o PDF de ano cheio (praia_dourada) — resolve colisão de fixture
+SKIP_W011A_ANO_CHEIO = pytest.mark.skipif(
+    _encontrar_pdf_ano_cheio_w011a() is None,
+    reason="PDF w011a ano cheio nao encontrado em fixtures_local/ (gitignored)"
+)
+# SKIP específico para o PDF de trimestre
+SKIP_W011A_TRIMESTRE = pytest.mark.skipif(
+    _encontrar_pdf_trimestre_w011a() is None,
+    reason="PDF w011a_trimestre nao encontrado em fixtures_local/ (gitignored)"
+)
+
 SKIP_W015A = _skip_sem_pdf("w015a")
 SKIP_AMBOS = pytest.mark.skipif(
     _encontrar_pdf_por_tipo("w011a") is None or _encontrar_pdf_por_tipo("w015a") is None,
@@ -146,10 +188,11 @@ def _est15_sintetico():
 
 # ── 1. Detector ──────────────────────────────────────────────────────────────
 
-@_skip_sem_pdf("w011a")
+@SKIP_W011A_ANO_CHEIO
 def test_detector_w011a():
     from app.detector import detectar_tipo
-    pdf = _encontrar_pdf_por_tipo("w011a")
+    # Usa PDF de ano cheio especificamente (determinístico, sem colisão de fixture)
+    pdf = _encontrar_pdf_ano_cheio_w011a()
     assert detectar_tipo(pdf) == "W011A", f"PDF {pdf} deve ser detectado como W011A"
 
 
@@ -167,44 +210,44 @@ def test_detector_arquivo_inexistente():
 
 # ── 2. Parser W011A — consistência interna com PDF real ──────────────────────
 
-@SKIP_W011A
+@SKIP_W011A_ANO_CHEIO
 def test_parser_w011a_conservacao_de_caixa():
     """saldo_anterior + receita_total - despesa_total == saldo_final (PDF real)."""
     from app.parser_w011a import parsear
-    est = parsear(_encontrar_pdf_por_tipo("w011a"))
+    est = parsear(_encontrar_pdf_ano_cheio_w011a())
     caixa = est.saldo_anterior + est.receita_total - est.despesa_total
     assert abs(caixa - est.saldo_final) < TOL, (
         f"conservação de caixa falhou: {caixa:.2f} != saldo_final {est.saldo_final:.2f}"
     )
 
 
-@SKIP_W011A
+@SKIP_W011A_ANO_CHEIO
 def test_parser_w011a_soma_receitas():
     """Soma dos lançamentos de receita == receita_total reportado."""
     from app.parser_w011a import parsear
-    est = parsear(_encontrar_pdf_por_tipo("w011a"))
+    est = parsear(_encontrar_pdf_ano_cheio_w011a())
     soma = round(sum(l.total for l in est.receitas), 2)
     assert abs(soma - est.receita_total) < TOL, (
         f"soma receitas {soma:.2f} != receita_total {est.receita_total:.2f}"
     )
 
 
-@SKIP_W011A
+@SKIP_W011A_ANO_CHEIO
 def test_parser_w011a_soma_grupos():
     """Soma dos totais de grupo == despesa_total reportado."""
     from app.parser_w011a import parsear
-    est = parsear(_encontrar_pdf_por_tipo("w011a"))
+    est = parsear(_encontrar_pdf_ano_cheio_w011a())
     soma = round(sum(g.total for g in est.grupos), 2)
     assert abs(soma - est.despesa_total) < TOL, (
         f"soma grupos {soma:.2f} != despesa_total {est.despesa_total:.2f}"
     )
 
 
-@SKIP_W011A
+@SKIP_W011A_ANO_CHEIO
 def test_parser_w011a_soma_lancamentos_por_grupo():
     """Para cada grupo, soma dos lançamentos == total do grupo."""
     from app.parser_w011a import parsear
-    est = parsear(_encontrar_pdf_por_tipo("w011a"))
+    est = parsear(_encontrar_pdf_ano_cheio_w011a())
     for g in est.grupos:
         soma_g = round(sum(l.total for l in g.lancamentos), 2)
         assert abs(soma_g - g.total) < TOL, (
@@ -212,21 +255,21 @@ def test_parser_w011a_soma_lancamentos_por_grupo():
         )
 
 
-@SKIP_W011A
+@SKIP_W011A_ANO_CHEIO
 def test_parser_w011a_meses_labels():
     """meses_labels tem 12 posições, primeiro é Jul, segundo é Ago."""
     from app.parser_w011a import parsear
-    est = parsear(_encontrar_pdf_por_tipo("w011a"))
+    est = parsear(_encontrar_pdf_ano_cheio_w011a())
     assert len(est.meses_labels) == 12
     assert est.meses_labels[0].startswith("Jul"), f"Primeiro label deve ser Jul: {est.meses_labels[0]}"
     assert est.meses_labels[1].startswith("Ago"), f"Segundo label deve ser Ago: {est.meses_labels[1]}"
 
 
-@SKIP_W011A
+@SKIP_W011A_ANO_CHEIO
 def test_parser_w011a_soma_meses_receita():
     """Soma dos 12 meses de receita deve ser igual ao receita_total do período."""
     from app.parser_w011a import parsear
-    est = parsear(_encontrar_pdf_por_tipo("w011a"))
+    est = parsear(_encontrar_pdf_ano_cheio_w011a())
     assert len(est.receita_total_mes) == 12
     soma = round(sum(est.receita_total_mes), 2)
     assert abs(soma - est.receita_total) < TOL, (
@@ -234,11 +277,11 @@ def test_parser_w011a_soma_meses_receita():
     )
 
 
-@SKIP_W011A
+@SKIP_W011A_ANO_CHEIO
 def test_parser_w011a_superavit_mes():
     """superavit_mes: 12 posições, todos finitos, soma reconcilia com mov_liquido."""
     from app.parser_w011a import parsear
-    est = parsear(_encontrar_pdf_por_tipo("w011a"))
+    est = parsear(_encontrar_pdf_ano_cheio_w011a())
     assert len(est.superavit_mes) == 12, "superavit_mes deve ter 12 posições"
     for i, v in enumerate(est.superavit_mes):
         assert math.isfinite(v), f"superavit_mes[{i}]={v} não é finito"
@@ -502,12 +545,12 @@ def test_config_so_w016a_nao_chama_montar_config_duas_vezes():
 # Os testes abaixo dependem de PDFs reais e são executados apenas localmente.
 # Em clone limpo sem fixtures_local, todos são marcados como SKIP automaticamente.
 
-@SKIP_W011A
+@SKIP_W011A_ANO_CHEIO
 def test_parser_w011a_com_pdf_real_valida_internamente():
     """Parsear PDF real do W011A deve passar a validacao interna sem levantar."""
     from app.parser_w011a import parsear
     # parsear() já chama _validar() internamente — se não levantar, está ok
-    est = parsear(_encontrar_pdf_por_tipo("w011a"))
+    est = parsear(_encontrar_pdf_ano_cheio_w011a())
     assert est.receita_total > 0
     assert est.despesa_total > 0
     assert len(est.grupos) > 0
@@ -530,10 +573,173 @@ def test_reconciliacao_com_pdfs_reais():
     from app.parser_w011a import parsear as p11
     from app.parser_w015a import parsear as p15
     from app.pipeline import _reconciliar
-    est11 = p11(_encontrar_pdf_por_tipo("w011a"))
+    # Usa PDF de ano cheio especificamente (determinístico, sem colisão de fixture)
+    est11 = p11(_encontrar_pdf_ano_cheio_w011a())
     est15 = p15(_encontrar_pdf_por_tipo("w015a"))
     avisos = []
     bloqueios = _reconciliar({"W011A": est11, "W015A": est15}, avisos)
     assert len(bloqueios) == 0, (
         f"Nao deve haver bloqueios com fontes do mesmo periodo: {bloqueios}"
     )
+
+
+# ── 10. Novos testes: suporte a período curto (trimestre) e não-regressão ─────
+
+@SKIP_W011A_TRIMESTRE
+def test_parser_w011a_trimestre_basico():
+    """(a) Trimestre: parse sem IndexError, 3 meses, conservação de caixa sem derivação fantasma."""
+    from app.parser_w011a import parsear
+    est = parsear(_encontrar_pdf_trimestre_w011a())
+    # 3 meses explícitos, sem mês derivado fantasma
+    assert len(est.meses_labels) == 3, f"Esperado 3 meses_labels, obtido {len(est.meses_labels)}"
+    assert len(est.receita_total_mes) == 3, (
+        f"Esperado 3 posicoes em receita_total_mes, obtido {len(est.receita_total_mes)}"
+    )
+    # Conservação de caixa do trimestre
+    caixa = est.saldo_anterior + est.receita_total - est.despesa_total
+    assert abs(caixa - est.saldo_final) < TOL, (
+        f"conservacao de caixa falhou: {caixa:.2f} != saldo_final {est.saldo_final:.2f}"
+    )
+    # sum(receita_total_mes) bate com receita_total sem mês derivado fantasma
+    soma_meses = round(sum(est.receita_total_mes), 2)
+    assert abs(soma_meses - est.receita_total) < TOL, (
+        f"sum(receita_total_mes)={soma_meses:.2f} != receita_total={est.receita_total:.2f} "
+        "(possivel mes fantasma derivado indevidamente)"
+    )
+
+
+@SKIP_W011A_ANO_CHEIO
+def test_parser_w011a_ano_cheio_nao_regressao():
+    """(b) Nao-regressao ano cheio: 12 meses, Jul primeiro, conservacao de caixa fecha."""
+    from app.parser_w011a import parsear
+    est = parsear(_encontrar_pdf_ano_cheio_w011a())
+    assert len(est.meses_labels) == 12, f"Esperado 12 meses_labels, obtido {len(est.meses_labels)}"
+    assert est.meses_labels[0].startswith("Jul"), (
+        f"Primeiro label deve comecar com Jul: {est.meses_labels[0]}"
+    )
+    caixa = est.saldo_anterior + est.receita_total - est.despesa_total
+    assert abs(caixa - est.saldo_final) < TOL, (
+        f"conservacao de caixa falhou: {caixa:.2f} != saldo_final {est.saldo_final:.2f}"
+    )
+
+
+def test_extrair_periodo_cabecalho_formato_ate():
+    """(c) _extrair_periodo_cabecalho: formato 'ate' (string pura, sem PDF)."""
+    from app.parser_w011a import _extrair_periodo_cabecalho
+    # Formato ano cheio original — deve retornar exatamente as datas do período
+    di, df = _extrair_periodo_cabecalho("Comparativo de Jul/2025 até Jun/2026")
+    assert di == "01/07/2025", f"data_inicial esperada '01/07/2025', obtida '{di}'"
+    assert df == "30/06/2026", f"data_final esperada '30/06/2026', obtida '{df}'"
+
+
+def test_extrair_periodo_cabecalho_formato_proximos_k():
+    """(d) _extrair_periodo_cabecalho: formato 'com os proximos K meses' (string pura, sem PDF)."""
+    from app.parser_w011a import _extrair_periodo_cabecalho
+    # K=2 meses adicionais a partir de Abr/2026 => mes final = Abr+2 = Jun/2026
+    di, df = _extrair_periodo_cabecalho("Comparativo de Abr/2026 com os próximos 2 meses")
+    assert di == "01/04/2026", f"data_inicial esperada '01/04/2026', obtida '{di}'"
+    assert df == "30/06/2026", f"data_final esperada '30/06/2026', obtida '{df}'"
+
+
+def test_borda_sintetica_6_meses():
+    """(e) Borda sintetica 6 meses: EstruturaW011A com 6 meses passa por
+    montar_config_multi_fonte sem erro (sem PDF necessario)."""
+    from app.parser_w011a import EstruturaW011A, GrupoW011A, LancamentoW011A
+    from app.pipeline import montar_config_multi_fonte
+    # Monta estrutura com 6 meses manualmente (período semestral sintético)
+    n = 6
+    est = EstruturaW011A(
+        condominio="Condominio Semestral Teste",
+        condominio_id="77777",
+        data_inicial="01/01/2026",
+        data_final="30/06/2026",
+        meses_labels=["Jan/2026", "Fev/2026", "Mar/2026", "Abr/2026", "Mai/2026", "Jun/2026"],
+        receitas=[LancamentoW011A("Taxa de Condominio", 60000.0, [10000.0] * n)],
+        receita_total=60000.0,
+        receita_total_mes=[10000.0] * n,
+        grupos=[
+            GrupoW011A(
+                nome_relatorio="DESPESA COM PESSOAL",
+                categoria="Pessoal",
+                total=30000.0,
+                total_mes=[5000.0] * n,
+                lancamentos=[LancamentoW011A("Salarios", 30000.0, [5000.0] * n)],
+            ),
+        ],
+        despesa_total=30000.0,
+        despesa_total_mes=[5000.0] * n,
+        saldo_anterior=10000.0,
+        saldo_anterior_mes=[10000.0] * n,
+        saldo_final=40000.0,
+        mov_liquido=30000.0,
+        superavit_mes=[5000.0] * n,
+    )
+    avisos = []
+    # Deve passar sem erro — montar_config_multi_fonte aceita qualquer N de meses
+    cfg = montar_config_multi_fonte(est, None, None, avisos)
+    assert cfg["receita_total"] == 60000.0
+    # Serie mensal ativa com 6 meses
+    assert cfg["meses_label"] is not None
+    assert len(cfg["meses_label"]) == 6, (
+        f"Esperado 6 meses_label, obtido {len(cfg['meses_label'])}"
+    )
+
+
+def test_malformado_vira_value_error():
+    """(f) Layout malformado levanta ValueError (nao IndexError): arquivo nao-W011A
+    com cells insuficientes deve produzir ValueError via _detectar_formato."""
+    from app.parser_w011a import _detectar_formato
+    # Simula um PDF com apenas 2 clusters de coluna detectados (malformado)
+    cols_insuficientes = [100.0, 200.0]
+    try:
+        _detectar_formato(cols_insuficientes, n_meses_header=12)
+        assert False, "Esperado ValueError para cols insuficientes"
+    except ValueError as e:
+        # Deve ser ValueError descritivo, nao IndexError
+        assert "malformado" in str(e).lower() or "cluster" in str(e).lower(), (
+            f"ValueError deve mencionar malformado ou cluster: {e}"
+        )
+    except IndexError:
+        assert False, "IndexError nao deve ocorrer — deve ser ValueError"
+
+
+def test_extrair_periodo_cabecalho_rollover_de_ano():
+    """(g) _extrair_periodo_cabecalho: rollover de ano no formato 'com os proximos K meses'.
+
+    Nov/2025 + 3 meses: Nov(11) + 3 = 14 -> subtrai 12 -> Fev(2) do ano seguinte.
+    Verifica que o calculo de num_fim e ano_fim atravessa a virada de ano corretamente.
+    O dia da data_final segue a convencao do codigo: sempre '30' (sem ajuste por mes).
+    """
+    from app.parser_w011a import _extrair_periodo_cabecalho
+    # Nov + 3 meses adicionais = Nov, Dez, Jan, Fev -> data_final = Fev/2026
+    di, df = _extrair_periodo_cabecalho(
+        "Comparativo de Nov/2025 com os proximos 3 meses"
+    )
+    assert di == "01/11/2025", f"data_inicial esperada '01/11/2025', obtida '{di}'"
+    # Fev/2026: ano rolou de 2025 para 2026 apos Nov+3
+    assert df == "30/02/2026", f"data_final esperada '30/02/2026', obtida '{df}'"
+
+
+def test_detectar_formato_discrepancia_meses_vs_colunas():
+    """(h) _detectar_formato levanta ValueError quando discrepancia meses-vs-colunas
+    e impossivel (diferenca != 0 e != 1).
+
+    Garante que o guard nao regrida em refatoracoes futuras: o caminho de erro
+    de discrepancia e distinto do caminho de len(cols)<3.
+    """
+    from app.parser_w011a import _detectar_formato
+    # 5 clusters de coluna: idx_total=4, n_explicitas=3 (cols[1:4]).
+    # Se cabeçalho declara 6 meses mas so ha 3 colunas explicitas -> diferenca=3.
+    # 3 nao pertence a {0, 1} -> ValueError de discrepancia.
+    cols_cinco = [50.0, 150.0, 250.0, 350.0, 450.0]
+    try:
+        _detectar_formato(cols_cinco, n_meses_header=6)
+        assert False, "Esperado ValueError por discrepancia meses-vs-colunas"
+    except ValueError as e:
+        msg = str(e).lower()
+        # Deve mencionar discrepancia ou meses ou colunas — nao o caminho de <3 clusters
+        assert any(kw in msg for kw in ("diferenca", "meses", "colunas", "explicitas")), (
+            f"ValueError deve descrever discrepancia meses-vs-colunas: {e}"
+        )
+    except IndexError:
+        assert False, "IndexError nao deve ocorrer — deve ser ValueError"
