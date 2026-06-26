@@ -743,3 +743,56 @@ def test_detectar_formato_discrepancia_meses_vs_colunas():
         )
     except IndexError:
         assert False, "IndexError nao deve ocorrer — deve ser ValueError"
+
+
+# ── Passo 1: rodape por repeticao + fragmento por continuacao (estrutural) ──
+
+def _encontrar_pdf_leblon_w011a() -> str | None:
+    """Localiza o W011A do Leblon (nome de 3 palavras, originou o bug do rodape)."""
+    if not os.path.isdir(FIXTURES):
+        return None
+    encontrados = sorted(glob.glob(os.path.join(FIXTURES, "w011a_leblon*.pdf")))
+    return encontrados[0] if encontrados else None
+
+
+SKIP_W011A_LEBLON = pytest.mark.skipif(
+    _encontrar_pdf_leblon_w011a() is None,
+    reason="PDF w011a_leblon nao encontrado em fixtures_local/ (gitignored)"
+)
+
+
+@SKIP_W011A_LEBLON
+def test_passo1_rodape_leblon_nao_vira_grupo():
+    """O nome do condominio no rodape (PRAIA DO LEBLON, 3 palavras) NAO pode
+    virar grupo de despesa. Era o bug que a heuristica de contar palavras causava."""
+    from app.parser_w011a import parsear
+    est = parsear(_encontrar_pdf_leblon_w011a())
+    nomes = [g.nome_relatorio.upper() for g in est.grupos]
+    assert not any("LEBLON" in n for n in nomes), f"rodape virou grupo: {nomes}"
+    soma = round(sum(g.total for g in est.grupos), 2)
+    assert abs(soma - est.despesa_total) < 0.02, (
+        f"soma grupos {soma} != despesa_total {est.despesa_total}"
+    )
+
+
+@SKIP_W011A_LEBLON
+def test_passo1_fragmento_categoria_nao_vira_grupo():
+    """Fragmentos de nome quebrado (FISCAIS, ADMINISTRATIVO) sao continuacao,
+    nao grupos separados."""
+    from app.parser_w011a import parsear
+    est = parsear(_encontrar_pdf_leblon_w011a())
+    nomes = [g.nome_relatorio.upper() for g in est.grupos]
+    assert "FISCAIS" not in nomes, f"fragmento FISCAIS virou grupo: {nomes}"
+    assert "ADMINISTRATIVO" not in nomes, f"fragmento ADMINISTRATIVO virou grupo: {nomes}"
+
+
+@SKIP_W011A_ANO_CHEIO
+def test_passo1_praia_dourada_estrutura_preservada():
+    """Trava de nao-regressao: o Praia Dourada continua com 10 grupos e 79
+    lancamentos. Reconciliacao fechar NAO basta (grupo errado tambem soma certo);
+    aqui travamos a estrutura de grupos."""
+    from app.parser_w011a import parsear
+    est = parsear(_encontrar_pdf_ano_cheio_w011a())
+    assert len(est.grupos) == 10, f"esperado 10 grupos, veio {len(est.grupos)}"
+    total_lanc = sum(len(g.lancamentos) for g in est.grupos)
+    assert total_lanc == 79, f"esperado 79 lancamentos, veio {total_lanc}"

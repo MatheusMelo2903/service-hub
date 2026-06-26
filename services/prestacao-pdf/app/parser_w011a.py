@@ -585,6 +585,55 @@ def _reagrupar_linhas_adjacentes(words: list) -> list:
     return resultado
 
 
+def _coletar_rodape_repetido(pdf) -> set:
+    """Detecta rodapé de forma estrutural, sem contar palavras.
+
+    O rodapé do W011A (nome do condomínio ou da administradora) se repete
+    IDÊNTICO em toda página, na zona inferior. Linhas que aparecem em 2+ páginas
+    nessa zona são rodapé. Cobre nomes de qualquer tamanho, inclusive 3 palavras
+    (ex PRAIA DO LEBLON) que a heurística antiga de contar palavras deixava passar.
+    """
+    contagem: dict = {}
+    for page in pdf.pages:
+        zona = page.height - 80  # zona de rodapé, abaixo do conteúdo financeiro
+        baixo = [w for w in page.extract_words() if w["top"] > zona]
+        linhas: dict = {}
+        for w in baixo:
+            linhas.setdefault(round(w["top"] / 3.0), []).append(w)
+        # Conta cada texto uma vez por página (set), para que repetir entre
+        # páginas seja o sinal, não repetir dentro da mesma página.
+        textos_pagina = set()
+        for k in linhas:
+            txt = " ".join(w["text"] for w in sorted(linhas[k], key=lambda x: x["x0"])).strip()
+            if txt:
+                textos_pagina.add(txt)
+        for txt in textos_pagina:
+            contagem[txt] = contagem.get(txt, 0) + 1
+    return {txt for txt, n in contagem.items() if n >= 2}
+
+
+def _e_fragmento_continuacao(label: str, grupo_atual, grupos: list) -> bool:
+    """Fragmento de nome de categoria quebrado em duas linhas.
+
+    Quando o nome de uma categoria (ou da linha "Total de") quebra em duas linhas,
+    o sufixo fica sozinho numa linha CAIXA ALTA (ex "FISCAIS" após "RETENÇÕES
+    -NOTAS FISCAIS", "ADMINISTRATIVO" após "DESPESA COM ADMINISTRATIVO"). Isso é
+    continuação do nome anterior, NÃO abre grupo novo. Estrutural: a linha é o
+    sufixo em palavras do nome de um grupo recém-aberto ou recém-fechado.
+    """
+    palavras = label.split()
+    candidatos = []
+    if grupo_atual is not None:
+        candidatos.append(grupo_atual.nome_relatorio)
+    if grupos:
+        candidatos.append(grupos[-1].nome_relatorio)
+    for nome in candidatos:
+        pn = nome.split()
+        if 0 < len(palavras) < len(pn) and pn[-len(palavras):] == palavras:
+            return True
+    return False
+
+
 def parsear(caminho_pdf: str) -> EstruturaW011A:
     """Parseia um PDF W011A e retorna EstruturaW011A completa e validada.
 
@@ -637,6 +686,9 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
     _cells_saldo_final: list | None = None
 
     with pdfplumber.open(caminho_pdf) as pdf:
+        # Rodapé detectado por repetição estrutural (uma passada prévia),
+        # substitui a heurística antiga de contar palavras.
+        rodape_set = _coletar_rodape_repetido(pdf)
         for pi, page in enumerate(pdf.pages):
             if secao == "fim":
                 break
@@ -732,18 +784,21 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
                     # "PRAIA DOURADA" e textos de 1-2 palavras que não estão
                     # no mapa de categoria conhecida são rodapés do PDF.
                     if label not in MAPA_CATEGORIA and secao == "despesas":
-                        # Linha CAIXA ALTA desconhecida dentro da seção de despesas
-                        # só pode ser um novo grupo LEGÍTIMO se aparecer no mapa.
-                        # Se não bate com nenhuma categoria conhecida e não tem
-                        # valores, é muito provavelmente o nome do condomínio no
-                        # rodapé que escapou do filtro por top (top=531 < 560).
-                        # Heurística adicional: rodapé tem ≤ 2 palavras e aparece
-                        # em TODAS as páginas na mesma posição.
-                        palavras_label = label.split()
-                        if len(palavras_label) <= 2:
-                            # Provavelmente rodapé — ignora
+                        # Tratamento ESTRUTURAL (sem contar palavras). Uma linha
+                        # CAIXA ALTA sem valores fora do mapa é uma de três coisas:
+                        # 1) Rodapé (nome do condomínio/administradora): repete
+                        #    idêntico em 2+ páginas. Cobre nomes de 3+ palavras
+                        #    (ex PRAIA DO LEBLON) que a heurística antiga deixava
+                        #    virar grupo falso.
+                        if label in rodape_set:
                             continue
-                        # Mais de 2 palavras desconhecidas: abre grupo com aviso
+                        # 2) Fragmento de nome quebrado em duas linhas: sufixo do
+                        #    nome de um grupo recém-aberto ou fechado (ex FISCAIS
+                        #    após RETENÇÕES -NOTAS FISCAIS). Continuação, não abre.
+                        if _e_fragmento_continuacao(label, grupo_atual, est.grupos):
+                            continue
+                        # 3) Categoria desconhecida legítima (Opção B): abre com o
+                        #    nome real e avisa para enriquecer o MAPA_CATEGORIA depois.
                         print(f"[parser_w011a] AVISO: categoria não mapeada: {label!r}",
                               file=sys.stderr)
                     # Abre novo grupo de despesa
