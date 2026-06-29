@@ -1268,12 +1268,32 @@
             <span style="font-size:12px;font-family:var(--mono);color:var(--text)"><span id="normalizar-resumo"></span></span>
             <div style="display:flex;gap:8px">
               <button class="btn btn-ghost" onclick="descartarNormalizado()" style="font-size:12px;padding:6px 12px">✕ Descartar</button>
-              <button class="btn btn-primary" onclick="baixarPlanilhaNormalizada()" style="font-size:12px;padding:6px 12px">⬇ Baixar XLSX</button>
+              <button class="btn btn-ghost" onclick="baixarPlanilhaNormalizada()" style="font-size:12px;padding:6px 12px">⬇ Baixar XLSX</button>
+              <button class="btn btn-primary" onclick="abrirRevisaoFromNormalizado()" style="font-size:12px;padding:6px 12px">✓ Revisar papéis e importar</button>
             </div>
           </div>
           <div class="table-wrap" style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table id="normalizar-table"></table></div>
-          <p style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-top:8px">⚠ Revise antes de baixar. Após baixar, arraste o .xlsx pro dropzone "Importar Unidades" abaixo pra subir ao Superlógica.</p>
+          <p style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-top:8px">⚠ Revise antes de subir. Use "Revisar papéis e importar" para checar quem é Proprietário, Inquilino ou Dependente antes do envio. Nada sobe sem sua confirmação.</p>
         </div>
+      </div>
+
+      <!-- TELA DE REVISAO DE PAPEIS: gate obrigatorio antes do import (familia A2 e IA) -->
+      <div class="card" id="revisao-unidades" style="display:none">
+        <div class="card-header">
+          <span class="card-title">Revisão de papéis</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" onclick="descartarRevisao()" style="font-size:12px;padding:6px 12px">✕ Descartar</button>
+            <button class="btn btn-primary" onclick="confirmarRevisao()" style="font-size:12px;padding:6px 12px">✓ Confirmar e preparar import</button>
+          </div>
+        </div>
+        <div id="revisao-resumo" style="font-size:12px;font-family:var(--mono);color:var(--text);margin-bottom:8px"></div>
+        <div style="display:flex;gap:14px;align-items:center;font-size:10px;font-family:var(--mono);color:var(--muted);margin-bottom:10px;flex-wrap:wrap">
+          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--success);display:inline-block"></span>confirmado</span>
+          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--warn,#e0a82e);display:inline-block"></span>inferido, confira</span>
+          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--danger);display:inline-block"></span>incerto, precisa decisão</span>
+        </div>
+        <div class="table-wrap" style="max-height:460px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table id="revisao-table"></table></div>
+        <p style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-top:8px">Edite o papel onde precisar. Linhas marcadas como Descartar não são enviadas. Ao confirmar, a pré-visualização de import aparece abaixo e nada sobe ao Superlógica sem o clique em Enviar.</p>
       </div>
 
       <div class="card">
@@ -2572,6 +2592,19 @@ function processFile(file, type) {
       }
       const safeHeader = allRows[headerIdx] || [];
       const headers = safeHeader.map(h => String(h||'').trim());
+
+      // Familia A2 (W045A "Contatos das unidades" tabular): roteia para a tela de
+      // revisao de papel. NAO filtra linhas de unidade em branco aqui, pois elas
+      // herdam a unidade de cima (forward fill feito dentro de parseW045AContatos).
+      const familiaPlanilha = detectarFamiliaPlanilha(headers);
+      if (familiaPlanilha === 'w045a-contatos') {
+        const contatos = inferirPapeis(parseW045AContatos(headers, allRows.slice(headerIdx + 1)));
+        if (!contatos.length) { toast('Nenhum contato reconhecido na planilha', 'err'); return; }
+        abrirRevisao(contatos, file.name);
+        toast(contatos.length + ' contatos lidos de "' + file.name + '". Revise os papéis antes de importar.', 'ok');
+        return;
+      }
+
       const data_rows = allRows.slice(headerIdx + 1).filter(r =>
         r && r[0] && String(r[0]).trim() !== '' && String(r[0]).trim() !== 'Unidade'
       );
@@ -2958,6 +2991,529 @@ function renderPreviewUnidades(processed, filename) {
     html += '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:12px">... mais ' + (processed.length - 8) + ' unidades</td></tr>';
   }
   table.innerHTML = html;
+}
+
+// ============================================================
+// PARSER W045A "CONTATOS DAS UNIDADES" (FAMILIA A2) + INFERENCIA DE PAPEL
+// ------------------------------------------------------------
+// Familia A2: relatorio W045A "Contatos das unidades" em planilha tabular
+// (ex: Villaggio Laranjeiras). Colunas tipicas:
+//   Unidade | Nome | Tipo | Telefone | Celular | Endereco | Complemento |
+//   Bairro | Cidade | Estado | CEP | CPF/CNPJ | E-mail | Fracao
+// A coluna Unidade so aparece na primeira linha de cada unidade; as demais
+// pessoas da unidade herdam (forward fill). A coluna Tipo traz valores
+// ambiguos (Residente, Visitante, Imobiliaria) que o motor de inferencia
+// resolve em Proprietario, Inquilino ou Dependente, com nivel de confianca.
+// Tudo passa pela tela de revisao editavel antes de qualquer envio.
+// ============================================================
+
+// Estado da tela de revisao: lista plana de contatos + nome do arquivo de origem.
+let _revisaoContatos = null;
+let _revisaoSource = '';
+
+// Detecta se os cabecalhos sao da familia A2 (W045A tabular). Retorna
+// 'w045a-contatos' quando reconhece o layout, ou null para deixar o fluxo
+// padrao (formato unificado ou antigo) seguir. Heuristica: coluna 0 fala de
+// unidade, existe coluna Nome e coluna Tipo logo no inicio, e ha coluna de
+// contato (Celular ou CPF), o que distingue do formato unificado de 26 colunas.
+function detectarFamiliaPlanilha(headers) {
+  if (!headers || headers.length < 3) return null;
+  var h = headers.map(function(s) { return String(s || '').trim().toLowerCase(); });
+  var idxNome = h.indexOf('nome');
+  var idxTipo = h.indexOf('tipo');
+  var temUnidade = h[0].indexOf('unidade') !== -1;
+  var temNome = idxNome !== -1 && idxNome <= 2;
+  var temTipo = idxTipo !== -1 && idxTipo <= 3;
+  // Exige a coluna Celular: assinatura distintiva do W045A tabular, que separa
+  // esta familia do formato unificado (26 col) e do antigo do Superlogica.
+  var temCelular = h.some(function(s) { return s.indexOf('celular') !== -1; });
+  if (temUnidade && temNome && temTipo && temCelular) return 'w045a-contatos';
+  return null;
+}
+
+// Separa o texto da unidade em numero e bloco. No W045A o numero vem primeiro
+// e o bloco depois: "LJ17 B8" vira numero "LJ17" bloco "B8"; "0101 A2" vira
+// "0101"/"A2"; "101 A" vira "101"/"A"; "001" vira "001"/"".
+function splitUnidadeNumeroBloco(raw) {
+  var v = String(raw == null ? '' : raw).trim();
+  if (!v) return { numero: '', bloco: '' };
+  var partes = v.split(/\s+/);
+  if (partes.length >= 2) return { numero: partes[0], bloco: partes.slice(1).join(' ') };
+  return { numero: v, bloco: '' };
+}
+
+// Extrai telefones validos de uma celula suja. As planilhas trazem ruido como
+// "(27)992388313Larissa" ou "irmao Aleandro tel 3752-1255". Pega cada sequencia
+// de digitos com 8 a 13 numeros, remove o codigo de pais 55 quando presente, e
+// devolve so os numeros validos. Nunca inventa: o que nao for digito e descartado.
+function extrairTelefonesValidos(str) {
+  if (!str) return [];
+  // Charset intencionalmente SEM ponto: telefones nas planilhas usam espaco,
+  // parenteses, + e hifen como separador, enquanto datas usam ponto (15.05.2024).
+  // Excluir o ponto evita capturar datas como se fossem numeros de telefone.
+  var bruto = String(str).match(/\d[\d\s()+-]{6,}\d/g) || [];
+  var out = [];
+  bruto.forEach(function(m) {
+    var d = m.replace(/\D/g, '');
+    // Remove codigo de pais 55 quando o numero fica com 12 ou 13 digitos
+    if ((d.length === 12 || d.length === 13) && d.indexOf('55') === 0) d = d.slice(2);
+    if (d.length >= 8 && d.length <= 11 && out.indexOf(d) === -1) out.push(d);
+  });
+  return out;
+}
+
+// Classifica o documento por quantidade de digitos: 14 e CNPJ, 11 e CPF.
+// Valores fora desses tamanhos ficam vazios para nao gerar documento invalido.
+function limparDocumento(str) {
+  var d = String(str == null ? '' : str).replace(/\D/g, '');
+  if (d.length === 14) return { cpf: '', cnpj: d };
+  if (d.length === 11) return { cpf: d, cnpj: '' };
+  return { cpf: '', cnpj: '' };
+}
+
+// Acrescenta um trecho a observacao sem perder o que ja estava la.
+function anexarObs(obsAtual, trecho) {
+  if (!trecho) return obsAtual || '';
+  return obsAtual ? (obsAtual + ' | ' + trecho) : trecho;
+}
+
+// Le a planilha A2 (linhas a partir do cabecalho, SEM filtrar as linhas de
+// unidade em branco, pois elas herdam a unidade de cima) e devolve uma lista
+// plana de contatos. Cada contato carrega tipoOriginal (valor cru da coluna
+// Tipo) para o motor de inferencia decidir o papel depois.
+function parseW045AContatos(headers, rawRows) {
+  var h = headers.map(function(s) { return String(s || '').trim().toLowerCase(); });
+  // Localiza indices de coluna de forma flexivel (tolera variacao de nome)
+  var acharCol = function(preds) {
+    for (var i = 0; i < h.length; i++) {
+      for (var p = 0; p < preds.length; p++) { if (h[i].indexOf(preds[p]) !== -1) return i; }
+    }
+    return -1;
+  };
+  var iUnidade = 0;
+  var iNome    = h.indexOf('nome');
+  var iTipo    = h.indexOf('tipo');
+  var iTel     = acharCol(['telefone']);
+  var iCel     = acharCol(['celular']);
+  var iEnd     = acharCol(['endereço', 'endereco']);
+  var iCompl   = acharCol(['complemento']);
+  var iBairro  = acharCol(['bairro']);
+  var iCidade  = acharCol(['cidade']);
+  var iEstado  = acharCol(['estado', 'uf']);
+  var iCep     = acharCol(['cep']);
+  var iDoc     = acharCol(['cpf', 'cnpj']);
+  var iEmail   = acharCol(['mail']);
+  var iFracao  = acharCol(['fração', 'fracao']);
+
+  var clean = function(row, idx) {
+    if (idx < 0) return '';
+    var v = row[idx];
+    if (v === null || v === undefined) return '';
+    var s = String(v).trim();
+    var lower = s.toLowerCase();
+    if (['nan', 'cep inválido', 'cep invalido', 'inválido', 'invalido'].indexOf(lower) !== -1) return '';
+    return s;
+  };
+
+  var contatos = [];
+  var ultimaUnidade = '';
+  var seq = 0;
+
+  rawRows.forEach(function(row) {
+    if (!row || row.length === 0) return;
+    var unidadeCel = clean(row, iUnidade);
+    if (unidadeCel) ultimaUnidade = unidadeCel;
+    var nome = clean(row, iNome);
+    var tipoOriginal = clean(row, iTipo);
+    // Linha sem nome e sem tipo nao representa pessoa (cabecalho repetido, rodape)
+    if (!nome && !tipoOriginal) return;
+    if (!ultimaUnidade) return;
+
+    var split = splitUnidadeNumeroBloco(ultimaUnidade);
+    var doc = limparDocumento(clean(row, iDoc));
+
+    // Telefones: junta as duas colunas, separa validos, primeiro vira o campo,
+    // o resto vai pra observacao para nao se perder.
+    var tels = extrairTelefonesValidos(clean(row, iTel) + ' ; ' + clean(row, iCel));
+    var telefone = tels.length ? tels[0] : '';
+    var telExtras = tels.slice(1);
+
+    // Emails: o primeiro vai pro campo, demais pra observacao.
+    var emailsBrutos = clean(row, iEmail).split(/[;,]/).map(function(s) { return s.trim(); }).filter(Boolean);
+    var email = emailsBrutos.length ? emailsBrutos[0] : '';
+    var emailExtras = emailsBrutos.slice(1);
+
+    var obs = '';
+    if (telExtras.length)  obs = anexarObs(obs, 'Telefones extras: ' + telExtras.join(', '));
+    if (emailExtras.length) obs = anexarObs(obs, 'Emails extras: ' + emailExtras.join(', '));
+
+    seq += 1;
+    contatos.push({
+      id: seq,
+      unidade: split.numero,
+      bloco: split.bloco,
+      nome: nome,
+      tipoOriginal: tipoOriginal,
+      papel: '',
+      confianca: '',
+      motivo: '',
+      cpf: doc.cpf,
+      cnpj: doc.cnpj,
+      rg: '',
+      dtNasc: '',
+      genero: '',
+      email: email,
+      ddi: telefone ? '55' : '',
+      telefone: telefone,
+      tipoTel: '',
+      cep: clean(row, iCep).replace(/\D/g, ''),
+      endereco: clean(row, iEnd),
+      numero: '',
+      complemento: clean(row, iCompl),
+      bairro: clean(row, iBairro),
+      cidade: clean(row, iCidade),
+      estado: clean(row, iEstado),
+      fracao: clean(row, iFracao),
+      dtEntrada: '',
+      dtSaida: '',
+      recebeCobranca: '',
+      obs: obs
+    });
+  });
+
+  return contatos;
+}
+
+// Compara sobrenomes para o sinal fraco de parentesco. Considera parentes se
+// o ultimo sobrenome coincide ou se ha qualquer token de sobrenome em comum.
+function mesmoSobrenome(a, b) {
+  var sa = String(a || '').trim().toUpperCase().split(/\s+/).filter(function(t) { return t.length > 2; });
+  var sb = String(b || '').trim().toUpperCase().split(/\s+/).filter(function(t) { return t.length > 2; });
+  if (!sa.length || !sb.length) return false;
+  if (sa[sa.length - 1] === sb[sb.length - 1]) return true;
+  return sa.some(function(t) { return sb.indexOf(t) !== -1; });
+}
+
+// Motor de inferencia de papel. Recebe a lista plana de contatos, agrupa por
+// unidade+bloco e define papel (proprietario|inquilino|dependente|descartar),
+// confianca (alta|media|incerta) e motivo de cada um, seguindo os sinais
+// aprovados. Mutaciona e devolve a propria lista.
+function inferirPapeis(contatos) {
+  var PROP = ['proprietário', 'proprietario'];
+  var INQ  = ['inquilino', 'locatário', 'locatario'];
+  var IMOB = ['imobiliária', 'imobiliaria'];
+
+  // Agrupa preservando a ordem de aparicao
+  var grupos = {};
+  var ordem = [];
+  contatos.forEach(function(c) {
+    var chave = c.unidade + '|' + c.bloco;
+    if (!grupos[chave]) { grupos[chave] = []; ordem.push(chave); }
+    grupos[chave].push(c);
+  });
+
+  ordem.forEach(function(chave) {
+    var grupo = grupos[chave];
+
+    // Passo 1: classificacao base pelo tipo declarado
+    grupo.forEach(function(c) {
+      var t = String(c.tipoOriginal || '').trim().toLowerCase();
+      c._cls = '';
+      if (PROP.indexOf(t) !== -1) {
+        c._cls = 'prop';
+      } else if (INQ.indexOf(t) !== -1) {
+        c.papel = 'inquilino'; c.confianca = 'alta'; c.motivo = 'Tipo declarado: Inquilino';
+      } else if (t === 'dependente') {
+        c.papel = 'dependente'; c.confianca = 'alta'; c.motivo = 'Tipo declarado: Dependente';
+      } else if (IMOB.indexOf(t) !== -1) {
+        c.papel = 'descartar'; c.confianca = 'media'; c._imob = true;
+        c.motivo = 'Imobiliaria administra a unidade, nao e morador; contato guardado na Observacao';
+      } else if (t === 'visitante') {
+        c.papel = 'descartar'; c.confianca = 'media';
+        c.motivo = 'Visitante nao e morador fixo; revise se deve entrar no cadastro';
+      } else if (t === 'residente') {
+        c._residente = true;
+      } else {
+        c._semTipo = true;
+      }
+    });
+
+    var owners = grupo.filter(function(c) { return c._cls === 'prop'; });
+    var ownerHumano = owners.filter(function(c) { return !c.cnpj; })[0] || null;
+    var temCnpjOwner = owners.some(function(c) { return c.cnpj; });
+
+    // Passo 2: titularidade
+    if (owners.length === 1) {
+      owners[0].papel = 'proprietario'; owners[0].confianca = 'alta';
+      owners[0].motivo = 'Tipo declarado: Proprietario';
+    } else if (owners.length > 1) {
+      owners.forEach(function(o) {
+        o.papel = 'proprietario'; o.confianca = 'incerta';
+        o.motivo = 'Unidade com mais de um Proprietario declarado, confirme o titular de cobranca';
+      });
+    }
+
+    // Passo 3: resolucao de Residente
+    grupo.filter(function(c) { return c._residente; }).forEach(function(r) {
+      if (temCnpjOwner) {
+        r.papel = 'inquilino'; r.confianca = 'media';
+        r.motivo = 'Proprietario e empresa (CNPJ); residente tratado como inquilino';
+      } else if (ownerHumano) {
+        if (mesmoSobrenome(r.nome, ownerHumano.nome)) {
+          r.papel = 'dependente'; r.confianca = 'media';
+          r.motivo = 'Residente com sobrenome do titular, provavel familiar';
+        } else {
+          r.papel = 'inquilino'; r.confianca = 'media';
+          r.motivo = 'Residente sem parentesco aparente em unidade com proprietario, provavel inquilino';
+        }
+      } else {
+        // Sem proprietario na unidade: o primeiro residente vira o melhor palpite
+        // de titular; os demais ficam como dependente incerto para nao gerar dois
+        // proprietarios na mesma unidade. A decisao final e do operador na revisao.
+        var jaHaProp = grupo.some(function(x) { return x.papel === 'proprietario'; });
+        if (jaHaProp) {
+          r.papel = 'dependente'; r.confianca = 'incerta';
+          r.motivo = 'Residente adicional em unidade sem proprietario declarado, confirme se e dependente ou inquilino';
+        } else {
+          r.papel = 'proprietario'; r.confianca = 'incerta';
+          r.motivo = 'Residente isolado sem proprietario declarado, melhor palpite a confirmar';
+        }
+      }
+    });
+
+    // Passo 4: pessoas sem tipo viram dependente por padrao
+    grupo.filter(function(c) { return c._semTipo; }).forEach(function(c) {
+      c.papel = 'dependente'; c.confianca = 'media';
+      c.motivo = 'Tipo nao informado no documento, classificado como dependente';
+    });
+
+    // Passo 5: eleicao de titular quando a unidade nao tem nenhum proprietario
+    if (owners.length === 0) {
+      var candidatos = grupo.filter(function(c) { return c.papel !== 'descartar'; });
+      var jaTemProp = candidatos.some(function(c) { return c.papel === 'proprietario'; });
+      if (candidatos.length && !jaTemProp) {
+        // Melhor palpite: prioriza CNPJ, depois quem tem CPF e telefone, senao o primeiro
+        var eleito = candidatos.filter(function(c) { return c.cnpj; })[0] ||
+                     candidatos.filter(function(c) { return c.cpf && c.telefone; })[0] ||
+                     candidatos.filter(function(c) { return c.cpf; })[0] ||
+                     candidatos[0];
+        eleito.papel = 'proprietario'; eleito.confianca = 'incerta';
+        eleito.motivo = 'Unidade sem Proprietario declarado, eleito como melhor palpite, confirme';
+      }
+    }
+
+    // Passo 6: guarda o contato da imobiliaria na observacao de um contato mantido
+    var imobs = grupo.filter(function(c) { return c._imob; });
+    if (imobs.length) {
+      var alvo = grupo.filter(function(c) { return c.papel === 'proprietario'; })[0] ||
+                 grupo.filter(function(c) { return c.papel !== 'descartar'; })[0] || null;
+      if (alvo) {
+        imobs.forEach(function(im) {
+          var info = 'Imobiliaria: ' + (im.nome || '') +
+                     (im.telefone ? ' tel ' + im.telefone : '') +
+                     (im.email ? ' ' + im.email : '');
+          alvo.obs = anexarObs(alvo.obs, info.trim());
+        });
+      }
+    }
+
+    // Limpeza dos marcadores temporarios
+    grupo.forEach(function(c) {
+      delete c._cls; delete c._residente; delete c._semTipo; delete c._imob;
+      if (!c.papel) { c.papel = 'dependente'; c.confianca = 'media'; c.motivo = 'Sem classificacao, dependente por seguranca'; }
+    });
+  });
+
+  return contatos;
+}
+
+// Converte um contato revisado numa linha de 26 colunas no formato unificado,
+// para reaproveitar processUnidadesDataUnificada (logica de agrupamento e envio
+// ja testada) sem reimplementar a montagem do payload do Superlogica.
+function contatoParaLinha26(c) {
+  var papelToTipo = { proprietario: 'Proprietario', inquilino: 'Inquilino', dependente: 'Dependente' };
+  return [
+    papelToTipo[c.papel] || 'Dependente', // A Tipo
+    c.unidade || '',                       // B Unidade
+    c.bloco || '',                         // C Bloco
+    c.fracao || '',                        // D Fracao
+    '',                                    // E Metragem
+    c.nome || '',                          // F Nome
+    c.cpf || '',                           // G CPF
+    c.cnpj || '',                          // H CNPJ
+    c.rg || '',                            // I RG
+    c.dtNasc || '',                        // J Data Nascimento
+    c.genero || '',                        // K Genero
+    c.email || '',                         // L Email
+    c.ddi || '',                           // M DDI
+    c.telefone || '',                      // N Telefone
+    c.tipoTel || '',                       // O Tipo Telefone
+    c.cep || '',                           // P CEP
+    c.endereco || '',                      // Q Endereco
+    c.numero || '',                        // R Numero
+    c.complemento || '',                   // S Complemento
+    c.bairro || '',                        // T Bairro
+    c.cidade || '',                        // U Cidade
+    c.estado || '',                        // V Estado
+    c.dtEntrada || '',                     // W Data Entrada
+    c.dtSaida || '',                       // X Data Saida
+    c.recebeCobranca || '',                // Y Recebe Cobranca
+    c.obs || ''                            // Z Observacao
+  ];
+}
+
+// Converte uma linha de 26 colunas (saida do Normalizador IA) num contato, para
+// que o resultado da IA tambem passe pela mesma tela de revisao de papel.
+function linha26ParaContato(row, idx) {
+  var g = function(i) { return row[i] == null ? '' : String(row[i]).trim(); };
+  return {
+    id: idx + 1,
+    unidade: g(1), bloco: g(2), nome: g(5),
+    tipoOriginal: g(0),
+    papel: '', confianca: '', motivo: '',
+    cpf: g(6).replace(/\D/g, ''), cnpj: g(7).replace(/\D/g, ''), rg: g(8),
+    dtNasc: g(9), genero: g(10), email: g(11),
+    ddi: g(12), telefone: g(13).replace(/\D/g, ''), tipoTel: g(14),
+    cep: g(15).replace(/\D/g, ''), endereco: g(16), numero: g(17), complemento: g(18),
+    bairro: g(19), cidade: g(20), estado: g(21), fracao: g(3),
+    dtEntrada: g(22), dtSaida: g(23), recebeCobranca: g(24), obs: g(25)
+  };
+}
+
+// ============================================================
+// TELA DE REVISAO DE PAPEIS
+// Recebe os contatos ja inferidos, mostra cada um com cor por confianca e um
+// dropdown editavel de papel. Ao confirmar, emite linhas de 26 colunas e passa
+// pelo processUnidadesDataUnificada (logica de envio ja testada).
+// ============================================================
+var REVISAO_PAPEL_OPCOES = [
+  { v: 'proprietario', label: 'Proprietário' },
+  { v: 'inquilino',    label: 'Inquilino' },
+  { v: 'dependente',   label: 'Dependente' },
+  { v: 'descartar',    label: 'Descartar' }
+];
+
+function abrirRevisao(contatos, sourceName) {
+  _revisaoContatos = contatos;
+  _revisaoSource = sourceName || '';
+  renderRevisao();
+  var card = document.getElementById('revisao-unidades');
+  card.style.display = 'block';
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Abre a revisao a partir do resultado do Normalizador IA (familia B).
+function abrirRevisaoFromNormalizado() {
+  if (!_normalizarRows || !_normalizarRows.length) { toast('Nada para revisar', 'err'); return; }
+  var contatos = inferirPapeis(_normalizarRows.map(linha26ParaContato));
+  abrirRevisao(contatos, _normalizarSourceName || 'normalizado');
+}
+
+// Cor de borda por nivel de confianca: alta verde, media amarelo, incerta vermelho.
+function corConfianca(conf) {
+  if (conf === 'alta') return 'var(--success)';
+  if (conf === 'incerta') return 'var(--danger)';
+  return 'var(--warn,#e0a82e)';
+}
+
+// Desenha a tabela de revisao: resumo no topo (contagem por papel e quantos
+// incertos) e uma linha por contato com borda colorida pela confianca e um
+// dropdown editavel de papel. Todo dado externo passa por esc() antes do DOM.
+function renderRevisao() {
+  var table = document.getElementById('revisao-table');
+  var resumo = document.getElementById('revisao-resumo');
+  var esc = function(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+  var cont = _revisaoContatos || [];
+  var nProp = 0, nInq = 0, nDep = 0, nDesc = 0, nIncerto = 0;
+  cont.forEach(function(c) {
+    if (c.papel === 'proprietario') nProp++;
+    else if (c.papel === 'inquilino') nInq++;
+    else if (c.papel === 'dependente') nDep++;
+    else if (c.papel === 'descartar') nDesc++;
+    if (c.confianca === 'incerta') nIncerto++;
+  });
+  var unidades = {};
+  cont.forEach(function(c) { if (c.papel !== 'descartar') unidades[c.unidade + '|' + c.bloco] = 1; });
+  resumo.innerHTML = Object.keys(unidades).length + ' unidades · ' + nProp + ' proprietários · ' +
+    nInq + ' inquilinos · ' + nDep + ' dependentes · ' + nDesc + ' descartados' +
+    (nIncerto ? ' · <b style="color:var(--danger)">' + nIncerto + ' incertos para decidir</b>' : '');
+
+  var head = '<thead><tr>' +
+    ['Unidade', 'Papel', 'Nome', 'Documento', 'Telefone', 'Email', 'Tipo no doc', 'Por quê']
+      .map(function(h) { return '<th style="padding:6px 8px;background:var(--bg3);font-size:10px;font-family:var(--mono);text-transform:uppercase;color:var(--muted);position:sticky;top:0;border-bottom:1px solid var(--border2);white-space:nowrap;text-align:left">' + h + '</th>'; })
+      .join('') + '</tr></thead>';
+
+  var body = cont.map(function(c) {
+    var cor = corConfianca(c.confianca);
+    var doc = c.cnpj ? (c.cnpj + ' (CNPJ)') : (c.cpf || '');
+    var sel = '<select onchange="mudarPapelRevisao(' + c.id + ', this.value)" style="font-size:11px;font-family:var(--mono);padding:3px 4px;border-radius:5px;border:1px solid var(--border2);background:var(--bg3);color:var(--text)">' +
+      REVISAO_PAPEL_OPCOES.map(function(o) {
+        return '<option value="' + o.v + '"' + (o.v === c.papel ? ' selected' : '') + '>' + o.label + '</option>';
+      }).join('') + '</select>';
+    var td = function(v, extra) { return '<td style="padding:5px 8px;font-size:11px;font-family:var(--mono);border-bottom:1px solid var(--border);' + (extra || '') + '">' + v + '</td>'; };
+    return '<tr style="border-left:3px solid ' + cor + '">' +
+      td('<b>' + esc(c.unidade) + (c.bloco ? ' ' + esc(c.bloco) : '') + '</b>') +
+      td(sel) +
+      td(esc(c.nome), 'max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
+      td(esc(doc)) +
+      td(esc(c.telefone)) +
+      td(esc(c.email), 'max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
+      td(esc(c.tipoOriginal) || '<span style="color:var(--muted)">—</span>') +
+      td('<span style="color:var(--muted)" title="' + esc(c.motivo) + '">' + esc(c.motivo) + '</span>', 'max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
+      '</tr>';
+  }).join('');
+
+  table.innerHTML = head + '<tbody>' + body + '</tbody>';
+}
+
+// Ajuste manual do papel: vira confianca alta (decidido pelo humano) e re-renderiza.
+function mudarPapelRevisao(id, papel) {
+  if (!_revisaoContatos) return;
+  var c = _revisaoContatos.filter(function(x) { return x.id === id; })[0];
+  if (!c) return;
+  c.papel = papel;
+  c.confianca = 'alta';
+  c.motivo = 'Ajustado manualmente';
+  renderRevisao();
+}
+
+function descartarRevisao() {
+  _revisaoContatos = null;
+  _revisaoSource = '';
+  document.getElementById('revisao-unidades').style.display = 'none';
+  toast('Revisão descartada', 'ok');
+}
+
+// Confirma a revisao: emite linhas de 26 colunas dos contatos mantidos, monta o
+// modelo de import via processUnidadesDataUnificada e mostra a pre-visualizacao.
+// Nada e enviado aqui; o envio continua no botao Enviar unidades.
+function confirmarRevisao() {
+  var cont = _revisaoContatos || [];
+  var ativos = cont.filter(function(c) { return c.papel !== 'descartar'; });
+  if (!ativos.length) { toast('Nada para importar: todos descartados', 'err'); return; }
+
+  var rows = ativos.map(contatoParaLinha26);
+  var processed = processUnidadesDataUnificada(NORMALIZAR_HEADERS, rows);
+
+  var avisos = (processed.avisos || []).slice();
+  // Alerta sobre proprietarios CNPJ: o cadastro do proprietario nao envia o documento da empresa
+  var propsCnpj = ativos.filter(function(c) { return c.papel === 'proprietario' && c.cnpj && !c.cpf; }).length;
+  if (propsCnpj) avisos.push(propsCnpj + ' proprietario(s) sao empresa (CNPJ); o documento da empresa nao vai no cadastro do proprietario');
+
+  state.unidades.headers = NORMALIZAR_HEADERS;
+  state.unidades.raw = rows;
+  state.unidades.processed = processed;
+  renderPreviewUnidades(processed, _revisaoSource || 'revisão');
+
+  document.getElementById('revisao-unidades').style.display = 'none';
+  if (avisos.length) toast(avisos.join(' | '), 'warn');
+  toast(processed.length + ' unidades prontas. Confira a pré-visualização e clique em Enviar unidades.', 'ok');
+  var prev = document.getElementById('preview-unidades');
+  if (prev) prev.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderPreview(type, headers, rows, filename) {
