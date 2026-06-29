@@ -1,5 +1,30 @@
 # Changelog Service Hub
 
+## 2026-06-29 — Importar Unidades Fase 1: parser W045A tabular + inferencia de papel + tela de revisao
+
+### Adicionado
+- `public/index.html`: parser deterministico da familia A2 (relatorio W045A "Contatos das unidades" em planilha, ex Villaggio Laranjeiras). Forward fill da coluna Unidade (so aparece na primeira linha de cada unidade), limpeza de telefone sujo (extrai so digitos validos, remove codigo de pais 55, primeiro no campo e resto na Observacao), emails extras na Observacao, classificacao CPF (11 digitos) vs CNPJ (14 digitos). Funcoes: `detectarFamiliaPlanilha`, `splitUnidadeNumeroBloco`, `extrairTelefonesValidos`, `limparDocumento`, `anexarObs`, `parseW045AContatos`.
+- `public/index.html`: motor de inferencia de papel (`inferirPapeis`, `mesmoSobrenome`). Resolve a coluna Tipo ambigua em Proprietario, Inquilino, Dependente ou Descartar com confianca alta, media ou incerta. Sinais: CNPJ dono faz residente virar inquilino; sobrenome do titular faz residente virar dependente; unidade sem proprietario elege o melhor palpite como incerto e os demais residentes caem como dependente incerto (nunca dois proprietarios por unidade). Imobiliaria descartada com contato guardado na Observacao de um contato mantido; Visitante descartado e marcado.
+- `public/index.html`: tela de revisao editavel (`abrirRevisao`, `renderRevisao`, `mudarPapelRevisao`, `confirmarRevisao`, `descartarRevisao`, `corConfianca`). Cor por confianca e dropdown de papel por contato. Ao confirmar, emite linhas de 26 colunas (`contatoParaLinha26`) e reaproveita o `processUnidadesDataUnificada` ja testado. Nada sobe ao Superlogica sem o clique manual em Enviar unidades.
+- `public/index.html`: Normalizador IA (familia B) ganhou botao "Revisar papeis e importar" que joga o resultado na mesma tela de revisao (`linha26ParaContato`, `abrirRevisaoFromNormalizado`).
+
+### Follow-ups registrados (nao implementar antes do ciclo indicado)
+- XSS pre-existente em `renderPreview` (`public/index.html` aprox. linhas 3515 e 3517): cabecalhos e celulas da planilha de despesas sao interpolados em template literal sem `esc()`. Fora do escopo da Fase 1 e nao agravado por ela (o caminho de unidades nao passa por essa funcao). Corrigir aplicando a mesma `esc()` de `renderPreviewUnidades`/`renderRevisao` ANTES da proxima mexida no modulo de despesas.
+- Familia A1 (PDF posicional W045A) fica para a Fase 2 com `pdfjs-dist` no `server.js`, so apos a tela de revisao validada em producao de teste.
+- Centralizar `esc()` numa unica utilitaria global (hoje redefinida em `renderPreviewUnidades` e `renderRevisao`): reduz risco de novas funcoes esquecerem o escape.
+
+### Validado
+- Revisor: APROVADO (apos correcao de 2 bloqueadores: multiplos residentes sem dono geravam multiplos proprietarios; falta de comentario no topo de `renderRevisao`)
+- Auditor de seguranca: APROVADO (todo dado externo da revisao passa por `esc()`, sem token exposto, sem log de dado pessoal)
+- Validador: sintaxe OK; testes de logica em dados reais Villaggio Comercial (194 unidades, 248 contatos) e Residencial (777 unidades, 0 com proprietario duplicado); pipeline end to end ate o modelo de import com tipoResp correto
+
+### Arquivos modificados
+- `public/index.html`
+
+Implementado na branch dev. Commit `9d04c97`. Fixtures usados: Recreio das Palmeiras, Alphaville Tres Praias, Villaggio Laranjeiras, Quattro Residencial.
+
+---
+
 ## 2026-06-23 — Prosa rica deterministica + Bloco A (Prestacao de Contas)
 
 ### Adicionado
