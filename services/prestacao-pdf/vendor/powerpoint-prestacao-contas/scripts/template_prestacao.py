@@ -760,17 +760,20 @@ def _detalhe_pagina(num, d, total, pct, lanc, primeira, ultima):
     if not primeira:
         r3 = p.add_run(); r3.text="  (continuação)"
         r3.font.name=FONT; r3.font.size=Pt(20); r3.font.bold=False; r3.font.color.rgb=C_GRAY_MUTED
-    # card esquerdo (so na primeira pagina da categoria)
-    if primeira:
-        cx, cy, cw, chh = Inches(0.5), Inches(2.15), Inches(5.2), Inches(4.75)
-        add_rounded_rect(s, cx, cy, cw, chh, C_NAVY, 0.04)
-        add_rect(s, cx+Inches(0.35), cy+Inches(0.35), Inches(0.5), Inches(0.12), C_AMBER)
-        add_text_box(s, cx+Inches(0.35), cy+Inches(1.1), cw-Inches(0.7), Inches(0.3), "TOTAL DO GRUPO", 11, True, C_BLUE_PALE)
-        add_text_box(s, cx+Inches(0.35), cy+Inches(1.45), cw-Inches(0.7), Inches(0.8), fmt_brl(total), 34, True, C_WHITE)
-        add_text_box(s, cx+Inches(0.35), cy+Inches(2.28), cw-Inches(0.7), Inches(0.3), f"{fmt_pct(pct)} DA DESPESA DO PERÍODO", 10, True, C_BLUE_PALE)
-        add_line(s, cx+Inches(0.35), cy+Inches(2.65), cx+Inches(1.35), cy+Inches(2.65), C_BLUE_LIGHT, 2)
-        add_text_box(s, cx+Inches(0.35), cy+Inches(2.85), cw-Inches(0.7), Inches(1.0), d.get("descricao",""), 11, False, C_WHITE)
-    sm = d.get("serie_mensal") if primeira else None
+    # Card esquerdo IDÊNTICO em TODOS os slides do grupo (primeiro e continuações):
+    # mesmo TOTAL DO GRUPO, percentual, narrativa e gráfico de distribuição mensal,
+    # no mesmo tamanho e posição. A continuação é uma cópia do primeiro slide onde
+    # SÓ a tabela de lançamentos à direita avança — parece o mesmo slide com a
+    # lista continuando.
+    cx, cy, cw, chh = Inches(0.5), Inches(2.15), Inches(5.2), Inches(4.75)
+    add_rounded_rect(s, cx, cy, cw, chh, C_NAVY, 0.04)
+    add_rect(s, cx+Inches(0.35), cy+Inches(0.35), Inches(0.5), Inches(0.12), C_AMBER)
+    add_text_box(s, cx+Inches(0.35), cy+Inches(1.1), cw-Inches(0.7), Inches(0.3), "TOTAL DO GRUPO", 11, True, C_BLUE_PALE)
+    add_text_box(s, cx+Inches(0.35), cy+Inches(1.45), cw-Inches(0.7), Inches(0.8), fmt_brl(total), 34, True, C_WHITE)
+    add_text_box(s, cx+Inches(0.35), cy+Inches(2.28), cw-Inches(0.7), Inches(0.3), f"{fmt_pct(pct)} DA DESPESA DO PERÍODO", 10, True, C_BLUE_PALE)
+    add_line(s, cx+Inches(0.35), cy+Inches(2.65), cx+Inches(1.35), cy+Inches(2.65), C_BLUE_LIGHT, 2)
+    add_text_box(s, cx+Inches(0.35), cy+Inches(2.85), cw-Inches(0.7), Inches(1.0), d.get("descricao",""), 11, False, C_WHITE)
+    sm = d.get("serie_mensal")
     if sm and TEM_MENSAL:
         add_text_box(s, cx+Inches(0.35), cy+Inches(3.75), cw-Inches(0.7), Inches(0.3), "DISTRIBUIÇÃO MENSAL", 10, True, C_BLUE_PALE)
         cd = CategoryChartData(); cd.categories = CONFIG["meses_ini"]; cd.add_series("M", sm)
@@ -815,8 +818,9 @@ def _detalhe_pagina(num, d, total, pct, lanc, primeira, ultima):
     else:
         add_text_box(s, tx+Inches(0.3), cur+Inches(0.12), tw-Inches(0.6), Inches(0.28),
                      "continua no próximo slide", 9, False, C_GRAY_MUTED)
-    # nota ambar opcional (so na primeira pagina, junto do card)
-    if primeira and d.get("nota"):
+    # nota ambar opcional, junto do card: repete em todas as paginas do grupo
+    # para o lado esquerdo ficar idêntico entre o primeiro slide e as continuações.
+    if d.get("nota"):
         ny = Inches(6.95)
         add_rounded_rect(s, Inches(0.5), ny - Inches(0.85), Inches(5.2), Inches(0.8), C_AMBER_LIGHT, 0.08)
         add_text_box(s, Inches(0.65), ny - Inches(0.78), Inches(4.9), Inches(0.7), "\u26A0  " + d["nota"], 9, False, C_AMBER_DEEP)
