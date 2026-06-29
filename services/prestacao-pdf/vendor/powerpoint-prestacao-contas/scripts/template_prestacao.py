@@ -304,11 +304,14 @@ _CAT_ANCHORS = [
     (0x14, 0x3A, 0x87),  # navy
     (0x1E, 0x5A, 0xA8),  # azul
     (0x2E, 0x7B, 0xC7),  # azul medio
-    (0x52, 0x99, 0xDC),  # azul claro
-    (0x5B, 0x6A, 0x88),  # cinza-azul escuro
-    (0x7F, 0x8F, 0xA8),  # cinza-azul
-    (0xA5, 0xB0, 0xC2),  # cinza claro
-    (0xC2, 0xCB, 0xD8),  # cinza mais claro
+    (0x52, 0x99, 0xDC),  # azul claro (peso intermediário)
+    # Menor peso: aço/navy saturado de luminância MÉDIA. Escuro o bastante para
+    # o texto branco ler na projeção; substitui os cinzas claros antigos que
+    # sumiam na parede (barra clara + texto branco = sem contraste).
+    (0x42, 0x54, 0x7A),  # aço navy (menor peso, ainda forte)
+    (0x4E, 0x60, 0x88),  # aço médio
+    (0x5A, 0x6C, 0x94),  # aço
+    (0x66, 0x78, 0x9E),  # aço claro mas médio (texto branco ainda lê)
 ]
 def cat_colors(n):
     """Retorna n cores interpolando os anchors verde->azul->cinza. Funciona p/ qualquer n."""
@@ -659,8 +662,12 @@ def slide_receita(num="05"):
                subtitle=f"Total: {fmt_brl(REC_TOTAL)}    \u2022    {CONFIG['periodo_extenso']}")
     add_text_box(s, Inches(0.5), Inches(2.7), Inches(4.5), Inches(0.5), fmt_brl_int(REC_TOTAL), 40, True, C_NAVY)
     add_text_box(s, Inches(0.5), Inches(3.55), Inches(4.5), Inches(0.3), "RECEITA TOTAL", 11, True, C_GRAY_MUTED)
+    # Mesma legenda e escala por peso do slide de despesas (coerência entre os dois).
+    add_text_box(s, Inches(0.5), Inches(4.0), Inches(4.5), Inches(0.3), "Tons verdes: maior peso", 10, False, C_POSITIVE)
+    add_text_box(s, Inches(0.5), Inches(4.25), Inches(4.5), Inches(0.3), "Tons azuis e aço: peso intermediário e menor", 10, False, C_GRAY_TEXT)
     lst = CONFIG["receitas_cat"]; lx = Inches(5.2); lw = Inches(7.6)
     n = len(lst)
+    colors = cat_colors(n)  # escala por peso (verde->azul->aço), igual ao slide de despesas
     # Calibrado pelas referencias aprovadas: avail 3.75 a partir de 2.45 faz a
     # lista terminar no maximo em 6.20, com folga para a faixa de insight em
     # 6.35 (o upstream usava 4.0/2.5 e invadia a faixa com 10+ fontes).
@@ -669,7 +676,7 @@ def slide_receita(num="05"):
     ly = 2.45
     for i,(fonte,val,pct) in enumerate(lst):
         y = Inches(ly + i*(rh+0.05))
-        col = C_POSITIVE if i==0 else C_BLUE
+        col = colors[i]
         add_rounded_rect(s, lx, y, lw, Inches(rh), col, 0.15)
         add_text_box(s, lx+Inches(0.25), y+Inches(rh/2-0.13), Inches(3.6), Inches(0.26), fonte, 12 if n<=7 else 11, True, C_WHITE)
         add_text_box(s, lx+Inches(3.8), y+Inches(rh/2-0.12), Inches(2.2), Inches(0.26), fmt_brl(val), 10, False, C_WHITE)
@@ -695,7 +702,7 @@ def slide_estrutura(num="06"):
     add_text_box(s, Inches(0.5), Inches(2.7), Inches(4.5), Inches(0.5), fmt_brl_int(DESP_TOTAL), 40, True, C_NAVY)
     add_text_box(s, Inches(0.5), Inches(3.55), Inches(4.5), Inches(0.3), "DESPESA TOTAL", 11, True, C_GRAY_MUTED)
     add_text_box(s, Inches(0.5), Inches(4.0), Inches(4.5), Inches(0.3), "Tons verdes: maior peso", 10, False, C_POSITIVE)
-    add_text_box(s, Inches(0.5), Inches(4.25), Inches(4.5), Inches(0.3), "Tons azuis e cinzas: peso intermediário e menor", 10, False, C_GRAY_TEXT)
+    add_text_box(s, Inches(0.5), Inches(4.25), Inches(4.5), Inches(0.3), "Tons azuis e aço: peso intermediário e menor", 10, False, C_GRAY_TEXT)
     colors = cat_colors(n)
     lx = Inches(5.2); lw = Inches(7.6)
     avail = 4.4
@@ -716,15 +723,26 @@ def slide_estrutura(num="06"):
 # PAGINADA em slides consecutivos: card de resumo so no primeiro, titulo
 # "(continuacao)" nos seguintes, faixa de total navy so no ultimo. Cada
 # pagina passa pelo auditor individualmente.
-LANC_POR_PAGINA = 20
+# Limite por slide reduzido de 20 para 14: acima disso a lista espremia (linhas
+# no piso de 0.17" e fonte 8pt). Com <=14, linhas >=0.28" e fonte >=9 (lê bem na
+# projeção). Acima do limite, a categoria é dividida em páginas EQUILIBRADAS.
+LANC_POR_PAGINA = 14
 
 def slide_detalhe(num, cat, total, pct):
     d = CONFIG["detalhes"].get(cat)
     if not d:
         d = {"titulo1": cat, "titulo2": "", "descricao": "", "serie_mensal": None, "lancamentos": [], "nota": None}
     lanc_total = d.get("lancamentos", [])
-    paginas = [lanc_total[i:i + LANC_POR_PAGINA]
-               for i in range(0, max(len(lanc_total), 1), LANC_POR_PAGINA)] or [[]]
+    n = len(lanc_total)
+    # Paginação EQUILIBRADA: quando passa do limite, divide em páginas de tamanho
+    # parecido (ex 20 itens -> 10+10, 15 -> 8+7), em vez de encher um slide e
+    # deixar o seguinte quase vazio (14+1). Evita lista apertada e página orfã.
+    if n <= LANC_POR_PAGINA:
+        paginas = [lanc_total] if lanc_total else [[]]
+    else:
+        num_pag = -(-n // LANC_POR_PAGINA)   # teto da divisao
+        tam = -(-n // num_pag)               # tamanho equilibrado por pagina
+        paginas = [lanc_total[i:i + tam] for i in range(0, n, tam)]
     for idx_pag, pagina in enumerate(paginas):
         _detalhe_pagina(num, d, total, pct, pagina,
                         primeira=(idx_pag == 0), ultima=(idx_pag == len(paginas) - 1))
