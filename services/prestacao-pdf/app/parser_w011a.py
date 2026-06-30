@@ -751,6 +751,12 @@ def _processar_meio_mes(est, cells_por_lanc, saldo_ant_cells, cells_saldo_final,
     if cells_mov_liquido and cells_mov_liquido[0] is not None:
         est.mov_liquido = round(cells_mov_liquido[0], 2)
     else:
+        # PDF sem Mov. Líquido col0: usa receita - despesa. Avisa, pois a checagem
+        # de mov_liquido em _validar vira tautológica nesse fallback (a cadeia de
+        # saldo continua sendo a aceitação real e independente).
+        print("[parser_w011a] AVISO: meio do mes sem Mov. Liquido col0; "
+              "mov_liquido = receita - despesa (cadeia de saldo segue como aceitacao)",
+              file=sys.stderr)
         est.mov_liquido = round(est.receita_total - est.despesa_total, 2)
 
     # Séries mensais de saldo/superávit: meses cheios (tendência do gráfico).

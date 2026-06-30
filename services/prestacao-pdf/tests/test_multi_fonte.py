@@ -796,6 +796,12 @@ def test_passo1_praia_dourada_estrutura_preservada():
     assert len(est.grupos) == 10, f"esperado 10 grupos, veio {len(est.grupos)}"
     total_lanc = sum(len(g.lancamentos) for g in est.grupos)
     assert total_lanc == 79, f"esperado 79 lancamentos, veio {total_lanc}"
+    # Snapshot dos numeros-chave: uma refatoracao que mude valor em silencio
+    # (mantendo a caixa fechando) tem que ser pega aqui, nao so no deep-compare.
+    assert abs(est.receita_total - 1293772.27) < 0.02, f"receita_total: {est.receita_total}"
+    assert abs(est.despesa_total - 780912.35) < 0.02, f"despesa_total: {est.despesa_total}"
+    assert est.meses_labels[0] == "Jul/2025" and est.meses_labels[-1] == "Jun/2026"
+    assert len(est.meses_labels) == 12
 
 
 # ── Passo 2: rotulos de mes lidos por posicao X da coluna (nao do cabecalho) ──
