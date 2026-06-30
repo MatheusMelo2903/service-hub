@@ -40,12 +40,15 @@ function carregarFuncoes() {
     html.match(/var TIPOS_W045A = \[[^\]]*\];/)[0],
     html.match(/var GAP_CONTINUACAO_W045A = \d+;/)[0],
     html.match(/var MARGEM_COLUNA_W045A = \d+;/)[0],
-    html.match(/var _PARENTESCO_DIRETO_RE = [^\n]+/)[0],
+    html.match(/var _PARENTESCO = '[^']*';/)[0],
+    html.match(/var _PARENTESCO_LIGADO_INQ_RE = [^\n]+/)[0],
+    html.match(/var _PARENTESCO_LIGADO_PROP_RE = [^\n]+/)[0],
+    html.match(/var _SO_PARENTESCO_RE = [^\n]+/)[0],
   ].join('\n');
   const fns = ['limparDocumento', 'anexarObs', 'splitUnidadeNumeroBloco', 'acharAncorasW045A',
     'colDeX', 'parseTelefonesW045A', 'parseEnderecoW045A', 'ehLinhaRodapeW045A',
-    'extrairContatosW045APdf', 'condoNomeDoTitulo', 'mesmoSobrenome', 'marcacaoInquilino',
-    'qualificadorPapel', 'inferirPapeis'];
+    'extrairContatosW045APdf', 'condoNomeDoTitulo', 'mesmoSobrenome', 'ehTitularDeclarado',
+    'marcacaoInquilino', 'parenteDeProprietario', 'nomeSoParentesco', 'qualificadorPapel', 'inferirPapeis'];
   const vm = require('vm');
   const ctx = { String, Array, Math, Object, console, RegExp };
   vm.createContext(ctx);
@@ -61,14 +64,27 @@ function check(nome, cond, detalhe) {
 
 function testarCasosLimite(ctx) {
   console.log('\n== Casos-limite da regra textual de inquilino ==');
-  check('Irma como nome vira titular', ctx.marcacaoInquilino('IRMA INQUILINO') === 'titular');
-  check('Inquilino - IRMA SOUZA vira titular', ctx.marcacaoInquilino('Inquilino - IRMA SOUZA') === 'titular');
+  check('IRMA INQUILINO (adjacente, sem separador) vira parente por ligacao', ctx.marcacaoInquilino('IRMA INQUILINO') === 'parente');
+  check('Inquilino - IRMA SOUZA vira titular (prefixo protege o nome)', ctx.marcacaoInquilino('Inquilino - IRMA SOUZA') === 'titular');
   check('cunhada inquilino vira parente', ctx.marcacaoInquilino('RAIANE - CUNHADA INQUILINO') === 'parente');
   check('sogra inquilino vira parente', ctx.marcacaoInquilino('EDILUCIA sogra inquilino') === 'parente');
   check('filha do inquilino vira parente', ctx.marcacaoInquilino('ANA filha do inquilino') === 'parente');
   check('tia do inquilino vira parente (possessivo)', ctx.marcacaoInquilino('JOANA tia do inquilino') === 'parente');
   check('nome sem mencao a inquilino vira null', ctx.marcacaoInquilino('JOSE DA SILVA') === null);
   check('qualificador apos outro parentese', ctx.qualificadorPapel('JOSE (APT 302) (Esposa)') === 'titular');
+
+  // Refino baseado em ligacao ao titular (nao no acento)
+  console.log('  -- ligacao vs nome proprio (com e sem acento) --');
+  check('CASO 1: "irma do inquilino" sem acento vira parente', ctx.marcacaoInquilino('PAULA irma do inquilino') === 'parente');
+  check('CASO 1b: "irma do inquilino" com acento vira parente', ctx.marcacaoInquilino('PAULA irmã do inquilino') === 'parente');
+  check('CASO 1c: "irmao da proprietaria" e parente do dono', ctx.parenteDeProprietario('LEANDRO irmao da proprietaria') === true);
+  check('possessivo nao-parentesco "amiga do inquilino" vira parente', ctx.marcacaoInquilino('CLARA amiga do inquilino') === 'parente');
+  check('CASO 2: "Irma Souza Costa" solta continua nome (null)', ctx.marcacaoInquilino('Irma Souza Costa') === null);
+  check('CASO 2b: dona "MAYARA - PROPRIETARIA" nao e parente do dono', ctx.parenteDeProprietario('MAYARA GARBINI - PROPRIETARIA') === false);
+  check('CASO 2c: "Inquilino - IRMA" e a inquilina (titular)', ctx.marcacaoInquilino('Inquilino - IRMA SOUZA') === 'titular');
+  check('CASO 2d: "IRMA - INQUILINA" e a inquilina (titular, hifen protege)', ctx.marcacaoInquilino('IRMA SOUZA - INQUILINA') === 'titular');
+  check('CASO 3: campo so "irmao" cai como bare-parentesco', ctx.nomeSoParentesco('irmao') === true);
+  check('CASO 3b: "Maria Soraia (irma)" tem nome, nao e bare', ctx.nomeSoParentesco('Maria Soraia de Moraes (irma)') === false);
 
   // Locatario na coluna Tipo nao e rebaixado por causa de um parente
   var mk = function(id, nome, tipo) { return { id: id, unidade: '70', bloco: 'Z', nome: nome, tipoOriginal: tipo, papel: '', confianca: '', motivo: '', cpf: '', cnpj: '', telefone: '', obs: '' }; };
@@ -87,6 +103,31 @@ function testarCasosLimite(ctx) {
   var amb = [mk(1, 'OWNER', 'Proprietário'), mk(2, 'Inquilino - JOAO (Marido)', 'Dependente'), mk(3, 'Inquilino - MARIA (Esposa)', 'Dependente')];
   ctx.inferirPapeis(amb);
   check('Marido + Esposa cai incerto', amb.filter(function(x) { return x.confianca === 'incerta'; }).length === 2);
+
+  console.log('  -- Passo 10: irma/irmao SEMPRE dependente (inferencia completa) --');
+  var i1 = [mk(1, 'DONO', 'Proprietário'), mk(2, 'Maria irma', 'Residente')];
+  ctx.inferirPapeis(i1);
+  check('"Maria irma" (residente) vira dependente', i1[1].papel === 'dependente');
+  var i2 = [mk(1, 'DONO', 'Proprietário'), mk(2, 'Inquilino - IRMA SOUZA', 'Dependente')];
+  ctx.inferirPapeis(i2);
+  check('"Inquilino - IRMA" vira dependente (irma sempre parentesco)', i2[1].papel === 'dependente');
+  var i3 = [mk(1, 'DONO', 'Proprietário'), mk(2, 'irmao', 'Dependente')];
+  ctx.inferirPapeis(i3);
+  check('campo so "irmao" cai incerto', i3[1].papel === 'dependente' && i3[1].confianca === 'incerta');
+  var i4 = [mk(1, 'IRMA DONA SOUZA', 'Proprietário'), mk(2, 'FULANO', 'Dependente')];
+  ctx.inferirPapeis(i4);
+  check('proprietario chamado "IRMA" nao e demovido (mantem dono da unidade)', i4[0].papel === 'proprietario');
+  var i5 = [mk(1, 'DONO', 'Proprietário'), mk(2, 'Irma Santos', 'Inquilino')];
+  ctx.inferirPapeis(i5);
+  check('inquilino DECLARADO pela coluna Tipo chamado "Irma" e protegido', i5[1].papel === 'inquilino');
+  var i6 = [mk(1, 'Irma', 'Proprietário'), mk(2, 'FULANO', 'Dependente')];
+  ctx.inferirPapeis(i6);
+  check('proprietario declarado de nome unico "Irma" nao vira incerto', i6[0].papel === 'proprietario' && i6[0].confianca === 'alta');
+  check('qualificadorPapel "(Irmã)" vira dependente', ctx.qualificadorPapel('JOAO (Irmã)') === 'dependente');
+  var i7 = [mk(1, 'OWNER', 'Proprietário'), mk(2, 'Inquilino - JOSE (Marido)', 'Dependente'), mk(3, 'Inquilino - ANA (Irmã)', 'Dependente')];
+  ctx.inferirPapeis(i7);
+  var inq7 = i7.filter(function(x) { return x.papel === 'inquilino'; });
+  check('familia (Marido)+(Irma) resolve com 1 inquilino', inq7.length === 1 && inq7[0].nome.indexOf('JOSE') !== -1);
 }
 
 async function testarPdf(ctx) {

@@ -1,5 +1,24 @@
 # Changelog Service Hub
 
+## 2026-06-30 — Refino de parentesco por ligacao ao titular + regra especial de irma/irmao
+
+### Adicionado / Alterado
+- `public/index.html`: deteccao de parentesco ligada ao titular (nao ao acento). `marcacaoInquilino` reconhece parente por possessivo "do/da inquilino" (qualquer termo antes, ex "amiga do inquilino") ou grau de parentesco adjacente a inquilino com `\s+` sem hifen (o hifen protege "IRMA - INQUILINA"). Texto normalizado remove acento, entao "irmã"/"irma" e "proprietária"/"proprietaria" caem no mesmo termo. Constantes de modulo `_PARENTESCO`, `_PARENTESCO_LIGADO_INQ_RE`, `_PARENTESCO_LIGADO_PROP_RE`, `_SO_PARENTESCO_RE`.
+- `parenteDeProprietario` (Passo 8): parente do dono ("irmao da proprietaria", "amiga da proprietaria") vira Dependente, sem confundir com a propria dona ("MAYARA - PROPRIETARIA").
+- `nomeSoParentesco` (Passo 9): campo so com grau de parentesco, sem nome nem ligacao, cai incerto.
+- REGRA ESPECIAL de irma/irmao (Passo 10, decisao do Matheus): a palavra (com/sem acento, com/sem hifen, normalizada, `\b` nas pontas) e SEMPRE parentesco -> Dependente, sem exigir ligacao. Campo literalmente so "irma"/"irmao" -> incerto. Consequencia aceita: "Inquilino - IRMA" textual vira Dependente (a palavra vence). `ehTitularDeclarado` protege titular declarado pela coluna Tipo (Proprietario/Inquilino/Locatario chamado "Irma") nos Passos 9 e 10, para nao deixar a unidade sem titular.
+- `tests/regressao-w045a-recreio.js` e `docs/REGRESSAO-W045A-RECREIO.md`: atualizados com os casos de ligacao, irma/irmao e as protecoes de titular declarado (30 casos).
+
+### Validado
+- Revisor: REPROVADO na primeira passada, corrigido e revalidado. Bloqueador (Passo 10 rebaixava inquilino declarado chamado "Irma") tratado estendendo a protecao de titular declarado a Inquilino/Locatario, mantendo a decisao do Matheus de que a marcacao textual "Inquilino - Irma" vira Dependente. Moderados corrigidos: `qualificadorPapel` sem "irma"; branch morta em `parenteDeProprietario`; Passos 9/10 sem proteger Tipo declarado.
+- Auditor de seguranca: APROVADO. Bug funcional corrigido: regex literais com `\\b`/`\\s` (barra dupla) viravam dead code; trocado por `\b`/`\s` para o possessivo disparar. Sem ReDoS, sem token, sem PII em log.
+- Validador: teste de regressao 100% verde. Agregado do Recreio IDENTICO ao anterior (papel 577/114/558/8, conf 1113/121/23), 7 unidades inalteradas, 1257 contatos, 0 proprietario duplicado.
+
+### Arquivos modificados
+- `public/index.html`, `tests/regressao-w045a-recreio.js`, `docs/REGRESSAO-W045A-RECREIO.md`
+
+---
+
 ## 2026-06-30 — Regra textual de inquilino no W045A + teste de regressao do Recreio
 
 ### Adicionado

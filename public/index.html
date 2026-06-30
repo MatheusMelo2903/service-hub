@@ -3087,25 +3087,71 @@ function mesmoSobrenome(a, b) {
 //   null      quando nao ha mencao a inquilino no nome.
 // Cobre variacoes de grafia: hifen, sem espaco, maiusculo/minusculo, antes ou
 // depois do nome, com e sem acento.
-// Termos de parentesco INEQUIVOCOS (nao sao nomes proprios comuns) que, vindo
-// imediatamente antes de "inquilino" mesmo sem "do/da", indicam parente. Lista
-// curta de proposito: termos ambiguos que tambem sao nomes (Irma, Tia, Nora, Pai)
-// ficam de fora e so contam na forma possessiva "do/da inquilino". Compilado uma
-// vez no escopo do modulo.
-var _PARENTESCO_DIRETO_RE = /\b(cunhad[oa]|sogr[oa]|genro|entead[oa]|padrasto|madrasta|filh[oa])\b\s+(d[oa]\s+)?inquilin/;
+// Graus de parentesco reconhecidos (acento ja removido pelo normalize, entao
+// "irma", "irma", "irmao", "irmao" caem todos aqui). A deteccao de parentesco
+// NAO depende do acento: depende da LIGACAO com um titular (ver abaixo).
+var _PARENTESCO = 'cunhad[oa]|sogr[oa]|genro|nora|filh[oa]|entead[oa]|padrasto|madrasta|pai|mae|irma|irmao|esposo|esposa|marido|mulher|companheir[oa]|tio|tia|sobrinh[oa]|prim[oa]|avo|avos|net[oa]|namorad[oa]|conjuge|parente|agregad[oa]';
+// Parentesco LIGADO a "inquilino": grau de parentesco seguido (so por espacos,
+// NUNCA por hifen) de um "do/da" opcional e da palavra inquilino. O \\s+ sem hifen
+// e proposital: protege "IRMA - INQUILINA" (nome + qualificador, a propria pessoa
+// e a inquilina) de virar parente, ja que ali ha hifen entre o nome e inquilina.
+var _PARENTESCO_LIGADO_INQ_RE = new RegExp('\\b(' + _PARENTESCO + ')\\s+(d[oa]\\s+)?inquilin');
+// Mesmo para "proprietario/proprietaria": parente do dono (ex "irmao da
+// proprietaria", "namorado proprietaria") vira Dependente, sem confundir com a
+// propria dona ("MAYARA - PROPRIETARIA"), que nao tem grau de parentesco antes.
+var _PARENTESCO_LIGADO_PROP_RE = new RegExp('\\b(' + _PARENTESCO + ')\\s+(d[oa]\\s+)?proprietari');
+// Campo cujo conteudo INTEIRO e um unico grau de parentesco (compilado uma vez).
+var _SO_PARENTESCO_RE = new RegExp('^(' + _PARENTESCO + ')$');
 
+// Titular declarado pela COLUNA Tipo (nao por marcacao no nome): Proprietario,
+// Inquilino ou Locatario. Esses sao a evidencia mais forte do documento e nao
+// devem ser rebaixados nem virar incertos pelas regras de parentesco no nome
+// (mesma protecao que evita deixar a unidade sem dono).
+function ehTitularDeclarado(tipoOriginal) {
+  return /^(propriet[aá]ri[oa]|inquilino|locat[aá]ri[oa])$/i.test(String(tipoOriginal || '').trim());
+}
+
+// Detecta a marcacao textual de inquilino DENTRO do nome do contato (condominios
+// que nao usam a coluna Tipo para inquilino). O que decide nao e o acento, e a
+// LIGACAO com o titular. Devolve:
+//   'titular' -> inquilino qualifica a propria pessoa ("Inquilino - JONAS",
+//                "LUANNA - INQUILINA"); a pessoa e o inquilino;
+//   'parente' -> grau de parentesco ligado a inquilino ("cunhada do inquilino",
+//                "irma do inquilino" mesmo sem acento, "cunhada inquilino");
+//   null      -> nao ha mencao a inquilino no nome.
+// Protecao contra nome proprio: "Irma Souza Costa" (sem inquilino no campo) -> null;
+// "Inquilino - Irma" -> titular (inquilino vem antes do nome, nao ha parentesco
+// ligando Irma a outro titular).
 function marcacaoInquilino(nome) {
   var t = String(nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   if (!/inquilin[oa]/.test(t)) return null;
-  // Possessivo "X do/da inquilino": a pessoa nomeada e parente, o inquilino e outro.
-  // Cobre qualquer termo antes (filha do inquilino, tia do inquilino, etc).
-  if (/\bd[oa]\s+inquilin/.test(t)) return 'parente';
-  // Parentesco inequivoco imediatamente antes de inquilino, sem "do/da"
-  // (ex "cunhada inquilino", "sogra inquilino").
-  if (_PARENTESCO_DIRETO_RE.test(t)) return 'parente';
+  if (/\bd[oa]\s+inquilin/.test(t)) return 'parente';   // X do/da inquilino
+  if (_PARENTESCO_LIGADO_INQ_RE.test(t)) return 'parente';  // parentesco ligado a inquilino
   return 'titular';
 }
 
+// Parente do PROPRIETARIO ligado no nome (ex "irmao da proprietaria"): a pessoa e
+// dependente do dono, nao o dono. So dispara com grau de parentesco antes de
+// "proprietario", entao "MAYARA - PROPRIETARIA" (a propria dona) nao casa.
+function parenteDeProprietario(nome) {
+  var t = String(nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // Possessivo "X do/da proprietario" (qualquer X) OU grau de parentesco adjacente.
+  return /\bd[oa]\s+proprietari/.test(t) || _PARENTESCO_LIGADO_PROP_RE.test(t);
+}
+
+// Caso duvidoso: o campo so tem grau(s) de parentesco, sem nome de pessoa e sem
+// ligacao a titular (ex o campo inteiro e "irmao" ou "irma"). Cadastro incompleto:
+// cai como incerto para o operador decidir, nunca chuta.
+function nomeSoParentesco(nome) {
+  var t = String(nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z\s]/g, ' ').trim();
+  if (/inquilin|proprietari/.test(t)) return false; // tem ligacao a titular: nao e o caso duvidoso
+  var toks = t.split(/\s+/).filter(Boolean);
+  if (!toks.length) return false;
+  var filler = /^(do|da|de|e)$/;
+  var temParente = false, temOutro = false;
+  toks.forEach(function(tk) { if (_SO_PARENTESCO_RE.test(tk)) temParente = true; else if (!filler.test(tk)) temOutro = true; });
+  return temParente && !temOutro;
+}
 // Le o qualificador entre parenteses no nome e classifica o papel na familia do
 // inquilino. Usado para desempatar quando ha varios "Inquilino -" na unidade.
 //   'titular'    -> (Marido), (Esposa), (Titular), (Companheiro) etc;
@@ -3119,7 +3165,7 @@ function qualificadorPapel(nome) {
   while ((m = re.exec(t)) !== null) {
     var q = m[1].trim();
     if (/\b(marido|esposo|esposa|titular|companheir[oa]|conjuge)\b/.test(q)) return 'titular';
-    if (/\b(filh[oa]|dependente|net[oa]|entead[oa]|sobrinh[oa]|irmao|prim[oa]|cunhad[oa]|sogr[oa]|genro|nora|menor|crianc[ao])\b/.test(q)) return 'dependente';
+    if (/\b(filh[oa]|dependente|net[oa]|entead[oa]|sobrinh[oa]|irma|irmao|prim[oa]|cunhad[oa]|sogr[oa]|genro|nora|menor|crianc[ao])\b/.test(q)) return 'dependente';
   }
   return null;
 }
@@ -3295,6 +3341,50 @@ function inferirPapeis(contatos) {
       parentes.forEach(function(p) { p.papel = 'dependente'; p.confianca = 'incerta'; p.motivo = 'Parente de inquilino sem titular claro na unidade, defina o inquilino titular'; });
       rebaixarInferidos('incerta', 'Unidade tem parente de inquilino mas titular indefinido, defina o titular');
     }
+
+    // Passo 8: parentesco ligado ao PROPRIETARIO no nome (ex "irmao da
+    // proprietaria") e dependente do dono. So rebaixa quem nao veio da coluna Tipo
+    // nem da marcacao textual de inquilino, para nao mexer em titular declarado.
+    grupo.forEach(function(c) {
+      if (c.papel !== 'dependente' && c.papel !== 'descartar' && c._marc == null &&
+          !/^(proprietario|propriet[aá]ri[oa]|inquilino|locat[aá]ri[oa])$/i.test(String(c.tipoOriginal || '').trim()) &&
+          parenteDeProprietario(c.nome)) {
+        c.papel = 'dependente'; c.confianca = 'media'; c.motivo = 'Parente do proprietario, ligado no nome do contato';
+      }
+    });
+
+    // Passo 9: campo so com grau de parentesco, sem nome nem ligacao a titular,
+    // cai incerto para decisao manual (cadastro incompleto). Nunca chuta. Nao
+    // mexe em titular declarado pela coluna Tipo (ex proprietario chamado "Irma").
+    grupo.forEach(function(c) {
+      if (c.papel !== 'descartar' && c.papel !== 'proprietario' &&
+          !ehTitularDeclarado(c.tipoOriginal) && nomeSoParentesco(c.nome)) {
+        c.confianca = 'incerta';
+        c.motivo = 'Campo so traz grau de parentesco, sem nome nem titular ligado; defina manualmente';
+      }
+    });
+
+    // Passo 10: regra especial SO para "irma"/"irmao" (decisao do Matheus 2026-06-30):
+    // a palavra (com/sem acento, normalizada) e SEMPRE parentesco -> Dependente,
+    // sem exigir ligacao com titular. Campo literalmente so "irma"/"irmao" sem nome
+    // cai incerto. NAO demove titular declarado pela coluna Tipo (proprietario,
+    // inquilino ou locatario chamado "Irma"), para nao deixar a unidade sem titular;
+    // mas a marcacao textual "Inquilino - Irma" no nome vira dependente (a palavra
+    // irma vence, decisao consciente do Matheus). "irma|irmao" sao seguros nessa
+    // ordem: o \b nas duas pontas impede "irma" de casar dentro de "irmao".
+    grupo.forEach(function(c) {
+      if (c.papel === 'descartar' || c.papel === 'proprietario' || ehTitularDeclarado(c.tipoOriginal)) return;
+      var t = String(c.nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      if (!/\b(irma|irmao)\b/.test(t)) return;
+      var soPalavra = /^(irma|irmao)$/.test(t.replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim());
+      if (soPalavra) {
+        c.papel = 'dependente'; c.confianca = 'incerta';
+        c.motivo = 'Campo so com "irma/irmao" sem nome de pessoa; defina manualmente';
+      } else if (c.papel !== 'dependente') {
+        c.papel = 'dependente'; c.confianca = 'media';
+        c.motivo = 'Contato com "irma/irmao" tratado sempre como parente (dependente)';
+      }
+    });
 
     // Limpeza dos marcadores temporarios
     grupo.forEach(function(c) {
