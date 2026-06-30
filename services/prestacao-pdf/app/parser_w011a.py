@@ -694,6 +694,81 @@ def _extrair_rotulos_por_posicao(page, cols, idx_total, deriva_primeiro) -> list
     return explicitos
 
 
+def _processar_meio_mes(est, cells_por_lanc, saldo_ant_cells, cells_saldo_final,
+                        cells_mov_liquido, matrix_lanc, idx_total, deriva_primeiro):
+    """Ramo ISOLADO do cut-date de corte por data no meio do mês (ex 26/12 a 26/06).
+
+    A verdade da JANELA REAL vem do col0 de CADA LANÇAMENTO (provado no Passo 0:
+    soma col0 das receitas/despesas reconcilia ao centavo com a cadeia de saldo).
+    NUNCA usa a linha "Total de" agregada (que tem col0 vazio) nem os meses cheios
+    como verdade. Só roda quando corte_meio_mes=True; o fluxo fechado nunca entra
+    aqui. A aceitação é a cadeia de saldo (col0) fechando em _validar; se não fechar,
+    422 limpo.
+    """
+    # idx_corte: primeira coluna de projeção futura (dois sinais já existentes).
+    # None = sem projeção -> usa todas as colunas explícitas como reais.
+    idx_corte = _detectar_cut_date(matrix_lanc, saldo_ant_cells, idx_total, deriva_primeiro)
+    fim = idx_corte if idx_corte is not None else idx_total  # cols 1..fim-1 = meses reais cheios
+
+    def _col0(lanc):
+        c = cells_por_lanc.get(id(lanc))
+        if c is None or c[0] is None:
+            raise ValueError(
+                "W011A meio do mes: lancamento sem col0 (valor da janela real "
+                "ausente). Nao gera numero inconsistente."
+            )
+        return round(c[0], 2)
+
+    def _serie_cheios(lanc):
+        c = cells_por_lanc.get(id(lanc)) or []
+        return [c[j] if (j < len(c) and c[j] is not None) else 0.0 for j in range(1, fim)]
+
+    nmes = fim - 1  # quantidade de meses cheios reais (cols 1..fim-1)
+
+    # Lançamentos: total = col0 (janela real); serie_mes = meses cheios (tendência)
+    for lanc in est.receitas:
+        lanc.total = _col0(lanc); lanc.serie_mes = _serie_cheios(lanc)
+    for g in est.grupos:
+        for lanc in g.lancamentos:
+            lanc.total = _col0(lanc); lanc.serie_mes = _serie_cheios(lanc)
+        g.total = round(sum(l.total for l in g.lancamentos), 2)
+        g.total_mes = ([round(sum(l.serie_mes[i] for l in g.lancamentos), 2) for i in range(nmes)]
+                       if g.lancamentos else [0.0] * nmes)
+
+    # Totais agregados pela soma do col0 (janela), nunca pela linha Total agregada.
+    est.receita_total = round(sum(l.total for l in est.receitas), 2)
+    est.despesa_total = round(sum(g.total for g in est.grupos), 2)
+    est.receita_total_mes = ([round(sum(l.serie_mes[i] for l in est.receitas), 2) for i in range(nmes)]
+                             if est.receitas else [0.0] * nmes)
+    est.despesa_total_mes = ([round(sum(g.total_mes[i] for g in est.grupos), 2) for i in range(nmes)]
+                             if est.grupos else [0.0] * nmes)
+
+    # Saldo e mov_liquido pela JANELA (col0). Cadeia de saldo é a aceitação.
+    if saldo_ant_cells and saldo_ant_cells[0] is not None:
+        est.saldo_anterior = round(saldo_ant_cells[0], 2)
+    if cells_saldo_final and cells_saldo_final[0] is not None:
+        est.saldo_final = round(cells_saldo_final[0], 2)
+    if cells_mov_liquido and cells_mov_liquido[0] is not None:
+        est.mov_liquido = round(cells_mov_liquido[0], 2)
+    else:
+        est.mov_liquido = round(est.receita_total - est.despesa_total, 2)
+
+    # Séries mensais de saldo/superávit: meses cheios (tendência do gráfico).
+    if saldo_ant_cells:
+        est.saldo_anterior_mes = [saldo_ant_cells[j] if (j < len(saldo_ant_cells)
+                                  and saldo_ant_cells[j] is not None) else 0.0 for j in range(1, fim)]
+    est.superavit_mes = [round(est.receita_total_mes[i] - est.despesa_total_mes[i], 2)
+                         for i in range(nmes)]
+
+    # Rótulos: explícitos das cols 1..fim-1 (Jan..Jun), SEM mês derivado de col0
+    # (Emenda 2: no meio do mês o col0 é a janela inteira, não um mês).
+    if deriva_primeiro:
+        est.meses_labels = est.meses_labels[1:fim]
+    else:
+        est.meses_labels = est.meses_labels[0:nmes]
+    return est
+
+
 def parsear(caminho_pdf: str) -> EstruturaW011A:
     """Parseia um PDF W011A e retorna EstruturaW011A completa e validada.
 
@@ -794,6 +869,12 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
                             r"Comparativo de (\d{2})/(\d{2})/(\d{4}) at[ée] "
                             r"(\d{2})/(\d{2})/(\d{4})", linha)
                         if m_data:
+                            # Cabeçalho DD/MM: _extrair_periodo_cabecalho (Mmm/AAAA)
+                            # não casa, então data_inicial/data_final ficavam vazios
+                            # e o pipeline crashava em int(data_inicial[3:5]). Preenche
+                            # aqui no formato DD/MM/AAAA que o pipeline já espera.
+                            est.data_inicial = f"{m_data.group(1)}/{m_data.group(2)}/{m_data.group(3)}"
+                            est.data_final = f"{m_data.group(4)}/{m_data.group(5)}/{m_data.group(6)}"
                             d_ini = int(m_data.group(1))
                             d_fim, mes_fim, ano_fim = (int(m_data.group(4)),
                                                        int(m_data.group(5)),
@@ -1113,18 +1194,16 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
             "precisar processar."
         )
 
-    # Corte por data no meio do mês (ex 26/12 a 26/06): NÃO suportado. Os meses
-    # cheios das colunas não reconciliam com a janela parcial (Dez/Jun parciais),
-    # e o PDF não fornece receita e despesa da janela real separadas (só o net no
-    # col0 do Mov. Líquido). 422 ESPECÍFICO. Fronteira de mês (01 ao último dia)
-    # reconcilia e segue para o truncamento da projeção abaixo.
+    # Corte por data no meio do mês (ex 26/12 a 26/06): RAMO ISOLADO com a janela
+    # real vinda do col0 de cada lançamento. Return ANTECIPADO antes do
+    # pós-processamento do fluxo fechado abaixo — o fechado NUNCA entra aqui.
+    # A cadeia de saldo (col0) é a aceitação: _validar fecha ao centavo ou 422 limpo.
     if corte_meio_mes:
-        raise ValueError(
-            "corte por data no meio do mes nao suportado (ex 26/12 a 26/06): os "
-            "meses cheios das colunas nao reconciliam com a janela parcial, e o "
-            "PDF nao fornece receita e despesa da janela real separadas. Use "
-            "fronteira de mes (01 ao ultimo dia). Tratamento futuro sob demanda."
-        )
+        est = _processar_meio_mes(
+            est, _cells_por_lancamento, _saldo_ant_cells, _cells_saldo_final,
+            _cells_mov_liquido, _matrix_lancamentos, idx_total, deriva_primeiro)
+        _validar(est)
+        return est
 
     # ── Pós-processamento: detecta cut_date e recalcula séries e totais ──────
     #

@@ -884,19 +884,42 @@ def _encontrar_pdf_buritis_cortado() -> str | None:
     return e[0] if e else None
 
 
-def test_passo4_corte_meio_mes_422_especifico():
-    """Corte por data no meio do mes (Buritis 26/12 a 26/06) cai em 422
-    ESPECIFICO: meses cheios nao reconciliam com a janela parcial e o PDF nao da
-    receita/despesa da janela real separadas. So fronteira de mes e suportada."""
+def test_passo5_buritis_cortado_meio_mes_reconcilia():
+    """Corte por data no meio do mes (Buritis 26/12 a 26/06) agora GERA: a janela
+    real vem do col0 de cada lancamento e reconcilia ao centavo pela cadeia de
+    saldo. Primeiro caso verde do meio do mes (antes caia em 422)."""
     pdf_path = _encontrar_pdf_buritis_cortado()
     if pdf_path is None:
         pytest.skip("w011a_buritis_cortado nao encontrado em fixtures_local/")
     from app.parser_w011a import parsear
+    est = parsear(pdf_path)  # nao pode levantar
+    assert abs(est.receita_total - 1822059.57) < 0.02, f"receita janela: {est.receita_total}"
+    assert abs(est.despesa_total - 1478056.50) < 0.02, f"despesa janela: {est.despesa_total}"
+    assert abs(est.saldo_anterior - 736590.09) < 0.02, f"saldo_ant: {est.saldo_anterior}"
+    assert abs(est.saldo_final - 1080593.16) < 0.02, f"saldo_fim: {est.saldo_final}"
+    # Cadeia de saldo fecha ao centavo (teste de aceitacao)
+    caixa = est.saldo_anterior + est.receita_total - est.despesa_total
+    assert abs(caixa - est.saldo_final) < 0.02, f"caixa nao fecha: {caixa} != {est.saldo_final}"
+    # Meses reais Jan..Jun (cols 1-6), SEM mes derivado de col0 (Emenda 2)
+    assert est.meses_labels == ["Jan/2026", "Fev/2026", "Mar/2026", "Abr/2026",
+                                "Mai/2026", "Jun/2026"], est.meses_labels
+
+
+def test_passo5_augusta_cortado_continua_422_loja():
+    """Augusta cortado tem cabecalho 26/12 (meio do mes) E e Loja Maconica. A
+    precedencia da Loja (verificada ANTES do meio do mes) tem que se manter:
+    cai em 422-Loja, nunca entra no ramo col0 do meio do mes."""
+    pdf_path = _encontrar_pdf_augusta_qualquer()
+    cortado = None
+    if os.path.isdir(FIXTURES):
+        e = sorted(glob.glob(os.path.join(FIXTURES, "w011a_augusta_cortado*.pdf")))
+        cortado = e[0] if e else None
+    if cortado is None:
+        pytest.skip("w011a_augusta_cortado nao encontrado em fixtures_local/")
+    from app.parser_w011a import parsear
     with pytest.raises(ValueError) as exc:
-        parsear(pdf_path)
-    msg = str(exc.value)
-    assert "meio do mes" in msg, f"422 deve identificar corte no meio do mes: {msg}"
-    assert "fronteira de mes" in msg, f"422 deve indicar a alternativa suportada: {msg}"
+        parsear(cortado)
+    assert "Loja" in str(exc.value), f"Augusta cortado deve cair em 422-Loja: {exc.value}"
 
 
 @SKIP_W011A_ANO_CHEIO
