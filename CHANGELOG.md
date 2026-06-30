@@ -1,5 +1,22 @@
 # Changelog Service Hub
 
+## 2026-06-30 — Regra textual de inquilino no W045A + teste de regressao do Recreio
+
+### Adicionado
+- `public/index.html`: regra geral (nao lista fixa de condominio) para condominios que NAO usam a coluna Tipo para inquilino e marcam "inquilino"/"inquilina" dentro do nome do contato. `marcacaoInquilino` classifica o nome em titular (a palavra qualifica a pessoa, ex "Inquilino - JONAS", "LUANNA - INQUILINA"), parente (construcao de parentesco, ex "cunhada do inquilino", "sogra inquilino" -> vira Dependente) ou null. `qualificadorPapel` le o qualificador entre parenteses (Marido/Esposa/Titular vs Filho/Filha/Dependente) para desempatar. O "Passo 7" de `inferirPapeis` aplica: um candidato -> Inquilino e parentes -> Dependente; varios candidatos resolve so com qualificador 100% claro (um titular e todos os demais com qualificador de dependente presente), senao INCERTA; parentes sem titular claro -> INCERTA. Nunca chuta o titular. A marcacao sobrepoe a inferencia e rebaixa inquilinos inferidos, mas preserva quem veio das colunas Tipo Inquilino/Locatario.
+- `extrairContatosW045APdf`: passa a capturar a continuacao alfabetica do nome (variavel `nomeCont`), onde fica o qualificador "INQUILINO" quando o nome quebra em outra linha (ex 401 B "TALYTA PESSOA - CUNHADA DO" + "INQUILINO"; 404 F "LUANNA ..." + "INQUILINA").
+- `tests/regressao-w045a-recreio.js` e `docs/REGRESSAO-W045A-RECREIO.md`: teste de regressao reexecutavel (extrai as funcoes reais de index.html) e documentacao das 7 unidades de teste (208 A, 401 B, 804 B, 806 D, 404 F, 406 H, 503 H) mais os casos-limite. O PDF nao fica no repo (LGPD); o teste pula a parte de PDF se ele nao for informado.
+
+### Validado
+- Revisor: APROVADO apos correcoes (guard de `rebaixarInferidos` que nao cobria "Locatario"; colisao do nome proprio "Irma" com o regex de parentesco direto; `qualificadorPapel` que so lia o primeiro parentese). Regex de parentesco direto reduzida a termos inequivocos e hoisted para o modulo (recomendacao do auditor).
+- Auditor de seguranca: APROVADO (sem ReDoS — regex montada de termos fixos, nome so e testado nunca concatenado na regex; XSS coberto por esc; sem token; nada sai do navegador).
+- Validador: teste de regressao passa 100% (11 casos-limite + 4 agregados + 7 unidades). 1257 contatos, 577 unidades, 0 proprietario duplicado, 0 nome vazio. Resultado das 7 unidades conforme aprovado pelo Matheus.
+
+### Arquivos modificados
+- `public/index.html`, `tests/regressao-w045a-recreio.js` (novo), `docs/REGRESSAO-W045A-RECREIO.md` (novo)
+
+---
+
 ## 2026-06-30 — Importar Unidades Fase 2: parser de PDF por codigo (W045A posicional) + arquitetura codigo-primeiro
 
 ### Adicionado

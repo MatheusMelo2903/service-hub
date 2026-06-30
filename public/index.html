@@ -1483,136 +1483,14 @@
       <!-- Banner do condomínio ativo (renderizado dinamicamente por renderBannerCondAtivo) -->
       <div id="banner-cond-previsao"></div>
 
-      <!-- Fallback quando não há condomínio selecionado -->
-      <div id="prev-fallback-sem-cond" style="display:none;padding:24px;text-align:center;color:var(--muted)">
-        <p style="font-size:13px;font-family:var(--mono);margin:0">Selecione um condomínio para começar.</p>
-      </div>
-
-      <!-- Lista de rascunhos do condomínio ativo (oculta por padrão) -->
-      <div id="prev-secao-rascunhos" style="display:none;margin-bottom:16px"></div>
-
-      <!-- Corpo principal -->
-      <div id="prev-corpo">
-
-        <!-- Card 1: Upload -->
-        <div class="card">
-          <div class="card-header">
-            <span class="card-title">Upload dos PDFs</span>
-          </div>
-
-          <div id="prev-dropzone" class="dropzone"
-               ondragover="previsaoOnDragOver(event)"
-               ondragleave="previsaoOnDragLeave(event)"
-               ondrop="previsaoOnDrop(event)"
-               style="cursor:pointer"
-               onclick="document.getElementById('prev-file-input').click()">
-            <input type="file" id="prev-file-input" multiple accept="application/pdf,.pdf"
-                   style="display:none"
-                   onchange="previsaoOnFileInput(event)">
-            <div style="font-size:32px;color:var(--muted);margin-bottom:8px">◫</div>
-            <div style="font-size:14px;color:var(--text);margin-bottom:4px">Arraste os PDFs aqui</div>
-            <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">
-              ou clique para selecionar. Somente PDF. W011A obrigatório, W045A opcional.
-            </div>
-          </div>
-
-          <div id="prev-chips" style="margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
-
-          <div style="display:flex;gap:10px;margin-top:14px;justify-content:flex-end">
-            <button id="prev-btn-limpar" class="btn btn-ghost" onclick="previsaoLimpar()">Limpar</button>
-            <button id="prev-btn-gerar" class="btn btn-primary" onclick="previsaoGerarPlanilha()" disabled>
-              Gerar Planilha
-            </button>
-          </div>
-        </div>
-
-        <!-- Card 2: Resultado (oculto até receber JSON) -->
-        <div id="prev-resultado" style="display:none">
-
-          <div class="card">
-            <div id="prev-cabecalho" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:6px 0"></div>
-          </div>
-
-          <div id="prev-avisos" class="card" style="display:none;background:rgba(214,158,46,0.08);border:1px solid rgba(214,158,46,0.3)"></div>
-
-          <div class="card">
-            <div class="card-header">
-              <span class="card-title">Grupos de despesa</span>
-            </div>
-            <div style="overflow-x:auto">
-              <table id="prev-tabela" style="width:100%;border-collapse:collapse;font-size:12px"></table>
-            </div>
-          </div>
-
-          <div id="prev-secao-fora-grupo" class="card" style="display:none">
-            <div class="card-header">
-              <span class="card-title">Itens fora do rateio</span>
-            </div>
-            <table id="prev-tabela-fora-grupo" style="width:100%;border-collapse:collapse;font-size:12px"></table>
-          </div>
-
-          <div class="card" id="prev-secao-fracoes">
-            <div class="card-header">
-              <span class="card-title">Frações ideais</span>
-            </div>
-            <div id="prev-fracoes-resumo" style="font-family:var(--mono);font-size:12px;padding:8px 0"></div>
-            <button id="prev-btn-toggle-fracoes" class="btn btn-ghost" onclick="previsaoToggleFracoes()"
-                    style="margin-top:6px">Ver lista de frações</button>
-            <div id="prev-fracoes-lista" style="display:none;margin-top:12px;overflow-x:auto"></div>
-          </div>
-
-          <div class="card" style="display:flex;justify-content:flex-end;gap:10px">
-            <button id="prev-btn-salvar" class="btn btn-primary" onclick="previsaoSalvarRascunho()">
-              Salvar Rascunho
-            </button>
-            <button id="prev-btn-baixar-csv" class="btn btn-ghost" onclick="previsaoBaixarCSV()">
-              Baixar Planilha CSV
-            </button>
-          </div>
-
-          <!-- Configuracoes de rateio (visivel quando ha rascunho salvo) -->
-          <div id="prev-config-rateio" class="card" style="display:none;margin-top:14px">
-            <div class="card-header">
-              <span class="card-title">Configurações de rateio</span>
-            </div>
-            <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;font-size:12px">
-              <label>Apartamentos
-                <input type="number" id="prev-cfg-aptos" min="1" step="1" placeholder="ex: 24"
-                  style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px">
-              </label>
-              <label>Coberturas
-                <input type="number" id="prev-cfg-cob" min="0" step="1" value="0"
-                  style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px">
-              </label>
-              <label>Fator cobertura
-                <input type="number" id="prev-cfg-fator" min="1" step="0.1" value="1.5"
-                  style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px">
-              </label>
-              <label>Fundo reserva R$
-                <input type="number" id="prev-cfg-fundo" min="0" step="0.01" value="0"
-                  style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px">
-              </label>
-              <label>% Fundo
-                <input type="number" id="prev-cfg-fundo-pct" min="0" max="100" step="0.1" value="5"
-                  style="width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:var(--mono);font-size:12px">
-              </label>
-            </div>
-          </div>
-
-          <!-- Botao Gerar Previsao (habilitado quando ha rascunho salvo + apartamentos preenchido) -->
-          <button id="prev-btn-pdf" class="btn btn-primary" onclick="previsaoGerarPdf()" style="margin-top:14px" disabled>
-            Gerar Previsão (PPTX + PDF)
-          </button>
-
-          <!-- Loading + mensagem -->
-          <div id="prev-status-geracao" style="display:none;margin-top:14px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;font-size:12px;color:var(--muted);font-family:var(--mono)"></div>
-
-          <!-- Area dos arquivos gerados (oculta ate gerar) -->
-          <div id="prev-area-arquivos" style="display:none;margin-top:14px"></div>
-
-        </div>
-
-      </div>
+      <!-- Modulo de Previsao Orcamentaria embutido (public/previsao-modulo.html).
+           Roda 100% no navegador, em memoria: nenhuma planilha financeira de cliente
+           sai do navegador (sem servidor, sem banco). O src e definido sob demanda em
+           previsaoInit() para carregar o modulo so quando a aba abre.
+           Fluxo antigo de PDF (previsao.js + rotas /api/previsao + tabela previsoes_orcamentarias)
+           foi descontinuado nesta aba e mantido no repo para reversibilidade. -->
+      <iframe id="prev-iframe" title="Previsao Orcamentaria"
+              style="width:100%;border:0;border-radius:10px;min-height:calc(100vh - 150px);background:#fff"></iframe>
 
     </div>
 
@@ -3199,6 +3077,53 @@ function mesmoSobrenome(a, b) {
   return sa.some(function(t) { return sb.indexOf(t) !== -1; });
 }
 
+// Detecta a marcacao textual de inquilino escrita DENTRO do nome do contato
+// (alguns condominios nao usam a coluna Tipo para inquilino). Regra geral, nao
+// lista fixa de condominio. Devolve:
+//   'titular' quando a palavra inquilino/inquilina qualifica a propria pessoa
+//             (ex "Inquilino - JONAS", "LUANNA - INQUILINA", "Inquilino-LUCAS");
+//   'parente' quando inquilino vem numa construcao de parentesco (ex "cunhada do
+//             inquilino", "sogra inquilino"), entao a pessoa e parente, nao o titular;
+//   null      quando nao ha mencao a inquilino no nome.
+// Cobre variacoes de grafia: hifen, sem espaco, maiusculo/minusculo, antes ou
+// depois do nome, com e sem acento.
+// Termos de parentesco INEQUIVOCOS (nao sao nomes proprios comuns) que, vindo
+// imediatamente antes de "inquilino" mesmo sem "do/da", indicam parente. Lista
+// curta de proposito: termos ambiguos que tambem sao nomes (Irma, Tia, Nora, Pai)
+// ficam de fora e so contam na forma possessiva "do/da inquilino". Compilado uma
+// vez no escopo do modulo.
+var _PARENTESCO_DIRETO_RE = /\b(cunhad[oa]|sogr[oa]|genro|entead[oa]|padrasto|madrasta|filh[oa])\b\s+(d[oa]\s+)?inquilin/;
+
+function marcacaoInquilino(nome) {
+  var t = String(nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (!/inquilin[oa]/.test(t)) return null;
+  // Possessivo "X do/da inquilino": a pessoa nomeada e parente, o inquilino e outro.
+  // Cobre qualquer termo antes (filha do inquilino, tia do inquilino, etc).
+  if (/\bd[oa]\s+inquilin/.test(t)) return 'parente';
+  // Parentesco inequivoco imediatamente antes de inquilino, sem "do/da"
+  // (ex "cunhada inquilino", "sogra inquilino").
+  if (_PARENTESCO_DIRETO_RE.test(t)) return 'parente';
+  return 'titular';
+}
+
+// Le o qualificador entre parenteses no nome e classifica o papel na familia do
+// inquilino. Usado para desempatar quando ha varios "Inquilino -" na unidade.
+//   'titular'    -> (Marido), (Esposa), (Titular), (Companheiro) etc;
+//   'dependente' -> (Filho), (Filha), (Dependente) ou parentesco claro;
+//   null         -> sem parenteses, ou conteudo que nao deixa claro o papel.
+// Varre TODOS os pares de parenteses e devolve o primeiro que classificar, para
+// nao falhar quando o nome traz outro parentese antes (ex "(APT 302) (Esposa)").
+function qualificadorPapel(nome) {
+  var t = String(nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  var re = /\(([^)]*)\)/g, m;
+  while ((m = re.exec(t)) !== null) {
+    var q = m[1].trim();
+    if (/\b(marido|esposo|esposa|titular|companheir[oa]|conjuge)\b/.test(q)) return 'titular';
+    if (/\b(filh[oa]|dependente|net[oa]|entead[oa]|sobrinh[oa]|irmao|prim[oa]|cunhad[oa]|sogr[oa]|genro|nora|menor|crianc[ao])\b/.test(q)) return 'dependente';
+  }
+  return null;
+}
+
 // Motor de inferencia de papel. Recebe a lista plana de contatos, agrupa por
 // unidade+bloco e define papel (proprietario|inquilino|dependente|descartar),
 // confianca (alta|media|incerta) e motivo de cada um, seguindo os sinais
@@ -3322,9 +3247,58 @@ function inferirPapeis(contatos) {
       }
     }
 
+    // Passo 7: marcacao textual de inquilino no nome SOBREPOE a inferencia.
+    // So age quando ha marcacao no nome; condominios que usam a coluna Tipo para
+    // inquilino normalmente nao tem marcacao e seguem intactos (regra 4).
+    grupo.forEach(function(c) { c._marc = marcacaoInquilino(c.nome); });
+    var titulares = grupo.filter(function(c) { return c._marc === 'titular'; });
+    var parentes = grupo.filter(function(c) { return c._marc === 'parente'; });
+    // Rebaixa inquilinos vindos da INFERENCIA (nao da coluna Tipo nem de marcacao)
+    // quando a unidade tem marcacao textual: so pode haver um inquilino por unidade.
+    var rebaixarInferidos = function(conf, motivo) {
+      grupo.forEach(function(c) {
+        // So rebaixa inquilino vindo da INFERENCIA. Preserva o que veio da coluna
+        // Tipo (Inquilino ou Locatario) e o que veio da marcacao textual (_marc).
+        if (c.papel === 'inquilino' && c._marc == null &&
+            !/^(inquilino|locat[aá]ri[oa])$/i.test(String(c.tipoOriginal || '').trim())) {
+          c.papel = 'dependente'; c.confianca = conf; c.motivo = motivo;
+        }
+      });
+    };
+    if (titulares.length === 1) {
+      titulares[0].papel = 'inquilino'; titulares[0].confianca = 'media';
+      titulares[0].motivo = 'Inquilino identificado pela marcacao no nome do contato';
+      parentes.forEach(function(p) { p.papel = 'dependente'; p.confianca = 'media'; p.motivo = 'Parente do inquilino, marcado no nome'; });
+      rebaixarInferidos('media', 'Inquilino titular definido por marcacao textual; este passa a dependente');
+    } else if (titulares.length > 1) {
+      // Varios "Inquilino -" na unidade. Tenta resolver pelos qualificadores entre
+      // parenteses, mas SO em caso 100% claro: exatamente um titular (Marido/Esposa/
+      // Titular) e todos os demais com qualificador de dependente. Qualquer ausencia
+      // ou ambiguidade cai incerta (nunca chuta o titular).
+      var quals = titulares.map(function(t) { return qualificadorPapel(t.nome); });
+      var nTitular = quals.filter(function(q) { return q === 'titular'; }).length;
+      var todosClassificados = quals.every(function(q) { return q != null; });
+      if (nTitular === 1 && todosClassificados) {
+        titulares.forEach(function(t, i) {
+          if (quals[i] === 'titular') { t.papel = 'inquilino'; t.confianca = 'media'; t.motivo = 'Inquilino titular pelo qualificador no nome (ex Marido/Titular)'; }
+          else { t.papel = 'dependente'; t.confianca = 'media'; t.motivo = 'Dependente do inquilino pelo qualificador no nome (ex Filho/Filha)'; }
+        });
+        parentes.forEach(function(p) { p.papel = 'dependente'; p.confianca = 'media'; p.motivo = 'Parente do inquilino, marcado no nome'; });
+        rebaixarInferidos('media', 'Inquilino titular definido por qualificador; este passa a dependente');
+      } else {
+        titulares.forEach(function(t) { t.papel = 'inquilino'; t.confianca = 'incerta'; t.motivo = 'Mais de um candidato a inquilino sem qualificador claro de titular, defina o titular'; });
+        parentes.forEach(function(p) { p.papel = 'dependente'; p.confianca = 'incerta'; p.motivo = 'Parente de inquilino em unidade com titular indefinido'; });
+        rebaixarInferidos('incerta', 'Unidade com mais de um candidato a inquilino, defina o titular');
+      }
+    } else if (parentes.length) {
+      // Ha parentes de inquilino mas nenhum titular claro: unidade incerta
+      parentes.forEach(function(p) { p.papel = 'dependente'; p.confianca = 'incerta'; p.motivo = 'Parente de inquilino sem titular claro na unidade, defina o inquilino titular'; });
+      rebaixarInferidos('incerta', 'Unidade tem parente de inquilino mas titular indefinido, defina o titular');
+    }
+
     // Limpeza dos marcadores temporarios
     grupo.forEach(function(c) {
-      delete c._cls; delete c._residente; delete c._semTipo; delete c._imob;
+      delete c._cls; delete c._residente; delete c._semTipo; delete c._imob; delete c._marc;
       if (!c.papel) { c.papel = 'dependente'; c.confianca = 'media'; c.motivo = 'Sem classificacao, dependente por seguranca'; }
     });
   });
@@ -3551,9 +3525,10 @@ function extrairContatosW045APdf(paginas, anchors, condoNome) {
     var sp = splitUnidadeNumeroBloco(pessoa.unidade);
     // Remove o complemento quando ele so repete a referencia da unidade
     if (end.complemento && (end.complemento === sp.numero + ' ' + sp.bloco || end.complemento === sp.numero)) end.complemento = '';
+    var nomeCompleto = pessoa.nomeCont.length ? (pessoa.nome + ' ' + pessoa.nomeCont.join(' ')).trim() : pessoa.nome;
     seq++;
     contatos.push({
-      id: seq, unidade: sp.numero, bloco: sp.bloco, nome: pessoa.nome, tipoOriginal: pessoa.tipo,
+      id: seq, unidade: sp.numero, bloco: sp.bloco, nome: nomeCompleto, tipoOriginal: pessoa.tipo,
       papel: '', confianca: '', motivo: '', cpf: doc.cpf, cnpj: doc.cnpj, rg: '', dtNasc: '', genero: '',
       email: email, ddi: telefone ? '55' : '', telefone: telefone, tipoTel: '', cep: end.cep,
       endereco: end.endereco, numero: end.numero, complemento: end.complemento, bairro: end.bairro,
@@ -3582,11 +3557,17 @@ function extrairContatosW045APdf(paginas, anchors, condoNome) {
         finalizar();
         if (cel.unidade && cel.unidade.trim()) ultimaUnidade = cel.unidade.trim();
         pessoa = { unidade: ultimaUnidade, nome: (cel.nome || '').trim(), tipo: (cel.tipo || '').trim(),
-                   tel: [], email: [], end: [], doc: (cel.doc || '').trim(), fracao: (cel.fracao || '').trim(), lastY: y };
+                   tel: [], email: [], end: [], nomeCont: [], doc: (cel.doc || '').trim(), fracao: (cel.fracao || '').trim(), lastY: y };
         if (cel.endereco) pessoa.end.push(cel.endereco.trim());
         if (cel.email) pessoa.email.push(cel.email.trim());
       } else if (pessoa && (pessoa.lastY - y) <= GAP_CONTINUACAO_W045A) {
-        if (cel.nome && /\d/.test(cel.nome)) pessoa.tel.push(cel.nome.trim());
+        // Na coluna do nome, fragmento com digito e telefone; fragmento so de
+        // texto e o nome que quebrou em outra linha (ex o qualificador "INQUILINO"
+        // que continua abaixo do nome). Capturado para a deteccao textual de papel.
+        if (cel.nome) {
+          if (/\d/.test(cel.nome)) pessoa.tel.push(cel.nome.trim());
+          else pessoa.nomeCont.push(cel.nome.trim());
+        }
         if (cel.endereco) pessoa.end.push(cel.endereco.trim());
         if (cel.email) pessoa.email.push(cel.email.trim());
         pessoa.lastY = y;
@@ -6649,7 +6630,9 @@ async function deletarUsuario(userId, email) {
 
 <!-- Prestação de contas: bloco JS extraído (refactor preparatório das ondas 1, 2, 3) -->
 <script src="/prestacao.js"></script>
-<!-- Previsão Orçamentária: frontend fase 2 -->
-<script src="/previsao.js"></script>
+<!-- Previsao Orcamentaria: fluxo antigo de PDF descontinuado nesta aba (mantido para reversibilidade) -->
+<!-- <script src="/previsao.js"></script> -->
+<!-- Previsao Orcamentaria: modulo embutido (iframe) + handoff do condominio ativo -->
+<script src="/previsao-embed.js"></script>
 </body>
 </html>
