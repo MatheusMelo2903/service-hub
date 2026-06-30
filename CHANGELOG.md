@@ -1,5 +1,32 @@
 # Changelog Service Hub
 
+## 2026-06-30 — Importar Unidades Fase 2: parser de PDF por codigo (W045A posicional) + arquitetura codigo-primeiro
+
+### Adicionado
+- `public/index.html`: extracao de PDF 100% por codigo no navegador com `pdfjs-dist` (mesma versao 3.11.174 e CDN cdnjs ja usados pelas atas). Reconhecedor deterministico do W045A "Contatos das unidades" posicional: le o cabecalho POR ROTULO para achar a posicao X de cada coluna, reconstroi as colunas por coordenada, faz forward fill da unidade, junta telefone e endereco que quebram em varias linhas, remove o prefixo de pais "+55", separa enderecos multilinha (inclusive empresas) e corta o rodape de cada pagina. Funcoes: `carregarPdfjs`, `extrairItensPdf`, `acharAncorasW045A`, `colDeX`, `parseTelefonesW045A`, `parseEnderecoW045A`, `ehLinhaRodapeW045A`, `extrairContatosW045APdf`, `condoNomeDoTitulo`.
+- `public/index.html`: arquitetura codigo-primeiro. A dropzone Importar Unidades virou porta unica e aceita PDF. `RECONHECEDORES_PDF` e um registro extensivel (preparar/extrair) onde cada layout de administradora vira um objeto novo sem reescrever o resto. `processarPdfUnidades` tenta os reconhecedores por codigo e, so se nenhum casar (ou a extracao falhar/vir vazia), oferece o fallback de IA com aviso explicito de custo (`fallbackIaPdf`, nunca automatico). IA deixa de ser o caminho principal.
+- A IA (familia B) segue como rede de seguranca para PDF escaneado, layout ainda nao mapeado ou documento fora de padrao.
+
+### Alterado
+- `extrairTextoPdf` (modulo de atas) agora reusa `carregarPdfjs` em vez de carregar o pdf.js por conta propria: remove duplicacao e a race condition de dois `<script>` concorrentes.
+- Removida a instrumentacao temporaria de diagnostico do caminho da IA (Prioridade 3 concluida: a causa do nome vazio era a saida da IA, resolvida pelo caminho por codigo).
+
+### Follow-ups registrados (nao implementar antes do ciclo indicado)
+- SRI (Subresource Integrity) ausente nos `<script>` de CDN: `xlsx` (linha ~8), pdf.js dinamico em `carregarPdfjs` e o worker. Versao fixada reduz o risco, mas o ideal e adicionar `integrity` (hash SHA-384 do cdnjs) + `crossorigin` nos tres pontos numa proxima sessao que toque nos scripts de CDN. Auditor classificou como moderado, nao bloqueante para ferramenta interna.
+- Header de seguranca ausente no `server.js` (CSP, X-Frame-Options, X-Content-Type-Options): pre-existente, avaliar num ciclo de hardening.
+
+### Validado
+- Revisor: APROVADO apos correcoes (bloqueador de try/catch no caminho de extracao; colDeX sem limite de borda; `_pdfjsPromise` nao limpa em falha; mensagem enganosa em 0 contatos; dupla deteccao de ancoras; titulo multi-item; telefone "+55" sem espaco; corte de rodape por nome de condominio embutido em endereco).
+- Auditor de seguranca: APROVADO (PDF lido 100% no navegador, dados nao saem da maquina; sem token exposto; XSS coberto por `esc()`; fallback robusto). Unico ponto: SRI (follow-up acima).
+- Validador: sintaxe OK; logica validada em node no PDF real do Recreio (62 paginas): 1257 contatos, 577 unidades, 0 nomes vazios, 0 unidades com proprietario duplicado, 0 lixo de rodape; Metropole (CNPJ, endereco multilinha) perfeita; 5.4% sem cidade/bairro (degradacao graciosa em fim de pagina). Zero regressao apos as correcoes do revisor.
+
+### Arquivos modificados
+- `public/index.html`
+
+Implementado na branch dev. pdfjs-dist nao e dependencia nova: ja era usado pelas atas, mesma versao e CDN.
+
+---
+
 ## 2026-06-29 — Importar Unidades Fase 1: parser W045A tabular + inferencia de papel + tela de revisao
 
 ### Adicionado

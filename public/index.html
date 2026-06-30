@@ -1304,10 +1304,10 @@
              ondragover="handleDrag(event, this)"
              ondragleave="handleDragLeave(this)"
              ondrop="handleDrop(event,'unidades')">
-          <input type="file" accept=".xlsx,.xls,.csv" onchange="handleFile(event,'unidades')">
+          <input type="file" accept=".xlsx,.xls,.csv,application/pdf" onchange="handleFile(event,'unidades')">
           <div class="drop-icon">⊡</div>
-          <div class="drop-title">Arraste a planilha de unidades</div>
-          <div class="drop-sub">.xlsx .xls .csv</div>
+          <div class="drop-title">Arraste a planilha ou o PDF de unidades</div>
+          <div class="drop-sub">.pdf .xlsx .xls .csv · W045A e planilhas conhecidas processados por código, sem IA</div>
         </div>
       </div>
 
@@ -2560,6 +2560,11 @@ function handleFile(e, type) {
 // LEITURA DE PLANILHA
 // ============================================================
 function processFile(file, type) {
+  // PDF de unidades vai pelo caminho por codigo (reconhecedores posicionais).
+  // Demais tipos e planilhas seguem pela leitura via SheetJS abaixo.
+  const ehPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+  if (type === 'unidades' && ehPdf) { processarPdfUnidades(file); return; }
+
   const reader = new FileReader();
   reader.onload = function(e) {
     const data = new Uint8Array(e.target.result);
@@ -3360,6 +3365,307 @@ function contatoParaLinha26(c) {
     c.recebeCobranca || '',                // Y Recebe Cobranca
     c.obs || ''                            // Z Observacao
   ];
+}
+
+// ============================================================
+// EXTRACAO DE PDF POR CODIGO (familia A1, W045A posicional)
+// ------------------------------------------------------------
+// Estrategia hibrida: documentos de padrao conhecido (W045A, planilhas A2 e A3)
+// sao processados 100% por codigo, sem IA e sem token. A IA so entra como
+// fallback consciente quando nenhum reconhecedor bate. pdfjs-dist roda no
+// proprio navegador (CDN oficial Cloudflare), entao os dados dos condominos
+// nao saem da maquina. Arquitetura extensivel: cada layout de administradora
+// vira um objeto em RECONHECEDORES_PDF, sem reescrever o resto.
+// ============================================================
+
+// Carrega o pdfjs-dist sob demanda do CDN. Resolve com a lib ja pronta e o
+// worker configurado. Reusa a mesma promessa em chamadas seguintes.
+var PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+var PDFJS_WORKER_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+var _pdfjsPromise = null;
+function carregarPdfjs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (_pdfjsPromise) return _pdfjsPromise;
+  _pdfjsPromise = new Promise(function(resolve, reject) {
+    // Em qualquer falha limpa a promessa cacheada para permitir nova tentativa
+    // (senao um CDN momentaneamente fora travaria o recurso ate recarregar a pagina).
+    var falhar = function(msg) { _pdfjsPromise = null; reject(new Error(msg)); };
+    var s = document.createElement('script');
+    s.src = PDFJS_CDN;
+    s.onload = function() {
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_CDN;
+        resolve(window.pdfjsLib);
+      } else { falhar('pdfjs nao inicializou'); }
+    };
+    s.onerror = function() { falhar('falha ao baixar pdfjs do CDN'); };
+    document.head.appendChild(s);
+  });
+  return _pdfjsPromise;
+}
+
+// Le o PDF e devolve uma lista de paginas, cada uma com seus itens de texto
+// posicionados: { x, y, w, str }. Base para os reconhecedores posicionais.
+async function extrairItensPdf(file) {
+  var pdfjsLib = await carregarPdfjs();
+  var buf = await file.arrayBuffer();
+  var doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+  var paginas = [];
+  for (var p = 1; p <= doc.numPages; p++) {
+    var pg = await doc.getPage(p);
+    var tc = await pg.getTextContent();
+    paginas.push({ items: tc.items.map(function(it) {
+      return { x: Math.round(it.transform[4]), y: Math.round(it.transform[5]), w: Math.round(it.width), str: it.str };
+    }).filter(function(it) { return it.str.trim() !== ''; }) });
+  }
+  return paginas;
+}
+
+// Tipos validos da coluna Tipo do W045A (define o que e uma linha de pessoa).
+var TIPOS_W045A = ['proprietário','proprietario','dependente','residente','visitante','inquilino','imobiliária','imobiliaria','locatário','locatario'];
+// Distancia vertical maxima (px) para considerar uma linha como continuacao
+// (telefone, 2a linha de endereco) da pessoa acima.
+var GAP_CONTINUACAO_W045A = 40;
+// Margem horizontal (px) alem da primeira e da ultima ancora: itens fora dessa
+// faixa (ex numero de pagina a direita) nao pertencem a nenhuma coluna da tabela.
+var MARGEM_COLUNA_W045A = 110;
+
+// Acha as ancoras de coluna LENDO O CABECALHO POR ROTULO (nao por X fixo), para
+// cobrir variacoes do template W045A entre administradoras. Devolve o X de cada
+// coluna conhecida, ou null se a pagina nao for um W045A.
+function acharAncorasW045A(itens) {
+  var porY = {};
+  itens.forEach(function(it) { var k = Math.round(it.y); (porY[k] = porY[k] || []).push(it); });
+  var ys = Object.keys(porY).map(Number).sort(function(a, b) { return b - a; });
+  for (var i = 0; i < ys.length; i++) {
+    var linha = porY[ys[i]];
+    var txt = linha.map(function(it) { return it.str.toLowerCase(); }).join(' | ');
+    if (/unidade/.test(txt) && /tipo/.test(txt) && /nome/.test(txt) && (/cpf|cnpj/.test(txt) || /mail/.test(txt))) {
+      var a = {};
+      linha.forEach(function(it) {
+        var s = it.str.toLowerCase();
+        if (/unidade/.test(s) && a.unidade == null) a.unidade = it.x;
+        else if (/nome/.test(s) && a.nome == null) a.nome = it.x;
+        else if (/^tipo/.test(s) && a.tipo == null) a.tipo = it.x;
+        else if (/endere/.test(s) && a.endereco == null) a.endereco = it.x;
+        else if (/(cpf|cnpj)/.test(s) && a.doc == null) a.doc = it.x;
+        else if (/mail/.test(s) && a.email == null) a.email = it.x;
+        else if (/fra[çc]/.test(s) && a.fracao == null) a.fracao = it.x;
+      });
+      if (a.unidade != null && a.nome != null && a.tipo != null) return a;
+    }
+  }
+  return null;
+}
+
+// Atribui um item de texto a coluna cuja ancora esta mais proxima no eixo X.
+// Rejeita (retorna null) itens muito a esquerda da primeira coluna ou a direita
+// da ultima: sao ruido fora da tabela (ex numero de pagina), nao dado de coluna.
+// O limite e so nas bordas para nao descartar tokens longos de nome/endereco
+// que comecam dentro da faixa das colunas.
+function colDeX(x, a) {
+  var xs = [];
+  for (var kk in a) xs.push(a[kk]);
+  var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
+  if (x < minX - MARGEM_COLUNA_W045A || x > maxX + MARGEM_COLUNA_W045A) return null;
+  var best = null, bd = 1e9;
+  for (var k in a) { var d = Math.abs(x - a[k]); if (d < bd) { bd = d; best = k; } }
+  return best;
+}
+
+// Telefones do W045A: junta fragmentos (numero pode quebrar entre linhas),
+// separa por ; e remove o prefixo de pais "+55 " quando presente, devolvendo so
+// digitos validos. Nunca inventa numero.
+function parseTelefonesW045A(frag) {
+  var j = frag.join('');
+  return j.split(';').map(function(t) {
+    // Remove o prefixo de pais no inicio do numero, com ou sem espaco ("+55 " ou
+    // "+5527..."). Ancorado no inicio para nao mexer num DDD 55 no meio.
+    return t.replace(/^\s*\+?55\s*/, '').replace(/\D/g, '');
+  }).filter(function(d) { return d.length >= 8 && d.length <= 11; });
+}
+
+// Endereco do W045A: acha a linha de localidade pelo padrao "- UF - CEP" (o CEP
+// pode estar nela ou na linha seguinte). O que vem antes e rua e complemento.
+// Degradacao graciosa: se nao casar o padrao, joga tudo no campo Endereco.
+function parseEnderecoW045A(lines) {
+  var o = { endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '' };
+  if (!lines.length) return o;
+  var locIdx = -1;
+  for (var i = 0; i < lines.length; i++) {
+    if (/\s-\s/.test(lines[i]) && /-\s*[A-Za-z]{2}\s*-?\s*(\d{5}-?\d{3}|\d{8})?\s*$/.test(lines[i])) locIdx = i;
+  }
+  if (locIdx >= 0) {
+    var L = lines[locIdx];
+    var cepM = L.match(/(\d{5}-?\d{3}|\d{8})\s*$/);
+    if (cepM) { o.cep = cepM[1].replace(/\D/g, ''); L = L.replace(/\s*-?\s*(\d{5}-?\d{3}|\d{8})\s*$/, ''); }
+    else if (lines[locIdx + 1]) { var cm = lines[locIdx + 1].match(/(\d{5}-?\d{3}|\d{8})/); if (cm) o.cep = cm[1].replace(/\D/g, ''); }
+    L = L.replace(/\s*-\s*$/, '');
+    var ufM = L.match(/^(.*?)\s*-\s*([A-Za-z]{2})\s*$/);
+    if (ufM) {
+      o.estado = ufM[2].toUpperCase();
+      var bc = ufM[1].split(' - ');
+      o.cidade = bc.length > 1 ? bc[bc.length - 1].trim() : '';
+      o.bairro = (bc.length > 1 ? bc.slice(0, -1).join(' - ') : bc[0]).trim();
+    } else { o.bairro = L.trim(); }
+    var street = lines.slice(0, locIdx).join(' ').trim();
+    var sp = street.split(' - ');
+    o.endereco = sp[0].trim();
+    if (sp.length > 1) o.complemento = sp.slice(1).join(' - ').trim();
+  } else {
+    o.endereco = lines.join(' ').trim();
+    var cm2 = o.endereco.match(/(\d{5}-?\d{3}|\d{8})/);
+    if (cm2) o.cep = cm2[1].replace(/\D/g, '');
+  }
+  return o;
+}
+
+// Detecta se uma linha pertence ao rodape da pagina (numero de pagina, bloco do
+// condominio com "CEP." ou "Nº", ou o proprio nome do condominio). Usada para
+// parar a leitura antes do rodape e nao poluir o ultimo contato.
+function ehLinhaRodapeW045A(txt, condoNome) {
+  var t = txt.toLowerCase().trim();
+  // condoNome so conta quando a linha COMECA com o nome do condominio (bloco de
+  // rodape), nao quando o nome aparece embutido num endereco de morador.
+  return /^\d+\s+de\s+\d+$/.test(txt.trim()) || /cep\.\s*\d/.test(t) ||
+    /\bn[º°o]\s*\d/i.test(txt) || (condoNome && t.indexOf(condoNome) === 0);
+}
+
+// Extrai a lista plana de contatos de um W045A posicional. Reconstroi as colunas
+// pelas ancoras, faz forward fill da unidade, junta telefone/email/endereco que
+// quebram em varias linhas e corta o rodape de cada pagina. Reusa limparDocumento,
+// anexarObs e splitUnidadeNumeroBloco ja definidos para a familia A2.
+function extrairContatosW045APdf(paginas, anchors, condoNome) {
+  var contatos = [], seq = 0, ultimaUnidade = '', pessoa = null;
+  function finalizar() {
+    if (!pessoa) return;
+    var tels = parseTelefonesW045A(pessoa.tel);
+    var telefone = tels[0] || '', telExtras = tels.slice(1);
+    var emails = pessoa.email.join('').split(/[;,]/).map(function(s) { return s.trim(); }).filter(Boolean);
+    var email = emails[0] || '', emailExtras = emails.slice(1);
+    var end = parseEnderecoW045A(pessoa.end);
+    var doc = limparDocumento(pessoa.doc);
+    var obs = '';
+    if (telExtras.length) obs = anexarObs(obs, 'Telefones extras: ' + telExtras.join(', '));
+    if (emailExtras.length) obs = anexarObs(obs, 'Emails extras: ' + emailExtras.join(', '));
+    var sp = splitUnidadeNumeroBloco(pessoa.unidade);
+    // Remove o complemento quando ele so repete a referencia da unidade
+    if (end.complemento && (end.complemento === sp.numero + ' ' + sp.bloco || end.complemento === sp.numero)) end.complemento = '';
+    seq++;
+    contatos.push({
+      id: seq, unidade: sp.numero, bloco: sp.bloco, nome: pessoa.nome, tipoOriginal: pessoa.tipo,
+      papel: '', confianca: '', motivo: '', cpf: doc.cpf, cnpj: doc.cnpj, rg: '', dtNasc: '', genero: '',
+      email: email, ddi: telefone ? '55' : '', telefone: telefone, tipoTel: '', cep: end.cep,
+      endereco: end.endereco, numero: end.numero, complemento: end.complemento, bairro: end.bairro,
+      cidade: end.cidade, estado: end.estado, fracao: pessoa.fracao || '', dtEntrada: '', dtSaida: '',
+      recebeCobranca: '', obs: obs
+    });
+    pessoa = null;
+  }
+  paginas.forEach(function(pg) {
+    var porY = {};
+    pg.items.forEach(function(it) { var k = Math.round(it.y); (porY[k] = porY[k] || []).push(it); });
+    var ys = Object.keys(porY).map(Number).sort(function(x, y) { return y - x; });
+    var emRodape = false, viuPessoa = false;
+    ys.forEach(function(y) {
+      if (emRodape) return;
+      var linhaItens = porY[y];
+      var cel = {};
+      linhaItens.forEach(function(it) { var c = colDeX(it.x, anchors); if (c) cel[c] = (cel[c] ? cel[c] + ' ' : '') + it.str; });
+      var txtLinha = linhaItens.map(function(it) { return it.str; }).join(' ');
+      // So corta no rodape depois que a primeira pessoa da pagina apareceu, para
+      // nao confundir o titulo (que contem o nome do condominio) com rodape.
+      if (viuPessoa && ehLinhaRodapeW045A(txtLinha, condoNome)) { emRodape = true; return; }
+      var tipoCel = (cel.tipo || '').trim().toLowerCase();
+      if (TIPOS_W045A.indexOf(tipoCel) !== -1) {
+        viuPessoa = true;
+        finalizar();
+        if (cel.unidade && cel.unidade.trim()) ultimaUnidade = cel.unidade.trim();
+        pessoa = { unidade: ultimaUnidade, nome: (cel.nome || '').trim(), tipo: (cel.tipo || '').trim(),
+                   tel: [], email: [], end: [], doc: (cel.doc || '').trim(), fracao: (cel.fracao || '').trim(), lastY: y };
+        if (cel.endereco) pessoa.end.push(cel.endereco.trim());
+        if (cel.email) pessoa.email.push(cel.email.trim());
+      } else if (pessoa && (pessoa.lastY - y) <= GAP_CONTINUACAO_W045A) {
+        if (cel.nome && /\d/.test(cel.nome)) pessoa.tel.push(cel.nome.trim());
+        if (cel.endereco) pessoa.end.push(cel.endereco.trim());
+        if (cel.email) pessoa.email.push(cel.email.trim());
+        pessoa.lastY = y;
+      }
+    });
+    finalizar(); // fecha a ultima pessoa da pagina
+  });
+  return contatos;
+}
+
+// Extrai o nome do condominio do titulo da pagina 1 (remove o prefixo W045A e o
+// sufixo "(NN)"), usado para reconhecer o bloco de rodape de cada pagina.
+function condoNomeDoTitulo(paginas) {
+  if (!paginas.length || !paginas[0].items.length) return '';
+  // O titulo pode vir quebrado em varios itens no mesmo Y (ex "W045A" e o nome
+  // em spans separados). Junta todos os itens da linha mais alta, em ordem de X.
+  var topo = Math.max.apply(null, paginas[0].items.map(function(it) { return it.y; }));
+  var tituloStr = paginas[0].items.filter(function(it) { return it.y === topo; })
+    .sort(function(a, b) { return a.x - b.x; })
+    .map(function(it) { return it.str; }).join(' ');
+  return tituloStr.replace(/^W045A\s*/i, '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+}
+
+// Registro extensivel de reconhecedores de PDF. Para suportar um layout novo de
+// administradora, adicione aqui um objeto { nome, detectar, extrair } sem mexer
+// no resto. O despachante tenta cada um na ordem e usa o primeiro que casar.
+// Cada reconhecedor: preparar(paginas) devolve um contexto (ex ancoras) ou null
+// se o layout nao bate; extrair(paginas, ctx) usa esse contexto. Calcular o
+// contexto uma so vez evita refazer a deteccao na extracao.
+var RECONHECEDORES_PDF = [
+  {
+    nome: 'W045A Contatos das unidades (Superlogica)',
+    preparar: function(paginas) { return paginas.length ? acharAncorasW045A(paginas[0].items) : null; },
+    extrair: function(paginas, anchors) { return extrairContatosW045APdf(paginas, anchors, condoNomeDoTitulo(paginas)); }
+  }
+];
+
+// Oferta de fallback de IA com aviso explicito do custo. So dispara com o ok do
+// usuario (confirm), nunca automatico.
+function fallbackIaPdf(file, motivo) {
+  if (confirm(motivo + ' Posso usar a IA, que e mais lenta e consome mais tokens. Continuar com a IA?')) {
+    processarDocNormalizar(file);
+  }
+}
+
+// Despachante de PDF: tenta os reconhecedores por codigo; se nenhum casar (ou a
+// extracao falhar/vir vazia), avisa e oferece o fallback de IA. Caso reconheca,
+// abre direto a tela de revisao. Todo o caminho e protegido por try/catch para
+// nunca deixar o operador sem diagnostico nem sem rota de recuperacao.
+async function processarPdfUnidades(file) {
+  toast('Lendo PDF por codigo...', 'info');
+  var paginas;
+  try {
+    paginas = await extrairItensPdf(file);
+  } catch (e) {
+    fallbackIaPdf(file, 'Nao consegui abrir este PDF por codigo.');
+    return;
+  }
+  for (var i = 0; i < RECONHECEDORES_PDF.length; i++) {
+    var r = RECONHECEDORES_PDF[i];
+    var ctx;
+    try { ctx = r.preparar(paginas); } catch (_) { ctx = null; }
+    if (!ctx) continue;
+    var contatos;
+    try {
+      contatos = inferirPapeis(r.extrair(paginas, ctx));
+    } catch (e2) {
+      fallbackIaPdf(file, 'Reconheci o layout (' + r.nome + ') mas a leitura por codigo falhou.');
+      return;
+    }
+    if (!contatos.length) {
+      fallbackIaPdf(file, 'Reconheci o layout (' + r.nome + ') mas nao extrai nenhum contato.');
+      return;
+    }
+    abrirRevisao(contatos, file.name);
+    toast(contatos.length + ' contatos lidos por codigo (' + r.nome + '). Revise os papeis antes de importar.', 'ok');
+    return;
+  }
+  fallbackIaPdf(file, 'Nao reconheci o layout deste PDF por codigo.');
 }
 
 // Converte uma linha de 26 colunas (saida do Normalizador IA) num contato, para
@@ -4729,18 +5035,10 @@ function removePauta(btn) {
 }
 
 async function extrairTextoPdf(arrayBuffer) {
-  // Carrega pdf.js se ainda não estiver carregado
-  if (!window.pdfjsLib) {
-    await new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-      s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-  }
-  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  // Reusa o loader unico de pdf.js (mesma versao e CDN), com dedupe de chamadas
+  // concorrentes e limpeza em caso de falha.
+  const pdfjsLib = await carregarPdfjs();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   let texto = '';
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
@@ -5132,31 +5430,6 @@ async function processarDocNormalizar(file) {
       while (cells.length < 26) cells.push('');
       return cells.slice(0, 26).map(c => c.trim());
     });
-
-    // ===== DIAGNOSTICO TEMPORARIO (Prioridade 3): por que nome/fracao vem vazios no PDF =====
-    // Remover apos identificar a causa. Mostra a saida crua da IA e checa se o
-    // problema e o cabecalho (linha 0 nao e header), o nome fora da coluna F (5),
-    // ou a fracao fora da coluna D (3).
-    try {
-      var ehHeader = /tipo/i.test(headerCsv[0] || '') && /nome/i.test((headerCsv[5] || ''));
-      var propSemNome = 0, propTotal = 0;
-      rows.forEach(function(r) {
-        if (/propriet/i.test(r[0] || '')) { propTotal++; if (!(r[5] || '').trim()) propSemNome++; }
-      });
-      console.log('===== DIAG NORMALIZAR PDF =====');
-      console.log('linha[0] tratada como CABECALHO:', JSON.stringify(linhas[0]));
-      console.log('cabecalho parece header valido (col0~Tipo, col5~Nome)?', ehHeader);
-      console.log('total linhas de dados:', rows.length, '| proprietarios:', propTotal, '| proprietarios SEM nome na col F:', propSemNome);
-      console.log('primeiras 3 linhas de dados (col5=Nome, col6=CPF, col3=Fracao):');
-      rows.slice(0, 3).forEach(function(r, i) {
-        console.log('  linha ' + i + ': Tipo[0]=' + JSON.stringify(r[0]) + ' Fracao[3]=' + JSON.stringify(r[3]) + ' Nome[5]=' + JSON.stringify(r[5]) + ' CPF[6]=' + JSON.stringify(r[6]) + ' CNPJ[7]=' + JSON.stringify(r[7]));
-      });
-      console.log('CSV cru (primeiros 600 chars):\n' + csvText.slice(0, 600));
-      console.log('===== FIM DIAG =====');
-      if (!ehHeader) toast('DIAG: linha 0 da IA nao parece cabecalho. Veja o console (F12).', 'warn');
-      else if (propSemNome) toast('DIAG: ' + propSemNome + '/' + propTotal + ' proprietarios sem nome na coluna F. Veja o console (F12).', 'warn');
-    } catch (diagErr) { console.log('DIAG falhou:', diagErr.message); }
-    // ===== FIM DIAGNOSTICO TEMPORARIO =====
 
     _normalizarRows = rows;
     renderPreviewNormalizado(rows);
