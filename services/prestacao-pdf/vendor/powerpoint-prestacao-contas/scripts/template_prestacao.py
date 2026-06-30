@@ -24,6 +24,7 @@ from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
 from pptx.oxml.ns import qn
+import calendar
 import os
 
 # =====================================================================
@@ -559,11 +560,34 @@ def slide_visao_geral():
     add_footer(s)
 
 # ---------- EVOLUCAO MENSAL ----------
+def _e_corte_meio_mes(di, df):
+    """Detecta corte por data no meio do mes a partir das datas DD/MM/AAAA do
+    CONFIG (data_inicial/data_final). Meio do mes = dia inicial != 01 OU dia final
+    != ultimo dia do mes. Usado SO para a nota de ressalva do grafico; nao toca
+    nada do fechado (que sempre comeca em 01 e termina no ultimo dia)."""
+    try:
+        d0 = int(di[0:2])
+        d1, m1, a1 = int(df[0:2]), int(df[3:5]), int(df[6:10])
+        return d0 != 1 or d1 != calendar.monthrange(a1, m1)[1]
+    except (ValueError, IndexError, TypeError):
+        return False
+
+
 def slide_evolucao():
     if not TEM_MENSAL: return
     s = prs.slides.add_slide(BLANK)
+    # Ressalva do corte no meio do mes (Emenda 1): derivada das datas do CONFIG,
+    # sem campo novo na estrutura. So aparece no meio do mes; no fechado mostra o
+    # subtitulo normal. O grafico usa meses cheios como tendencia; o numero oficial
+    # do periodo e a janela real (col0), menor que a soma dos meses.
+    _mm = _e_corte_meio_mes(CONFIG.get("data_inicial", ""), CONFIG.get("data_final", ""))
     add_header(s, "02", "EVOLUÇÃO MENSAL", "Receitas e despesas", "mês a mês",
-               subtitle="Movimentação mensal ao longo do período")
+               subtitle=None if _mm else "Movimentação mensal ao longo do período")
+    if _mm:
+        add_text_box(s, Inches(0.5), Inches(1.95), Inches(12.33), Inches(0.4),
+                     "⚠  Grafico em meses cheios como tendencia. O total oficial do "
+                     "periodo e a janela real do corte, menor que a soma dos meses.",
+                     12, False, C_AMBER_DEEP)
     cd = CategoryChartData(); cd.categories = CONFIG["meses_label"]
     cd.add_series("Receitas", CONFIG["receitas_mes"])
     cd.add_series("Despesas", CONFIG["despesas_mes"])
