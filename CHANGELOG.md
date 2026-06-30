@@ -12,6 +12,8 @@
 - XSS pre-existente em `renderPreview` (`public/index.html` aprox. linhas 3515 e 3517): cabecalhos e celulas da planilha de despesas sao interpolados em template literal sem `esc()`. Fora do escopo da Fase 1 e nao agravado por ela (o caminho de unidades nao passa por essa funcao). Corrigir aplicando a mesma `esc()` de `renderPreviewUnidades`/`renderRevisao` ANTES da proxima mexida no modulo de despesas.
 - Familia A1 (PDF posicional W045A) fica para a Fase 2 com `pdfjs-dist` no `server.js`, so apos a tela de revisao validada em producao de teste.
 - Centralizar `esc()` numa unica utilitaria global (hoje redefinida em `renderPreviewUnidades` e `renderRevisao`): reduz risco de novas funcoes esquecerem o escape.
+- LIMITACAO CONHECIDA DA PRODUCAO (descoberta ao estudar a main em 2026-06-30, NAO corrigir sem decisao do Matheus): o CNPJ do Proprietario nao e enviado ao Superlogica. O PASSO 2 (PUT do proprietario, `enviarUmaUnidade`) so manda `ST_CPF_CON`, nao tem `ST_CGC_CON`. So os contatos extras (Inquilino/Dependente, `buildPayloadContatoExtra`) enviam CNPJ via `ST_CGC_CON`. Resultado: dono pessoa juridica (Banco Daycoval, Metropole, SPE Carapina) sobe sem o documento da empresa no cadastro do proprietario.
+- LIMITACAO CONHECIDA DA PRODUCAO (mesma origem, NAO corrigir sem decisao do Matheus): o Estado/UF do Proprietario nao e enviado. O PASSO 2 nao tem `ST_ESTADO_CON`; so os contatos extras mandam estado (como codigo numerico). O proprietario sobe sem UF.
 
 ### Validado
 - Revisor: APROVADO (apos correcao de 2 bloqueadores: multiplos residentes sem dono geravam multiplos proprietarios; falta de comentario no topo de `renderRevisao`)

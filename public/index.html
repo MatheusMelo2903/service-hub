@@ -5133,6 +5133,31 @@ async function processarDocNormalizar(file) {
       return cells.slice(0, 26).map(c => c.trim());
     });
 
+    // ===== DIAGNOSTICO TEMPORARIO (Prioridade 3): por que nome/fracao vem vazios no PDF =====
+    // Remover apos identificar a causa. Mostra a saida crua da IA e checa se o
+    // problema e o cabecalho (linha 0 nao e header), o nome fora da coluna F (5),
+    // ou a fracao fora da coluna D (3).
+    try {
+      var ehHeader = /tipo/i.test(headerCsv[0] || '') && /nome/i.test((headerCsv[5] || ''));
+      var propSemNome = 0, propTotal = 0;
+      rows.forEach(function(r) {
+        if (/propriet/i.test(r[0] || '')) { propTotal++; if (!(r[5] || '').trim()) propSemNome++; }
+      });
+      console.log('===== DIAG NORMALIZAR PDF =====');
+      console.log('linha[0] tratada como CABECALHO:', JSON.stringify(linhas[0]));
+      console.log('cabecalho parece header valido (col0~Tipo, col5~Nome)?', ehHeader);
+      console.log('total linhas de dados:', rows.length, '| proprietarios:', propTotal, '| proprietarios SEM nome na col F:', propSemNome);
+      console.log('primeiras 3 linhas de dados (col5=Nome, col6=CPF, col3=Fracao):');
+      rows.slice(0, 3).forEach(function(r, i) {
+        console.log('  linha ' + i + ': Tipo[0]=' + JSON.stringify(r[0]) + ' Fracao[3]=' + JSON.stringify(r[3]) + ' Nome[5]=' + JSON.stringify(r[5]) + ' CPF[6]=' + JSON.stringify(r[6]) + ' CNPJ[7]=' + JSON.stringify(r[7]));
+      });
+      console.log('CSV cru (primeiros 600 chars):\n' + csvText.slice(0, 600));
+      console.log('===== FIM DIAG =====');
+      if (!ehHeader) toast('DIAG: linha 0 da IA nao parece cabecalho. Veja o console (F12).', 'warn');
+      else if (propSemNome) toast('DIAG: ' + propSemNome + '/' + propTotal + ' proprietarios sem nome na coluna F. Veja o console (F12).', 'warn');
+    } catch (diagErr) { console.log('DIAG falhou:', diagErr.message); }
+    // ===== FIM DIAGNOSTICO TEMPORARIO =====
+
     _normalizarRows = rows;
     renderPreviewNormalizado(rows);
     progressBar.style.width = '100%';
