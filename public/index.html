@@ -1287,11 +1287,7 @@
           </div>
         </div>
         <div id="revisao-resumo" style="font-size:12px;font-family:var(--mono);color:var(--text);margin-bottom:8px"></div>
-        <div style="display:flex;gap:14px;align-items:center;font-size:10px;font-family:var(--mono);color:var(--muted);margin-bottom:10px;flex-wrap:wrap">
-          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--success);display:inline-block"></span>confirmado</span>
-          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--warn,#e0a82e);display:inline-block"></span>inferido, confira</span>
-          <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:2px;background:var(--danger);display:inline-block"></span>incerto, precisa decisão</span>
-        </div>
+        <div class="chips" id="revisao-filtro-chips"></div>
         <div class="table-wrap" style="max-height:460px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table id="revisao-table"></table></div>
         <p style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-top:8px">Edite o papel onde precisar. Linhas marcadas como Descartar não são enviadas. Ao confirmar, a pré-visualização de import aparece abaixo e nada sobe ao Superlógica sem o clique em Enviar.</p>
       </div>
@@ -2893,6 +2889,8 @@ function renderPreviewUnidades(processed, filename) {
 // Estado da tela de revisao: lista plana de contatos + nome do arquivo de origem.
 let _revisaoContatos = null;
 let _revisaoSource = '';
+// Filtro por status (confianca) da tela de revisao: todos, alta, media ou incerta.
+let _revisaoFiltro = 'todos';
 
 // Detecta se os cabecalhos sao da familia A2 (W045A tabular). Retorna
 // 'w045a-contatos' quando reconhece o layout, ou null para deixar o fluxo
@@ -3773,6 +3771,7 @@ var REVISAO_PAPEL_OPCOES = [
 function abrirRevisao(contatos, sourceName) {
   _revisaoContatos = contatos;
   _revisaoSource = sourceName || '';
+  _revisaoFiltro = 'todos';
   renderRevisao();
   var card = document.getElementById('revisao-unidades');
   card.style.display = 'block';
@@ -3805,49 +3804,78 @@ function renderRevisao() {
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   };
   var cont = _revisaoContatos || [];
-  var nProp = 0, nInq = 0, nDep = 0, nDesc = 0, nIncerto = 0;
+  var nProp = 0, nInq = 0, nDep = 0, nDesc = 0, nIncerto = 0, nAlta = 0, nMedia = 0;
   cont.forEach(function(c) {
     if (c.papel === 'proprietario') nProp++;
     else if (c.papel === 'inquilino') nInq++;
     else if (c.papel === 'dependente') nDep++;
     else if (c.papel === 'descartar') nDesc++;
     if (c.confianca === 'incerta') nIncerto++;
+    else if (c.confianca === 'alta') nAlta++;
+    else if (c.confianca === 'media') nMedia++;
   });
   var unidades = {};
   cont.forEach(function(c) { if (c.papel !== 'descartar') unidades[c.unidade + '|' + c.bloco] = 1; });
+  // Resumo do topo sempre reflete a lista inteira, independente do filtro de status escolhido abaixo.
   resumo.innerHTML = Object.keys(unidades).length + ' unidades · ' + nProp + ' proprietários · ' +
     nInq + ' inquilinos · ' + nDep + ' dependentes · ' + nDesc + ' descartados' +
     (nIncerto ? ' · <b style="color:var(--danger)">' + nIncerto + ' incertos para decidir</b>' : '');
+
+  // Chips de filtro por status (confianca): selecao unica, contagem ao lado de cada rotulo.
+  var chipsEl = document.getElementById('revisao-filtro-chips');
+  if (chipsEl) {
+    var chipsDef = [
+      { v: 'todos', label: 'Todos (' + cont.length + ')' },
+      { v: 'alta', label: 'Confirmado (' + nAlta + ')' },
+      { v: 'media', label: 'Inferido (' + nMedia + ')' },
+      { v: 'incerta', label: 'Incerto (' + nIncerto + ')' }
+    ];
+    chipsEl.innerHTML = chipsDef.map(function(ch) {
+      var ativo = ch.v === _revisaoFiltro ? ' active' : '';
+      return '<div class="chip' + ativo + '" onclick="filtrarRevisao(\'' + ch.v + '\')">' + ch.label + '</div>';
+    }).join('');
+  }
+
+  // Tabela exibe so a lista filtrada pelo status escolhido; o resumo acima nunca filtra.
+  var contFiltrado = _revisaoFiltro === 'todos' ? cont : cont.filter(function(c) { return c.confianca === _revisaoFiltro; });
 
   var head = '<thead><tr>' +
     ['Unidade', 'Papel', 'Nome', 'Documento', 'Telefone', 'Email', 'Tipo no doc', 'Por quê']
       .map(function(h) { return '<th style="padding:6px 8px;background:var(--bg3);font-size:10px;font-family:var(--mono);text-transform:uppercase;color:var(--muted);position:sticky;top:0;border-bottom:1px solid var(--border2);white-space:nowrap;text-align:left">' + h + '</th>'; })
       .join('') + '</tr></thead>';
 
-  var body = cont.map(function(c) {
-    var cor = corConfianca(c.confianca);
-    var doc = c.cnpj ? (c.cnpj + ' (CNPJ)') : (c.cpf || '');
-    var sel = '<select onchange="mudarPapelRevisao(' + c.id + ', this.value)" style="font-size:11px;font-family:var(--mono);padding:3px 4px;border-radius:5px;border:1px solid var(--border2);background:var(--bg3);color:var(--text)">' +
-      REVISAO_PAPEL_OPCOES.map(function(o) {
-        return '<option value="' + o.v + '"' + (o.v === c.papel ? ' selected' : '') + '>' + o.label + '</option>';
-      }).join('') + '</select>';
-    var td = function(v, extra) { return '<td style="padding:5px 8px;font-size:11px;font-family:var(--mono);border-bottom:1px solid var(--border);' + (extra || '') + '">' + v + '</td>'; };
-    return '<tr style="border-left:3px solid ' + cor + '">' +
-      td('<b>' + esc(c.unidade) + (c.bloco ? ' ' + esc(c.bloco) : '') + '</b>') +
-      td(sel) +
-      td(esc(c.nome), 'max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
-      td(esc(doc)) +
-      td(esc(c.telefone)) +
-      td(esc(c.email), 'max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
-      td(esc(c.tipoOriginal) || '<span style="color:var(--muted)">—</span>') +
-      td('<span style="color:var(--muted)" title="' + esc(c.motivo) + '">' + esc(c.motivo) + '</span>', 'max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
-      '</tr>';
-  }).join('');
+  var body = !contFiltrado.length
+    ? '<tr><td colspan="8" style="padding:14px 8px;font-size:11px;font-family:var(--mono);color:var(--muted);text-align:center">Nenhum contato com este status</td></tr>'
+    : contFiltrado.map(function(c) {
+      var cor = corConfianca(c.confianca);
+      var doc = c.cnpj ? (c.cnpj + ' (CNPJ)') : (c.cpf || '');
+      var sel = '<select onchange="mudarPapelRevisao(' + c.id + ', this.value)" style="font-size:11px;font-family:var(--mono);padding:3px 4px;border-radius:5px;border:1px solid var(--border2);background:var(--bg3);color:var(--text)">' +
+        REVISAO_PAPEL_OPCOES.map(function(o) {
+          return '<option value="' + o.v + '"' + (o.v === c.papel ? ' selected' : '') + '>' + o.label + '</option>';
+        }).join('') + '</select>';
+      var td = function(v, extra) { return '<td style="padding:5px 8px;font-size:11px;font-family:var(--mono);border-bottom:1px solid var(--border);' + (extra || '') + '">' + v + '</td>'; };
+      return '<tr style="border-left:3px solid ' + cor + '">' +
+        td('<b>' + esc(c.unidade) + (c.bloco ? ' ' + esc(c.bloco) : '') + '</b>') +
+        td(sel) +
+        td(esc(c.nome), 'max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
+        td(esc(doc)) +
+        td(esc(c.telefone)) +
+        td(esc(c.email), 'max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
+        td(esc(c.tipoOriginal) || '<span style="color:var(--muted)">—</span>') +
+        td('<span style="color:var(--muted)" title="' + esc(c.motivo) + '">' + esc(c.motivo) + '</span>', 'max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
+        '</tr>';
+    }).join('');
 
   table.innerHTML = head + '<tbody>' + body + '</tbody>';
 }
 
-// Ajuste manual do papel: vira confianca alta (decidido pelo humano) e re-renderiza.
+// Troca o filtro de status da tela de revisao e redesenha (chips de selecao unica).
+function filtrarRevisao(valor) {
+  _revisaoFiltro = valor;
+  renderRevisao();
+}
+
+// Ajuste manual do papel: vira confianca alta (decidido pelo humano) e redesenha a tela.
 function mudarPapelRevisao(id, papel) {
   if (!_revisaoContatos) return;
   var c = _revisaoContatos.filter(function(x) { return x.id === id; })[0];
@@ -3861,12 +3889,13 @@ function mudarPapelRevisao(id, papel) {
 function descartarRevisao() {
   _revisaoContatos = null;
   _revisaoSource = '';
+  _revisaoFiltro = 'todos';
   document.getElementById('revisao-unidades').style.display = 'none';
   toast('Revisão descartada', 'ok');
 }
 
 // Confirma a revisao: emite linhas de 26 colunas dos contatos mantidos, monta o
-// modelo de import via processUnidadesDataUnificada e mostra a pre-visualizacao.
+// modelo de import via processUnidadesDataUnificada e mostra a previa de import.
 // Nada e enviado aqui; o envio continua no botao Enviar unidades.
 function confirmarRevisao() {
   var cont = _revisaoContatos || [];
@@ -5789,8 +5818,8 @@ function baixarAtaPDF() {
   //   - Fonte Arial 12pt, line-height 1.5
   //   - Margens 2.54cm (sup/dir/inf) + 3.17cm (esq)
   //   - Texto justificado no corpo; cabeçalho e linha de local/data centralizados
-  //   - <title> vazio + toast pra que o usuário desmarque "Cabeçalhos e
-  //     rodapés" no diálogo (browser não suprime URL/página via CSS)
+  //   - @page com margin:0 e margens reais no padding do .page: sem área de
+  //     margem, o browser não tem onde desenhar data/hora/URL — sai limpo
   //   - ITEMs viram blocos com page-break-inside:avoid pra não cortar
   const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const corpo = renderAtaBlocos(_ataTextoGerado, esc);
@@ -5803,7 +5832,7 @@ function baixarAtaPDF() {
 <meta charset="UTF-8">
 <title> </title>
 <style>
-  @page { size: A4; margin: 2.54cm 2.54cm 2.54cm 3.17cm; }
+  @page { size: A4; margin: 0; }
   html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 12pt; line-height: 1.5; color: #000; }
   .ata-bloco { margin: 0; white-space: pre-wrap; text-align: justify; text-justify: inter-word; }
@@ -5815,7 +5844,7 @@ function baixarAtaPDF() {
     .page { background: #fff; max-width: 21cm; min-height: 29.7cm; margin: 0 auto; padding: 2.54cm 2.54cm 2.54cm 3.17cm; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
   }
   @media print {
-    .page { padding: 0; box-shadow: none; max-width: none; min-height: 0; }
+    .page { padding: 2.54cm 2.54cm 2.54cm 3.17cm; box-shadow: none; max-width: none; min-height: 0; }
   }
 </style>
 </head>
@@ -5824,7 +5853,7 @@ function baixarAtaPDF() {
 </body>
 </html>`);
   w.document.close();
-  toast('No diálogo de impressão: desmarque "Cabeçalhos e rodapés" e salve como PDF', 'ok');
+  toast('No diálogo de impressão, escolha "Salvar como PDF"', 'ok');
 }
 
 // Gera a MESMA ata em .docx editável, em paralelo ao PDF (não altera baixarAtaPDF
