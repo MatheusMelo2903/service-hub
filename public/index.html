@@ -5704,11 +5704,36 @@ async function gerarAtaIA() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userMessage })
     });
-    const payload = await resp.json().catch(() => ({}));
+    // Resposta em streaming NDJSON com heartbeat (mata o 502 do edge). O servidor
+    // manda pings enquanto gera e um evento final 'done' com o payload completo,
+    // no mesmo shape de antes. Descartamos os pings e usamos so o evento final. O
+    // texto da ata chega intacto no campo 'ata'. Erro antes do stream vem como JSON
+    // normal (resp nao ok); erro durante a geracao vem como evento 'error'.
     if (!resp.ok) {
-      const detalhe = payload.detalhe || payload.erro || ('HTTP ' + resp.status);
-      throw new Error(detalhe);
+      const errJson = await resp.json().catch(() => ({}));
+      throw new Error(errJson.detalhe || errJson.erro || ('HTTP ' + resp.status));
     }
+    let payload = null;
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const linha = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!linha) continue;
+        let ev;
+        try { ev = JSON.parse(linha); } catch (_) { continue; }
+        if (ev.type === 'ping') continue;
+        if (ev.type === 'error') throw new Error(ev.detalhe || ev.erro || ('HTTP ' + ev.status));
+        if (ev.type === 'done') payload = ev;
+      }
+    }
+    if (!payload) throw new Error('resposta incompleta do servidor');
     const texto = (payload.ata || '').trim();
     if (!texto) throw new Error('engine retornou ata vazia');
 

@@ -614,6 +614,23 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
     return res.status(400).json({ erro: 'userMessage_invalido', detalhe: 'envie a transcrição + dados da reunião como string em userMessage (mín 50 chars)' });
   }
 
+  // ─── Resposta em STREAMING com heartbeat ───────────────────────────────────
+  // A geração da ata segura a requisição por dezenas de segundos (tentativas +
+  // auditoria). Se o Hub só respondesse no fim, o edge do Railway estouraria o
+  // tempo e devolveria 502 antes de qualquer byte. Solução: responder JÁ, mandando
+  // pings NDJSON a cada 7s enquanto gera, e no fim UM evento 'done' com o payload
+  // no MESMO shape de antes. O edge sempre vê bytes e nunca dá 502. Os pings são
+  // linhas separadas que o frontend descarta; o texto da ata (campo 'ata') vai
+  // intacto, byte a byte igual, no evento final.
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no');
+  const heartbeat = setInterval(() => { if (!res.writableEnded) res.write('{"type":"ping"}\n'); }, 7000);
+  res.write('{"type":"ping"}\n'); // primeiro byte imediato, tira a conexão do idle
+  req.on('close', () => clearInterval(heartbeat));
+  const enviarDone = (obj) => { clearInterval(heartbeat); if (!res.writableEnded) { res.write(JSON.stringify(Object.assign({ type: 'done' }, obj)) + '\n'); res.end(); } };
+  const enviarErro = (status, obj) => { clearInterval(heartbeat); if (!res.writableEnded) { res.write(JSON.stringify(Object.assign({ type: 'error', status }, obj)) + '\n'); res.end(); } };
+
   const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
 
@@ -638,44 +655,49 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
       }
     }
     tentativas[tentativaIdx].auditoria = auditoriaStatus;
-    return res.json(Object.assign({ ata: ataFinal, modelo_usado, tentativas, auditoria: auditoriaStatus }, extras || {}));
+    return enviarDone(Object.assign({ ata: ataFinal, modelo_usado, tentativas, auditoria: auditoriaStatus }, extras || {}));
   }
 
-  // Tentativa 1: Sonnet 4.6 + 16k
-  let r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, system, userMessage);
-  tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 16000, status: r.status, erro: r.erro || null });
-  if (r.ok) {
-    const v = validarAta(r.texto);
-    tentativas[0].validacao = v;
-    if (v.valido) return entregarAtaAuditada(r.texto, 'claude-sonnet-4-6', 0);
-  }
+  try {
+    // Tentativa 1: Sonnet 4.6 + 16k
+    let r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, system, userMessage);
+    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 16000, status: r.status, erro: r.erro || null });
+    if (r.ok) {
+      const v = validarAta(r.texto);
+      tentativas[0].validacao = v;
+      if (v.valido) return await entregarAtaAuditada(r.texto, 'claude-sonnet-4-6', 0);
+    }
 
-  // Tentativa 2: Sonnet 4.6 + 20k (max_tokens +25%)
-  r = await chamarAnthropicAta('claude-sonnet-4-6', 20000, system, userMessage);
-  tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 20000, status: r.status, erro: r.erro || null });
-  if (r.ok) {
-    const v = validarAta(r.texto);
-    tentativas[1].validacao = v;
-    if (v.valido) return entregarAtaAuditada(r.texto, 'claude-sonnet-4-6', 1);
-  }
+    // Tentativa 2: Sonnet 4.6 + 20k (max_tokens +25%)
+    r = await chamarAnthropicAta('claude-sonnet-4-6', 20000, system, userMessage);
+    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 20000, status: r.status, erro: r.erro || null });
+    if (r.ok) {
+      const v = validarAta(r.texto);
+      tentativas[1].validacao = v;
+      if (v.valido) return await entregarAtaAuditada(r.texto, 'claude-sonnet-4-6', 1);
+    }
 
-  // Tentativa 3: Opus 4.7 fallback. Logado pra acompanhar frequência em prod.
-  console.warn('[engine-ata] Fallback Opus 4.7 acionado após 2 tentativas Sonnet inválidas. Tentativas:', JSON.stringify(tentativas));
-  r = await chamarAnthropicAta('claude-opus-4-7', 20000, system, userMessage);
-  tentativas.push({ modelo: 'claude-opus-4-7', max_tokens: 20000, status: r.status, erro: r.erro || null });
-  if (r.ok) {
-    const v = validarAta(r.texto);
-    tentativas[2].validacao = v;
-    if (v.valido) return entregarAtaAuditada(r.texto, 'claude-opus-4-7', 2, { fallback: true });
-  }
+    // Tentativa 3: Opus 4.7 fallback. Logado pra acompanhar frequência em prod.
+    console.warn('[engine-ata] Fallback Opus 4.7 acionado após 2 tentativas Sonnet inválidas. Tentativas:', JSON.stringify(tentativas));
+    r = await chamarAnthropicAta('claude-opus-4-7', 20000, system, userMessage);
+    tentativas.push({ modelo: 'claude-opus-4-7', max_tokens: 20000, status: r.status, erro: r.erro || null });
+    if (r.ok) {
+      const v = validarAta(r.texto);
+      tentativas[2].validacao = v;
+      if (v.valido) return await entregarAtaAuditada(r.texto, 'claude-opus-4-7', 2, { fallback: true });
+    }
 
-  // 3 tentativas falharam — devolve erro estruturado pro frontend explicar o motivo
-  return res.status(502).json({
-    erro: 'engine_falhou_3x',
-    detalhe: 'Nenhuma das 3 tentativas produziu ata válida',
-    tentativas,
-    ultima_resposta: r.texto ? r.texto.slice(0, 2000) + (r.texto.length > 2000 ? '...[truncado]' : '') : null
-  });
+    // 3 tentativas falharam — evento de erro no stream (mesmo shape do 502 antigo)
+    return enviarErro(502, {
+      erro: 'engine_falhou_3x',
+      detalhe: 'Nenhuma das 3 tentativas produziu ata válida',
+      tentativas,
+      ultima_resposta: r.texto ? r.texto.slice(0, 2000) + (r.texto.length > 2000 ? '...[truncado]' : '') : null
+    });
+  } catch (e) {
+    console.error('[engine-ata] Erro inesperado na geração:', e && e.message);
+    return enviarErro(500, { erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' });
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────
