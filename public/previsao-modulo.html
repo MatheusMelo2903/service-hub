@@ -1152,6 +1152,37 @@ function parseW011A(paginasLinhas){
   const itens=[]; let n=1, maxMeses=0, condominio=null;
   const ignorar=/^(total\b|subtotal|p[áa]gina|demonstrativo|per[íi]odo|saldo|mov\.)/i;
   let fim=false;
+  // Pre-varredura dos nomes de secao. No W011A da Loja Maconica os subtitulos de
+  // secao ("Despesas Ordinarias", "Despesas Financeiras", ...) vem em Title Case,
+  // nao em CAIXA ALTA, entao escapam do teste de categoria e caiam na regra de
+  // continuacao de nome, grudando no item anterior (bug "Outras Despesas Despesas
+  // Financeiras"). Toda secao aparece tambem como linha "Total de <secao>";
+  // coletamos esses nomes aqui para reconhecer e ignorar o subtitulo la embaixo.
+  // normalize('NFC') evita que acentos com codificacao Unicode diferente entre o
+  // titulo e o cabecalho repetido (pdf.js) escapem da comparacao.
+  const normTxt = s => String(s).normalize('NFC').replace(/\s+/g,' ').trim().toLowerCase();
+  const secoesConhecidas = [];
+  // So coleta secoes dentro da area de Despesas (mesma flag do loop principal): assim
+  // um nome de secao de Receitas nao contamina ehSecao e descarta um item de despesa.
+  // Limitacao conhecida: se a linha "Total de <secao>" vier sem valor monetario, a
+  // secao nao entra aqui e seu subtitulo volta a ser tratado como continuacao de nome
+  // (nao e regressao do comportamento anterior, so nao cobre esse caso de borda).
+  let ehDespPre=false;
+  for(const linhas of paginasLinhas){
+    for(const cels of linhas){
+      const numsP = cels.map(numBR);
+      const textoP = cels.filter((c,i)=>numsP[i]===null).join(' ').trim();
+      if(textoP==='Despesas'){ ehDespPre=true; continue; }
+      if(textoP==='Receitas'){ ehDespPre=false; continue; }
+      if(!ehDespPre) continue;
+      const m = cels.join(' ').match(/^Total de (.+?)\s+-?[\d.]+,\d{2}/);
+      if(m){ const nm = normTxt(m[1]); if(nm && !secoesConhecidas.includes(nm)) secoesConhecidas.push(nm); }
+    }
+  }
+  // Um texto e cabecalho de secao (nao continuacao de nome) se casa com algum
+  // "Total de <secao>". O startsWith cobre totais truncados no layout do PDF
+  // (ex: "Total de Despesas do Veneravel" para a secao "Despesas do Veneravel Mestre").
+  const ehSecao = txt => { const n = normTxt(txt); return secoesConhecidas.some(s => n===s || n.startsWith(s)); };
   for(const linhas of paginasLinhas){
     if(fim) break;
     for(const cels of linhas){
@@ -1175,11 +1206,18 @@ function parseW011A(paginasLinhas){
         if(texto==='Despesas'){ inDespesas=true; continue; }
         if(texto==='Receitas'){ inDespesas=false; continue; }
         if(!inDespesas) continue;
+        // Cabecalho de pagina repetido = nome do condominio (CAIXA ALTA, centralizado).
+        // Sem isto virava categoria e contaminava os itens seguintes (bug categoria =
+        // nome da loja). Ignora e segue, sem alterar a categoria atual.
+        if(condominio && normTxt(texto)===normTxt(condominio)) continue;
         // categoria: linha toda em CAIXA ALTA
         if(texto.length>=4 && texto===texto.toUpperCase() && !/^TOTAL/.test(texto)
            && !/CONDOM[ÍI]NIO SERVICE|GRUPO/.test(texto)){
           catAtual = normCat(texto); continue;
         }
+        // Subtitulo de secao em Title Case (confirmado por uma linha "Total de <secao>"):
+        // nao e continuacao de nome de item, entao nao anexa ao item anterior.
+        if(ehSecao(texto)) continue;
         // continuação de nome quebrado (minúsculas/mistas) → anexa ao último item
         if(itens.length && texto.length>1 && texto.length<35 && texto!==texto.toUpperCase()
            && !ignorar.test(texto)){
