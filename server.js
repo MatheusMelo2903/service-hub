@@ -311,6 +311,17 @@ try {
   console.warn('SKILL ata-condominial NÃO carregada: ' + e.message);
 }
 
+// Glossario de dominio condominial: corrige erros foneticos da transcricao (Whisper
+// erra termos tecnicos). Entra no system prompt junto com a skill. So padroniza
+// grafia de termo ouvido errado; NUNCA autoriza inventar conteudo (anti-invencao).
+let GLOSSARIO_MD = '';
+try {
+  GLOSSARIO_MD = fs.readFileSync(path.join(__dirname, 'skills-server', 'glossario-condominial.md'), 'utf8');
+  console.log('Glossario condominial carregado (' + GLOSSARIO_MD.length + ' chars)');
+} catch (e) {
+  console.warn('Glossario condominial NÃO carregado: ' + e.message);
+}
+
 const CONTEXTO_GRUPO_SERVICE = `CONTEXTO FIXO DO GRUPO SERVICE
 
 Administradora: Condomínio Service
@@ -446,7 +457,7 @@ FID 1. NUNCA INVENTAR, COMPLETAR OU ADIVINHAR
 Qualquer fato que não esteja explicitamente na transcrição (ou em outra fonte oficial anexada, como edital) precisa ir como [a confirmar] no lugar exato do dado. Isso inclui nomes próprios, sobrenomes, números de votos, valores em reais, datas, números de unidade, cargos, quantidades de parcelas, percentuais e qualquer outro dado pontual. É PROIBIDO substituir uma lacuna por palpite plausível, mesmo que pareça óbvio pelo contexto. Quando o contexto sugere algo mas a transcrição não confirma, registre [a confirmar] e nada além.
 
 FID 2. NÚMEROS SÃO LITERAIS
-Todo número (valor financeiro, quantidade de votos, percentual, número de parcelas, anos, datas) deve ser transcrito exatamente como aparece na transcrição. É PROIBIDO recalcular, arredondar, somar, inferir ou ajustar qualquer número. Se um número aparece de forma ambígua ou parcial, registrar o trecho disponível seguido de [a confirmar]. Se a transcrição não diz o número, escrever [valor a confirmar] ou [número a confirmar] e nada mais.
+Todo número (valor financeiro, quantidade de votos, percentual, número de parcelas, anos, datas) deve ser transcrito exatamente como aparece na transcrição. É PROIBIDO recalcular, arredondar, somar, inferir ou ajustar qualquer número. Se um número aparece de forma ambígua, conflitante ou parcial na transcrição, NÃO registrar as versões conflitantes nem explicar a divergência dentro da ata: escrever apenas o marcador limpo [valor a confirmar] (ou [número a confirmar]) no lugar do dado. Se a transcrição não diz o número, escrever [valor a confirmar] e nada mais.
 
 FID 3. NOMES PRÓPRIOS NÃO SÃO COMPLETADOS
 Se a pessoa é citada apenas pelo primeiro nome, registrar apenas o primeiro nome seguido de [sobrenome a confirmar]. Se há dúvida entre nome civil e apelido (caso real: a transcrição menciona alguém ora como "Wellington", ora como "Eriton"), registrar AMBOS na forma "Wellington (Eriton)" sem escolher um. Nunca completar "Cris" para "Cristina" ou "Cristiano". Nunca substituir o apelido pelo suposto nome civil sem confirmação explícita.
@@ -455,7 +466,22 @@ FID 4. VARREDURA PRÉ FECHAMENTO
 Antes de finalizar a ata, varrer a transcrição inteira item por item e garantir que nenhum fato relevante foi omitido. Atenção especial obrigatória a: composição da arrecadação (taxa de condomínio, fundo de reserva, multas, juros), valor total arrecadado no período, número de meses de superávit no exercício, renegociações com concessionárias (CESAN, EDP, Vivo, NET), impacto de obras específicas em meses específicos do período, parcelamentos de inadimplência, esclarecimentos técnicos ou jurídicos dados a condôminos. Se a transcrição menciona, a ata REGISTRA.
 
 FID 5. SEM HÍFEN OU TRAVESSÃO NO CORPO DA ATA
-Proibido usar hífen "-" ou travessão "–" no texto corrido dos itens da ata e na abertura. Use vírgula, ponto e vírgula ou frase nova no lugar. EXCEÇÕES EXPLÍCITAS desta regra, que permanecem regidas pela SKILL.md acima: (a) travessões do cabeçalho de endereço, formato "Logradouro – Bairro – Cidade/UF"; (b) travessões da linha de cargo das assinaturas, formato "Cargo – Tratamento Nome"; (c) travessão do título do anexo, formato "ANEXO I – TÍTULO". Nenhuma OUTRA ocorrência de hífen ou travessão é permitida.`;
+Proibido usar hífen "-" ou travessão "–" no texto corrido dos itens da ata e na abertura. Use vírgula, ponto e vírgula ou frase nova no lugar. EXCEÇÕES EXPLÍCITAS desta regra, que permanecem regidas pela SKILL.md acima: (a) travessões do cabeçalho de endereço, formato "Logradouro – Bairro – Cidade/UF"; (b) travessões da linha de cargo das assinaturas, formato "Cargo – Tratamento Nome"; (c) travessão do título do anexo, formato "ANEXO I – TÍTULO". Nenhuma OUTRA ocorrência de hífen ou travessão é permitida.
+
+FID 6. NENHUM COMENTÁRIO SOBRE A TRANSCRIÇÃO DENTRO DA ATA
+A ata é documento formal de cartório. É PROIBIDO escrever no texto qualquer comentário meta sobre a transcrição, dúvida de leitura, raciocínio interno, justificativa de incerteza ou observação do tipo "tendo em vista que a transcrição menciona", "a gravação está inaudível", "não ficou claro se". Quando um dado for ambíguo ou faltar, usar SOMENTE o marcador limpo entre colchetes ([valor a confirmar], [nome a confirmar], [data a confirmar], [sobrenome a confirmar]) no lugar do dado, sem NENHUMA explicação ao lado e sem citar a transcrição. O marcador nunca contém frases, motivos ou referências à gravação. ERRADO: "R$ 24.030,47 [valor a confirmar, tendo em vista que a transcrição menciona 'R$ 24.000' e 'R$ 24.000, R$ 30,47' em momentos distintos]". CERTO: "[valor a confirmar]". Isso vale para QUALQUER dado, INCLUSIVE CONTAGEM DE VOTOS: se a apuração foi confusa, reiniciada ou ficou incerta, NÃO descrever o que aconteceu na contagem dentro da ata. Registrar apenas o número seguido de [a confirmar] limpo, ou [a confirmar] no lugar do número, sem explicar o motivo. ERRADO: "sete (7) votos [a confirmar, tendo em vista que durante a apuração o contador reiniciou a contagem]". CERTO: "sete (7) votos [a confirmar]", ou, se o próprio número for incerto, "[a confirmar] votos". Nunca escrever na ata frases sobre a contagem, a gravação, o áudio ou o raciocínio da redação.
+
+FID 7. PALAVRA SUSPEITA DE ERRO DE TRANSCRIÇÃO: SINALIZAR, NUNCA CHUTAR
+Se aparecer uma palavra que não é português válido, ou que não faz sentido no contexto condominial (provável erro da transcrição automática de áudio), e não houver correspondência clara no GLOSSÁRIO DE TERMOS CONDOMINIAIS anexado abaixo, é PROIBIDO copiar a palavra cega e é PROIBIDO adivinhar qual seria a palavra certa. Marcar exatamente como [termo a confirmar: 'texto original da transcrição'], preservando entre aspas o que a transcrição trouxe. Sinalizar apenas; nunca inventar a correção. A marcação de termo é SEMPRE completa, com o trecho original entre aspas simples dentro dos colchetes. É PROIBIDO escrever [termo a confirmar] seco, sem o texto original: sem o trecho entre aspas, o revisor perde a pista do que foi dito. Exemplo: o serviço de insuflamento, transcrito como "insufuco com varita", se não puder ser corrigido com segurança pelo glossário, vira [termo a confirmar: 'insufuco com varita'], NUNCA [termo a confirmar] sozinho. Toda marcação de termo a confirmar sem o trecho original entre aspas deve ser tratada como ERRO de redação. Se o trecho estiver realmente ininteligível e não houver texto original citável, escrever [trecho ininteligível a confirmar]; JAMAIS deixar o colchete sem conteúdo. Esta regra também cobre PALAVRA ESTRANGEIRA ou rótulo/nome sem significado claro no contexto condominial: é PROIBIDO reproduzir a palavra crua (mesmo entre aspas) como se fosse um rótulo real da assembleia. Exemplo real: a transcrição trouxe "house" no meio da descrição de mão de obra; o certo é [termo a confirmar: 'house'], nunca apresentar 'house' como se fosse um dado válido da reunião. Termo sem sentido nunca vira informação da ata: ou corrige pelo glossário, ou marca com o original entre aspas.
+
+FID 8. GLOSSÁRIO DE DOMÍNIO CORRIGE GRAFIA DE TERMO OUVIDO ERRADO
+Está anexado abaixo um GLOSSÁRIO DE TERMOS CONDOMINIAIS. Quando a transcrição trouxer uma palavra foneticamente próxima de um termo do glossário, mas grafada de forma errada ou sem sentido no contexto, corrigir para o termo correto do glossário (ex.: "dancaria" no contexto de área comum e máquinas de lavar corrige para lavanderia; "insufuco" corrige para insuflamento; atenção ao par corrediço x basculante, corrigindo só quando o contexto tornar inequívoco qual é). Sem correspondência clara no glossário, aplicar a FID 7 (marcar como [termo a confirmar: '...']). O glossário SÓ padroniza a grafia de termo reconhecível ouvido errado: NUNCA autoriza inventar conteúdo, mudar valores, preencher lacunas (quórum, votos, presença, datas, desfechos) nem alterar o que foi dito. A anti-invenção continua absoluta. CASO MAPEADO tem correção OBRIGATÓRIA e EXATA: quando o glossário lista o erro (seção 11, ex.: "dancaria" no contexto de área comum/máquinas de lavar corrige para LAVANDERIA), usar EXATAMENTE o termo do glossário. É PROIBIDO substituir por uma terceira palavra só por ser foneticamente parecida: "dancaria" NUNCA vira "danceteria", vira lavanderia. Se ficar em dúvida entre a correção do glossário e outra palavra, aplicar a FID 7 e marcar [termo a confirmar: 'texto original'], nunca escolher uma palavra fora do glossário.
+
+FID 9. FIDELIDADE AO QUE FOI DITO: NÃO REORGANIZAR ENTRE ITENS
+A IA NÃO deve mover, antecipar, repetir nem realocar conteúdo entre os itens de pauta por conta própria para "organizar" a ata. O critério é fidelidade absoluta ao que foi realmente dito na assembleia: se um assunto foi de fato mencionado em mais de um momento da reunião, a ata registra em cada momento onde ele foi dito, mantendo a repetição real. PROIBIDO mover uma menção de um item para outro, duplicar uma menção que ocorreu só uma vez, ou inventar menção que não ocorreu. Exemplo do que é ERRADO: deslocar a frase sobre vagas remanescentes do conselho (dita no Item 4) para dentro do Item 2. Cada fato fica no item em que foi efetivamente tratado.
+
+FID 10. NUNCA OMITIR ITEM, SERVIÇO OU INFORMAÇÃO DA TRANSCRIÇÃO
+É PROIBIDO deixar de fora da ata qualquer item, serviço, valor ou informação que estava na transcrição só porque a palavra veio grafada errada, sem sentido ou difícil de entender. Omitir é violação grave de fidelidade. O procedimento correto quando o termo veio errado: (1) se houver caso mapeado ou correspondência clara no glossário, corrigir para o termo do glossário (FID 8); (2) se NÃO conseguir corrigir com segurança, MANTER o item na lista e marcar o trecho problemático como [termo a confirmar: 'texto original da transcrição'] (FID 7). Em nenhuma hipótese o item some. Exemplo real: "insufuco com varita" (provável insuflamento) deve aparecer na lista de serviços como insuflamento (se o contexto confirmar) ou como [termo a confirmar: 'insufuco com varita']; jamais ser simplesmente removido da ata.`;
 
 // Prompt do segundo passe (auditoria de fidelidade).
 // Roda Sonnet 4.6 sem fallback Opus — auditoria deve ser leve. Se falhar, devolvemos
@@ -471,16 +497,21 @@ Sua tarefa é ESTRITAMENTE de auditoria. Não reformule estilo, não melhore red
 PROCEDIMENTO:
 (a) Liste mentalmente cada número (valor em reais, quantidade de votos, percentual, parcelas, datas), cada nome próprio (incluindo sobrenomes) e cada fato pontual que aparece na ata.
 (b) Para cada item da lista, verifique se a transcrição sustenta literalmente esse item.
-(c) Se a transcrição NÃO sustenta o item, substitua o item pela marcação [a confirmar] entre colchetes, mantendo a estrutura da frase. Exemplos concretos:
+(c) Se a transcrição NÃO sustenta o item, substitua o dado pela marcação limpa entre colchetes, mantendo a estrutura da frase e SEM explicar o motivo. Exemplos concretos:
     "Sr. Wellington (Eriton) Pabodo" vira "Sr. Wellington (Eriton) [sobrenome a confirmar]" se Pabodo não aparece na transcrição.
     "vinte e três (23) votos" vira "[número de votos a confirmar] votos" se a transcrição não confirma esse número exato.
     "R$ 762.000,00" vira "R$ [valor a confirmar]" se a transcrição não confirma esse valor.
+(c.1) ATENÇÃO, esta é a distinção que a auditoria vinha errando: os passos (b) e (c) valem SOMENTE para NÚMEROS, NOMES PRÓPRIOS e FATOS PONTUAIS (datas, votos, valores, quórum, presença, desfecho). NÃO valem para VOCABULÁRIO. Termo técnico que o passe anterior corrigiu de um erro de transcrição (por exemplo insuflamento, corrediço, síndico, subsíndico, assembleia, conselho consultivo, regimento interno, lavanderia, conforme o GLOSSÁRIO DE TERMOS CONDOMINIAIS anexado abaixo) é correção LEGÍTIMA e deve ser PRESERVADA. É PROIBIDO rebaixar esse termo para [a confirmar] só porque a palavra corrigida não aparece literal na transcrição bruta, já que a transcrição automática erra vocabulário. Só marque um termo quando ele não tiver correspondência no glossário nem sentido claro no contexto condominial.
 (d) Se um fato relevante da transcrição foi OMITIDO na ata (composição da arrecadação, número de meses de superávit, renegociação com concessionária, impacto de obras em meses específicos), INCLUA o fato no item correspondente, sempre com base literal na transcrição.
 
 REGRAS DE SAÍDA:
 1. Devolva APENAS a ata corrigida, do cabeçalho até a última linha de assinatura. Nada antes, nada depois. Sem comentários, sem lista de mudanças, sem "Aqui está a ata auditada".
 2. Mantenha exatamente a formatação do documento: prosa corrida, sem markdown, sem bullets, CAIXA ALTA para destaques, ITEM N) para itens, travessões "–" apenas onde a SKILL.md prescreve (endereço, linha de cargo das assinaturas, título de anexo).
-3. Se você conferir que a ata está 100% fiel e nada precisa mudar, devolva a ata idêntica à entrada, sem modificar uma vírgula.`;
+3. Se você conferir que a ata está 100% fiel e nada precisa mudar, devolva a ata idêntica à entrada, sem modificar uma vírgula.
+4. Marcação de TERMO (palavra técnica ouvida errada que não dá pra corrigir com segurança pelo glossário) é SEMPRE completa: [termo a confirmar: 'texto original da transcrição'], com o trecho original entre aspas simples dentro dos colchetes. Se o trecho estiver ininteligível e não houver texto citável, usar [trecho ininteligível a confirmar]. É PROIBIDO [termo a confirmar] seco, sem o texto original.
+5. NUNCA OMITIR item, serviço, valor ou informação que já estava na ata ou na transcrição. Se um termo veio errado e você não consegue corrigir com segurança pelo glossário, MANTENHA o item e marque o trecho pela regra 4 (com o original entre aspas). Omitir é violação grave.
+6. PRESERVE os marcadores [termo a confirmar: '...'] que já vierem na ata de entrada. Não apague, não esvazie e não rebaixe para [a confirmar] seco.
+7. NUNCA escreva no corpo da ata comentário, justificativa, dúvida ou observação sobre a transcrição, a contagem de votos, o áudio ou o próprio processo de redação. Dado incerto vira apenas o marcador limpo, sem explicar o motivo.`;
 
 // Segundo passe: roda Sonnet 4.6 com a ata + transcrição original e devolve a ata
 // corrigida. Sem fallback. Em caso de erro, retorna null e o caller usa a ata original.
@@ -490,7 +521,10 @@ async function auditarFidelidadeAta(ataGerada, userMessageOriginal) {
     '\n\nAudite a ata acima contra a transcrição e devolva a ata corrigida seguindo o procedimento e as regras de saída.';
   // max_tokens alinhado com a tentativa 1 do passe principal (regra reviewer.md: ≤16000).
   // Auditoria substitui trechos por [a confirmar] e adiciona fatos curtos — não expande conteúdo.
-  const r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, PROMPT_AUDITORIA, auditMessage);
+  // Glossário anexado também aqui: sem ele, a auditoria não reconhece correções de
+  // vocabulário legítimas do passe principal e as rebaixava para [a confirmar].
+  const systemAuditoria = PROMPT_AUDITORIA + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+  const r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, systemAuditoria, auditMessage);
   if (!r.ok || !r.texto) {
     console.warn('[engine-ata] Segundo passe de auditoria falhou (status ' + (r.status || 'sem_status') + '): ' + (r.erro || 'sem_texto'));
     return null;
@@ -502,7 +536,7 @@ async function auditarFidelidadeAta(ataGerada, userMessageOriginal) {
 // Critérios derivados das atas de referência do handoff:
 //   - tem frase de encerramento padrão
 //   - termina com ponto final (não foi cortada no meio)
-//   - tem pelo menos 4 blocos de assinatura (Síndico, Presidente, Secretária, Administradora)
+//   - tem pelo menos 4 blocos de assinatura (ex.: Síndico, Subsíndico, Conselho, Presidente, Secretária; a administradora nunca assina)
 //   - tem tamanho mínimo plausível (atas reais têm 6000+ chars)
 function validarAta(resposta) {
   if (!resposta || typeof resposta !== 'string') return { valido: false, motivo: 'resposta_vazia' };
@@ -580,7 +614,7 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
     return res.status(400).json({ erro: 'userMessage_invalido', detalhe: 'envie a transcrição + dados da reunião como string em userMessage (mín 50 chars)' });
   }
 
-  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO;
+  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
 
   // Helper local pra encadear segundo passe de auditoria e padronizar resposta.
@@ -1393,11 +1427,21 @@ app.use('/api', (req, res) => {
   });
 });
 
+// Impede o navegador de servir uma versão antiga do HTML em cache. É o que garante
+// que o usuário sempre pegue o index.html mais novo (evita gerar a ata pela versão
+// antiga, que usava window.print e injetava data/URL). Só afeta o HTML; os assets
+// (jsPDF, fonte) continuam cacheáveis normalmente.
+function semCacheHtml(res) {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+}
+
 // Rota raiz: serve a landing page ServiceZone
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
+app.get('/', (req, res) => { semCacheHtml(res); res.sendFile(path.join(__dirname, 'public', 'landing.html')); });
 
 // Rota do sistema principal, acessada a partir do botão Entrar na landing
-app.get('/hub', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/hub', (req, res) => { semCacheHtml(res); res.sendFile(path.join(__dirname, 'public', 'index.html')); });
 
 // Qualquer rota desconhecida cai na landing, não no sistema
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));

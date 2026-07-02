@@ -8,6 +8,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/docx@9.5.1/dist/index.iife.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="/ata-fonte-arimo.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/auth-bootstrap.js" defer></script>
 <style>
@@ -5804,56 +5806,176 @@ function renderAtaBlocos(texto, escFn) {
   const parts = [];
   if (cabCentro.length)  parts.push(`<div class="ata-bloco centro">${escFn(cabCentro.join('\n'))}</div>`);
   if (cabJust.length)    parts.push(`<div class="ata-bloco">${escFn(cabJust.join('\n'))}</div>`);
-  for (const it of items) parts.push(`<div class="ata-bloco item">${escFn(it.join('\n'))}</div>`);
+  for (const it of items) {
+    // Regra permanente: rótulo do item + título em caixa alta, até os dois pontos
+    // (inclusive), saem em negrito. O texto corrido após os dois pontos volta ao
+    // peso normal. Se não houver dois pontos, o negrito fica só na 1ª linha (ITEM n).
+    const itemTexto = it.join('\n');
+    const idxDoisPontos = itemTexto.indexOf(':');
+    let interno;
+    if (idxDoisPontos !== -1) {
+      interno = `<strong>${escFn(itemTexto.slice(0, idxDoisPontos + 1))}</strong>${escFn(itemTexto.slice(idxDoisPontos + 1))}`;
+    } else {
+      const qNL = itemTexto.indexOf('\n');
+      interno = qNL !== -1
+        ? `<strong>${escFn(itemTexto.slice(0, qNL))}</strong>${escFn(itemTexto.slice(qNL))}`
+        : `<strong>${escFn(itemTexto)}</strong>`;
+    }
+    parts.push(`<div class="ata-bloco item">${interno}</div>`);
+  }
   if (encJust.length)    parts.push(`<div class="ata-bloco">${escFn(encJust.join('\n'))}</div>`);
   if (encLocalData)      parts.push(`<div class="ata-bloco centro">${escFn(encLocalData)}</div>`);
   if (encAssin.length)   parts.push(`<div class="ata-bloco assin">${escFn(encAssin.join('\n'))}</div>`);
   return parts.join('');
 }
 
+// Monta o PDF da ata por codigo (jsPDF), com texto REAL selecionavel. Como nao usa
+// window.print(), nenhum navegador injeta cabecalho/rodape nativo: sai igual no
+// Safari e no Chrome, sem data nem URL. Numeracao "Pagina X de Y", margens e negrito
+// dos itens sao desenhados por nos. Fonte Arimo (=Liberation Sans, metricamente
+// identica a Arial) TTF embutida (ata-fonte-arimo.js) com suporte pleno a UTF-8:
+// acentos do portugues (física, órgão, três) sem corromper, diferente das fontes
+// core do jsPDF que so cobrem WinAnsi.
+function montarAtaPDF(jsPDF, texto) {
+  const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+  texto = String(texto).replace(/\r/g, '');
+
+  const PW = doc.internal.pageSize.getWidth();   // ~595.28pt
+  const PH = doc.internal.pageSize.getHeight();  // ~841.89pt
+  const CM = 28.3465;                            // pt por cm
+  const MARG_TOP = 2.54 * CM, MARG_BOT = 2.54 * CM, MARG_DIR = 2.54 * CM, MARG_ESQ = 3.17 * CM;
+  const LARG = PW - MARG_ESQ - MARG_DIR;         // largura util do texto
+  const LIMITE_Y = PH - MARG_BOT;                // conteudo nao passa daqui
+  const FONTE = 'Arimo', TAM = 12, ALTURA_LINHA = TAM * 1.5;  // Arimo (=Liberation Sans, métrica de Arial) embutida em ata-fonte-arimo.js
+
+  let y = MARG_TOP + TAM;                         // baseline da 1a linha
+
+  function novaPaginaSeNecessario() {
+    if (y > LIMITE_Y) { doc.addPage(); y = MARG_TOP + TAM; }
+  }
+
+  // Justifica uma linha distribuindo o espaco extra igualmente entre as palavras.
+  function desenharJustificado(linha) {
+    const palavras = linha.split(' ').filter(function (p) { return p.length; });
+    if (palavras.length <= 1) { doc.text(linha, MARG_ESQ, y); return; }
+    let larguraPalavras = 0;
+    for (const p of palavras) larguraPalavras += doc.getTextWidth(p);
+    const gap = (LARG - larguraPalavras) / (palavras.length - 1);
+    let x = MARG_ESQ;
+    for (let i = 0; i < palavras.length; i++) {
+      doc.text(palavras[i], x, y);
+      x += doc.getTextWidth(palavras[i]) + gap;
+    }
+  }
+
+  // Escreve um paragrafo com quebra automatica de linha e de pagina.
+  // align: 'left' | 'center' | 'justify' (justifica todas as linhas menos a ultima).
+  function paragrafo(txt, align, bold) {
+    doc.setFont(FONTE, bold ? 'bold' : 'normal');
+    doc.setFontSize(TAM);
+    // Cada quebra real (\n) é um parágrafo lógico próprio, então a ÚLTIMA linha de
+    // cada parágrafo nunca é justificada (senão fica com espaços gigantes de borda
+    // a borda). Só as linhas do meio de cada parágrafo são justificadas.
+    const paragrafos = String(txt).split('\n');
+    for (const par of paragrafos) {
+      const linhas = doc.splitTextToSize(par, LARG);
+      for (let i = 0; i < linhas.length; i++) {
+        novaPaginaSeNecessario();
+        const linha = linhas[i];
+        const ultima = (i === linhas.length - 1);
+        if (align === 'center') {
+          doc.text(linha, MARG_ESQ + LARG / 2, y, { align: 'center' });
+        } else if (align === 'justify' && !ultima && linha.indexOf(' ') !== -1) {
+          desenharJustificado(linha);
+        } else {
+          doc.text(linha, MARG_ESQ, y);
+        }
+        y += ALTURA_LINHA;
+      }
+    }
+  }
+
+  // Segmentacao identica a do renderAtaBlocos (usado no preview): cabecalho
+  // centralizado, abertura justificada, itens (titulo negrito + corpo normal),
+  // encerramento justificado, local/data centralizado e assinaturas a esquerda.
+  const reItem = /^ITEM\s+\d+\)/;
+  const reEnc = /^ENCERRAMENTO\b/i;
+  const reTituloATA = /^ATA DA ASSEMBLEIA/i;
+  const reLocalData = /^[^/\n]+\/[A-Z]{2},\s*\d+\s+de\s+\S+\s+de\s+\d{4}\.?\s*$/i;
+  const reUnderline = /^_{10,}\s*$/;
+
+  const linhas = texto.split('\n');
+  const cabCentro = [], cabJust = [], items = [], encJust = [], encAssin = [];
+  let encLocalData = '', modo = 'cabCentro', buf = null;
+  for (const ln of linhas) {
+    if (modo === 'cabCentro') { cabCentro.push(ln); if (reTituloATA.test(ln)) modo = 'cabJust'; continue; }
+    if (modo === 'cabJust') { if (reItem.test(ln)) { modo = 'item'; buf = [ln]; continue; } cabJust.push(ln); continue; }
+    if (modo === 'item') {
+      if (reItem.test(ln)) { if (buf) items.push(buf); buf = [ln]; continue; }
+      if (reEnc.test(ln)) { if (buf) { items.push(buf); buf = null; } modo = 'encJust'; encJust.push(ln); continue; }
+      buf.push(ln); continue;
+    }
+    if (modo === 'encJust') {
+      if (reLocalData.test(ln.trim())) { encLocalData = ln; modo = 'encAssin'; continue; }
+      if (reUnderline.test(ln.trim())) { modo = 'encAssin'; encAssin.push(ln); continue; }
+      encJust.push(ln); continue;
+    }
+    encAssin.push(ln);
+  }
+  if (buf) items.push(buf);
+
+  if (items.length === 0) {
+    paragrafo(texto, 'justify', false);
+  } else {
+    if (cabCentro.length) paragrafo(cabCentro.join('\n'), 'center', false);
+    if (cabJust.length) paragrafo(cabJust.join('\n'), 'justify', false);
+    for (const it of items) {
+      const itemTexto = it.join('\n');
+      const idx = itemTexto.indexOf(':');
+      if (idx !== -1) {
+        paragrafo(itemTexto.slice(0, idx + 1), 'justify', true);           // rotulo + titulo: negrito
+        const resto = itemTexto.slice(idx + 1).replace(/^\s+/, '');
+        if (resto) paragrafo(resto, 'justify', false);                      // corpo: peso normal
+      } else {
+        paragrafo(itemTexto, 'justify', true);
+      }
+    }
+    if (encJust.length) paragrafo(encJust.join('\n'), 'justify', false);
+    if (encLocalData) paragrafo(encLocalData, 'center', false);
+    if (encAssin.length) paragrafo(encAssin.join('\n'), 'left', false);
+  }
+
+  // Rodape "Pagina X de Y" no centro da margem inferior de todas as paginas.
+  const total = doc.getNumberOfPages();
+  doc.setFont(FONTE, 'normal');
+  doc.setFontSize(10);
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i);
+    doc.text('Página ' + i + ' de ' + total, PW / 2, PH - MARG_BOT / 2, { align: 'center' });
+  }
+  return doc;
+}
+
 function baixarAtaPDF() {
   if (!_ataTextoGerado) { toast('Nada pra baixar', 'err'); return; }
-  // Abre janela formatada em A4 e aciona print — user salva como PDF via browser.
-  // Padrão visual espelha a Ata 1 Praia Dourada (gabarito Matheus):
-  //   - Fonte Arial 12pt, line-height 1.5
-  //   - Margens 2.54cm (sup/dir/inf) + 3.17cm (esq)
-  //   - Texto justificado no corpo; cabeçalho e linha de local/data centralizados
-  //   - @page com margin:0 e margens reais no padding do .page: sem área de
-  //     margem, o browser não tem onde desenhar data/hora/URL — sai limpo
-  //   - ITEMs viram blocos com page-break-inside:avoid pra não cortar
-  const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const corpo = renderAtaBlocos(_ataTextoGerado, esc);
-
-  const w = window.open('', '_blank');
-  if (!w) { toast('Bloqueado pelo navegador. Permita pop-ups e tente novamente.', 'err'); return; }
-  w.document.write(`<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<title> </title>
-<style>
-  @page { size: A4; margin: 0; }
-  html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 12pt; line-height: 1.5; color: #000; }
-  .ata-bloco { margin: 0; white-space: pre-wrap; text-align: justify; text-justify: inter-word; }
-  .ata-bloco.centro { text-align: center; }
-  .ata-bloco.assin  { text-align: left; }
-  .ata-bloco.item   { page-break-inside: avoid; break-inside: avoid; }
-  @media screen {
-    body { background: #f3f4f6; padding: 24px; }
-    .page { background: #fff; max-width: 21cm; min-height: 29.7cm; margin: 0 auto; padding: 2.54cm 2.54cm 2.54cm 3.17cm; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    toast('Biblioteca de PDF nao carregou (verifique a conexao). Tente de novo ou use Baixar Word.', 'err');
+    return;
   }
-  @media print {
-    .page { padding: 2.54cm 2.54cm 2.54cm 3.17cm; box-shadow: none; max-width: none; min-height: 0; }
+  try {
+    const doc = montarAtaPDF(window.jspdf.jsPDF, _ataTextoGerado);
+    // Nome do arquivo a partir dos campos do formulario (fallback "ata.pdf").
+    const slug = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const cond = (document.getElementById('ata-cond') || {}).value || '';
+    const data = (document.getElementById('ata-data') || {}).value || '';
+    let nome = [slug(cond), slug(data)].filter(Boolean).join('_');
+    nome = (nome ? 'Ata_' + nome : 'ata') + '.pdf';
+    doc.save(nome);
+    toast('✓ PDF gerado: ' + nome, 'ok');
+  } catch (e) {
+    toast('Erro ao gerar PDF: ' + (e && e.message ? e.message : e), 'err');
   }
-</style>
-</head>
-<body onload="setTimeout(function(){window.print()},250)">
-<div class="page">${corpo}</div>
-</body>
-</html>`);
-  w.document.close();
-  toast('No diálogo de impressão, escolha "Salvar como PDF"', 'ok');
 }
 
 // Gera a MESMA ata em .docx editável, em paralelo ao PDF (não altera baixarAtaPDF
