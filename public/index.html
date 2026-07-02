@@ -7,6 +7,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/docx@9.5.1/dist/index.iife.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="/ata-fonte-arimo.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="/auth-bootstrap.js" defer></script>
 <style>
@@ -137,6 +140,16 @@
   }
 
   .nav-icon { font-size: 15px; width: 18px; text-align: center; }
+
+  /* Seletor de formato de saida da prestacao (PDF / PowerPoint / Ambos) */
+  .prest-formato { display: flex; flex-wrap: wrap; gap: 8px; }
+  .prest-formato-opcao {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 12px; border: 1px solid var(--border2); border-radius: 8px;
+    background: var(--bg3); color: var(--text); font-size: 13px; cursor: pointer;
+  }
+  .prest-formato-opcao:has(input:checked) { border-color: var(--accent); }
+  .prest-formato-opcao input { accent-color: var(--accent); cursor: pointer; }
 
   .nav-badge {
     margin-left: auto;
@@ -993,7 +1006,10 @@
 
     <div class="nav-section">Gestão</div>
     <div class="nav-item" onclick="showPanel('prestacao')">
-      <span class="nav-icon">📊</span> Prestação de Contas
+      <span class="nav-icon">▤</span> Prestação de Contas
+    </div>
+    <div class="nav-item" onclick="showPanel('previsao')">
+      <span class="nav-icon">◫</span> Previsão Orçamentária
     </div>
     <div class="nav-item" onclick="showPanel('atas')">
       <span class="nav-icon">✎</span> Atas Condominiais
@@ -1254,12 +1270,28 @@
             <span style="font-size:12px;font-family:var(--mono);color:var(--text)"><span id="normalizar-resumo"></span></span>
             <div style="display:flex;gap:8px">
               <button class="btn btn-ghost" onclick="descartarNormalizado()" style="font-size:12px;padding:6px 12px">✕ Descartar</button>
-              <button class="btn btn-primary" onclick="baixarPlanilhaNormalizada()" style="font-size:12px;padding:6px 12px">⬇ Baixar XLSX</button>
+              <button class="btn btn-ghost" onclick="baixarPlanilhaNormalizada()" style="font-size:12px;padding:6px 12px">⬇ Baixar XLSX</button>
+              <button class="btn btn-primary" onclick="abrirRevisaoFromNormalizado()" style="font-size:12px;padding:6px 12px">✓ Revisar papéis e importar</button>
             </div>
           </div>
           <div class="table-wrap" style="max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table id="normalizar-table"></table></div>
-          <p style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-top:8px">⚠ Revise antes de baixar. Após baixar, arraste o .xlsx pro dropzone "Importar Unidades" abaixo pra subir ao Superlógica.</p>
+          <p style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-top:8px">⚠ Revise antes de subir. Use "Revisar papéis e importar" para checar quem é Proprietário, Inquilino ou Dependente antes do envio. Nada sobe sem sua confirmação.</p>
         </div>
+      </div>
+
+      <!-- TELA DE REVISAO DE PAPEIS: gate obrigatorio antes do import (familia A2 e IA) -->
+      <div class="card" id="revisao-unidades" style="display:none">
+        <div class="card-header">
+          <span class="card-title">Revisão de papéis</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" onclick="descartarRevisao()" style="font-size:12px;padding:6px 12px">✕ Descartar</button>
+            <button class="btn btn-primary" onclick="confirmarRevisao()" style="font-size:12px;padding:6px 12px">✓ Confirmar e preparar import</button>
+          </div>
+        </div>
+        <div id="revisao-resumo" style="font-size:12px;font-family:var(--mono);color:var(--text);margin-bottom:8px"></div>
+        <div class="chips" id="revisao-filtro-chips"></div>
+        <div class="table-wrap" style="max-height:460px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table id="revisao-table"></table></div>
+        <p style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-top:8px">Edite o papel onde precisar. Linhas marcadas como Descartar não são enviadas. Ao confirmar, a pré-visualização de import aparece abaixo e nada sobe ao Superlógica sem o clique em Enviar.</p>
       </div>
 
       <div class="card">
@@ -1270,10 +1302,10 @@
              ondragover="handleDrag(event, this)"
              ondragleave="handleDragLeave(this)"
              ondrop="handleDrop(event,'unidades')">
-          <input type="file" accept=".xlsx,.xls,.csv" onchange="handleFile(event,'unidades')">
+          <input type="file" accept=".xlsx,.xls,.csv,application/pdf" onchange="handleFile(event,'unidades')">
           <div class="drop-icon">⊡</div>
-          <div class="drop-title">Arraste a planilha de unidades</div>
-          <div class="drop-sub">.xlsx .xls .csv</div>
+          <div class="drop-title">Arraste a planilha ou o PDF de unidades</div>
+          <div class="drop-sub">.pdf .xlsx .xls .csv · W045A e planilhas conhecidas processados por código, sem IA</div>
         </div>
       </div>
 
@@ -1407,7 +1439,8 @@
         <div id="prest-files-list" style="margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
 
         <div style="margin-top:8px;font-size:11px;color:var(--muted);font-family:var(--mono)">
-          Geralmente são relatórios W011A e W015A do Superlógica. Atas, fotos e comprovantes podem entrar em casos excepcionais.
+          W011A e W015A (recomendados). W016A opcional, apenas conferência.<br>
+          Com o W011A sai a Evolução mensal e o Superávit mensal.
         </div>
       </div>
 
@@ -1424,13 +1457,38 @@
                     oninput="prestacaoAtualizarObservacoes(this.value)"></textarea>
         </div>
 
+        <div style="margin-top:12px">
+          <label style="display:block;margin-bottom:6px;font-size:13px;color:var(--muted)">Formato de saída</label>
+          <div class="prest-formato" role="radiogroup" aria-label="Formato de saída">
+            <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="ambos" checked> Ambos (PDF + PowerPoint)</label>
+            <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="pdf"> Somente PDF</label>
+            <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="pptx"> Somente PowerPoint</label>
+          </div>
+        </div>
+
         <div style="display:flex;gap:8px;margin-top:8px">
-          <button id="prest-btn-gerar" class="btn btn-primary" onclick="prestacaoGerar()" disabled>
+          <button id="prest-btn-gerar" class="btn btn-primary" onclick="prestacaoGerarServico()" disabled>
             📊 Gerar prestação de contas
           </button>
           <button class="btn btn-ghost" onclick="prestacaoLimparTudo()">Limpar tudo</button>
         </div>
       </div>
+
+    </div>
+
+    <div class="panel" id="panel-previsao">
+
+      <!-- Banner do condomínio ativo (renderizado dinamicamente por renderBannerCondAtivo) -->
+      <div id="banner-cond-previsao"></div>
+
+      <!-- Modulo de Previsao Orcamentaria embutido (public/previsao-modulo.html).
+           Roda 100% no navegador, em memoria: nenhuma planilha financeira de cliente
+           sai do navegador (sem servidor, sem banco). O src e definido sob demanda em
+           previsaoInit() para carregar o modulo so quando a aba abre.
+           Fluxo antigo de PDF (previsao.js + rotas /api/previsao + tabela previsoes_orcamentarias)
+           foi descontinuado nesta aba e mantido no repo para reversibilidade. -->
+      <iframe id="prev-iframe" title="Previsao Orcamentaria"
+              style="width:100%;border:0;border-radius:10px;min-height:calc(100vh - 150px);background:#fff"></iframe>
 
     </div>
 
@@ -1593,6 +1651,7 @@
             <div style="display:flex;gap:8px">
               <button class="btn btn-ghost" onclick="copiarAtaTexto()" style="font-size:12px;padding:6px 12px">⎘ Copiar texto</button>
               <button class="btn btn-primary" onclick="baixarAtaPDF()" style="font-size:12px;padding:6px 12px">⬇ Baixar PDF</button>
+              <button class="btn btn-primary" onclick="baixarAtaWord()" style="font-size:12px;padding:6px 12px">⬇ Baixar Word</button>
               <button class="btn btn-ghost" onclick="fecharAtaGerada()" style="font-size:12px;padding:6px 12px">✕ Fechar</button>
             </div>
           </div>
@@ -1914,7 +1973,7 @@ function setCondominioAtivo(obj) {
   // Atualiza card do Dashboard se já estiver no DOM
   if (typeof atualizarDashCond === 'function') atualizarDashCond();
   // Atualiza banners nos painéis que já foram renderizados
-  ['despesas','unidades','boletos','financeiro'].forEach(function(p) {
+  ['despesas','unidades','boletos','financeiro','previsao'].forEach(function(p) {
     if (document.getElementById('banner-cond-' + p)) renderBannerCondAtivo(p);
   });
   // Sincroniza o seletor do topbar quando a troca vem de outro fluxo (dashboard, modal)
@@ -2286,6 +2345,7 @@ const PAGE_META = {
   tarefas:       { title: 'Tarefas', sub: 'em breve' },
   configuracoes: { title: 'Configurações', sub: 'credenciais e preferências' },
   prestacao:     { title: 'Prestação de Contas', sub: 'gerar apresentação financeira anual' },
+  previsao:      { title: 'Previsão Orçamentária', sub: 'PDFs W011A e W045A geram planilha editável' },
   atas:          { title: 'Atas Condominiais', sub: 'geração automática com IA' },
   consumo:       { title: 'Leitura de Consumo', sub: 'fotos de medidores → Superlógica' },
 };
@@ -2311,6 +2371,9 @@ function showPanel(name) {
   }
   if (name === 'prestacao') {
     prestacaoInit();
+  }
+  if (name === 'previsao') {
+    if (typeof previsaoInit === 'function') previsaoInit();
   }
 }
 
@@ -2373,6 +2436,11 @@ function handleFile(e, type) {
 // LEITURA DE PLANILHA
 // ============================================================
 function processFile(file, type) {
+  // PDF de unidades vai pelo caminho por codigo (reconhecedores posicionais).
+  // Demais tipos e planilhas seguem pela leitura via SheetJS abaixo.
+  const ehPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+  if (type === 'unidades' && ehPdf) { processarPdfUnidades(file); return; }
+
   const reader = new FileReader();
   reader.onload = function(e) {
     const data = new Uint8Array(e.target.result);
@@ -2405,6 +2473,19 @@ function processFile(file, type) {
       }
       const safeHeader = allRows[headerIdx] || [];
       const headers = safeHeader.map(h => String(h||'').trim());
+
+      // Familia A2 (W045A "Contatos das unidades" tabular): roteia para a tela de
+      // revisao de papel. NAO filtra linhas de unidade em branco aqui, pois elas
+      // herdam a unidade de cima (forward fill feito dentro de parseW045AContatos).
+      const familiaPlanilha = detectarFamiliaPlanilha(headers);
+      if (familiaPlanilha === 'w045a-contatos') {
+        const contatos = inferirPapeis(parseW045AContatos(headers, allRows.slice(headerIdx + 1)));
+        if (!contatos.length) { toast('Nenhum contato reconhecido na planilha', 'err'); return; }
+        abrirRevisao(contatos, file.name);
+        toast(contatos.length + ' contatos lidos de "' + file.name + '". Revise os papéis antes de importar.', 'ok');
+        return;
+      }
+
       const data_rows = allRows.slice(headerIdx + 1).filter(r =>
         r && r[0] && String(r[0]).trim() !== '' && String(r[0]).trim() !== 'Unidade'
       );
@@ -2791,6 +2872,1056 @@ function renderPreviewUnidades(processed, filename) {
     html += '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:12px">... mais ' + (processed.length - 8) + ' unidades</td></tr>';
   }
   table.innerHTML = html;
+}
+
+// ============================================================
+// PARSER W045A "CONTATOS DAS UNIDADES" (FAMILIA A2) + INFERENCIA DE PAPEL
+// ------------------------------------------------------------
+// Familia A2: relatorio W045A "Contatos das unidades" em planilha tabular
+// (ex: Villaggio Laranjeiras). Colunas tipicas:
+//   Unidade | Nome | Tipo | Telefone | Celular | Endereco | Complemento |
+//   Bairro | Cidade | Estado | CEP | CPF/CNPJ | E-mail | Fracao
+// A coluna Unidade so aparece na primeira linha de cada unidade; as demais
+// pessoas da unidade herdam (forward fill). A coluna Tipo traz valores
+// ambiguos (Residente, Visitante, Imobiliaria) que o motor de inferencia
+// resolve em Proprietario, Inquilino ou Dependente, com nivel de confianca.
+// Tudo passa pela tela de revisao editavel antes de qualquer envio.
+// ============================================================
+
+// Estado da tela de revisao: lista plana de contatos + nome do arquivo de origem.
+let _revisaoContatos = null;
+let _revisaoSource = '';
+// Filtro por status (confianca) da tela de revisao: todos, alta, media ou incerta.
+let _revisaoFiltro = 'todos';
+
+// Detecta se os cabecalhos sao da familia A2 (W045A tabular). Retorna
+// 'w045a-contatos' quando reconhece o layout, ou null para deixar o fluxo
+// padrao (formato unificado ou antigo) seguir. Heuristica: coluna 0 fala de
+// unidade, existe coluna Nome e coluna Tipo logo no inicio, e ha coluna de
+// contato (Celular ou CPF), o que distingue do formato unificado de 26 colunas.
+function detectarFamiliaPlanilha(headers) {
+  if (!headers || headers.length < 3) return null;
+  var h = headers.map(function(s) { return String(s || '').trim().toLowerCase(); });
+  var idxNome = h.indexOf('nome');
+  var idxTipo = h.indexOf('tipo');
+  var temUnidade = h[0].indexOf('unidade') !== -1;
+  var temNome = idxNome !== -1 && idxNome <= 2;
+  var temTipo = idxTipo !== -1 && idxTipo <= 3;
+  // Exige a coluna Celular: assinatura distintiva do W045A tabular, que separa
+  // esta familia do formato unificado (26 col) e do antigo do Superlogica.
+  var temCelular = h.some(function(s) { return s.indexOf('celular') !== -1; });
+  if (temUnidade && temNome && temTipo && temCelular) return 'w045a-contatos';
+  return null;
+}
+
+// Separa o texto da unidade em numero e bloco. No W045A o numero vem primeiro
+// e o bloco depois: "LJ17 B8" vira numero "LJ17" bloco "B8"; "0101 A2" vira
+// "0101"/"A2"; "101 A" vira "101"/"A"; "001" vira "001"/"".
+function splitUnidadeNumeroBloco(raw) {
+  var v = String(raw == null ? '' : raw).trim();
+  if (!v) return { numero: '', bloco: '' };
+  var partes = v.split(/\s+/);
+  if (partes.length >= 2) return { numero: partes[0], bloco: partes.slice(1).join(' ') };
+  return { numero: v, bloco: '' };
+}
+
+// Extrai telefones validos de uma celula suja. As planilhas trazem ruido como
+// "(27)992388313Larissa" ou "irmao Aleandro tel 3752-1255". Pega cada sequencia
+// de digitos com 8 a 13 numeros, remove o codigo de pais 55 quando presente, e
+// devolve so os numeros validos. Nunca inventa: o que nao for digito e descartado.
+function extrairTelefonesValidos(str) {
+  if (!str) return [];
+  // Charset intencionalmente SEM ponto: telefones nas planilhas usam espaco,
+  // parenteses, + e hifen como separador, enquanto datas usam ponto (15.05.2024).
+  // Excluir o ponto evita capturar datas como se fossem numeros de telefone.
+  var bruto = String(str).match(/\d[\d\s()+-]{6,}\d/g) || [];
+  var out = [];
+  bruto.forEach(function(m) {
+    var d = m.replace(/\D/g, '');
+    // Remove codigo de pais 55 quando o numero fica com 12 ou 13 digitos
+    if ((d.length === 12 || d.length === 13) && d.indexOf('55') === 0) d = d.slice(2);
+    if (d.length >= 8 && d.length <= 11 && out.indexOf(d) === -1) out.push(d);
+  });
+  return out;
+}
+
+// Classifica o documento por quantidade de digitos: 14 e CNPJ, 11 e CPF.
+// Valores fora desses tamanhos ficam vazios para nao gerar documento invalido.
+function limparDocumento(str) {
+  var d = String(str == null ? '' : str).replace(/\D/g, '');
+  if (d.length === 14) return { cpf: '', cnpj: d };
+  if (d.length === 11) return { cpf: d, cnpj: '' };
+  return { cpf: '', cnpj: '' };
+}
+
+// Acrescenta um trecho a observacao sem perder o que ja estava la.
+function anexarObs(obsAtual, trecho) {
+  if (!trecho) return obsAtual || '';
+  return obsAtual ? (obsAtual + ' | ' + trecho) : trecho;
+}
+
+// Le a planilha A2 (linhas a partir do cabecalho, SEM filtrar as linhas de
+// unidade em branco, pois elas herdam a unidade de cima) e devolve uma lista
+// plana de contatos. Cada contato carrega tipoOriginal (valor cru da coluna
+// Tipo) para o motor de inferencia decidir o papel depois.
+function parseW045AContatos(headers, rawRows) {
+  var h = headers.map(function(s) { return String(s || '').trim().toLowerCase(); });
+  // Localiza indices de coluna de forma flexivel (tolera variacao de nome)
+  var acharCol = function(preds) {
+    for (var i = 0; i < h.length; i++) {
+      for (var p = 0; p < preds.length; p++) { if (h[i].indexOf(preds[p]) !== -1) return i; }
+    }
+    return -1;
+  };
+  var iUnidade = 0;
+  var iNome    = h.indexOf('nome');
+  var iTipo    = h.indexOf('tipo');
+  var iTel     = acharCol(['telefone']);
+  var iCel     = acharCol(['celular']);
+  var iEnd     = acharCol(['endereço', 'endereco']);
+  var iCompl   = acharCol(['complemento']);
+  var iBairro  = acharCol(['bairro']);
+  var iCidade  = acharCol(['cidade']);
+  var iEstado  = acharCol(['estado', 'uf']);
+  var iCep     = acharCol(['cep']);
+  var iDoc     = acharCol(['cpf', 'cnpj']);
+  var iEmail   = acharCol(['mail']);
+  var iFracao  = acharCol(['fração', 'fracao']);
+
+  var clean = function(row, idx) {
+    if (idx < 0) return '';
+    var v = row[idx];
+    if (v === null || v === undefined) return '';
+    var s = String(v).trim();
+    var lower = s.toLowerCase();
+    if (['nan', 'cep inválido', 'cep invalido', 'inválido', 'invalido'].indexOf(lower) !== -1) return '';
+    return s;
+  };
+
+  var contatos = [];
+  var ultimaUnidade = '';
+  var seq = 0;
+
+  rawRows.forEach(function(row) {
+    if (!row || row.length === 0) return;
+    var unidadeCel = clean(row, iUnidade);
+    if (unidadeCel) ultimaUnidade = unidadeCel;
+    var nome = clean(row, iNome);
+    var tipoOriginal = clean(row, iTipo);
+    // Linha sem nome e sem tipo nao representa pessoa (cabecalho repetido, rodape)
+    if (!nome && !tipoOriginal) return;
+    if (!ultimaUnidade) return;
+
+    var split = splitUnidadeNumeroBloco(ultimaUnidade);
+    var doc = limparDocumento(clean(row, iDoc));
+
+    // Telefones: junta as duas colunas, separa validos, primeiro vira o campo,
+    // o resto vai pra observacao para nao se perder.
+    var tels = extrairTelefonesValidos(clean(row, iTel) + ' ; ' + clean(row, iCel));
+    var telefone = tels.length ? tels[0] : '';
+    var telExtras = tels.slice(1);
+
+    // Emails: o primeiro vai pro campo, demais pra observacao.
+    var emailsBrutos = clean(row, iEmail).split(/[;,]/).map(function(s) { return s.trim(); }).filter(Boolean);
+    var email = emailsBrutos.length ? emailsBrutos[0] : '';
+    var emailExtras = emailsBrutos.slice(1);
+
+    var obs = '';
+    if (telExtras.length)  obs = anexarObs(obs, 'Telefones extras: ' + telExtras.join(', '));
+    if (emailExtras.length) obs = anexarObs(obs, 'Emails extras: ' + emailExtras.join(', '));
+
+    seq += 1;
+    contatos.push({
+      id: seq,
+      unidade: split.numero,
+      bloco: split.bloco,
+      nome: nome,
+      tipoOriginal: tipoOriginal,
+      papel: '',
+      confianca: '',
+      motivo: '',
+      cpf: doc.cpf,
+      cnpj: doc.cnpj,
+      rg: '',
+      dtNasc: '',
+      genero: '',
+      email: email,
+      ddi: telefone ? '55' : '',
+      telefone: telefone,
+      tipoTel: '',
+      cep: clean(row, iCep).replace(/\D/g, ''),
+      endereco: clean(row, iEnd),
+      numero: '',
+      complemento: clean(row, iCompl),
+      bairro: clean(row, iBairro),
+      cidade: clean(row, iCidade),
+      estado: clean(row, iEstado),
+      fracao: clean(row, iFracao),
+      dtEntrada: '',
+      dtSaida: '',
+      recebeCobranca: '',
+      obs: obs
+    });
+  });
+
+  return contatos;
+}
+
+// Compara sobrenomes para o sinal fraco de parentesco. Considera parentes se
+// o ultimo sobrenome coincide ou se ha qualquer token de sobrenome em comum.
+function mesmoSobrenome(a, b) {
+  var sa = String(a || '').trim().toUpperCase().split(/\s+/).filter(function(t) { return t.length > 2; });
+  var sb = String(b || '').trim().toUpperCase().split(/\s+/).filter(function(t) { return t.length > 2; });
+  if (!sa.length || !sb.length) return false;
+  if (sa[sa.length - 1] === sb[sb.length - 1]) return true;
+  return sa.some(function(t) { return sb.indexOf(t) !== -1; });
+}
+
+// Detecta a marcacao textual de inquilino escrita DENTRO do nome do contato
+// (alguns condominios nao usam a coluna Tipo para inquilino). Regra geral, nao
+// lista fixa de condominio. Devolve:
+//   'titular' quando a palavra inquilino/inquilina qualifica a propria pessoa
+//             (ex "Inquilino - JONAS", "LUANNA - INQUILINA", "Inquilino-LUCAS");
+//   'parente' quando inquilino vem numa construcao de parentesco (ex "cunhada do
+//             inquilino", "sogra inquilino"), entao a pessoa e parente, nao o titular;
+//   null      quando nao ha mencao a inquilino no nome.
+// Cobre variacoes de grafia: hifen, sem espaco, maiusculo/minusculo, antes ou
+// depois do nome, com e sem acento.
+// Graus de parentesco reconhecidos (acento ja removido pelo normalize, entao
+// "irma", "irma", "irmao", "irmao" caem todos aqui). A deteccao de parentesco
+// NAO depende do acento: depende da LIGACAO com um titular (ver abaixo).
+var _PARENTESCO = 'cunhad[oa]|sogr[oa]|genro|nora|filh[oa]|entead[oa]|padrasto|madrasta|pai|mae|irma|irmao|esposo|esposa|marido|mulher|companheir[oa]|tio|tia|sobrinh[oa]|prim[oa]|avo|avos|net[oa]|namorad[oa]|conjuge|parente|agregad[oa]';
+// Parentesco LIGADO a "inquilino": grau de parentesco seguido (so por espacos,
+// NUNCA por hifen) de um "do/da" opcional e da palavra inquilino. O \\s+ sem hifen
+// e proposital: protege "IRMA - INQUILINA" (nome + qualificador, a propria pessoa
+// e a inquilina) de virar parente, ja que ali ha hifen entre o nome e inquilina.
+var _PARENTESCO_LIGADO_INQ_RE = new RegExp('\\b(' + _PARENTESCO + ')\\s+(d[oa]\\s+)?inquilin');
+// Mesmo para "proprietario/proprietaria": parente do dono (ex "irmao da
+// proprietaria", "namorado proprietaria") vira Dependente, sem confundir com a
+// propria dona ("MAYARA - PROPRIETARIA"), que nao tem grau de parentesco antes.
+var _PARENTESCO_LIGADO_PROP_RE = new RegExp('\\b(' + _PARENTESCO + ')\\s+(d[oa]\\s+)?proprietari');
+// Campo cujo conteudo INTEIRO e um unico grau de parentesco (compilado uma vez).
+var _SO_PARENTESCO_RE = new RegExp('^(' + _PARENTESCO + ')$');
+
+// Titular declarado pela COLUNA Tipo (nao por marcacao no nome): Proprietario,
+// Inquilino ou Locatario. Esses sao a evidencia mais forte do documento e nao
+// devem ser rebaixados nem virar incertos pelas regras de parentesco no nome
+// (mesma protecao que evita deixar a unidade sem dono).
+function ehTitularDeclarado(tipoOriginal) {
+  return /^(propriet[aá]ri[oa]|inquilino|locat[aá]ri[oa])$/i.test(String(tipoOriginal || '').trim());
+}
+
+// Detecta a marcacao textual de inquilino DENTRO do nome do contato (condominios
+// que nao usam a coluna Tipo para inquilino). O que decide nao e o acento, e a
+// LIGACAO com o titular. Devolve:
+//   'titular' -> inquilino qualifica a propria pessoa ("Inquilino - JONAS",
+//                "LUANNA - INQUILINA"); a pessoa e o inquilino;
+//   'parente' -> grau de parentesco ligado a inquilino ("cunhada do inquilino",
+//                "irma do inquilino" mesmo sem acento, "cunhada inquilino");
+//   null      -> nao ha mencao a inquilino no nome.
+// Protecao contra nome proprio: "Irma Souza Costa" (sem inquilino no campo) -> null;
+// "Inquilino - Irma" -> titular (inquilino vem antes do nome, nao ha parentesco
+// ligando Irma a outro titular).
+function marcacaoInquilino(nome) {
+  var t = String(nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (!/inquilin[oa]/.test(t)) return null;
+  if (/\bd[oa]\s+inquilin/.test(t)) return 'parente';   // X do/da inquilino
+  if (_PARENTESCO_LIGADO_INQ_RE.test(t)) return 'parente';  // parentesco ligado a inquilino
+  return 'titular';
+}
+
+// Parente do PROPRIETARIO ligado no nome (ex "irmao da proprietaria"): a pessoa e
+// dependente do dono, nao o dono. So dispara com grau de parentesco antes de
+// "proprietario", entao "MAYARA - PROPRIETARIA" (a propria dona) nao casa.
+function parenteDeProprietario(nome) {
+  var t = String(nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // Possessivo "X do/da proprietario" (qualquer X) OU grau de parentesco adjacente.
+  return /\bd[oa]\s+proprietari/.test(t) || _PARENTESCO_LIGADO_PROP_RE.test(t);
+}
+
+// Caso duvidoso: o campo so tem grau(s) de parentesco, sem nome de pessoa e sem
+// ligacao a titular (ex o campo inteiro e "irmao" ou "irma"). Cadastro incompleto:
+// cai como incerto para o operador decidir, nunca chuta.
+function nomeSoParentesco(nome) {
+  var t = String(nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z\s]/g, ' ').trim();
+  if (/inquilin|proprietari/.test(t)) return false; // tem ligacao a titular: nao e o caso duvidoso
+  var toks = t.split(/\s+/).filter(Boolean);
+  if (!toks.length) return false;
+  var filler = /^(do|da|de|e)$/;
+  var temParente = false, temOutro = false;
+  toks.forEach(function(tk) { if (_SO_PARENTESCO_RE.test(tk)) temParente = true; else if (!filler.test(tk)) temOutro = true; });
+  return temParente && !temOutro;
+}
+// Le o qualificador entre parenteses no nome e classifica o papel na familia do
+// inquilino. Usado para desempatar quando ha varios "Inquilino -" na unidade.
+//   'titular'    -> (Marido), (Esposa), (Titular), (Companheiro) etc;
+//   'dependente' -> (Filho), (Filha), (Dependente) ou parentesco claro;
+//   null         -> sem parenteses, ou conteudo que nao deixa claro o papel.
+// Varre TODOS os pares de parenteses e devolve o primeiro que classificar, para
+// nao falhar quando o nome traz outro parentese antes (ex "(APT 302) (Esposa)").
+function qualificadorPapel(nome) {
+  var t = String(nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  var re = /\(([^)]*)\)/g, m;
+  while ((m = re.exec(t)) !== null) {
+    var q = m[1].trim();
+    if (/\b(marido|esposo|esposa|titular|companheir[oa]|conjuge)\b/.test(q)) return 'titular';
+    if (/\b(filh[oa]|dependente|net[oa]|entead[oa]|sobrinh[oa]|irma|irmao|prim[oa]|cunhad[oa]|sogr[oa]|genro|nora|menor|crianc[ao])\b/.test(q)) return 'dependente';
+  }
+  return null;
+}
+
+// Motor de inferencia de papel. Recebe a lista plana de contatos, agrupa por
+// unidade+bloco e define papel (proprietario|inquilino|dependente|descartar),
+// confianca (alta|media|incerta) e motivo de cada um, seguindo os sinais
+// aprovados. Mutaciona e devolve a propria lista.
+function inferirPapeis(contatos) {
+  var PROP = ['proprietário', 'proprietario'];
+  var INQ  = ['inquilino', 'locatário', 'locatario'];
+  var IMOB = ['imobiliária', 'imobiliaria'];
+
+  // Agrupa preservando a ordem de aparicao
+  var grupos = {};
+  var ordem = [];
+  contatos.forEach(function(c) {
+    var chave = c.unidade + '|' + c.bloco;
+    if (!grupos[chave]) { grupos[chave] = []; ordem.push(chave); }
+    grupos[chave].push(c);
+  });
+
+  ordem.forEach(function(chave) {
+    var grupo = grupos[chave];
+
+    // Passo 1: classificacao base pelo tipo declarado
+    grupo.forEach(function(c) {
+      var t = String(c.tipoOriginal || '').trim().toLowerCase();
+      c._cls = '';
+      if (PROP.indexOf(t) !== -1) {
+        c._cls = 'prop';
+      } else if (INQ.indexOf(t) !== -1) {
+        c.papel = 'inquilino'; c.confianca = 'alta'; c.motivo = 'Tipo declarado: Inquilino';
+      } else if (t === 'dependente') {
+        c.papel = 'dependente'; c.confianca = 'alta'; c.motivo = 'Tipo declarado: Dependente';
+      } else if (IMOB.indexOf(t) !== -1) {
+        c.papel = 'descartar'; c.confianca = 'media'; c._imob = true;
+        c.motivo = 'Imobiliaria administra a unidade, nao e morador; contato guardado na Observacao';
+      } else if (t === 'visitante') {
+        c.papel = 'descartar'; c.confianca = 'media';
+        c.motivo = 'Visitante nao e morador fixo; revise se deve entrar no cadastro';
+      } else if (t === 'residente') {
+        c._residente = true;
+      } else {
+        c._semTipo = true;
+      }
+    });
+
+    var owners = grupo.filter(function(c) { return c._cls === 'prop'; });
+    var ownerHumano = owners.filter(function(c) { return !c.cnpj; })[0] || null;
+    var temCnpjOwner = owners.some(function(c) { return c.cnpj; });
+
+    // Passo 2: titularidade
+    if (owners.length === 1) {
+      owners[0].papel = 'proprietario'; owners[0].confianca = 'alta';
+      owners[0].motivo = 'Tipo declarado: Proprietario';
+    } else if (owners.length > 1) {
+      owners.forEach(function(o) {
+        o.papel = 'proprietario'; o.confianca = 'incerta';
+        o.motivo = 'Unidade com mais de um Proprietario declarado, confirme o titular de cobranca';
+      });
+    }
+
+    // Passo 3: resolucao de Residente
+    grupo.filter(function(c) { return c._residente; }).forEach(function(r) {
+      if (temCnpjOwner) {
+        r.papel = 'inquilino'; r.confianca = 'media';
+        r.motivo = 'Proprietario e empresa (CNPJ); residente tratado como inquilino';
+      } else if (ownerHumano) {
+        if (mesmoSobrenome(r.nome, ownerHumano.nome)) {
+          r.papel = 'dependente'; r.confianca = 'media';
+          r.motivo = 'Residente com sobrenome do titular, provavel familiar';
+        } else {
+          r.papel = 'inquilino'; r.confianca = 'media';
+          r.motivo = 'Residente sem parentesco aparente em unidade com proprietario, provavel inquilino';
+        }
+      } else {
+        // Sem proprietario na unidade: o primeiro residente vira o melhor palpite
+        // de titular; os demais ficam como dependente incerto para nao gerar dois
+        // proprietarios na mesma unidade. A decisao final e do operador na revisao.
+        var jaHaProp = grupo.some(function(x) { return x.papel === 'proprietario'; });
+        if (jaHaProp) {
+          r.papel = 'dependente'; r.confianca = 'incerta';
+          r.motivo = 'Residente adicional em unidade sem proprietario declarado, confirme se e dependente ou inquilino';
+        } else {
+          r.papel = 'proprietario'; r.confianca = 'incerta';
+          r.motivo = 'Residente isolado sem proprietario declarado, melhor palpite a confirmar';
+        }
+      }
+    });
+
+    // Passo 4: pessoas sem tipo viram dependente por padrao
+    grupo.filter(function(c) { return c._semTipo; }).forEach(function(c) {
+      c.papel = 'dependente'; c.confianca = 'media';
+      c.motivo = 'Tipo nao informado no documento, classificado como dependente';
+    });
+
+    // Passo 5: eleicao de titular quando a unidade nao tem nenhum proprietario
+    if (owners.length === 0) {
+      var candidatos = grupo.filter(function(c) { return c.papel !== 'descartar'; });
+      var jaTemProp = candidatos.some(function(c) { return c.papel === 'proprietario'; });
+      if (candidatos.length && !jaTemProp) {
+        // Melhor palpite: prioriza CNPJ, depois quem tem CPF e telefone, senao o primeiro
+        var eleito = candidatos.filter(function(c) { return c.cnpj; })[0] ||
+                     candidatos.filter(function(c) { return c.cpf && c.telefone; })[0] ||
+                     candidatos.filter(function(c) { return c.cpf; })[0] ||
+                     candidatos[0];
+        eleito.papel = 'proprietario'; eleito.confianca = 'incerta';
+        eleito.motivo = 'Unidade sem Proprietario declarado, eleito como melhor palpite, confirme';
+      }
+    }
+
+    // Passo 6: guarda o contato da imobiliaria na observacao de um contato mantido
+    var imobs = grupo.filter(function(c) { return c._imob; });
+    if (imobs.length) {
+      var alvo = grupo.filter(function(c) { return c.papel === 'proprietario'; })[0] ||
+                 grupo.filter(function(c) { return c.papel !== 'descartar'; })[0] || null;
+      if (alvo) {
+        imobs.forEach(function(im) {
+          var info = 'Imobiliaria: ' + (im.nome || '') +
+                     (im.telefone ? ' tel ' + im.telefone : '') +
+                     (im.email ? ' ' + im.email : '');
+          alvo.obs = anexarObs(alvo.obs, info.trim());
+        });
+      }
+    }
+
+    // Passo 7: marcacao textual de inquilino no nome SOBREPOE a inferencia.
+    // So age quando ha marcacao no nome; condominios que usam a coluna Tipo para
+    // inquilino normalmente nao tem marcacao e seguem intactos (regra 4).
+    grupo.forEach(function(c) { c._marc = marcacaoInquilino(c.nome); });
+    var titulares = grupo.filter(function(c) { return c._marc === 'titular'; });
+    var parentes = grupo.filter(function(c) { return c._marc === 'parente'; });
+    // Rebaixa inquilinos vindos da INFERENCIA (nao da coluna Tipo nem de marcacao)
+    // quando a unidade tem marcacao textual: so pode haver um inquilino por unidade.
+    var rebaixarInferidos = function(conf, motivo) {
+      grupo.forEach(function(c) {
+        // So rebaixa inquilino vindo da INFERENCIA. Preserva o que veio da coluna
+        // Tipo (Inquilino ou Locatario) e o que veio da marcacao textual (_marc).
+        if (c.papel === 'inquilino' && c._marc == null &&
+            !/^(inquilino|locat[aá]ri[oa])$/i.test(String(c.tipoOriginal || '').trim())) {
+          c.papel = 'dependente'; c.confianca = conf; c.motivo = motivo;
+        }
+      });
+    };
+    if (titulares.length === 1) {
+      titulares[0].papel = 'inquilino'; titulares[0].confianca = 'media';
+      titulares[0].motivo = 'Inquilino identificado pela marcacao no nome do contato';
+      parentes.forEach(function(p) { p.papel = 'dependente'; p.confianca = 'media'; p.motivo = 'Parente do inquilino, marcado no nome'; });
+      rebaixarInferidos('media', 'Inquilino titular definido por marcacao textual; este passa a dependente');
+    } else if (titulares.length > 1) {
+      // Varios "Inquilino -" na unidade. Tenta resolver pelos qualificadores entre
+      // parenteses, mas SO em caso 100% claro: exatamente um titular (Marido/Esposa/
+      // Titular) e todos os demais com qualificador de dependente. Qualquer ausencia
+      // ou ambiguidade cai incerta (nunca chuta o titular).
+      var quals = titulares.map(function(t) { return qualificadorPapel(t.nome); });
+      var nTitular = quals.filter(function(q) { return q === 'titular'; }).length;
+      var todosClassificados = quals.every(function(q) { return q != null; });
+      if (nTitular === 1 && todosClassificados) {
+        titulares.forEach(function(t, i) {
+          if (quals[i] === 'titular') { t.papel = 'inquilino'; t.confianca = 'media'; t.motivo = 'Inquilino titular pelo qualificador no nome (ex Marido/Titular)'; }
+          else { t.papel = 'dependente'; t.confianca = 'media'; t.motivo = 'Dependente do inquilino pelo qualificador no nome (ex Filho/Filha)'; }
+        });
+        parentes.forEach(function(p) { p.papel = 'dependente'; p.confianca = 'media'; p.motivo = 'Parente do inquilino, marcado no nome'; });
+        rebaixarInferidos('media', 'Inquilino titular definido por qualificador; este passa a dependente');
+      } else {
+        titulares.forEach(function(t) { t.papel = 'inquilino'; t.confianca = 'incerta'; t.motivo = 'Mais de um candidato a inquilino sem qualificador claro de titular, defina o titular'; });
+        parentes.forEach(function(p) { p.papel = 'dependente'; p.confianca = 'incerta'; p.motivo = 'Parente de inquilino em unidade com titular indefinido'; });
+        rebaixarInferidos('incerta', 'Unidade com mais de um candidato a inquilino, defina o titular');
+      }
+    } else if (parentes.length) {
+      // Ha parentes de inquilino mas nenhum titular claro: unidade incerta
+      parentes.forEach(function(p) { p.papel = 'dependente'; p.confianca = 'incerta'; p.motivo = 'Parente de inquilino sem titular claro na unidade, defina o inquilino titular'; });
+      rebaixarInferidos('incerta', 'Unidade tem parente de inquilino mas titular indefinido, defina o titular');
+    }
+
+    // Passo 8: parentesco ligado ao PROPRIETARIO no nome (ex "irmao da
+    // proprietaria") e dependente do dono. So rebaixa quem nao veio da coluna Tipo
+    // nem da marcacao textual de inquilino, para nao mexer em titular declarado.
+    grupo.forEach(function(c) {
+      if (c.papel !== 'dependente' && c.papel !== 'descartar' && c._marc == null &&
+          !/^(proprietario|propriet[aá]ri[oa]|inquilino|locat[aá]ri[oa])$/i.test(String(c.tipoOriginal || '').trim()) &&
+          parenteDeProprietario(c.nome)) {
+        c.papel = 'dependente'; c.confianca = 'media'; c.motivo = 'Parente do proprietario, ligado no nome do contato';
+      }
+    });
+
+    // Passo 9: campo so com grau de parentesco, sem nome nem ligacao a titular,
+    // cai incerto para decisao manual (cadastro incompleto). Nunca chuta. Nao
+    // mexe em titular declarado pela coluna Tipo (ex proprietario chamado "Irma").
+    grupo.forEach(function(c) {
+      if (c.papel !== 'descartar' && c.papel !== 'proprietario' &&
+          !ehTitularDeclarado(c.tipoOriginal) && nomeSoParentesco(c.nome)) {
+        c.confianca = 'incerta';
+        c.motivo = 'Campo so traz grau de parentesco, sem nome nem titular ligado; defina manualmente';
+      }
+    });
+
+    // Passo 10: regra especial SO para "irma"/"irmao" (decisao do Matheus 2026-06-30):
+    // a palavra (com/sem acento, normalizada) e SEMPRE parentesco -> Dependente,
+    // sem exigir ligacao com titular. Campo literalmente so "irma"/"irmao" sem nome
+    // cai incerto. NAO demove titular declarado pela coluna Tipo (proprietario,
+    // inquilino ou locatario chamado "Irma"), para nao deixar a unidade sem titular;
+    // mas a marcacao textual "Inquilino - Irma" no nome vira dependente (a palavra
+    // irma vence, decisao consciente do Matheus). "irma|irmao" sao seguros nessa
+    // ordem: o \b nas duas pontas impede "irma" de casar dentro de "irmao".
+    grupo.forEach(function(c) {
+      if (c.papel === 'descartar' || c.papel === 'proprietario' || ehTitularDeclarado(c.tipoOriginal)) return;
+      var t = String(c.nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      if (!/\b(irma|irmao)\b/.test(t)) return;
+      var soPalavra = /^(irma|irmao)$/.test(t.replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim());
+      if (soPalavra) {
+        c.papel = 'dependente'; c.confianca = 'incerta';
+        c.motivo = 'Campo so com "irma/irmao" sem nome de pessoa; defina manualmente';
+      } else if (c.papel !== 'dependente') {
+        c.papel = 'dependente'; c.confianca = 'media';
+        c.motivo = 'Contato com "irma/irmao" tratado sempre como parente (dependente)';
+      }
+    });
+
+    // Limpeza dos marcadores temporarios
+    grupo.forEach(function(c) {
+      delete c._cls; delete c._residente; delete c._semTipo; delete c._imob; delete c._marc;
+      if (!c.papel) { c.papel = 'dependente'; c.confianca = 'media'; c.motivo = 'Sem classificacao, dependente por seguranca'; }
+    });
+  });
+
+  return contatos;
+}
+
+// Converte um contato revisado numa linha de 26 colunas no formato unificado,
+// para reaproveitar processUnidadesDataUnificada (logica de agrupamento e envio
+// ja testada) sem reimplementar a montagem do payload do Superlogica.
+function contatoParaLinha26(c) {
+  var papelToTipo = { proprietario: 'Proprietario', inquilino: 'Inquilino', dependente: 'Dependente' };
+  return [
+    papelToTipo[c.papel] || 'Dependente', // A Tipo
+    c.unidade || '',                       // B Unidade
+    c.bloco || '',                         // C Bloco
+    c.fracao || '',                        // D Fracao
+    '',                                    // E Metragem
+    c.nome || '',                          // F Nome
+    c.cpf || '',                           // G CPF
+    c.cnpj || '',                          // H CNPJ
+    c.rg || '',                            // I RG
+    c.dtNasc || '',                        // J Data Nascimento
+    c.genero || '',                        // K Genero
+    c.email || '',                         // L Email
+    c.ddi || '',                           // M DDI
+    c.telefone || '',                      // N Telefone
+    c.tipoTel || '',                       // O Tipo Telefone
+    c.cep || '',                           // P CEP
+    c.endereco || '',                      // Q Endereco
+    c.numero || '',                        // R Numero
+    c.complemento || '',                   // S Complemento
+    c.bairro || '',                        // T Bairro
+    c.cidade || '',                        // U Cidade
+    c.estado || '',                        // V Estado
+    c.dtEntrada || '',                     // W Data Entrada
+    c.dtSaida || '',                       // X Data Saida
+    c.recebeCobranca || '',                // Y Recebe Cobranca
+    c.obs || ''                            // Z Observacao
+  ];
+}
+
+// ============================================================
+// EXTRACAO DE PDF POR CODIGO (familia A1, W045A posicional)
+// ------------------------------------------------------------
+// Estrategia hibrida: documentos de padrao conhecido (W045A, planilhas A2 e A3)
+// sao processados 100% por codigo, sem IA e sem token. A IA so entra como
+// fallback consciente quando nenhum reconhecedor bate. pdfjs-dist roda no
+// proprio navegador (CDN oficial Cloudflare), entao os dados dos condominos
+// nao saem da maquina. Arquitetura extensivel: cada layout de administradora
+// vira um objeto em RECONHECEDORES_PDF, sem reescrever o resto.
+// ============================================================
+
+// Carrega o pdfjs-dist sob demanda do CDN. Resolve com a lib ja pronta e o
+// worker configurado. Reusa a mesma promessa em chamadas seguintes.
+var PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+var PDFJS_WORKER_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+var _pdfjsPromise = null;
+function carregarPdfjs() {
+  if (window.pdfjsLib) return Promise.resolve(window.pdfjsLib);
+  if (_pdfjsPromise) return _pdfjsPromise;
+  _pdfjsPromise = new Promise(function(resolve, reject) {
+    // Em qualquer falha limpa a promessa cacheada para permitir nova tentativa
+    // (senao um CDN momentaneamente fora travaria o recurso ate recarregar a pagina).
+    var falhar = function(msg) { _pdfjsPromise = null; reject(new Error(msg)); };
+    var s = document.createElement('script');
+    s.src = PDFJS_CDN;
+    s.onload = function() {
+      if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER_CDN;
+        resolve(window.pdfjsLib);
+      } else { falhar('pdfjs nao inicializou'); }
+    };
+    s.onerror = function() { falhar('falha ao baixar pdfjs do CDN'); };
+    document.head.appendChild(s);
+  });
+  return _pdfjsPromise;
+}
+
+// Le o PDF e devolve uma lista de paginas, cada uma com seus itens de texto
+// posicionados: { x, y, w, str }. Base para os reconhecedores posicionais.
+async function extrairItensPdf(file) {
+  var pdfjsLib = await carregarPdfjs();
+  var buf = await file.arrayBuffer();
+  var doc = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+  var paginas = [];
+  for (var p = 1; p <= doc.numPages; p++) {
+    var pg = await doc.getPage(p);
+    var tc = await pg.getTextContent();
+    paginas.push({ items: tc.items.map(function(it) {
+      return { x: Math.round(it.transform[4]), y: Math.round(it.transform[5]), w: Math.round(it.width), str: it.str };
+    }).filter(function(it) { return it.str.trim() !== ''; }) });
+  }
+  return paginas;
+}
+
+// Tipos validos da coluna Tipo do W045A (define o que e uma linha de pessoa).
+var TIPOS_W045A = ['proprietário','proprietario','dependente','residente','visitante','inquilino','imobiliária','imobiliaria','locatário','locatario'];
+// Distancia vertical maxima (px) para considerar uma linha como continuacao
+// (telefone, 2a linha de endereco) da pessoa acima.
+var GAP_CONTINUACAO_W045A = 40;
+// Margem horizontal (px) alem da primeira e da ultima ancora: itens fora dessa
+// faixa (ex numero de pagina a direita) nao pertencem a nenhuma coluna da tabela.
+var MARGEM_COLUNA_W045A = 110;
+
+// Acha as ancoras de coluna LENDO O CABECALHO POR ROTULO (nao por X fixo), para
+// cobrir variacoes do template W045A entre administradoras. Devolve o X de cada
+// coluna conhecida, ou null se a pagina nao for um W045A.
+function acharAncorasW045A(itens) {
+  var porY = {};
+  itens.forEach(function(it) { var k = Math.round(it.y); (porY[k] = porY[k] || []).push(it); });
+  var ys = Object.keys(porY).map(Number).sort(function(a, b) { return b - a; });
+  for (var i = 0; i < ys.length; i++) {
+    var linha = porY[ys[i]];
+    var txt = linha.map(function(it) { return it.str.toLowerCase(); }).join(' | ');
+    if (/unidade/.test(txt) && /tipo/.test(txt) && /nome/.test(txt) && (/cpf|cnpj/.test(txt) || /mail/.test(txt))) {
+      var a = {};
+      linha.forEach(function(it) {
+        var s = it.str.toLowerCase();
+        if (/unidade/.test(s) && a.unidade == null) a.unidade = it.x;
+        else if (/nome/.test(s) && a.nome == null) a.nome = it.x;
+        else if (/^tipo/.test(s) && a.tipo == null) a.tipo = it.x;
+        else if (/endere/.test(s) && a.endereco == null) a.endereco = it.x;
+        else if (/(cpf|cnpj)/.test(s) && a.doc == null) a.doc = it.x;
+        else if (/mail/.test(s) && a.email == null) a.email = it.x;
+        else if (/fra[çc]/.test(s) && a.fracao == null) a.fracao = it.x;
+      });
+      if (a.unidade != null && a.nome != null && a.tipo != null) return a;
+    }
+  }
+  return null;
+}
+
+// Atribui um item de texto a coluna cuja ancora esta mais proxima no eixo X.
+// Rejeita (retorna null) itens muito a esquerda da primeira coluna ou a direita
+// da ultima: sao ruido fora da tabela (ex numero de pagina), nao dado de coluna.
+// O limite e so nas bordas para nao descartar tokens longos de nome/endereco
+// que comecam dentro da faixa das colunas.
+function colDeX(x, a) {
+  var xs = [];
+  for (var kk in a) xs.push(a[kk]);
+  var minX = Math.min.apply(null, xs), maxX = Math.max.apply(null, xs);
+  if (x < minX - MARGEM_COLUNA_W045A || x > maxX + MARGEM_COLUNA_W045A) return null;
+  var best = null, bd = 1e9;
+  for (var k in a) { var d = Math.abs(x - a[k]); if (d < bd) { bd = d; best = k; } }
+  return best;
+}
+
+// Telefones do W045A: junta fragmentos (numero pode quebrar entre linhas),
+// separa por ; e remove o prefixo de pais "+55 " quando presente, devolvendo so
+// digitos validos. Nunca inventa numero.
+function parseTelefonesW045A(frag) {
+  var j = frag.join('');
+  return j.split(';').map(function(t) {
+    // Remove o prefixo de pais no inicio do numero, com ou sem espaco ("+55 " ou
+    // "+5527..."). Ancorado no inicio para nao mexer num DDD 55 no meio.
+    return t.replace(/^\s*\+?55\s*/, '').replace(/\D/g, '');
+  }).filter(function(d) { return d.length >= 8 && d.length <= 11; });
+}
+
+// Endereco do W045A: acha a linha de localidade pelo padrao "- UF - CEP" (o CEP
+// pode estar nela ou na linha seguinte). O que vem antes e rua e complemento.
+// Degradacao graciosa: se nao casar o padrao, joga tudo no campo Endereco.
+function parseEnderecoW045A(lines) {
+  var o = { endereco: '', numero: '', complemento: '', bairro: '', cidade: '', estado: '', cep: '' };
+  if (!lines.length) return o;
+  var locIdx = -1;
+  for (var i = 0; i < lines.length; i++) {
+    if (/\s-\s/.test(lines[i]) && /-\s*[A-Za-z]{2}\s*-?\s*(\d{5}-?\d{3}|\d{8})?\s*$/.test(lines[i])) locIdx = i;
+  }
+  if (locIdx >= 0) {
+    var L = lines[locIdx];
+    var cepM = L.match(/(\d{5}-?\d{3}|\d{8})\s*$/);
+    if (cepM) { o.cep = cepM[1].replace(/\D/g, ''); L = L.replace(/\s*-?\s*(\d{5}-?\d{3}|\d{8})\s*$/, ''); }
+    else if (lines[locIdx + 1]) { var cm = lines[locIdx + 1].match(/(\d{5}-?\d{3}|\d{8})/); if (cm) o.cep = cm[1].replace(/\D/g, ''); }
+    L = L.replace(/\s*-\s*$/, '');
+    var ufM = L.match(/^(.*?)\s*-\s*([A-Za-z]{2})\s*$/);
+    if (ufM) {
+      o.estado = ufM[2].toUpperCase();
+      var bc = ufM[1].split(' - ');
+      o.cidade = bc.length > 1 ? bc[bc.length - 1].trim() : '';
+      o.bairro = (bc.length > 1 ? bc.slice(0, -1).join(' - ') : bc[0]).trim();
+    } else { o.bairro = L.trim(); }
+    var street = lines.slice(0, locIdx).join(' ').trim();
+    var sp = street.split(' - ');
+    o.endereco = sp[0].trim();
+    if (sp.length > 1) o.complemento = sp.slice(1).join(' - ').trim();
+  } else {
+    o.endereco = lines.join(' ').trim();
+    var cm2 = o.endereco.match(/(\d{5}-?\d{3}|\d{8})/);
+    if (cm2) o.cep = cm2[1].replace(/\D/g, '');
+  }
+  return o;
+}
+
+// Detecta se uma linha pertence ao rodape da pagina (numero de pagina, bloco do
+// condominio com "CEP." ou "Nº", ou o proprio nome do condominio). Usada para
+// parar a leitura antes do rodape e nao poluir o ultimo contato.
+function ehLinhaRodapeW045A(txt, condoNome) {
+  var t = txt.toLowerCase().trim();
+  // condoNome so conta quando a linha COMECA com o nome do condominio (bloco de
+  // rodape), nao quando o nome aparece embutido num endereco de morador.
+  return /^\d+\s+de\s+\d+$/.test(txt.trim()) || /cep\.\s*\d/.test(t) ||
+    /\bn[º°o]\s*\d/i.test(txt) || (condoNome && t.indexOf(condoNome) === 0);
+}
+
+// Extrai a lista plana de contatos de um W045A posicional. Reconstroi as colunas
+// pelas ancoras, faz forward fill da unidade, junta telefone/email/endereco que
+// quebram em varias linhas e corta o rodape de cada pagina. Reusa limparDocumento,
+// anexarObs e splitUnidadeNumeroBloco ja definidos para a familia A2.
+function extrairContatosW045APdf(paginas, anchors, condoNome) {
+  var contatos = [], seq = 0, ultimaUnidade = '', pessoa = null;
+  function finalizar() {
+    if (!pessoa) return;
+    var tels = parseTelefonesW045A(pessoa.tel);
+    var telefone = tels[0] || '', telExtras = tels.slice(1);
+    var emails = pessoa.email.join('').split(/[;,]/).map(function(s) { return s.trim(); }).filter(Boolean);
+    var email = emails[0] || '', emailExtras = emails.slice(1);
+    var end = parseEnderecoW045A(pessoa.end);
+    var doc = limparDocumento(pessoa.doc);
+    var obs = '';
+    if (telExtras.length) obs = anexarObs(obs, 'Telefones extras: ' + telExtras.join(', '));
+    if (emailExtras.length) obs = anexarObs(obs, 'Emails extras: ' + emailExtras.join(', '));
+    var sp = splitUnidadeNumeroBloco(pessoa.unidade);
+    // Remove o complemento quando ele so repete a referencia da unidade
+    if (end.complemento && (end.complemento === sp.numero + ' ' + sp.bloco || end.complemento === sp.numero)) end.complemento = '';
+    var nomeCompleto = pessoa.nomeCont.length ? (pessoa.nome + ' ' + pessoa.nomeCont.join(' ')).trim() : pessoa.nome;
+    seq++;
+    contatos.push({
+      id: seq, unidade: sp.numero, bloco: sp.bloco, nome: nomeCompleto, tipoOriginal: pessoa.tipo,
+      papel: '', confianca: '', motivo: '', cpf: doc.cpf, cnpj: doc.cnpj, rg: '', dtNasc: '', genero: '',
+      email: email, ddi: telefone ? '55' : '', telefone: telefone, tipoTel: '', cep: end.cep,
+      endereco: end.endereco, numero: end.numero, complemento: end.complemento, bairro: end.bairro,
+      cidade: end.cidade, estado: end.estado, fracao: pessoa.fracao || '', dtEntrada: '', dtSaida: '',
+      recebeCobranca: '', obs: obs
+    });
+    pessoa = null;
+  }
+  paginas.forEach(function(pg) {
+    var porY = {};
+    pg.items.forEach(function(it) { var k = Math.round(it.y); (porY[k] = porY[k] || []).push(it); });
+    var ys = Object.keys(porY).map(Number).sort(function(x, y) { return y - x; });
+    var emRodape = false, viuPessoa = false;
+    ys.forEach(function(y) {
+      if (emRodape) return;
+      var linhaItens = porY[y];
+      var cel = {};
+      linhaItens.forEach(function(it) { var c = colDeX(it.x, anchors); if (c) cel[c] = (cel[c] ? cel[c] + ' ' : '') + it.str; });
+      var txtLinha = linhaItens.map(function(it) { return it.str; }).join(' ');
+      // So corta no rodape depois que a primeira pessoa da pagina apareceu, para
+      // nao confundir o titulo (que contem o nome do condominio) com rodape.
+      if (viuPessoa && ehLinhaRodapeW045A(txtLinha, condoNome)) { emRodape = true; return; }
+      var tipoCel = (cel.tipo || '').trim().toLowerCase();
+      if (TIPOS_W045A.indexOf(tipoCel) !== -1) {
+        viuPessoa = true;
+        finalizar();
+        if (cel.unidade && cel.unidade.trim()) ultimaUnidade = cel.unidade.trim();
+        pessoa = { unidade: ultimaUnidade, nome: (cel.nome || '').trim(), tipo: (cel.tipo || '').trim(),
+                   tel: [], email: [], end: [], nomeCont: [], doc: (cel.doc || '').trim(), fracao: (cel.fracao || '').trim(), lastY: y };
+        if (cel.endereco) pessoa.end.push(cel.endereco.trim());
+        if (cel.email) pessoa.email.push(cel.email.trim());
+      } else if (pessoa && (pessoa.lastY - y) <= GAP_CONTINUACAO_W045A) {
+        // Na coluna do nome, fragmento com digito e telefone; fragmento so de
+        // texto e o nome que quebrou em outra linha (ex o qualificador "INQUILINO"
+        // que continua abaixo do nome). Capturado para a deteccao textual de papel.
+        if (cel.nome) {
+          if (/\d/.test(cel.nome)) pessoa.tel.push(cel.nome.trim());
+          else pessoa.nomeCont.push(cel.nome.trim());
+        }
+        if (cel.endereco) pessoa.end.push(cel.endereco.trim());
+        if (cel.email) pessoa.email.push(cel.email.trim());
+        pessoa.lastY = y;
+      }
+    });
+    finalizar(); // fecha a ultima pessoa da pagina
+  });
+  return contatos;
+}
+
+// Extrai o nome do condominio do titulo da pagina 1 (remove o prefixo W045A e o
+// sufixo "(NN)"), usado para reconhecer o bloco de rodape de cada pagina.
+function condoNomeDoTitulo(paginas) {
+  if (!paginas.length || !paginas[0].items.length) return '';
+  // O titulo pode vir quebrado em varios itens no mesmo Y (ex "W045A" e o nome
+  // em spans separados). Junta todos os itens da linha mais alta, em ordem de X.
+  var topo = Math.max.apply(null, paginas[0].items.map(function(it) { return it.y; }));
+  var tituloStr = paginas[0].items.filter(function(it) { return it.y === topo; })
+    .sort(function(a, b) { return a.x - b.x; })
+    .map(function(it) { return it.str; }).join(' ');
+  return tituloStr.replace(/^W045A\s*/i, '').replace(/\s*\(\d+\)\s*$/, '').trim().toLowerCase();
+}
+
+// Registro extensivel de reconhecedores de PDF. Para suportar um layout novo de
+// administradora, adicione aqui um objeto { nome, detectar, extrair } sem mexer
+// no resto. O despachante tenta cada um na ordem e usa o primeiro que casar.
+// Cada reconhecedor: preparar(paginas) devolve um contexto (ex ancoras) ou null
+// se o layout nao bate; extrair(paginas, ctx) usa esse contexto. Calcular o
+// contexto uma so vez evita refazer a deteccao na extracao.
+var RECONHECEDORES_PDF = [
+  {
+    nome: 'W045A Contatos das unidades (Superlogica)',
+    preparar: function(paginas) { return paginas.length ? acharAncorasW045A(paginas[0].items) : null; },
+    extrair: function(paginas, anchors) { return extrairContatosW045APdf(paginas, anchors, condoNomeDoTitulo(paginas)); }
+  }
+];
+
+// Oferta de fallback de IA com aviso explicito do custo. So dispara com o ok do
+// usuario (confirm), nunca automatico.
+function fallbackIaPdf(file, motivo) {
+  if (confirm(motivo + ' Posso usar a IA, que e mais lenta e consome mais tokens. Continuar com a IA?')) {
+    processarDocNormalizar(file);
+  }
+}
+
+// Despachante de PDF: tenta os reconhecedores por codigo; se nenhum casar (ou a
+// extracao falhar/vir vazia), avisa e oferece o fallback de IA. Caso reconheca,
+// abre direto a tela de revisao. Todo o caminho e protegido por try/catch para
+// nunca deixar o operador sem diagnostico nem sem rota de recuperacao.
+async function processarPdfUnidades(file) {
+  toast('Lendo PDF por codigo...', 'info');
+  var paginas;
+  try {
+    paginas = await extrairItensPdf(file);
+  } catch (e) {
+    fallbackIaPdf(file, 'Nao consegui abrir este PDF por codigo.');
+    return;
+  }
+  for (var i = 0; i < RECONHECEDORES_PDF.length; i++) {
+    var r = RECONHECEDORES_PDF[i];
+    var ctx;
+    try { ctx = r.preparar(paginas); } catch (_) { ctx = null; }
+    if (!ctx) continue;
+    var contatos;
+    try {
+      contatos = inferirPapeis(r.extrair(paginas, ctx));
+    } catch (e2) {
+      fallbackIaPdf(file, 'Reconheci o layout (' + r.nome + ') mas a leitura por codigo falhou.');
+      return;
+    }
+    if (!contatos.length) {
+      fallbackIaPdf(file, 'Reconheci o layout (' + r.nome + ') mas nao extrai nenhum contato.');
+      return;
+    }
+    abrirRevisao(contatos, file.name);
+    toast(contatos.length + ' contatos lidos por codigo (' + r.nome + '). Revise os papeis antes de importar.', 'ok');
+    return;
+  }
+  fallbackIaPdf(file, 'Nao reconheci o layout deste PDF por codigo.');
+}
+
+// Converte uma linha de 26 colunas (saida do Normalizador IA) num contato, para
+// que o resultado da IA tambem passe pela mesma tela de revisao de papel.
+function linha26ParaContato(row, idx) {
+  var g = function(i) { return row[i] == null ? '' : String(row[i]).trim(); };
+  return {
+    id: idx + 1,
+    unidade: g(1), bloco: g(2), nome: g(5),
+    tipoOriginal: g(0),
+    papel: '', confianca: '', motivo: '',
+    cpf: g(6).replace(/\D/g, ''), cnpj: g(7).replace(/\D/g, ''), rg: g(8),
+    dtNasc: g(9), genero: g(10), email: g(11),
+    ddi: g(12), telefone: g(13).replace(/\D/g, ''), tipoTel: g(14),
+    cep: g(15).replace(/\D/g, ''), endereco: g(16), numero: g(17), complemento: g(18),
+    bairro: g(19), cidade: g(20), estado: g(21), fracao: g(3),
+    dtEntrada: g(22), dtSaida: g(23), recebeCobranca: g(24), obs: g(25)
+  };
+}
+
+// ============================================================
+// TELA DE REVISAO DE PAPEIS
+// Recebe os contatos ja inferidos, mostra cada um com cor por confianca e um
+// dropdown editavel de papel. Ao confirmar, emite linhas de 26 colunas e passa
+// pelo processUnidadesDataUnificada (logica de envio ja testada).
+// ============================================================
+var REVISAO_PAPEL_OPCOES = [
+  { v: 'proprietario', label: 'Proprietário' },
+  { v: 'inquilino',    label: 'Inquilino' },
+  { v: 'dependente',   label: 'Dependente' },
+  { v: 'descartar',    label: 'Descartar' }
+];
+
+function abrirRevisao(contatos, sourceName) {
+  _revisaoContatos = contatos;
+  _revisaoSource = sourceName || '';
+  _revisaoFiltro = 'todos';
+  renderRevisao();
+  var card = document.getElementById('revisao-unidades');
+  card.style.display = 'block';
+  card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Abre a revisao a partir do resultado do Normalizador IA (familia B).
+function abrirRevisaoFromNormalizado() {
+  if (!_normalizarRows || !_normalizarRows.length) { toast('Nada para revisar', 'err'); return; }
+  var contatos = inferirPapeis(_normalizarRows.map(linha26ParaContato));
+  abrirRevisao(contatos, _normalizarSourceName || 'normalizado');
+}
+
+// Cor de borda por nivel de confianca: alta verde, media amarelo, incerta vermelho.
+function corConfianca(conf) {
+  if (conf === 'alta') return 'var(--success)';
+  if (conf === 'incerta') return 'var(--danger)';
+  return 'var(--warn,#e0a82e)';
+}
+
+// Desenha a tabela de revisao: resumo no topo (contagem por papel e quantos
+// incertos) e uma linha por contato com borda colorida pela confianca e um
+// dropdown editavel de papel. Todo dado externo passa por esc() antes do DOM.
+function renderRevisao() {
+  var table = document.getElementById('revisao-table');
+  var resumo = document.getElementById('revisao-resumo');
+  var esc = function(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
+  var cont = _revisaoContatos || [];
+  var nProp = 0, nInq = 0, nDep = 0, nDesc = 0, nIncerto = 0, nAlta = 0, nMedia = 0;
+  cont.forEach(function(c) {
+    if (c.papel === 'proprietario') nProp++;
+    else if (c.papel === 'inquilino') nInq++;
+    else if (c.papel === 'dependente') nDep++;
+    else if (c.papel === 'descartar') nDesc++;
+    if (c.confianca === 'incerta') nIncerto++;
+    else if (c.confianca === 'alta') nAlta++;
+    else if (c.confianca === 'media') nMedia++;
+  });
+  var unidades = {};
+  cont.forEach(function(c) { if (c.papel !== 'descartar') unidades[c.unidade + '|' + c.bloco] = 1; });
+  // Resumo do topo sempre reflete a lista inteira, independente do filtro de status escolhido abaixo.
+  resumo.innerHTML = Object.keys(unidades).length + ' unidades · ' + nProp + ' proprietários · ' +
+    nInq + ' inquilinos · ' + nDep + ' dependentes · ' + nDesc + ' descartados' +
+    (nIncerto ? ' · <b style="color:var(--danger)">' + nIncerto + ' incertos para decidir</b>' : '');
+
+  // Chips de filtro por status (confianca): selecao unica, contagem ao lado de cada rotulo.
+  var chipsEl = document.getElementById('revisao-filtro-chips');
+  if (chipsEl) {
+    var chipsDef = [
+      { v: 'todos', label: 'Todos (' + cont.length + ')' },
+      { v: 'alta', label: 'Confirmado (' + nAlta + ')' },
+      { v: 'media', label: 'Inferido (' + nMedia + ')' },
+      { v: 'incerta', label: 'Incerto (' + nIncerto + ')' }
+    ];
+    chipsEl.innerHTML = chipsDef.map(function(ch) {
+      var ativo = ch.v === _revisaoFiltro ? ' active' : '';
+      return '<div class="chip' + ativo + '" onclick="filtrarRevisao(\'' + ch.v + '\')">' + ch.label + '</div>';
+    }).join('');
+  }
+
+  // Tabela exibe so a lista filtrada pelo status escolhido; o resumo acima nunca filtra.
+  var contFiltrado = _revisaoFiltro === 'todos' ? cont : cont.filter(function(c) { return c.confianca === _revisaoFiltro; });
+
+  var head = '<thead><tr>' +
+    ['Unidade', 'Papel', 'Nome', 'Documento', 'Telefone', 'Email', 'Tipo no doc', 'Por quê']
+      .map(function(h) { return '<th style="padding:6px 8px;background:var(--bg3);font-size:10px;font-family:var(--mono);text-transform:uppercase;color:var(--muted);position:sticky;top:0;border-bottom:1px solid var(--border2);white-space:nowrap;text-align:left">' + h + '</th>'; })
+      .join('') + '</tr></thead>';
+
+  var body = !contFiltrado.length
+    ? '<tr><td colspan="8" style="padding:14px 8px;font-size:11px;font-family:var(--mono);color:var(--muted);text-align:center">Nenhum contato com este status</td></tr>'
+    : contFiltrado.map(function(c) {
+      var cor = corConfianca(c.confianca);
+      var doc = c.cnpj ? (c.cnpj + ' (CNPJ)') : (c.cpf || '');
+      var sel = '<select onchange="mudarPapelRevisao(' + c.id + ', this.value)" style="font-size:11px;font-family:var(--mono);padding:3px 4px;border-radius:5px;border:1px solid var(--border2);background:var(--bg3);color:var(--text)">' +
+        REVISAO_PAPEL_OPCOES.map(function(o) {
+          return '<option value="' + o.v + '"' + (o.v === c.papel ? ' selected' : '') + '>' + o.label + '</option>';
+        }).join('') + '</select>';
+      var td = function(v, extra) { return '<td style="padding:5px 8px;font-size:11px;font-family:var(--mono);border-bottom:1px solid var(--border);' + (extra || '') + '">' + v + '</td>'; };
+      return '<tr style="border-left:3px solid ' + cor + '">' +
+        td('<b>' + esc(c.unidade) + (c.bloco ? ' ' + esc(c.bloco) : '') + '</b>') +
+        td(sel) +
+        td(esc(c.nome), 'max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
+        td(esc(doc)) +
+        td(esc(c.telefone)) +
+        td(esc(c.email), 'max-width:160px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
+        td(esc(c.tipoOriginal) || '<span style="color:var(--muted)">—</span>') +
+        td('<span style="color:var(--muted)" title="' + esc(c.motivo) + '">' + esc(c.motivo) + '</span>', 'max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis') +
+        '</tr>';
+    }).join('');
+
+  table.innerHTML = head + '<tbody>' + body + '</tbody>';
+}
+
+// Troca o filtro de status da tela de revisao e redesenha (chips de selecao unica).
+function filtrarRevisao(valor) {
+  _revisaoFiltro = valor;
+  renderRevisao();
+}
+
+// Ajuste manual do papel: vira confianca alta (decidido pelo humano) e redesenha a tela.
+function mudarPapelRevisao(id, papel) {
+  if (!_revisaoContatos) return;
+  var c = _revisaoContatos.filter(function(x) { return x.id === id; })[0];
+  if (!c) return;
+  c.papel = papel;
+  c.confianca = 'alta';
+  c.motivo = 'Ajustado manualmente';
+  renderRevisao();
+}
+
+function descartarRevisao() {
+  _revisaoContatos = null;
+  _revisaoSource = '';
+  _revisaoFiltro = 'todos';
+  document.getElementById('revisao-unidades').style.display = 'none';
+  toast('Revisão descartada', 'ok');
+}
+
+// Confirma a revisao: emite linhas de 26 colunas dos contatos mantidos, monta o
+// modelo de import via processUnidadesDataUnificada e mostra a previa de import.
+// Nada e enviado aqui; o envio continua no botao Enviar unidades.
+function confirmarRevisao() {
+  var cont = _revisaoContatos || [];
+  var ativos = cont.filter(function(c) { return c.papel !== 'descartar'; });
+  if (!ativos.length) { toast('Nada para importar: todos descartados', 'err'); return; }
+
+  var rows = ativos.map(contatoParaLinha26);
+  var processed = processUnidadesDataUnificada(NORMALIZAR_HEADERS, rows);
+
+  var avisos = (processed.avisos || []).slice();
+  // Alerta sobre proprietarios CNPJ: o cadastro do proprietario nao envia o documento da empresa
+  var propsCnpj = ativos.filter(function(c) { return c.papel === 'proprietario' && c.cnpj && !c.cpf; }).length;
+  if (propsCnpj) avisos.push(propsCnpj + ' proprietario(s) sao empresa (CNPJ); o documento da empresa nao vai no cadastro do proprietario');
+
+  state.unidades.headers = NORMALIZAR_HEADERS;
+  state.unidades.raw = rows;
+  state.unidades.processed = processed;
+  renderPreviewUnidades(processed, _revisaoSource || 'revisão');
+
+  document.getElementById('revisao-unidades').style.display = 'none';
+  if (avisos.length) toast(avisos.join(' | '), 'warn');
+  toast(processed.length + ' unidades prontas. Confira a pré-visualização e clique em Enviar unidades.', 'ok');
+  var prev = document.getElementById('preview-unidades');
+  if (prev) prev.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function renderPreview(type, headers, rows, filename) {
@@ -4006,18 +5137,10 @@ function removePauta(btn) {
 }
 
 async function extrairTextoPdf(arrayBuffer) {
-  // Carrega pdf.js se ainda não estiver carregado
-  if (!window.pdfjsLib) {
-    await new Promise((res, rej) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-      s.onload = res; s.onerror = rej;
-      document.head.appendChild(s);
-    });
-    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-  }
-  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  // Reusa o loader unico de pdf.js (mesma versao e CDN), com dedupe de chamadas
+  // concorrentes e limpeza em caso de falha.
+  const pdfjsLib = await carregarPdfjs();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   let texto = '';
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
@@ -4683,56 +5806,283 @@ function renderAtaBlocos(texto, escFn) {
   const parts = [];
   if (cabCentro.length)  parts.push(`<div class="ata-bloco centro">${escFn(cabCentro.join('\n'))}</div>`);
   if (cabJust.length)    parts.push(`<div class="ata-bloco">${escFn(cabJust.join('\n'))}</div>`);
-  for (const it of items) parts.push(`<div class="ata-bloco item">${escFn(it.join('\n'))}</div>`);
+  for (const it of items) {
+    // Regra permanente: rótulo do item + título em caixa alta, até os dois pontos
+    // (inclusive), saem em negrito. O texto corrido após os dois pontos volta ao
+    // peso normal. Se não houver dois pontos, o negrito fica só na 1ª linha (ITEM n).
+    const itemTexto = it.join('\n');
+    const idxDoisPontos = itemTexto.indexOf(':');
+    let interno;
+    if (idxDoisPontos !== -1) {
+      interno = `<strong>${escFn(itemTexto.slice(0, idxDoisPontos + 1))}</strong>${escFn(itemTexto.slice(idxDoisPontos + 1))}`;
+    } else {
+      const qNL = itemTexto.indexOf('\n');
+      interno = qNL !== -1
+        ? `<strong>${escFn(itemTexto.slice(0, qNL))}</strong>${escFn(itemTexto.slice(qNL))}`
+        : `<strong>${escFn(itemTexto)}</strong>`;
+    }
+    parts.push(`<div class="ata-bloco item">${interno}</div>`);
+  }
   if (encJust.length)    parts.push(`<div class="ata-bloco">${escFn(encJust.join('\n'))}</div>`);
   if (encLocalData)      parts.push(`<div class="ata-bloco centro">${escFn(encLocalData)}</div>`);
   if (encAssin.length)   parts.push(`<div class="ata-bloco assin">${escFn(encAssin.join('\n'))}</div>`);
   return parts.join('');
 }
 
+// Monta o PDF da ata por codigo (jsPDF), com texto REAL selecionavel. Como nao usa
+// window.print(), nenhum navegador injeta cabecalho/rodape nativo: sai igual no
+// Safari e no Chrome, sem data nem URL. Numeracao "Pagina X de Y", margens e negrito
+// dos itens sao desenhados por nos. Fonte Arimo (=Liberation Sans, metricamente
+// identica a Arial) TTF embutida (ata-fonte-arimo.js) com suporte pleno a UTF-8:
+// acentos do portugues (física, órgão, três) sem corromper, diferente das fontes
+// core do jsPDF que so cobrem WinAnsi.
+function montarAtaPDF(jsPDF, texto) {
+  const doc = new jsPDF({ unit: 'pt', format: 'a4', orientation: 'portrait' });
+  texto = String(texto).replace(/\r/g, '');
+
+  const PW = doc.internal.pageSize.getWidth();   // ~595.28pt
+  const PH = doc.internal.pageSize.getHeight();  // ~841.89pt
+  const CM = 28.3465;                            // pt por cm
+  const MARG_TOP = 2.54 * CM, MARG_BOT = 2.54 * CM, MARG_DIR = 2.54 * CM, MARG_ESQ = 3.17 * CM;
+  const LARG = PW - MARG_ESQ - MARG_DIR;         // largura util do texto
+  const LIMITE_Y = PH - MARG_BOT;                // conteudo nao passa daqui
+  const FONTE = 'Arimo', TAM = 12, ALTURA_LINHA = TAM * 1.5;  // Arimo (=Liberation Sans, métrica de Arial) embutida em ata-fonte-arimo.js
+
+  let y = MARG_TOP + TAM;                         // baseline da 1a linha
+
+  function novaPaginaSeNecessario() {
+    if (y > LIMITE_Y) { doc.addPage(); y = MARG_TOP + TAM; }
+  }
+
+  // Justifica uma linha distribuindo o espaco extra igualmente entre as palavras.
+  function desenharJustificado(linha) {
+    const palavras = linha.split(' ').filter(function (p) { return p.length; });
+    if (palavras.length <= 1) { doc.text(linha, MARG_ESQ, y); return; }
+    let larguraPalavras = 0;
+    for (const p of palavras) larguraPalavras += doc.getTextWidth(p);
+    const gap = (LARG - larguraPalavras) / (palavras.length - 1);
+    let x = MARG_ESQ;
+    for (let i = 0; i < palavras.length; i++) {
+      doc.text(palavras[i], x, y);
+      x += doc.getTextWidth(palavras[i]) + gap;
+    }
+  }
+
+  // Escreve um paragrafo com quebra automatica de linha e de pagina.
+  // align: 'left' | 'center' | 'justify' (justifica todas as linhas menos a ultima).
+  function paragrafo(txt, align, bold) {
+    doc.setFont(FONTE, bold ? 'bold' : 'normal');
+    doc.setFontSize(TAM);
+    // Cada quebra real (\n) é um parágrafo lógico próprio, então a ÚLTIMA linha de
+    // cada parágrafo nunca é justificada (senão fica com espaços gigantes de borda
+    // a borda). Só as linhas do meio de cada parágrafo são justificadas.
+    const paragrafos = String(txt).split('\n');
+    for (const par of paragrafos) {
+      const linhas = doc.splitTextToSize(par, LARG);
+      for (let i = 0; i < linhas.length; i++) {
+        novaPaginaSeNecessario();
+        const linha = linhas[i];
+        const ultima = (i === linhas.length - 1);
+        if (align === 'center') {
+          doc.text(linha, MARG_ESQ + LARG / 2, y, { align: 'center' });
+        } else if (align === 'justify' && !ultima && linha.indexOf(' ') !== -1) {
+          desenharJustificado(linha);
+        } else {
+          doc.text(linha, MARG_ESQ, y);
+        }
+        y += ALTURA_LINHA;
+      }
+    }
+  }
+
+  // Segmentacao identica a do renderAtaBlocos (usado no preview): cabecalho
+  // centralizado, abertura justificada, itens (titulo negrito + corpo normal),
+  // encerramento justificado, local/data centralizado e assinaturas a esquerda.
+  const reItem = /^ITEM\s+\d+\)/;
+  const reEnc = /^ENCERRAMENTO\b/i;
+  const reTituloATA = /^ATA DA ASSEMBLEIA/i;
+  const reLocalData = /^[^/\n]+\/[A-Z]{2},\s*\d+\s+de\s+\S+\s+de\s+\d{4}\.?\s*$/i;
+  const reUnderline = /^_{10,}\s*$/;
+
+  const linhas = texto.split('\n');
+  const cabCentro = [], cabJust = [], items = [], encJust = [], encAssin = [];
+  let encLocalData = '', modo = 'cabCentro', buf = null;
+  for (const ln of linhas) {
+    if (modo === 'cabCentro') { cabCentro.push(ln); if (reTituloATA.test(ln)) modo = 'cabJust'; continue; }
+    if (modo === 'cabJust') { if (reItem.test(ln)) { modo = 'item'; buf = [ln]; continue; } cabJust.push(ln); continue; }
+    if (modo === 'item') {
+      if (reItem.test(ln)) { if (buf) items.push(buf); buf = [ln]; continue; }
+      if (reEnc.test(ln)) { if (buf) { items.push(buf); buf = null; } modo = 'encJust'; encJust.push(ln); continue; }
+      buf.push(ln); continue;
+    }
+    if (modo === 'encJust') {
+      if (reLocalData.test(ln.trim())) { encLocalData = ln; modo = 'encAssin'; continue; }
+      if (reUnderline.test(ln.trim())) { modo = 'encAssin'; encAssin.push(ln); continue; }
+      encJust.push(ln); continue;
+    }
+    encAssin.push(ln);
+  }
+  if (buf) items.push(buf);
+
+  if (items.length === 0) {
+    paragrafo(texto, 'justify', false);
+  } else {
+    if (cabCentro.length) paragrafo(cabCentro.join('\n'), 'center', false);
+    if (cabJust.length) paragrafo(cabJust.join('\n'), 'justify', false);
+    for (const it of items) {
+      const itemTexto = it.join('\n');
+      const idx = itemTexto.indexOf(':');
+      if (idx !== -1) {
+        paragrafo(itemTexto.slice(0, idx + 1), 'justify', true);           // rotulo + titulo: negrito
+        const resto = itemTexto.slice(idx + 1).replace(/^\s+/, '');
+        if (resto) paragrafo(resto, 'justify', false);                      // corpo: peso normal
+      } else {
+        paragrafo(itemTexto, 'justify', true);
+      }
+    }
+    if (encJust.length) paragrafo(encJust.join('\n'), 'justify', false);
+    if (encLocalData) paragrafo(encLocalData, 'center', false);
+    if (encAssin.length) paragrafo(encAssin.join('\n'), 'left', false);
+  }
+
+  // Rodape "Pagina X de Y" no centro da margem inferior de todas as paginas.
+  const total = doc.getNumberOfPages();
+  doc.setFont(FONTE, 'normal');
+  doc.setFontSize(10);
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i);
+    doc.text('Página ' + i + ' de ' + total, PW / 2, PH - MARG_BOT / 2, { align: 'center' });
+  }
+  return doc;
+}
+
 function baixarAtaPDF() {
   if (!_ataTextoGerado) { toast('Nada pra baixar', 'err'); return; }
-  // Abre janela formatada em A4 e aciona print — user salva como PDF via browser.
-  // Padrão visual espelha a Ata 1 Praia Dourada (gabarito Matheus):
-  //   - Fonte Arial 12pt, line-height 1.5
-  //   - Margens 2.54cm (sup/dir/inf) + 3.17cm (esq)
-  //   - Texto justificado no corpo; cabeçalho e linha de local/data centralizados
-  //   - <title> vazio + toast pra que o usuário desmarque "Cabeçalhos e
-  //     rodapés" no diálogo (browser não suprime URL/página via CSS)
-  //   - ITEMs viram blocos com page-break-inside:avoid pra não cortar
-  const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const corpo = renderAtaBlocos(_ataTextoGerado, esc);
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    toast('Biblioteca de PDF nao carregou (verifique a conexao). Tente de novo ou use Baixar Word.', 'err');
+    return;
+  }
+  try {
+    const doc = montarAtaPDF(window.jspdf.jsPDF, _ataTextoGerado);
+    // Nome do arquivo a partir dos campos do formulario (fallback "ata.pdf").
+    const slug = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const cond = (document.getElementById('ata-cond') || {}).value || '';
+    const data = (document.getElementById('ata-data') || {}).value || '';
+    let nome = [slug(cond), slug(data)].filter(Boolean).join('_');
+    nome = (nome ? 'Ata_' + nome : 'ata') + '.pdf';
+    doc.save(nome);
+    toast('✓ PDF gerado: ' + nome, 'ok');
+  } catch (e) {
+    toast('Erro ao gerar PDF: ' + (e && e.message ? e.message : e), 'err');
+  }
+}
 
-  const w = window.open('', '_blank');
-  if (!w) { toast('Bloqueado pelo navegador. Permita pop-ups e tente novamente.', 'err'); return; }
-  w.document.write(`<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<title> </title>
-<style>
-  @page { size: A4; margin: 2.54cm 2.54cm 2.54cm 3.17cm; }
-  html, body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 12pt; line-height: 1.5; color: #000; }
-  .ata-bloco { margin: 0; white-space: pre-wrap; text-align: justify; text-justify: inter-word; }
-  .ata-bloco.centro { text-align: center; }
-  .ata-bloco.assin  { text-align: left; }
-  .ata-bloco.item   { page-break-inside: avoid; break-inside: avoid; }
-  @media screen {
-    body { background: #f3f4f6; padding: 24px; }
-    .page { background: #fff; max-width: 21cm; min-height: 29.7cm; margin: 0 auto; padding: 2.54cm 2.54cm 2.54cm 3.17cm; box-shadow: 0 8px 24px rgba(0,0,0,0.08); }
+// Gera a MESMA ata em .docx editável, em paralelo ao PDF (não altera baixarAtaPDF
+// nem renderAtaBlocos). Parser próprio replica a segmentação em blocos do PDF.
+// Formatação equivalente: Arial 12pt, line-height 1.5, A4, margens 2.54/3.17cm,
+// cabeçalho e local/data centralizados, corpo e itens justificados (ITEM não
+// corta entre páginas via keepLines), assinaturas à esquerda. Título SEM negrito.
+function baixarAtaWord() {
+  if (!_ataTextoGerado) { toast('Nada pra baixar', 'err'); return; }
+  if (!window.docx || !window.docx.Document) {
+    toast('Biblioteca Word não carregou (verifique a conexão). Use Baixar PDF.', 'err');
+    return;
   }
-  @media print {
-    .page { padding: 0; box-shadow: none; max-width: none; min-height: 0; }
+
+  // Mesma lógica de blocos do renderAtaBlocos(), replicada aqui para não tocar nele.
+  const reItem      = /^ITEM\s+\d+\)/;
+  const reEnc       = /^ENCERRAMENTO\b/i;
+  const reTituloATA = /^ATA DA ASSEMBLEIA/i;
+  const reLocalData = /^[^/\n]+\/[A-Z]{2},\s*\d+\s+de\s+\S+\s+de\s+\d{4}\.?\s*$/i;
+  const reUnderline = /^_{10,}\s*$/;
+
+  const linhas = _ataTextoGerado.split('\n');
+  const cabCentro = [], cabJust = [], items = [], encJust = [], encAssin = [];
+  let encLocalData = '';
+  let modo = 'cabCentro', buf = null;
+
+  for (const ln of linhas) {
+    if (modo === 'cabCentro') { cabCentro.push(ln); if (reTituloATA.test(ln)) modo = 'cabJust'; continue; }
+    if (modo === 'cabJust')   { if (reItem.test(ln)) { modo = 'item'; buf = [ln]; continue; } cabJust.push(ln); continue; }
+    if (modo === 'item') {
+      if (reItem.test(ln)) { if (buf) items.push(buf); buf = [ln]; continue; }
+      if (reEnc.test(ln))  { if (buf) { items.push(buf); buf = null; } modo = 'encJust'; encJust.push(ln); continue; }
+      buf.push(ln); continue;
+    }
+    if (modo === 'encJust') {
+      if (reLocalData.test(ln.trim())) { encLocalData = ln; modo = 'encAssin'; continue; }
+      if (reUnderline.test(ln.trim())) { modo = 'encAssin'; encAssin.push(ln); continue; }
+      encJust.push(ln); continue;
+    }
+    encAssin.push(ln);
   }
-</style>
-</head>
-<body onload="setTimeout(function(){window.print()},250)">
-<div class="page">${corpo}</div>
-</body>
-</html>`);
-  w.document.close();
-  toast('No diálogo de impressão: desmarque "Cabeçalhos e rodapés" e salve como PDF', 'ok');
+  if (buf) items.push(buf);
+
+  const D = window.docx;
+  const ALIGN = D.AlignmentType;
+
+  // Texto multilinha -> UM parágrafo com quebras de linha reais (texto editável).
+  // Arial 12pt = size 24 (half-points); line-height 1.5 = spacing.line 360.
+  function paragrafo(texto, align, keepLines) {
+    const linhasP = String(texto).split('\n');
+    const runs = linhasP.map((l, i) => new D.TextRun(
+      i === 0 ? { text: l, font: 'Arial', size: 24 }
+              : { text: l, font: 'Arial', size: 24, break: 1 }
+    ));
+    return new D.Paragraph({
+      alignment: align,
+      spacing: { line: 360 },
+      keepLines: !!keepLines,
+      children: runs,
+    });
+  }
+
+  const children = [];
+  if (items.length === 0) {
+    // Mesmo fallback do renderAtaBlocos: texto inteiro como um bloco justificado.
+    children.push(paragrafo(_ataTextoGerado, ALIGN.JUSTIFIED, false));
+  } else {
+    if (cabCentro.length) children.push(paragrafo(cabCentro.join('\n'), ALIGN.CENTER, false));
+    if (cabJust.length)   children.push(paragrafo(cabJust.join('\n'), ALIGN.JUSTIFIED, false));
+    for (const it of items) children.push(paragrafo(it.join('\n'), ALIGN.JUSTIFIED, true));
+    if (encJust.length)   children.push(paragrafo(encJust.join('\n'), ALIGN.JUSTIFIED, false));
+    if (encLocalData)     children.push(paragrafo(encLocalData, ALIGN.CENTER, false));
+    if (encAssin.length)  children.push(paragrafo(encAssin.join('\n'), ALIGN.LEFT, false));
+  }
+
+  // A4 em twips (11906x16838). Margens: 2.54cm=1440, 3.17cm=1797 (igual ao @page do PDF).
+  const doc = new D.Document({
+    sections: [{
+      properties: {
+        page: {
+          size: { width: 11906, height: 16838 },
+          margin: { top: 1440, right: 1440, bottom: 1440, left: 1797 },
+        },
+      },
+      children,
+    }],
+  });
+
+  // Nome do arquivo a partir dos campos do formulário (fallback "ata.docx").
+  const slug = (s) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const cond = (document.getElementById('ata-cond') || {}).value || '';
+  const data = (document.getElementById('ata-data') || {}).value || '';
+  let nome = [slug(cond), slug(data)].filter(Boolean).join('_');
+  nome = (nome ? 'Ata_' + nome : 'ata') + '.docx';
+
+  D.Packer.toBlob(doc).then((blob) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    toast('✓ Word (.docx) gerado: ' + nome, 'ok');
+  }).catch((e) => {
+    toast('Erro ao gerar Word: ' + (e && e.message ? e.message : e), 'err');
+  });
 }
 
 async function copiarProClaude() {
@@ -5521,5 +6871,9 @@ async function deletarUsuario(userId, email) {
 
 <!-- Prestação de contas: bloco JS extraído (refactor preparatório das ondas 1, 2, 3) -->
 <script src="/prestacao.js"></script>
+<!-- Previsao Orcamentaria: fluxo antigo de PDF descontinuado nesta aba (mantido para reversibilidade) -->
+<!-- <script src="/previsao.js"></script> -->
+<!-- Previsao Orcamentaria: modulo embutido (iframe) + handoff do condominio ativo -->
+<script src="/previsao-embed.js"></script>
 </body>
 </html>

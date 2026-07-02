@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const https = require('https');
+const http = require('http');
 const crypto = require('crypto');
 const fs = require('fs');
 const app = express();
@@ -15,6 +16,16 @@ const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY || '';
 // Auth dos endpoints /api/* — pelo menos UM destes precisa estar configurado
 const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET || '';
+// URL do microserviço de Previsão Orçamentária (FastAPI). Em prod, setar via
+// Railway ENV apontando para a URL interna do serviço previsao-api.
+const PREVISAO_API_URL = process.env.PREVISAO_API_URL || 'http://localhost:8000';
+// URL do microservico de geracao de PPTX/PDF (previsao-pdf FastAPI). Em prod, setar via
+// Railway ENV apontando para a URL interna do servico. Opcional: sem ela o endpoint /gerar-pdf retorna 503.
+const PREVISAO_PDF_API_URL = process.env.PREVISAO_PDF_API_URL || '';
+// URL do microservico de prestacao de contas (prestacao-pdf FastAPI). Opcional:
+// sem ela o endpoint /api/prestacao/gerar-deck retorna 503 e o Hub usa o
+// fallback offline (PptxGenJS no browser).
+const PRESTACAO_PDF_API_URL = process.env.PRESTACAO_PDF_API_URL || '';
 // Origens permitidas (separadas por vírgula). Se vazio, qualquer origem passa
 // (dev mode). Em prod, setar pra "https://service-hub-production.up.railway.app"
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -300,6 +311,17 @@ try {
   console.warn('SKILL ata-condominial NÃO carregada: ' + e.message);
 }
 
+// Glossario de dominio condominial: corrige erros foneticos da transcricao (Whisper
+// erra termos tecnicos). Entra no system prompt junto com a skill. So padroniza
+// grafia de termo ouvido errado; NUNCA autoriza inventar conteudo (anti-invencao).
+let GLOSSARIO_MD = '';
+try {
+  GLOSSARIO_MD = fs.readFileSync(path.join(__dirname, 'skills-server', 'glossario-condominial.md'), 'utf8');
+  console.log('Glossario condominial carregado (' + GLOSSARIO_MD.length + ' chars)');
+} catch (e) {
+  console.warn('Glossario condominial NÃO carregado: ' + e.message);
+}
+
 const CONTEXTO_GRUPO_SERVICE = `CONTEXTO FIXO DO GRUPO SERVICE
 
 Administradora: Condomínio Service
@@ -435,7 +457,7 @@ FID 1. NUNCA INVENTAR, COMPLETAR OU ADIVINHAR
 Qualquer fato que não esteja explicitamente na transcrição (ou em outra fonte oficial anexada, como edital) precisa ir como [a confirmar] no lugar exato do dado. Isso inclui nomes próprios, sobrenomes, números de votos, valores em reais, datas, números de unidade, cargos, quantidades de parcelas, percentuais e qualquer outro dado pontual. É PROIBIDO substituir uma lacuna por palpite plausível, mesmo que pareça óbvio pelo contexto. Quando o contexto sugere algo mas a transcrição não confirma, registre [a confirmar] e nada além.
 
 FID 2. NÚMEROS SÃO LITERAIS
-Todo número (valor financeiro, quantidade de votos, percentual, número de parcelas, anos, datas) deve ser transcrito exatamente como aparece na transcrição. É PROIBIDO recalcular, arredondar, somar, inferir ou ajustar qualquer número. Se um número aparece de forma ambígua ou parcial, registrar o trecho disponível seguido de [a confirmar]. Se a transcrição não diz o número, escrever [valor a confirmar] ou [número a confirmar] e nada mais.
+Todo número (valor financeiro, quantidade de votos, percentual, número de parcelas, anos, datas) deve ser transcrito exatamente como aparece na transcrição. É PROIBIDO recalcular, arredondar, somar, inferir ou ajustar qualquer número. Se um número aparece de forma ambígua, conflitante ou parcial na transcrição, NÃO registrar as versões conflitantes nem explicar a divergência dentro da ata: escrever apenas o marcador limpo [valor a confirmar] (ou [número a confirmar]) no lugar do dado. Se a transcrição não diz o número, escrever [valor a confirmar] e nada mais.
 
 FID 3. NOMES PRÓPRIOS NÃO SÃO COMPLETADOS
 Se a pessoa é citada apenas pelo primeiro nome, registrar apenas o primeiro nome seguido de [sobrenome a confirmar]. Se há dúvida entre nome civil e apelido (caso real: a transcrição menciona alguém ora como "Wellington", ora como "Eriton"), registrar AMBOS na forma "Wellington (Eriton)" sem escolher um. Nunca completar "Cris" para "Cristina" ou "Cristiano". Nunca substituir o apelido pelo suposto nome civil sem confirmação explícita.
@@ -444,7 +466,22 @@ FID 4. VARREDURA PRÉ FECHAMENTO
 Antes de finalizar a ata, varrer a transcrição inteira item por item e garantir que nenhum fato relevante foi omitido. Atenção especial obrigatória a: composição da arrecadação (taxa de condomínio, fundo de reserva, multas, juros), valor total arrecadado no período, número de meses de superávit no exercício, renegociações com concessionárias (CESAN, EDP, Vivo, NET), impacto de obras específicas em meses específicos do período, parcelamentos de inadimplência, esclarecimentos técnicos ou jurídicos dados a condôminos. Se a transcrição menciona, a ata REGISTRA.
 
 FID 5. SEM HÍFEN OU TRAVESSÃO NO CORPO DA ATA
-Proibido usar hífen "-" ou travessão "–" no texto corrido dos itens da ata e na abertura. Use vírgula, ponto e vírgula ou frase nova no lugar. EXCEÇÕES EXPLÍCITAS desta regra, que permanecem regidas pela SKILL.md acima: (a) travessões do cabeçalho de endereço, formato "Logradouro – Bairro – Cidade/UF"; (b) travessões da linha de cargo das assinaturas, formato "Cargo – Tratamento Nome"; (c) travessão do título do anexo, formato "ANEXO I – TÍTULO". Nenhuma OUTRA ocorrência de hífen ou travessão é permitida.`;
+Proibido usar hífen "-" ou travessão "–" no texto corrido dos itens da ata e na abertura. Use vírgula, ponto e vírgula ou frase nova no lugar. EXCEÇÕES EXPLÍCITAS desta regra, que permanecem regidas pela SKILL.md acima: (a) travessões do cabeçalho de endereço, formato "Logradouro – Bairro – Cidade/UF"; (b) travessões da linha de cargo das assinaturas, formato "Cargo – Tratamento Nome"; (c) travessão do título do anexo, formato "ANEXO I – TÍTULO". Nenhuma OUTRA ocorrência de hífen ou travessão é permitida.
+
+FID 6. NENHUM COMENTÁRIO SOBRE A TRANSCRIÇÃO DENTRO DA ATA
+A ata é documento formal de cartório. É PROIBIDO escrever no texto qualquer comentário meta sobre a transcrição, dúvida de leitura, raciocínio interno, justificativa de incerteza ou observação do tipo "tendo em vista que a transcrição menciona", "a gravação está inaudível", "não ficou claro se". Quando um dado for ambíguo ou faltar, usar SOMENTE o marcador limpo entre colchetes ([valor a confirmar], [nome a confirmar], [data a confirmar], [sobrenome a confirmar]) no lugar do dado, sem NENHUMA explicação ao lado e sem citar a transcrição. O marcador nunca contém frases, motivos ou referências à gravação. ERRADO: "R$ 24.030,47 [valor a confirmar, tendo em vista que a transcrição menciona 'R$ 24.000' e 'R$ 24.000, R$ 30,47' em momentos distintos]". CERTO: "[valor a confirmar]". Isso vale para QUALQUER dado, INCLUSIVE CONTAGEM DE VOTOS: se a apuração foi confusa, reiniciada ou ficou incerta, NÃO descrever o que aconteceu na contagem dentro da ata. Registrar apenas o número seguido de [a confirmar] limpo, ou [a confirmar] no lugar do número, sem explicar o motivo. ERRADO: "sete (7) votos [a confirmar, tendo em vista que durante a apuração o contador reiniciou a contagem]". CERTO: "sete (7) votos [a confirmar]", ou, se o próprio número for incerto, "[a confirmar] votos". Nunca escrever na ata frases sobre a contagem, a gravação, o áudio ou o raciocínio da redação.
+
+FID 7. PALAVRA SUSPEITA DE ERRO DE TRANSCRIÇÃO: SINALIZAR, NUNCA CHUTAR
+Se aparecer uma palavra que não é português válido, ou que não faz sentido no contexto condominial (provável erro da transcrição automática de áudio), e não houver correspondência clara no GLOSSÁRIO DE TERMOS CONDOMINIAIS anexado abaixo, é PROIBIDO copiar a palavra cega e é PROIBIDO adivinhar qual seria a palavra certa. Marcar exatamente como [termo a confirmar: 'texto original da transcrição'], preservando entre aspas o que a transcrição trouxe. Sinalizar apenas; nunca inventar a correção. A marcação de termo é SEMPRE completa, com o trecho original entre aspas simples dentro dos colchetes. É PROIBIDO escrever [termo a confirmar] seco, sem o texto original: sem o trecho entre aspas, o revisor perde a pista do que foi dito. Exemplo: o serviço de insuflamento, transcrito como "insufuco com varita", se não puder ser corrigido com segurança pelo glossário, vira [termo a confirmar: 'insufuco com varita'], NUNCA [termo a confirmar] sozinho. Toda marcação de termo a confirmar sem o trecho original entre aspas deve ser tratada como ERRO de redação. Se o trecho estiver realmente ininteligível e não houver texto original citável, escrever [trecho ininteligível a confirmar]; JAMAIS deixar o colchete sem conteúdo. Esta regra também cobre PALAVRA ESTRANGEIRA ou rótulo/nome sem significado claro no contexto condominial: é PROIBIDO reproduzir a palavra crua (mesmo entre aspas) como se fosse um rótulo real da assembleia. Exemplo real: a transcrição trouxe "house" no meio da descrição de mão de obra; o certo é [termo a confirmar: 'house'], nunca apresentar 'house' como se fosse um dado válido da reunião. Termo sem sentido nunca vira informação da ata: ou corrige pelo glossário, ou marca com o original entre aspas.
+
+FID 8. GLOSSÁRIO DE DOMÍNIO CORRIGE GRAFIA DE TERMO OUVIDO ERRADO
+Está anexado abaixo um GLOSSÁRIO DE TERMOS CONDOMINIAIS. Quando a transcrição trouxer uma palavra foneticamente próxima de um termo do glossário, mas grafada de forma errada ou sem sentido no contexto, corrigir para o termo correto do glossário (ex.: "dancaria" no contexto de área comum e máquinas de lavar corrige para lavanderia; "insufuco" corrige para insuflamento; atenção ao par corrediço x basculante, corrigindo só quando o contexto tornar inequívoco qual é). Sem correspondência clara no glossário, aplicar a FID 7 (marcar como [termo a confirmar: '...']). O glossário SÓ padroniza a grafia de termo reconhecível ouvido errado: NUNCA autoriza inventar conteúdo, mudar valores, preencher lacunas (quórum, votos, presença, datas, desfechos) nem alterar o que foi dito. A anti-invenção continua absoluta. CASO MAPEADO tem correção OBRIGATÓRIA e EXATA: quando o glossário lista o erro (seção 11, ex.: "dancaria" no contexto de área comum/máquinas de lavar corrige para LAVANDERIA), usar EXATAMENTE o termo do glossário. É PROIBIDO substituir por uma terceira palavra só por ser foneticamente parecida: "dancaria" NUNCA vira "danceteria", vira lavanderia. Se ficar em dúvida entre a correção do glossário e outra palavra, aplicar a FID 7 e marcar [termo a confirmar: 'texto original'], nunca escolher uma palavra fora do glossário.
+
+FID 9. FIDELIDADE AO QUE FOI DITO: NÃO REORGANIZAR ENTRE ITENS
+A IA NÃO deve mover, antecipar, repetir nem realocar conteúdo entre os itens de pauta por conta própria para "organizar" a ata. O critério é fidelidade absoluta ao que foi realmente dito na assembleia: se um assunto foi de fato mencionado em mais de um momento da reunião, a ata registra em cada momento onde ele foi dito, mantendo a repetição real. PROIBIDO mover uma menção de um item para outro, duplicar uma menção que ocorreu só uma vez, ou inventar menção que não ocorreu. Exemplo do que é ERRADO: deslocar a frase sobre vagas remanescentes do conselho (dita no Item 4) para dentro do Item 2. Cada fato fica no item em que foi efetivamente tratado.
+
+FID 10. NUNCA OMITIR ITEM, SERVIÇO OU INFORMAÇÃO DA TRANSCRIÇÃO
+É PROIBIDO deixar de fora da ata qualquer item, serviço, valor ou informação que estava na transcrição só porque a palavra veio grafada errada, sem sentido ou difícil de entender. Omitir é violação grave de fidelidade. O procedimento correto quando o termo veio errado: (1) se houver caso mapeado ou correspondência clara no glossário, corrigir para o termo do glossário (FID 8); (2) se NÃO conseguir corrigir com segurança, MANTER o item na lista e marcar o trecho problemático como [termo a confirmar: 'texto original da transcrição'] (FID 7). Em nenhuma hipótese o item some. Exemplo real: "insufuco com varita" (provável insuflamento) deve aparecer na lista de serviços como insuflamento (se o contexto confirmar) ou como [termo a confirmar: 'insufuco com varita']; jamais ser simplesmente removido da ata.`;
 
 // Prompt do segundo passe (auditoria de fidelidade).
 // Roda Sonnet 4.6 sem fallback Opus — auditoria deve ser leve. Se falhar, devolvemos
@@ -460,16 +497,21 @@ Sua tarefa é ESTRITAMENTE de auditoria. Não reformule estilo, não melhore red
 PROCEDIMENTO:
 (a) Liste mentalmente cada número (valor em reais, quantidade de votos, percentual, parcelas, datas), cada nome próprio (incluindo sobrenomes) e cada fato pontual que aparece na ata.
 (b) Para cada item da lista, verifique se a transcrição sustenta literalmente esse item.
-(c) Se a transcrição NÃO sustenta o item, substitua o item pela marcação [a confirmar] entre colchetes, mantendo a estrutura da frase. Exemplos concretos:
+(c) Se a transcrição NÃO sustenta o item, substitua o dado pela marcação limpa entre colchetes, mantendo a estrutura da frase e SEM explicar o motivo. Exemplos concretos:
     "Sr. Wellington (Eriton) Pabodo" vira "Sr. Wellington (Eriton) [sobrenome a confirmar]" se Pabodo não aparece na transcrição.
     "vinte e três (23) votos" vira "[número de votos a confirmar] votos" se a transcrição não confirma esse número exato.
     "R$ 762.000,00" vira "R$ [valor a confirmar]" se a transcrição não confirma esse valor.
+(c.1) ATENÇÃO, esta é a distinção que a auditoria vinha errando: os passos (b) e (c) valem SOMENTE para NÚMEROS, NOMES PRÓPRIOS e FATOS PONTUAIS (datas, votos, valores, quórum, presença, desfecho). NÃO valem para VOCABULÁRIO. Termo técnico que o passe anterior corrigiu de um erro de transcrição (por exemplo insuflamento, corrediço, síndico, subsíndico, assembleia, conselho consultivo, regimento interno, lavanderia, conforme o GLOSSÁRIO DE TERMOS CONDOMINIAIS anexado abaixo) é correção LEGÍTIMA e deve ser PRESERVADA. É PROIBIDO rebaixar esse termo para [a confirmar] só porque a palavra corrigida não aparece literal na transcrição bruta, já que a transcrição automática erra vocabulário. Só marque um termo quando ele não tiver correspondência no glossário nem sentido claro no contexto condominial.
 (d) Se um fato relevante da transcrição foi OMITIDO na ata (composição da arrecadação, número de meses de superávit, renegociação com concessionária, impacto de obras em meses específicos), INCLUA o fato no item correspondente, sempre com base literal na transcrição.
 
 REGRAS DE SAÍDA:
 1. Devolva APENAS a ata corrigida, do cabeçalho até a última linha de assinatura. Nada antes, nada depois. Sem comentários, sem lista de mudanças, sem "Aqui está a ata auditada".
 2. Mantenha exatamente a formatação do documento: prosa corrida, sem markdown, sem bullets, CAIXA ALTA para destaques, ITEM N) para itens, travessões "–" apenas onde a SKILL.md prescreve (endereço, linha de cargo das assinaturas, título de anexo).
-3. Se você conferir que a ata está 100% fiel e nada precisa mudar, devolva a ata idêntica à entrada, sem modificar uma vírgula.`;
+3. Se você conferir que a ata está 100% fiel e nada precisa mudar, devolva a ata idêntica à entrada, sem modificar uma vírgula.
+4. Marcação de TERMO (palavra técnica ouvida errada que não dá pra corrigir com segurança pelo glossário) é SEMPRE completa: [termo a confirmar: 'texto original da transcrição'], com o trecho original entre aspas simples dentro dos colchetes. Se o trecho estiver ininteligível e não houver texto citável, usar [trecho ininteligível a confirmar]. É PROIBIDO [termo a confirmar] seco, sem o texto original.
+5. NUNCA OMITIR item, serviço, valor ou informação que já estava na ata ou na transcrição. Se um termo veio errado e você não consegue corrigir com segurança pelo glossário, MANTENHA o item e marque o trecho pela regra 4 (com o original entre aspas). Omitir é violação grave.
+6. PRESERVE os marcadores [termo a confirmar: '...'] que já vierem na ata de entrada. Não apague, não esvazie e não rebaixe para [a confirmar] seco.
+7. NUNCA escreva no corpo da ata comentário, justificativa, dúvida ou observação sobre a transcrição, a contagem de votos, o áudio ou o próprio processo de redação. Dado incerto vira apenas o marcador limpo, sem explicar o motivo.`;
 
 // Segundo passe: roda Sonnet 4.6 com a ata + transcrição original e devolve a ata
 // corrigida. Sem fallback. Em caso de erro, retorna null e o caller usa a ata original.
@@ -479,7 +521,10 @@ async function auditarFidelidadeAta(ataGerada, userMessageOriginal) {
     '\n\nAudite a ata acima contra a transcrição e devolva a ata corrigida seguindo o procedimento e as regras de saída.';
   // max_tokens alinhado com a tentativa 1 do passe principal (regra reviewer.md: ≤16000).
   // Auditoria substitui trechos por [a confirmar] e adiciona fatos curtos — não expande conteúdo.
-  const r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, PROMPT_AUDITORIA, auditMessage);
+  // Glossário anexado também aqui: sem ele, a auditoria não reconhece correções de
+  // vocabulário legítimas do passe principal e as rebaixava para [a confirmar].
+  const systemAuditoria = PROMPT_AUDITORIA + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+  const r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, systemAuditoria, auditMessage);
   if (!r.ok || !r.texto) {
     console.warn('[engine-ata] Segundo passe de auditoria falhou (status ' + (r.status || 'sem_status') + '): ' + (r.erro || 'sem_texto'));
     return null;
@@ -491,7 +536,7 @@ async function auditarFidelidadeAta(ataGerada, userMessageOriginal) {
 // Critérios derivados das atas de referência do handoff:
 //   - tem frase de encerramento padrão
 //   - termina com ponto final (não foi cortada no meio)
-//   - tem pelo menos 4 blocos de assinatura (Síndico, Presidente, Secretária, Administradora)
+//   - tem pelo menos 4 blocos de assinatura (ex.: Síndico, Subsíndico, Conselho, Presidente, Secretária; a administradora nunca assina)
 //   - tem tamanho mínimo plausível (atas reais têm 6000+ chars)
 function validarAta(resposta) {
   if (!resposta || typeof resposta !== 'string') return { valido: false, motivo: 'resposta_vazia' };
@@ -569,7 +614,7 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
     return res.status(400).json({ erro: 'userMessage_invalido', detalhe: 'envie a transcrição + dados da reunião como string em userMessage (mín 50 chars)' });
   }
 
-  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO;
+  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
 
   // Helper local pra encadear segundo passe de auditoria e padronizar resposta.
@@ -683,6 +728,61 @@ async function supabaseAdminRequest(method, pathStr, body) {
   });
 }
 
+// Upload binario para Supabase Storage via REST com service_role.
+// Diferente de supabaseAdminRequest (que serializa JSON), este envia o Buffer
+// cru com Content-Type apropriado. Path no bucket: <previsao_id>/<hash>.<ext>.
+async function supabaseStorageUpload(bucket, objectPath, buffer, contentType) {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('supabase_nao_configurado');
+  }
+  const url = new URL(`${SUPABASE_URL}/storage/v1/object/${bucket}/${objectPath}`);
+  const cliente = url.protocol === 'https:' ? https : http;
+  return new Promise((resolve, reject) => {
+    const opts = {
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + SUPABASE_SERVICE_ROLE_KEY,
+        'apikey': SUPABASE_SERVICE_ROLE_KEY,
+        'Content-Type': contentType,
+        'Content-Length': buffer.length,
+        'x-upsert': 'true',
+      },
+    };
+    const reqUp = cliente.request(opts, r => {
+      let body = '';
+      r.on('data', c => { body += c; });
+      r.on('end', () => {
+        if (r.statusCode >= 200 && r.statusCode < 300) {
+          try { resolve(JSON.parse(body)); } catch { resolve({}); }
+        } else {
+          reject(new Error(`storage_upload_status_${r.statusCode}: ${body.slice(0, 200)}`));
+        }
+      });
+    });
+    reqUp.on('error', reject);
+    reqUp.write(buffer);
+    reqUp.end();
+  });
+}
+
+// Gera signed URL para um objeto privado do Storage (expira em N segundos).
+async function supabaseStorageSignedUrl(bucket, objectPath, expiresIn = 600) {
+  const r = await supabaseAdminRequest(
+    'POST',
+    `/storage/v1/object/sign/${bucket}/${objectPath}`,
+    { expiresIn }
+  );
+  if (r.status >= 400 || !r.body || !r.body.signedURL) {
+    throw new Error('signed_url_falhou');
+  }
+  // O retorno e relativo: { signedURL: "/object/sign/..." } - precisa prefixar com SUPABASE_URL.
+  const rel = r.body.signedURL.startsWith('/') ? r.body.signedURL : '/' + r.body.signedURL;
+  return SUPABASE_URL.replace(/\/$/, '') + '/storage/v1' + rel;
+}
+
 // POST /api/admin/usuarios/convidar
 // Body: { email, role: 'GERENTE'|'OPERACIONAL', nome? }
 // Envia magic link de convite via GoTrue. O profile é criado automaticamente pelo
@@ -793,6 +893,522 @@ app.post('/api/admin/seed-dev',
     res.status(r.status).json(r.body);
   });
 
+// ─────────────────────────────────────────────────────────────────────────
+// Helpers de cache hash para o módulo Previsão Orçamentária.
+// Calculam MD5 deterministico do payload com keys ordenadas recursivamente.
+// Evitam escrita no banco quando o usuário salva sem ter alterado nada.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Serializa objeto com chaves ordenadas recursivamente em todos os niveis.
+// Garante que o hash do payload seja deterministico independente da ordem
+// em que JavaScript construiu o objeto. Usado apenas para detectar mudanca
+// de conteudo, nao para seguranca.
+function previsaoSerializarOrdenado(obj) {
+  if (obj === null || typeof obj !== 'object') return JSON.stringify(obj);
+  if (Array.isArray(obj)) return '[' + obj.map(previsaoSerializarOrdenado).join(',') + ']';
+  var chaves = Object.keys(obj).sort();
+  return '{' + chaves.map(function(k) {
+    return JSON.stringify(k) + ':' + previsaoSerializarOrdenado(obj[k]);
+  }).join(',') + '}';
+}
+
+// MD5 hex do payload serializado com keys ordenadas.
+function previsaoMd5Deterministico(obj) {
+  return crypto.createHash('md5').update(previsaoSerializarOrdenado(obj)).digest('hex');
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Módulo: Previsão Orçamentária
+// Proxy autenticado para o microserviço FastAPI previsao-api.
+// O body multipart vai puro pelo pipe — NÃO passar por express.json().
+// Timeout: 120s (PDFs grandes podem demorar na extração pdfplumber).
+// ─────────────────────────────────────────────────────────────────────────
+
+// Retorna http ou https baseado no protocolo da URL alvo.
+// Necessário porque o microserviço local roda em HTTP, não HTTPS.
+function clienteHttpDe(protocolo) {
+  return protocolo === 'https:' ? https : http;
+}
+
+app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
+  if (!INTERNAL_API_SECRET) {
+    res.status(503).json({ erro: 'previsao_api_nao_configurada' });
+    return;
+  }
+
+  // Limite de 50MB: PDFs do Superlógica raramente passam de 5MB.
+  // Validado após requireAuth e ANTES de abrir a conexão com o upstream —
+  // abrir o socket antes deixava conexão TCP pendurada a cada request
+  // rejeitado (achado da revisão da prestação, mesmo padrão aqui).
+  const TAMANHO_MAX_UPLOAD = 50 * 1024 * 1024;
+  const contentLength = parseInt(req.headers['content-length'] || '0', 10);
+  if (!contentLength) {
+    res.status(411).json({ erro: 'content_length_obrigatorio' });
+    return;
+  }
+  if (contentLength > TAMANHO_MAX_UPLOAD) {
+    res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'PDFs do Superlógica raramente passam de 5MB. Limite: 50MB.' });
+    return;
+  }
+
+  const target = new URL('/extrair-pdfs', PREVISAO_API_URL);
+  const cliente = clienteHttpDe(target.protocol);
+  const opts = {
+    hostname: target.hostname,
+    port: target.port || (target.protocol === 'https:' ? 443 : 80),
+    path: target.pathname,
+    method: 'POST',
+    headers: {
+      'X-Internal-Secret': INTERNAL_API_SECRET,
+      'Content-Type': req.headers['content-type'] || 'application/octet-stream',
+      'Content-Length': req.headers['content-length'],
+    },
+  };
+  const upstream = cliente.request(opts, r => {
+    res.status(r.statusCode);
+    Object.entries(r.headers).forEach(([k, v]) => {
+      if (!['connection', 'transfer-encoding'].includes(k.toLowerCase())) {
+        res.setHeader(k, v);
+      }
+    });
+    r.pipe(res);
+  });
+  upstream.setTimeout(120000, () => {
+    upstream.destroy();
+    if (!res.headersSent) res.status(504).json({ erro: 'timeout_extracao' });
+  });
+  upstream.on('error', e => {
+    if (!res.headersSent) {
+      // Serviço inacessível (recusa, timeout de rede, DNS) → 503.
+      // Erros de protocolo/resposta inválida → 502.
+      const indisponivel = ['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EHOSTUNREACH'].includes(e.code);
+      const statusCode = indisponivel ? 503 : 502;
+      // Expor apenas o código Node (sem IP/hostname) para não vazar topologia interna.
+      res.status(statusCode).json({ erro: 'previsao_api_indisponivel', detalhe: e.code || 'erro_desconhecido' });
+    }
+  });
+
+  req.pipe(upstream);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Módulo: Prestação de Contas
+// Proxy autenticado para o microserviço prestacao-pdf (FastAPI).
+// O Hub envia os W016A (multipart) e recebe { pptx_b64, pdf_b64, blocos }.
+// O body multipart vai puro pelo pipe — NÃO passar por express.json().
+// Timeout 240s: parse + render + LibreOffice frio chegam a 90s no primeiro
+// request do dia. Erros 422 do microserviço passam direto pro Hub com o
+// motivo estruturado (degradação graciosa: revisão humana, nunca slide
+// quebrado).
+// ─────────────────────────────────────────────────────────────────────────
+
+app.post('/api/prestacao/gerar-deck', requireAuth, (req, res) => {
+  if (!INTERNAL_API_SECRET || !PRESTACAO_PDF_API_URL) {
+    // Sem microserviço configurado o Hub cai no fallback offline (PptxGenJS).
+    res.status(503).json({ erro: 'prestacao_api_nao_configurada' });
+    return;
+  }
+
+  // Validação de tamanho ANTES de abrir a conexão com o upstream — abrir o
+  // socket antes deixaria uma conexão TCP pendurada por até 240s a cada
+  // request rejeitado (achado da revisão). Sem Content-Length: 411 explícito
+  // (fetch com FormData sempre envia o header; a ausência indica cliente
+  // fora do fluxo normal, não upload grande).
+  const TAMANHO_MAX_PRESTACAO = 50 * 1024 * 1024;
+  const tamanho = parseInt(req.headers['content-length'] || '0', 10);
+  if (!tamanho) {
+    res.status(411).json({ erro: 'content_length_obrigatorio' });
+    return;
+  }
+  if (tamanho > TAMANHO_MAX_PRESTACAO) {
+    res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'Limite: 50MB.' });
+    return;
+  }
+
+  const target = new URL('/gerar', PRESTACAO_PDF_API_URL);
+  const cliente = clienteHttpDe(target.protocol);
+  const opts = {
+    hostname: target.hostname,
+    port: target.port || (target.protocol === 'https:' ? 443 : 80),
+    path: target.pathname,
+    method: 'POST',
+    headers: {
+      'X-Internal-Secret': INTERNAL_API_SECRET,
+      'Content-Type': req.headers['content-type'] || 'application/octet-stream',
+      'Content-Length': req.headers['content-length'],
+    },
+  };
+  const upstream = cliente.request(opts, r => {
+    res.status(r.statusCode);
+    Object.entries(r.headers).forEach(([k, v]) => {
+      if (!['connection', 'transfer-encoding'].includes(k.toLowerCase())) {
+        res.setHeader(k, v);
+      }
+    });
+    r.pipe(res);
+  });
+  upstream.setTimeout(240000, () => {
+    upstream.destroy();
+    if (!res.headersSent) res.status(504).json({ erro: 'timeout_geracao' });
+  });
+  upstream.on('error', e => {
+    if (!res.headersSent) {
+      const indisponivel = ['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EHOSTUNREACH'].includes(e.code);
+      res.status(indisponivel ? 503 : 502).json({ erro: 'prestacao_api_indisponivel', detalhe: e.code || 'erro_desconhecido' });
+    }
+  });
+
+  req.pipe(upstream);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Módulo: Previsão Orçamentária — Persistência Supabase (Fase 3)
+//
+// Três rotas de rascunho com cache hash MD5:
+//   POST /api/previsao/salvar-rascunho  — upsert com detecção de mudança
+//   GET  /api/previsao/listar           — lista rascunhos do condomínio
+//   GET  /api/previsao/rascunho/:id     — carrega rascunho individual
+//
+// Todas exigem auth Supabase (JWT). authMode 'internal' é bloqueado porque
+// rascunhos precisam de um usuario real (criado_por = auth.uid()).
+// service_role bypassa RLS, portanto o filtro por criado_por é replicado
+// no Express para respeitar a Opção C de visibilidade por role.
+// ─────────────────────────────────────────────────────────────────────────
+
+// POST /api/previsao/salvar-rascunho
+// Upsert de rascunho com detecção de mudança via hash MD5. Se o hash armazenado
+// for igual ao calculado, retorna sem_alteracoes sem escrever no banco.
+// Body: { condominio_id, ano_referencia, periodo, payload_json }
+app.post('/api/previsao/salvar-rascunho',
+  requireAuth, requireServiceRoleKey, express.json({ limit: '10mb' }),
+  async (req, res) => {
+    // authMode internal não tem usuario real; criado_por seria null
+    if (req.authMode === 'internal') {
+      return res.status(400).json({ erro: 'usuario_obrigatorio', detalhe: 'Esta rota exige autenticação Supabase (JWT de usuário real).' });
+    }
+    const { condominio_id, ano_referencia, periodo, payload_json } = req.body || {};
+    if (!condominio_id || typeof condominio_id !== 'string') {
+      return res.status(400).json({ erro: 'condominio_id_obrigatorio' });
+    }
+    if (typeof ano_referencia !== 'number' || ano_referencia < 2000 || ano_referencia > 2100) {
+      return res.status(400).json({ erro: 'ano_referencia_invalido', detalhe: 'Deve ser número entre 2000 e 2100.' });
+    }
+    if (!periodo || typeof periodo !== 'string') {
+      return res.status(400).json({ erro: 'periodo_obrigatorio' });
+    }
+    if (!payload_json || typeof payload_json !== 'object' || Array.isArray(payload_json)) {
+      return res.status(400).json({ erro: 'payload_json_obrigatorio', detalhe: 'Deve ser um objeto JSON.' });
+    }
+
+    const userId = req.user.sub;
+    // Reajustes entram no hash para que mudanças só neles também disparem escrita
+    const hashCalculado = previsaoMd5Deterministico(payload_json);
+
+    // Busca rascunho existente para o condomínio + ano
+    const busca = await supabaseAdminRequest('GET',
+      `/rest/v1/previsoes_orcamentarias?condominio_id=eq.${encodeURIComponent(condominio_id)}&ano_referencia=eq.${encodeURIComponent(ano_referencia)}&status=eq.rascunho&select=id,payload_hash,criado_por&limit=1`);
+
+    if (busca.status >= 400) {
+      console.error('[previsao] erro busca rascunho:', JSON.stringify(busca.body));
+      return res.status(502).json({ erro: 'erro_busca_rascunho' });
+    }
+
+    const existentes = Array.isArray(busca.body) ? busca.body : [];
+    const existente = existentes[0] || null;
+
+    // Controle de acesso: OPERACIONAL só pode atualizar o próprio rascunho
+    const role = getRoleFromPayload(req.user);
+    if (existente && !['GESTOR', 'GERENTE'].includes(role) && existente.criado_por !== userId) {
+      return res.status(404).json({ erro: 'rascunho_nao_encontrado' });
+    }
+
+    // Cache hit: payload não mudou, sem escrita
+    if (existente && existente.payload_hash === hashCalculado) {
+      return res.status(200).json({ status: 'sem_alteracoes', id: existente.id, payload_hash: hashCalculado });
+    }
+
+    if (existente) {
+      // Atualiza registro existente
+      const upd = await supabaseAdminRequest('PATCH',
+        `/rest/v1/previsoes_orcamentarias?id=eq.${encodeURIComponent(existente.id)}`,
+        { periodo, payload_json, payload_hash: hashCalculado });
+      if (upd.status >= 400) {
+        console.error('[previsao] erro patch rascunho:', JSON.stringify(upd.body));
+        return res.status(502).json({ erro: 'erro_atualizar_rascunho' });
+      }
+      const registro = Array.isArray(upd.body) ? upd.body[0] : upd.body;
+      return res.status(200).json({ status: 'atualizado', id: registro?.id || existente.id, payload_hash: hashCalculado });
+    }
+
+    // Insere novo rascunho
+    const ins = await supabaseAdminRequest('POST',
+      '/rest/v1/previsoes_orcamentarias',
+      { condominio_id, ano_referencia, periodo, status: 'rascunho', payload_json, payload_hash: hashCalculado, criado_por: userId });
+    if (ins.status >= 400) {
+      console.error('[previsao] erro insert rascunho:', JSON.stringify(ins.body));
+      return res.status(502).json({ erro: 'erro_inserir_rascunho' });
+    }
+    const novo = Array.isArray(ins.body) ? ins.body[0] : ins.body;
+    return res.status(201).json({ status: 'criado', id: novo?.id, payload_hash: hashCalculado });
+  });
+
+// GET /api/previsao/listar?condominio_id=<uuid>
+// Lista rascunhos do condomínio ativo. GESTOR/GERENTE veem todos;
+// OPERACIONAL vê apenas os próprios (filtro explícito no Express, pois
+// service_role bypassa RLS).
+app.get('/api/previsao/listar',
+  requireAuth, requireServiceRoleKey,
+  async (req, res) => {
+    if (req.authMode === 'internal') {
+      return res.status(400).json({ erro: 'usuario_obrigatorio' });
+    }
+    const condominioId = req.query.condominio_id;
+    if (!condominioId || typeof condominioId !== 'string') {
+      return res.status(400).json({ erro: 'condominio_id_obrigatorio' });
+    }
+
+    const role = getRoleFromPayload(req.user);
+    const userId = req.user.sub;
+    const limite = Math.min(parseInt(req.query.limit || '50', 10) || 50, 200);
+    let filtro = `/rest/v1/previsoes_orcamentarias?condominio_id=eq.${encodeURIComponent(condominioId)}&status=eq.rascunho&select=id,ano_referencia,periodo,payload_hash,atualizado_em&order=atualizado_em.desc&limit=${limite}`;
+    // OPERACIONAL: aplica filtro adicional pelo proprio userId
+    if (!['GESTOR', 'GERENTE'].includes(role)) {
+      filtro += `&criado_por=eq.${encodeURIComponent(userId)}`;
+    }
+
+    const r = await supabaseAdminRequest('GET', filtro);
+    if (r.status >= 400) {
+      console.error('[previsao] erro listar rascunhos:', JSON.stringify(r.body));
+      return res.status(502).json({ erro: 'erro_listar_rascunhos' });
+    }
+    return res.status(200).json(Array.isArray(r.body) ? r.body : []);
+  });
+
+// GET /api/previsao/rascunho/:id
+// Carrega um rascunho individual pelo UUID. OPERACIONAL recebe 404 se não
+// for o dono (evita vazar que o registro existe).
+app.get('/api/previsao/rascunho/:id',
+  requireAuth, requireServiceRoleKey,
+  async (req, res) => {
+    if (req.authMode === 'internal') {
+      return res.status(400).json({ erro: 'usuario_obrigatorio' });
+    }
+    const id = req.params.id;
+    const r = await supabaseAdminRequest('GET',
+      `/rest/v1/previsoes_orcamentarias?id=eq.${encodeURIComponent(id)}&select=*&limit=1`);
+    if (r.status >= 400) {
+      console.error('[previsao] erro get rascunho:', JSON.stringify(r.body));
+      return res.status(502).json({ erro: 'erro_buscar_rascunho' });
+    }
+    const registros = Array.isArray(r.body) ? r.body : [];
+    if (!registros.length) {
+      return res.status(404).json({ erro: 'rascunho_nao_encontrado' });
+    }
+    const registro = registros[0];
+    // Controle de visibilidade: OPERACIONAL só vê o próprio
+    const role = getRoleFromPayload(req.user);
+    const userId = req.user.sub;
+    if (!['GESTOR', 'GERENTE'].includes(role) && registro.criado_por !== userId) {
+      return res.status(404).json({ erro: 'rascunho_nao_encontrado' });
+    }
+    return res.status(200).json(registro);
+  });
+
+// ─────────────────────────────────────────────────────────────────────────
+// POST /api/previsao/gerar-pdf
+//
+// Orquestrador de geracao de PPTX + PDF:
+//   1. Valida auth (apenas Supabase JWT - sem internal)
+//   2. Busca previsao no banco (controle de visibilidade por role)
+//   3. Checa cache em previsoes_geracoes por (previsao_id, payload_hash)
+//   4. Cache hit: regenera signed URLs (10min) e retorna cached: true
+//   5. Cache miss: chama microservico previsao-pdf com timeout 180s
+//   6. Upload PPTX + PDF para Storage privado (bucket previsao-arquivos)
+//   7. INSERT em previsoes_geracoes
+//   8. Retorna { pptx_url, pdf_url, gerado_em, cached, duracao_ms }
+// ─────────────────────────────────────────────────────────────────────────
+app.post('/api/previsao/gerar-pdf',
+  requireAuth, requireServiceRoleKey, express.json({ limit: '2mb' }),
+  async (req, res) => {
+  // Bloqueia authMode internal - precisa de usuario real para gerado_por
+  if (req.authMode === 'internal') {
+    return res.status(400).json({ erro: 'usuario_obrigatorio', detalhe: 'gerar-pdf requer autenticacao Supabase' });
+  }
+
+  if (!PREVISAO_PDF_API_URL) {
+    return res.status(503).json({ erro: 'previsao_pdf_nao_configurado' });
+  }
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return res.status(503).json({ erro: 'storage_nao_configurado' });
+  }
+
+  const { previsao_id, config_rateio } = req.body || {};
+
+  // Validacao basica
+  if (!previsao_id || typeof previsao_id !== 'string' || !/^[0-9a-f-]{36}$/.test(previsao_id)) {
+    return res.status(400).json({ erro: 'previsao_id_invalido' });
+  }
+  if (!config_rateio || typeof config_rateio.apartamentos !== 'number' || config_rateio.apartamentos < 1) {
+    return res.status(400).json({ erro: 'config_rateio_invalido', detalhe: 'apartamentos obrigatorio e >= 1' });
+  }
+
+  const userId = req.user.sub;
+  const role = getRoleFromPayload(req.user);
+
+  try {
+    // 1) Busca previsao no banco
+    const buscaPrev = await supabaseAdminRequest('GET',
+      `/rest/v1/previsoes_orcamentarias?id=eq.${encodeURIComponent(previsao_id)}&select=id,payload_json,payload_hash,criado_por`
+    );
+    if (buscaPrev.status >= 400 || !Array.isArray(buscaPrev.body) || !buscaPrev.body.length) {
+      return res.status(404).json({ erro: 'previsao_nao_encontrada' });
+    }
+    const previsao = buscaPrev.body[0];
+
+    // Controle de visibilidade: OPERACIONAL so ve o proprio
+    if (!['GESTOR', 'GERENTE'].includes(role) && previsao.criado_por !== userId) {
+      return res.status(404).json({ erro: 'previsao_nao_encontrada' });
+    }
+
+    const payloadHash = previsao.payload_hash;
+    const payloadJson = previsao.payload_json;
+
+    // Monta config completa com defaults
+    const configCompleto = {
+      apartamentos: config_rateio.apartamentos,
+      coberturas: config_rateio.coberturas != null ? config_rateio.coberturas : 0,
+      fator_cobertura: config_rateio.fator_cobertura != null ? config_rateio.fator_cobertura : 1.5,
+      fundo_reserva: config_rateio.fundo_reserva != null ? config_rateio.fundo_reserva : 0.0,
+      fundo_pct: config_rateio.fundo_pct != null ? config_rateio.fundo_pct : 0.05,
+    };
+
+    // 2) Checa cache em previsoes_geracoes
+    const cacheKey = payloadHash + ':' + JSON.stringify(configCompleto);
+    const hashCache = require('crypto').createHash('md5').update(cacheKey).digest('hex');
+    const buscaCache = await supabaseAdminRequest('GET',
+      `/rest/v1/previsoes_geracoes?previsao_id=eq.${encodeURIComponent(previsao_id)}&payload_hash=eq.${encodeURIComponent(hashCache)}&order=gerado_em.desc&limit=1&select=id,pptx_url,pdf_url,gerado_em,duracao_ms`
+    );
+    if (buscaCache.status < 400 && Array.isArray(buscaCache.body) && buscaCache.body.length) {
+      const cached = buscaCache.body[0];
+      // Extrai objectPath do pptx_url original (armazenado como path, nao como signed URL)
+      // Formato armazenado: "previsao_id/hashCache.pptx" e "previsao_id/hashCache.pdf"
+      const pptxPath = `${previsao_id}/${hashCache}.pptx`;
+      const pdfPath = `${previsao_id}/${hashCache}.pdf`;
+      try {
+        const pptxUrl = await supabaseStorageSignedUrl('previsao-arquivos', pptxPath, 600);
+        const pdfUrl = await supabaseStorageSignedUrl('previsao-arquivos', pdfPath, 600);
+        return res.status(200).json({
+          pptx_url: pptxUrl,
+          pdf_url: pdfUrl,
+          gerado_em: cached.gerado_em,
+          cached: true,
+          duracao_ms: cached.duracao_ms,
+        });
+      } catch (signErr) {
+        console.warn('[previsao/gerar-pdf] signed url cache falhou, regenerando:', signErr.message);
+        // Continua para regenerar
+      }
+    }
+
+    // 3) Cache miss: chama microservico
+    const microPayload = JSON.stringify({
+      previsao_id,
+      payload_json: payloadJson,
+      payload_hash: payloadHash,
+      config_rateio: configCompleto,
+    });
+
+    const microUrl = new URL('/gerar', PREVISAO_PDF_API_URL);
+    const microCliente = microUrl.protocol === 'https:' ? https : http;
+
+    const microResp = await new Promise((resolve, reject) => {
+      const opts = {
+        hostname: microUrl.hostname,
+        port: microUrl.port || (microUrl.protocol === 'https:' ? 443 : 80),
+        path: microUrl.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(microPayload),
+          'X-Internal-Secret': INTERNAL_API_SECRET,
+        },
+      };
+      const timer = setTimeout(() => reject(new Error('timeout_microservico')), 180000);
+      const mReq = microCliente.request(opts, r => {
+        let d = '';
+        r.on('data', c => { d += c; });
+        r.on('end', () => {
+          clearTimeout(timer);
+          let body = null;
+          try { body = JSON.parse(d); } catch { body = { raw: d.slice(0, 200) }; }
+          resolve({ status: r.statusCode, body });
+        });
+      });
+      mReq.on('error', e => { clearTimeout(timer); reject(e); });
+      mReq.write(microPayload);
+      mReq.end();
+    });
+
+    if (microResp.status === 422) {
+      return res.status(422).json({ erro: 'payload_invalido_para_geracao' });
+    }
+    if (microResp.status !== 200 || !microResp.body || !microResp.body.pptx_b64 || !microResp.body.pdf_b64) {
+      console.error('[previsao/gerar-pdf] microservico retornou erro:', microResp.status);
+      return res.status(503).json({ erro: 'geracao_falhou' });
+    }
+
+    const pptxBuffer = Buffer.from(microResp.body.pptx_b64, 'base64');
+    const pdfBuffer = Buffer.from(microResp.body.pdf_b64, 'base64');
+    const duracaoMs = microResp.body.duracao_ms || 0;
+
+    // 4) Upload pro Storage
+    const pptxPath = `${previsao_id}/${hashCache}.pptx`;
+    const pdfPath = `${previsao_id}/${hashCache}.pdf`;
+    const MIME_PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+
+    await Promise.all([
+      supabaseStorageUpload('previsao-arquivos', pptxPath, pptxBuffer, MIME_PPTX),
+      supabaseStorageUpload('previsao-arquivos', pdfPath, pdfBuffer, 'application/pdf'),
+    ]);
+
+    // 5) INSERT em previsoes_geracoes
+    const geradoEm = new Date().toISOString();
+    const ins = await supabaseAdminRequest('POST', '/rest/v1/previsoes_geracoes', {
+      previsao_id,
+      payload_hash: hashCache,
+      pptx_url: pptxPath,
+      pdf_url: pdfPath,
+      gerado_por: userId,
+      gerado_em: geradoEm,
+      duracao_ms: duracaoMs,
+    });
+    if (ins.status >= 400) {
+      console.error('[previsao/gerar-pdf] erro insert geracao:', ins.status);
+      // Nao aborta: arquivos ja foram salvos, erro na auditoria nao deve bloquear usuario
+    }
+
+    // 6) Gera signed URLs (10min)
+    const [pptxUrl, pdfUrl] = await Promise.all([
+      supabaseStorageSignedUrl('previsao-arquivos', pptxPath, 600),
+      supabaseStorageSignedUrl('previsao-arquivos', pdfPath, 600),
+    ]);
+
+    return res.status(200).json({
+      pptx_url: pptxUrl,
+      pdf_url: pdfUrl,
+      gerado_em: geradoEm,
+      cached: false,
+      duracao_ms: duracaoMs,
+    });
+  } catch (e) {
+    if (e.message === 'timeout_microservico') {
+      return res.status(504).json({ erro: 'timeout_geracao' });
+    }
+    console.error('[previsao/gerar-pdf] erro inesperado:', e.message);
+    return res.status(500).json({ erro: 'erro_interno' });
+  }
+});
+
 // Middleware 404 para rotas /api/* desconhecidas.
 // Posicionado depois de todas as rotas reais de /api e antes do catch-all geral.
 // Retorna JSON estruturado e loga via console.warn (404 é erro de cliente, não falha de servidor).
@@ -811,11 +1427,21 @@ app.use('/api', (req, res) => {
   });
 });
 
+// Impede o navegador de servir uma versão antiga do HTML em cache. É o que garante
+// que o usuário sempre pegue o index.html mais novo (evita gerar a ata pela versão
+// antiga, que usava window.print e injetava data/URL). Só afeta o HTML; os assets
+// (jsPDF, fonte) continuam cacheáveis normalmente.
+function semCacheHtml(res) {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+}
+
 // Rota raiz: serve a landing page ServiceZone
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
+app.get('/', (req, res) => { semCacheHtml(res); res.sendFile(path.join(__dirname, 'public', 'landing.html')); });
 
 // Rota do sistema principal, acessada a partir do botão Entrar na landing
-app.get('/hub', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/hub', (req, res) => { semCacheHtml(res); res.sendFile(path.join(__dirname, 'public', 'index.html')); });
 
 // Qualquer rota desconhecida cai na landing, não no sistema
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));

@@ -1,3 +1,26 @@
+REGRAS DE AMBIENTE — LEIA ANTES DE QUALQUER TAREFA
+
+Este projeto tem dois ambientes no mesmo repositorio (MatheusMelo2903/service-hub):
+- Branch dev = ambiente de TESTE. Roda em service-hub-dev.up.railway.app. E onde todo desenvolvimento acontece.
+- Branch main = PRODUCAO. Roda em service-hub-production.up.railway.app. E intocavel sem autorizacao explicita.
+
+Regras absolutas:
+1. No inicio de toda sessao, rode `git status` e confirme que estou na branch dev. Se nao estiver, rode `git checkout dev` e me avise antes de continuar.
+2. Todo desenvolvimento, edicao e teste acontece SOMENTE na branch dev.
+3. NUNCA faca commit, merge ou push para a branch main. Producao so e atualizada quando EU autorizar explicitamente com a frase "sobe para producao".
+4. Quando eu autorizar subir para producao, o fluxo e: commit na dev, push da dev, e so entao merge dev para main com minha confirmacao.
+5. Antes de comecar a editar, rode `git fetch` para sincronizar com o remoto e evitar conflito entre os varios clones locais.
+6. Se em algum momento detectar que estou em pasta diferente de v8s/service-hub, me avise imediatamente.
+7. AUTO-SINCRONIZACAO DE LEITURA (inicio de toda sessao):
+   a) Rode `git fetch origin`.
+   b) Rode `git status` e verifique se ha trabalho nao commitado ou nao rastreado.
+   c) Se a arvore estiver LIMPA (nada a perder) E a dev local estiver atras da origin/dev: rode `git reset --hard origin/dev` para alinhar automaticamente, e me avise que sincronizou.
+   d) Se houver QUALQUER trabalho nao commitado, nao rastreado, ou a dev local estiver a frente da origin/dev: NAO sincronize automaticamente. PARE, me mostre o que ha de pendente, e pergunte como proceder.
+   e) NUNCA sobrescreva, descarte ou resete trabalho nao salvo sem minha confirmacao explicita. Em duvida, sempre pare e pergunte.
+   f) Esta regra vale APENAS para a branch dev. NUNCA aplique auto-sincronizacao na main.
+
+Quando eu disser "estou na versao teste" ou "trabalha no dev", confirme que estamos na branch dev e prossiga normalmente nela.
+
 # CLAUDE.md — Service Hub V8S
 
 Este arquivo é a fonte de verdade do projeto Service Hub. Leia INTEIRO antes de qualquer tarefa.

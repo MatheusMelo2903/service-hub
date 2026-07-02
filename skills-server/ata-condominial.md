@@ -74,6 +74,7 @@ Em DOCX, o título em caixa alta + dois pontos vai em negrito, e o corpo segue n
 
 **Regras de redação dos itens:**
 
+- O TÍTULO em caixa alta deve ter grafia e acentuação corretas do português: escrever "ELEIÇÃO", "PRESTAÇÃO", "DELIBERAÇÃO", "MANUTENÇÃO", "APROVAÇÃO", nunca versões sem acento ou truncadas como "ELEICO", "ELEICAO", "PRESTACAO". Caixa alta não remove acento (Ç, Ã, Á, É, Í, Ó, Ú permanecem). Revisar cada título antes de fechar.
 - Conteúdo em **prosa corrida**, sem bullets, sem listas, sem travessões como marcadores.
 - Atribuir falas com clareza: "O síndico Sr. [Nome] informou que...", "O representante da administradora apresentou...", "O morador Sr. [Nome] apontou que..."
 - Tom neutro. Em conflitos, registrar fatos e posições sem adjetivos carregados. Usar "manifestou insatisfação com" em vez de "atacou".
@@ -107,15 +108,21 @@ ENCERRAMENTO E PRÓXIMOS PASSOS: [resumo das deliberações]
 
 **Quem deve assinar (adaptar conforme presentes):**
 
-- Síndico (atual ou anterior, conforme o caso)
 - Síndico(a) eleito(a), quando houver eleição
+- Subsíndico(a) eleito(a) e conselheiros eleitos, quando houver eleição, um por linha
+- Síndico em exercício SOMENTE quando NÃO houver eleição nesta assembleia (ex.: prestação de contas isolada)
 - Presidente da Mesa
 - Secretária da ata
 - Advogado, quando presente
 - Presidente do Conselho
 - Membros titulares do Conselho Fiscal, um por linha
 - Membros suplentes do Conselho Fiscal, um por linha
-- Representante da administradora, quando aplicável
+
+**ORDEM FIXA E OBRIGATÓRIA das assinaturas (esta ordem NÃO muda em hipótese alguma):** primeiro os cargos ELEITOS, na sequência (1) Síndico Eleito, (2) Subsíndico Eleito, (3) Membro Eleito do Conselho Consultivo (um por linha, se houver mais de um); em seguida (4) Presidente da Mesa; e por ÚLTIMO (5) Secretária da Ata. É PROIBIDO colocar Presidente da Mesa ou Secretária da Ata antes dos eleitos. Advogado ou membros do Conselho Fiscal, quando presentes, entram depois dos eleitos e antes do Presidente da Mesa.
+
+**Em ata de ELEIÇÃO, o síndico que estava em exercício (atual ou anterior) NÃO assina como "Síndico em Exercício" nem "Síndico Atual" no bloco de assinaturas.** Nas assinaturas de eleição constam apenas os CARGOS ELEITOS (síndico eleito, subsíndico eleito, conselheiros eleitos), mais Presidente da Mesa e Secretária da ata. Se a mesma pessoa que estava no exercício presidiu a mesa, ela aparece uma ÚNICA vez, como "Presidente da Mesa", nunca também como síndico.
+
+**O representante da administradora (Condomínio Service) NUNCA assina a ata.** Não incluir linha de assinatura para a administradora em hipótese alguma, mesmo que citada na abertura ou nos itens como presente.
 
 **NUNCA agrupar múltiplos assinantes em uma única linha.** NUNCA incluir linha de "Moradores Presentes" como assinatura, salvo solicitação explícita.
 
@@ -182,6 +189,10 @@ NUNCA inventar fatos em ata. Sem informação explícita:
 - Usar marcador `[Nome]` para participantes não identificados
 
 Nunca assumir gênero por nome. Nunca preencher quórum, hora exata, presença individual, votação ou desfecho sem confirmação na transcrição ou edital.
+
+**Marcadores são sempre limpos e completos.** Dado incerto vira apenas `[a confirmar]` (ou `[valor a confirmar]`, `[nome a confirmar]`). Termo ouvido errado que não dá pra corrigir com segurança vira `[termo a confirmar: 'texto original da transcrição']`, SEMPRE com o trecho original entre aspas simples: é proibido `[termo a confirmar]` seco, sem o texto original.
+
+**Proibido nota interna no corpo da ata.** NUNCA escrever justificativa, dúvida ou observação sobre a transcrição, a contagem de votos, o áudio ou o próprio processo de redação. O marcador nunca leva explicação do motivo. ERRADO: "sete (7) votos [a confirmar, tendo em vista que o contador reiniciou a contagem]". CERTO: "sete (7) votos [a confirmar]".
 
 ---
 

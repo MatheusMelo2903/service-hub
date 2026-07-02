@@ -32,6 +32,10 @@ async function prestacaoInit() {
     const r = await supaFetch('condominios?select=id,nome,id_superlogica&order=nome.asc');
     if (Array.isArray(r)) prestacaoState.condominios = r;
   } catch (e) {
+    // Informa o usuário que a lista não carregou para ele poder tentar recarregar,
+    // em vez de deixar o campo de busca silenciosamente vazio.
+    // prestacaoState.condominios já foi inicializado como [] antes do try.
+    toast('Não foi possível carregar a lista de condomínios. Tente recarregar a página.', 'err');
   }
   var hoje = new Date();
   var iso = hoje.getFullYear() + '-' +
@@ -1822,6 +1826,171 @@ function prestacaoArquivoParaBloco(file) {
 // Handler principal do botao Gerar.
 // Le todos os arquivos do prestacaoState, monta payload Anthropic com instrucoes
 // para extrair a estrutura JSON da prestacao de contas e envia para o proxy
+// ── Caminho padrao: microservico prestacao-pdf via /api/prestacao/gerar-deck ──
+// Envia os W016A pro backend (parser deterministico + skill + auditoria) e
+// recebe PPTX e PDF prontos. O PptxGenJS abaixo permanece como fallback
+// OFFLINE: so e oferecido quando o servico esta indisponivel (503/504/rede).
+// Erro 422 e degradacao graciosa: o relatorio precisa de revisao humana e o
+// fallback NAO e oferecido, porque geraria o mesmo dado ruim com menos checagem.
+
+// Decodifica base64 em Blob e dispara o download no browser.
+// Usa Uint8Array.from com charCodeAt como callback para converter em O(n) sem
+// loop explícito: evita travar a thread em decks com muitas imagens ou slides.
+function prestacaoBaixarBlob(b64, mime, nomeArquivo) {
+  var bin = atob(b64);
+  var bytes = Uint8Array.from(bin, function(c) { return c.charCodeAt(0); });
+  var url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  var a = document.createElement('a');
+  a.href = url; a.download = nomeArquivo;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+}
+
+async function prestacaoGerarServico() {
+  var btn = document.getElementById('prest-btn-gerar');
+  if (!btn) return;
+  var textoOriginal = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Gerando no servidor (pode levar até 2 minutos)...';
+  try {
+    if (!prestacaoState.arquivos || prestacaoState.arquivos.length === 0) {
+      throw new Error('Nenhum arquivo carregado.');
+    }
+    var form = new FormData();
+    for (var i = 0; i < prestacaoState.arquivos.length; i++) {
+      form.append('arquivos', prestacaoState.arquivos[i]);
+    }
+    var resp = await apiAuthFetch('/api/prestacao/gerar-deck', { method: 'POST', body: form });
+
+    if (resp.status === 422) {
+      // Degradacao graciosa: relatorio invalido ou auditoria reprovada.
+      // Nao entrega slide quebrado; sinaliza revisao humana com o motivo.
+      var corpo422 = await resp.json().catch(function() { return {}; });
+      var det = (corpo422.detail || corpo422);
+      console.error('[prestacao] geracao retida para revisao humana:', det);
+      toast('Geração retida para revisão humana: ' + (det.erro || 'relatório fora do padrão')
+        + '. Detalhe no console. Confira o relatório no Superlógica antes de tentar de novo.', 'err');
+      return;
+    }
+    if (!resp.ok) {
+      // So indisponibilidade real abre a porta do fallback. 401/500 e afins
+      // sao erro de configuracao ou bug: mostrar claro e parar.
+      var ehIndisponivel = resp.status === 503 || resp.status === 504 || resp.status === 502;
+      var corpoErr = await resp.json().catch(function() { return {}; });
+      var naoConfigurada = (corpoErr.erro === 'prestacao_api_nao_configurada');
+      throw Object.assign(new Error('Falha na geração (' + resp.status + (corpoErr.erro ? ': ' + corpoErr.erro : '') + ')'),
+        { indisponivel: ehIndisponivel, naoConfigurada: naoConfigurada });
+    }
+    var dados = await resp.json();
+    var base = 'Prestacao_' + (prestacaoState.condNome || 'Condominio').replace(/[^\w]+/g, '_');
+    var algumBaixou = false;
+    var baixados = [];
+
+    // Formato escolhido pelo usuario: 'ambos' (padrao), 'pdf' ou 'pptx'. O servidor
+    // sempre devolve os dois; aqui so decidimos o que baixar. Default seguro = ambos,
+    // entao qualquer valor inesperado (ou ausencia do seletor) mantem o comportamento antigo.
+    var fmtSel = document.querySelector('input[name="prest-formato"]:checked');
+    var formato = fmtSel ? fmtSel.value : 'ambos';
+    var querPdf = (formato === 'ambos' || formato === 'pdf');
+    var querPptx = (formato === 'ambos' || formato === 'pptx');
+
+    // Valida pdf_b64 antes de tentar decodificar; falha no PDF não deve impedir o PPTX.
+    if (querPdf && dados.pdf_b64 && typeof dados.pdf_b64 === 'string' && dados.pdf_b64.length > 0) {
+      try {
+        prestacaoBaixarBlob(dados.pdf_b64, 'application/pdf', base + '.pdf');
+        algumBaixou = true;
+        baixados.push('PDF');
+      } catch (errPdf) {
+        // Detalhe técnico só no console; o usuário vê mensagem acionável sem ruído técnico.
+        console.error('[prestacao] falha ao baixar PDF:', errPdf);
+        toast('PDF não pôde ser baixado. Tente gerar novamente.', 'warn');
+      }
+    } else if (querPdf) {
+      // So alerta ausencia de PDF se o usuario realmente pediu PDF.
+      toast('PDF não disponível na resposta do servidor.', 'warn');
+    }
+
+    // Valida pptx_b64 independentemente do resultado do PDF.
+    if (querPptx && dados.pptx_b64 && typeof dados.pptx_b64 === 'string' && dados.pptx_b64.length > 0) {
+      try {
+        prestacaoBaixarBlob(dados.pptx_b64,
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation', base + '.pptx');
+        algumBaixou = true;
+        baixados.push('PPTX');
+      } catch (errPptx) {
+        // Detalhe técnico só no console; o usuário vê mensagem acionável sem ruído técnico.
+        console.error('[prestacao] falha ao baixar PPTX:', errPptx);
+        toast('PPTX não pôde ser baixado. Tente gerar novamente.', 'warn');
+      }
+    } else if (querPptx) {
+      // So alerta ausencia de PPTX se o usuario realmente pediu PowerPoint.
+      toast('PPTX não disponível na resposta do servidor.', 'warn');
+    }
+
+    // Só reseta o estado (lista de arquivos e campos) se pelo menos um download
+    // foi iniciado sem erro de decodificação base64. Não há garantia de que o
+    // arquivo chegou ao disco (um bloqueador de popup pode ter interceptado),
+    // mas é o sinal mais confiável disponível no browser. Se ambos falharem,
+    // o usuário pode tentar de novo sem precisar reanexar os PDFs do W016A.
+    if (algumBaixou) {
+      prestacaoState.arquivos = [];
+      var filesList = document.getElementById('prest-files-list');
+      if (filesList) filesList.innerHTML = '';
+      var fileInput = document.getElementById('prest-file-input');
+      if (fileInput) fileInput.value = '';
+      prestacaoAtualizarBotao();
+
+      // Monta resumo de fontes detectadas e série mensal para informar o usuário.
+      // Usa somente campos que o servidor garante (sem inventar dado ausente).
+      var partesStatus = [];
+      if (dados.fontes_detectadas) {
+        var fontesList = [];
+        if (dados.fontes_detectadas.W011A) fontesList.push('W011A');
+        if (dados.fontes_detectadas.W015A) fontesList.push('W015A');
+        if (dados.fontes_detectadas.W016A) fontesList.push('W016A');
+        if (fontesList.length > 0) {
+          partesStatus.push('Fontes: ' + fontesList.join(', '));
+        }
+      }
+      if (dados.serie_mensal_ativa) {
+        partesStatus.push('Série mensal: ativa');
+      }
+      if (dados.avisos_reconciliacao && dados.avisos_reconciliacao.length > 0) {
+        // Aviso de reconciliação: exibe como toast separado (âmbar) sem bloquear o download.
+        toast('Atenção: diferença entre fontes detectada. Verifique os totais.', 'warn');
+        console.warn('[prestacao] avisos de reconciliação:', dados.avisos_reconciliacao);
+      }
+
+      var msgStatus = partesStatus.length > 0 ? ' ' + partesStatus.join('. ') + '.' : '';
+      toast('Prestação gerada: ' + dados.blocos + ' bloco(s). ' + baixados.join(' e ') + ' baixado(s).' + msgStatus, 'ok');
+    } else {
+      toast('Nenhum arquivo foi baixado. Tente novamente ou contate o suporte.', 'err');
+    }
+  } catch (err) {
+    console.error('[prestacao] erro no caminho padrao:', err);
+    if (err && err.indisponivel) {
+      // DECISAO DE PRODUTO (Matheus, 2026-06-09): o fallback offline usa
+      // extracao por IA e relaxa deliberadamente a regra "numero nao passa
+      // por LLM". So e oferecido com o servico indisponivel, exige
+      // confirmacao e nao passa pela auditoria do servidor.
+      var msgServico = err.naoConfigurada
+        ? 'O serviço de geração ainda não está configurado neste ambiente.'
+        : 'O serviço de geração está indisponível no momento.';
+      var usarFallback = window.confirm(
+        msgServico + ' Quer usar o gerador local (modo offline)? '
+        + 'Ele usa extração por IA e não passa pela auditoria do servidor.');
+      if (usarFallback) { prestacaoGerar(); return; }
+    } else {
+      toast('Erro: ' + (err && err.message ? err.message : String(err)), 'err');
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = textoOriginal || 'Gerar prestação de contas';
+  }
+}
+
+// ── Fallback offline (PptxGenJS no browser) ──
 // /api/claude/messages. Em sucesso salva em prestacaoState.dadosExtraidos, loga
 // no console e troca o botao para acionar prestacaoGerarPptx (B5). Em erro,
 // restaura o botao original e mostra toast com a mensagem.
@@ -1845,11 +2014,11 @@ async function prestacaoGerar() {
     btn.textContent = 'Consultando IA...';
 
     // System prompt orienta o modelo a devolver JSON estruturado seguindo o
-    // padrao da skill powerpoint prestacao contas, com base nos relatorios
-    // W011A (despesas por categoria) e W015A (extrato bancario) do Superlogica.
+    // padrao da skill powerpoint prestacao contas, com base no relatorio
+    // W016A do Superlogica (demonstrativo de receitas e despesas).
     var systemPrompt = [
       'Voce e um assistente especializado em montar prestacao de contas condominial em formato pptx.',
-      'O usuario vai fornecer relatorios do Superlogica, em especial W011A (despesas por categoria) e W015A (extrato bancario com receitas e saldos).',
+      'O usuario vai fornecer o relatorio W016A do Superlogica (demonstrativo de receitas e despesas).',
       'Sua tarefa e extrair os dados em JSON estruturado para alimentar a skill powerpoint prestacao contas.',
       'Devolva SEMPRE um unico bloco JSON valido, dentro de cercas tripla com a tag json (```json ... ```), sem texto antes nem depois.',
       'Estrutura obrigatoria do JSON:',
@@ -1931,9 +2100,9 @@ async function prestacaoGerar() {
     console.log('[prestacao] dados extraidos:', dados);
 
     btn.disabled = false;
-    btn.textContent = 'Dados extraidos. Gerar pptx';
+    btn.textContent = 'Dados extraídos. Gerar PPTX';
     btn.onclick = prestacaoGerarPptx;
-    toast('Extracao concluida. Veja prestacaoState.dadosExtraidos no console.', 'ok');
+    toast('Extração concluída. Veja prestacaoState.dadosExtraidos no console.', 'ok');
   } catch (err) {
     console.error('[prestacao] erro ao gerar:', err);
     btn.disabled = false;
