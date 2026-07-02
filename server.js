@@ -587,9 +587,13 @@ function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
       timeout: 120000
     };
     const r = https.request(opts, (resp) => {
-      let d = '';
-      resp.on('data', (c) => d += c);
+      const chunks = [];
+      resp.on('data', (c) => chunks.push(c));
       resp.on('end', () => {
+        // Acumula os chunks como Buffer e decodifica UTF-8 UMA vez no fim. Concatenar
+        // como string por chunk (d += c) corrompia acento quando o corte de chunk caía
+        // no meio de um caractere multibyte (ex: "Síndico" virava "S□ndico").
+        const d = Buffer.concat(chunks).toString('utf8');
         try {
           const j = JSON.parse(d);
           const texto = (j.content && j.content[0] && j.content[0].text || '').trim();
