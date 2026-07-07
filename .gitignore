@@ -45,3 +45,8 @@ _handoff/
 
 # Fixtures locais com dados reais de condominio (NUNCA commitar)
 services/prestacao-pdf/tests/fixtures_local/
+
+# Harness Node isolado da Previsao (nao entra no deploy, so o codigo do harness importa)
+scripts/previsao-harness/node_modules/
+# motor-extraido.js e gerado a cada `node run.js` a partir do HTML — nunca commitar, sempre reproduzir
+scripts/previsao-harness/motor-extraido.js
