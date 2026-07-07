@@ -1833,13 +1833,19 @@ function prestacaoArquivoParaBloco(file) {
 // Erro 422 e degradacao graciosa: o relatorio precisa de revisao humana e o
 // fallback NAO e oferecido, porque geraria o mesmo dado ruim com menos checagem.
 
-// Decodifica base64 em Blob e dispara o download no browser.
-// Usa Uint8Array.from com charCodeAt como callback para converter em O(n) sem
-// loop explícito: evita travar a thread em decks com muitas imagens ou slides.
-function prestacaoBaixarBlob(b64, mime, nomeArquivo) {
+// Decodifica base64 num object URL de download. Pode lancar em base64 invalido;
+// separado do disparo para que a falha de decodificacao seja detectada de forma
+// SINCRONA (antes de contar o arquivo como baixado). Usa Uint8Array.from com
+// charCodeAt como callback para converter em O(n) sem loop explicito, evitando
+// travar a thread em decks com muitas imagens ou slides.
+function prestacaoPrepararDownload(b64, mime) {
   var bin = atob(b64);
   var bytes = Uint8Array.from(bin, function(c) { return c.charCodeAt(0); });
-  var url = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  return URL.createObjectURL(new Blob([bytes], { type: mime }));
+}
+
+// Dispara o download de um object URL ja preparado (cria o link e clica).
+function prestacaoDispararDownload(url, nomeArquivo) {
   var a = document.createElement('a');
   a.href = url; a.download = nomeArquivo;
   document.body.appendChild(a); a.click();
@@ -1895,44 +1901,57 @@ async function prestacaoGerarServico() {
     var querPdf = (formato === 'ambos' || formato === 'pdf');
     var querPptx = (formato === 'ambos' || formato === 'pptx');
 
-    // Valida pdf_b64 antes de tentar decodificar; falha no PDF não deve impedir o PPTX.
-    if (querPdf && dados.pdf_b64 && typeof dados.pdf_b64 === 'string' && dados.pdf_b64.length > 0) {
-      try {
-        prestacaoBaixarBlob(dados.pdf_b64, 'application/pdf', base + '.pdf');
-        algumBaixou = true;
-        baixados.push('PDF');
-      } catch (errPdf) {
-        // Detalhe técnico só no console; o usuário vê mensagem acionável sem ruído técnico.
-        console.error('[prestacao] falha ao baixar PDF:', errPdf);
-        toast('PDF não pôde ser baixado. Tente gerar novamente.', 'warn');
+    // Monta a lista de arquivos a baixar conforme o formato pedido. O servidor
+    // sempre devolve os dois; aqui filtramos o que o usuario escolheu. Se um
+    // formato pedido nao veio na resposta, avisa (nao sai em silencio).
+    var pendentes = [];
+    if (querPdf) {
+      if (dados.pdf_b64 && typeof dados.pdf_b64 === 'string' && dados.pdf_b64.length > 0) {
+        pendentes.push({ b64: dados.pdf_b64, mime: 'application/pdf',
+                         nome: base + '.pdf', rotulo: 'PDF' });
+      } else {
+        toast('PDF não disponível na resposta do servidor.', 'warn');
       }
-    } else if (querPdf) {
-      // So alerta ausencia de PDF se o usuario realmente pediu PDF.
-      toast('PDF não disponível na resposta do servidor.', 'warn');
+    }
+    if (querPptx) {
+      if (dados.pptx_b64 && typeof dados.pptx_b64 === 'string' && dados.pptx_b64.length > 0) {
+        pendentes.push({ b64: dados.pptx_b64,
+                         mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                         nome: base + '.pptx', rotulo: 'PPTX' });
+      } else {
+        toast('PPTX não disponível na resposta do servidor.', 'warn');
+      }
     }
 
-    // Valida pptx_b64 independentemente do resultado do PDF.
-    if (querPptx && dados.pptx_b64 && typeof dados.pptx_b64 === 'string' && dados.pptx_b64.length > 0) {
+    // Decodifica cada arquivo de forma SINCRONA (atob pode falhar). So os que
+    // decodificam entram na conta de baixados; falha avisa na hora, com o nome
+    // do formato, e nao entra em silencio nem infla o toast de sucesso.
+    var prontos = [];
+    pendentes.forEach(function(p) {
       try {
-        prestacaoBaixarBlob(dados.pptx_b64,
-          'application/vnd.openxmlformats-officedocument.presentationml.presentation', base + '.pptx');
-        algumBaixou = true;
-        baixados.push('PPTX');
-      } catch (errPptx) {
-        // Detalhe técnico só no console; o usuário vê mensagem acionável sem ruído técnico.
-        console.error('[prestacao] falha ao baixar PPTX:', errPptx);
-        toast('PPTX não pôde ser baixado. Tente gerar novamente.', 'warn');
+        p.url = prestacaoPrepararDownload(p.b64, p.mime);
+        prontos.push(p);
+      } catch (err) {
+        console.error('[prestacao] falha ao preparar ' + p.rotulo + ':', err);
+        toast(p.rotulo + ' não pôde ser gerado para download. Tente novamente.', 'warn');
       }
-    } else if (querPptx) {
-      // So alerta ausencia de PPTX se o usuario realmente pediu PowerPoint.
-      toast('PPTX não disponível na resposta do servidor.', 'warn');
-    }
+    });
 
-    // Só reseta o estado (lista de arquivos e campos) se pelo menos um download
-    // foi iniciado sem erro de decodificação base64. Não há garantia de que o
-    // arquivo chegou ao disco (um bloqueador de popup pode ter interceptado),
-    // mas é o sinal mais confiável disponível no browser. Se ambos falharem,
-    // o usuário pode tentar de novo sem precisar reanexar os PDFs do W016A.
+    // Dispara os cliques ESCALONADOS. Dois downloads no mesmo tique sao
+    // colapsados pelo navegador num so (era por isso que "ambos" entregava so um
+    // arquivo). Um atraso entre eles garante que os dois saiam. A decodificacao
+    // ja passou, entao algumBaixou/baixados refletem o resultado real.
+    prontos.forEach(function(p, i) {
+      setTimeout(function() { prestacaoDispararDownload(p.url, p.nome); }, i * 600);
+    });
+    algumBaixou = prontos.length > 0;
+    baixados = prontos.map(function(p) { return p.rotulo; });
+
+    // Só reseta o estado (arquivos anexados e campos) se pelo menos um arquivo
+    // decodificou com sucesso e foi disparado para download. Não há garantia de
+    // que chegou ao disco (um bloqueador de download pode interceptar), mas é o
+    // sinal mais confiável no browser. Se nenhum saiu, o usuário tenta de novo
+    // sem precisar reanexar os PDFs.
     if (algumBaixou) {
       prestacaoState.arquivos = [];
       var filesList = document.getElementById('prest-files-list');
