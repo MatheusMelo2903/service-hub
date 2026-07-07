@@ -4736,8 +4736,9 @@ async function processarArquivoAudio(file) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         audio_url: upload_url,
-        // Modelo novo (universal-3-pro) com fallback pra universal-2.
-        speech_models: ['universal-3-pro', 'universal-2'],
+        // Modelo novo (universal-3-5-pro) com fallback pra universal-2. O universal-3-pro
+        // foi deprecado pela AssemblyAI, que recomenda o universal-3-5-pro no lugar.
+        speech_models: ['universal-3-5-pro', 'universal-2'],
         // Deteccao automatica de idioma (mutuamente exclusiva com language_code, por
         // isso o language_code: 'pt' fixo foi removido) e rotulos de locutor.
         language_detection: true,
