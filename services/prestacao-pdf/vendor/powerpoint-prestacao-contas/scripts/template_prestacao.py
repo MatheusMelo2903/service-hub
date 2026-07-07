@@ -583,11 +583,6 @@ def slide_evolucao():
     _mm = _e_corte_meio_mes(CONFIG.get("data_inicial", ""), CONFIG.get("data_final", ""))
     add_header(s, "02", "EVOLUÇÃO MENSAL", "Receitas e despesas", "mês a mês",
                subtitle=None if _mm else "Movimentação mensal ao longo do período")
-    if _mm:
-        add_text_box(s, Inches(0.5), Inches(1.95), Inches(12.33), Inches(0.4),
-                     "⚠  Grafico em meses cheios como tendencia. O total oficial do "
-                     "periodo e a janela real do corte, menor que a soma dos meses.",
-                     12, False, C_AMBER_DEEP)
     cd = CategoryChartData(); cd.categories = CONFIG["meses_label"]
     cd.add_series("Receitas", CONFIG["receitas_mes"])
     cd.add_series("Despesas", CONFIG["despesas_mes"])
