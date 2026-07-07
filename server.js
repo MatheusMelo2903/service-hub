@@ -256,11 +256,36 @@ app.get('/api/config', (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────
 // Proxies AssemblyAI — protegidos por requireAuth
 // ─────────────────────────────────────────────────────────────────────────
-app.post('/api/assemblyai/upload', requireAuth, express.raw({type:'*/*', limit:'5gb'}), (req, res) => {
-  const opts = { hostname:'api.assemblyai.com', path:'/v2/upload', method:'POST', headers:{'authorization':ASSEMBLYAI_KEY,'content-type':'application/octet-stream','content-length':req.body.length} };
-  const pr = https.request(opts, r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ try{res.json(JSON.parse(d))}catch(e){res.status(500).json({error:d})} }); });
-  pr.on('error', e => res.status(500).json({error:e.message}));
-  pr.write(req.body); pr.end();
+// Upload de áudio em STREAMING (sem express.raw). Encaminha os bytes direto pro
+// AssemblyAI conforme chegam do navegador, SEM carregar o arquivo na RAM. Antes,
+// express.raw bufferizava o arquivo inteiro e pr.write(req.body) copiava de novo
+// (~2x o tamanho na memória): um m4a de 187MB dava ~375MB de pico, estourava a RAM
+// do container (OOM), o container caía e o navegador via 502. Com req.pipe o uso de
+// memória é constante, independente do tamanho do arquivo. Content-Length repassado
+// do request original; timeout explícito + erro claro no lugar do 502 mudo.
+app.post('/api/assemblyai/upload', requireAuth, (req, res) => {
+  const len = req.headers['content-length'];
+  const opts = {
+    hostname: 'api.assemblyai.com', path: '/v2/upload', method: 'POST',
+    headers: Object.assign(
+      { 'authorization': ASSEMBLYAI_KEY, 'content-type': 'application/octet-stream' },
+      len ? { 'content-length': len } : { 'transfer-encoding': 'chunked' }
+    ),
+    timeout: 300000 // 5min: uploads grandes precisam de folga
+  };
+  const pr = https.request(opts, (r) => {
+    const chunks = [];
+    r.on('data', (c) => chunks.push(c));
+    r.on('end', () => {
+      const d = Buffer.concat(chunks).toString('utf8');
+      try { res.json(JSON.parse(d)); }
+      catch (e) { if (!res.headersSent) res.status(502).json({ error: 'resposta inválida do AssemblyAI no upload', detalhe: d.slice(0, 300) }); }
+    });
+  });
+  pr.on('error', (e) => { if (!res.headersSent) res.status(502).json({ error: 'falha ao enviar o áudio ao AssemblyAI', detalhe: e.message }); });
+  pr.on('timeout', () => { pr.destroy(); if (!res.headersSent) res.status(504).json({ error: 'timeout no upload ao AssemblyAI (5 min)' }); });
+  req.on('aborted', () => pr.destroy()); // cliente cancelou: corta o envio ao AssemblyAI
+  req.pipe(pr);
 });
 
 app.post('/api/assemblyai/transcript', requireAuth, express.json(), (req, res) => {
