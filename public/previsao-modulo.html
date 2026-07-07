@@ -2156,7 +2156,7 @@ function _modoAPlanilhaPreviewHTML(){
     else if(isHeader) s='background:#2E7BC7;color:#fff;font-weight:700';
     else if(isTotal) s='background:#FDE9CC;color:#7a4a06;font-weight:700';
     else if(isSecao) s='background:#EAF1FB;color:#143A87;font-weight:700';
-    else s='background:'+(ri%2===1?'#eef3fa':'#f7f9fc');
+    else s='background:'+(ri%2===1?'#eef3fa':'#f7f9fc')+';color:#1E2533';   // Gap C: linhas comuns nao tinham cor de texto — herdavam claro sobre claro
     return `<tr style="${s}">${tds}</tr>`;
   }).join('');
   return `<details open style="margin:10px 0 14px">
