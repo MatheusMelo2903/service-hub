@@ -159,6 +159,10 @@ async def gerar(
             "fontes_detectadas": fontes_detectadas,
             "serie_mensal_ativa": serie_mensal_ativa,
             "avisos_reconciliacao": avisos_reconciliacao,
+            # Texto claro do aviso (qual fonte, qual período, qual base). None
+            # quando não há divergência ou no fluxo legado de fonte única.
+            "reconciliacao_resumo": (configs[0].get("_reconciliacao_resumo")
+                                     if configs else None),
         }
     except HTTPException:
         raise

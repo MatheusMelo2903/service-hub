@@ -509,6 +509,71 @@ def _despesas_de_w015p(est15p) -> tuple[list, dict]:
     return despesas_cat, detalhes
 
 
+def _juntar_nomes(nomes: list) -> str:
+    """Junta nomes de fonte em texto natural: ['W011A'] -> 'W011A';
+    ['W011A','W015A'] -> 'W011A e W015A'; tres ou mais com virgula e 'e'."""
+    if len(nomes) == 1:
+        return nomes[0]
+    if len(nomes) == 2:
+        return nomes[0] + " e " + nomes[1]
+    return ", ".join(nomes[:-1]) + " e " + nomes[-1]
+
+
+def _resumo_reconciliacao(fontes_info: list, base_nome: str) -> str:
+    """Compoe o texto claro do aviso de reconciliacao a partir do periodo de
+    cada fonte e da fonte base. So le periodo, nao recalcula nenhum numero.
+
+    fontes_info: lista de (nome, periodo_label, n_meses).
+    IMPORTANTE: o texto gerado NAO pode conter hifen (regra do projeto). Os
+    rotulos de periodo ja vem sem hifen (ex: 'AGO/2025 a JUN/2026')."""
+    # Agrupa fontes por periodo (mesma data e mesmo numero de meses).
+    grupos = []
+    for nome, label, n in fontes_info:
+        chave = (label, n)
+        existente = next((g for g in grupos if g[0] == chave), None)
+        if existente:
+            existente[1].append(nome)
+        else:
+            grupos.append((chave, [nome]))
+
+    # Todas as fontes no mesmo período: divergência é só de valor (escopo).
+    if len(grupos) == 1:
+        return ("Mesmo período nas fontes, pequena diferença de valores entre "
+                "relatórios, esperada, não é erro.")
+
+    # Períodos diferentes: descreve cada grupo de período.
+    partes = []
+    for (label, n), nomes in grupos:
+        artigo = "O " if len(nomes) == 1 else ""
+        verbo = "cobre" if len(nomes) == 1 else "cobrem"
+        partes.append(f"{artigo}{_juntar_nomes(nomes)} {verbo} {label} ({n} meses)")
+
+    # Período do deck = período da fonte base. As demais fontes (período
+    # diferente do base) entraram só para conferência. A frase de conferência é
+    # composta POR grupo de período: cada grupo leva o SEU número de meses. Um
+    # único n_meses aplicado a fontes de períodos distintos reportaria mês
+    # errado quando há três ou mais períodos diferentes.
+    base = next(f for f in fontes_info if f[0] == base_nome)
+    base_label, base_n = base[1], base[2]
+    frases_conf = []
+    total_conf = 0
+    for (label, n), nomes in grupos:
+        if (label, n) == (base_label, base_n):
+            continue
+        artigo = "o" if len(nomes) == 1 else "os"
+        frases_conf.append(f"{artigo} {_juntar_nomes(nomes)} de {n} meses")
+        total_conf += len(nomes)
+    verbo_conf = "entrou" if total_conf == 1 else "entraram"
+
+    return (
+        "Fontes com períodos diferentes. "
+        + ". ".join(partes) + ". "
+        + f"O deck foi gerado com {base_n} meses, base {base_nome}; "
+        + f"{_juntar_nomes(frases_conf)} {verbo_conf} apenas para conferência. "
+        + "Diferença entre fontes de períodos distintos é esperada, não é erro."
+    )
+
+
 def montar_config_multi_fonte(
     est11: P11.EstruturaW011A | None,
     est15: P15.EstruturaW015A | None,
@@ -533,6 +598,7 @@ def montar_config_multi_fonte(
     """
     # Fonte de identificação e totais (prioridade W011A > W015A > W016A > W015P)
     if est11:
+        base_nome = "W011A"
         condominio = est11.condominio
         rot = _rotulos_periodo_w011a(est11)
         receita_total = est11.receita_total
@@ -540,6 +606,7 @@ def montar_config_multi_fonte(
         saldo_anterior = est11.saldo_anterior
         saldo_final = est11.saldo_final
     elif est15:
+        base_nome = "W015A"
         condominio = est15.condominio
         rot = _rotulos_periodo_w015a(est15)
         receita_total = est15.receita_total
@@ -547,6 +614,7 @@ def montar_config_multi_fonte(
         saldo_anterior = est15.saldo_anterior
         saldo_final = est15.saldo_final
     elif est16:
+        base_nome = "W016A"
         condominio = est16.cliente
         rot = P.rotulos_periodo(est16)
         receita_total = est16.receita_total
@@ -554,6 +622,7 @@ def montar_config_multi_fonte(
         saldo_anterior = est16.saldo_anterior
         saldo_final = est16.saldo_final
     elif est15p:
+        base_nome = "W015P"
         condominio = est15p.condominio
         rot = _rotulos_periodo_w015p(est15p)
         receita_total = est15p.receita_total
@@ -630,13 +699,32 @@ def montar_config_multi_fonte(
         despesas_mes = None
         saldo_fim_mes = None
 
-    # Nota âmbar de reconciliação quando há avisos
+    # Nota âmbar de reconciliação quando há avisos. Além da nota curta do deck,
+    # compõe um resumo claro (qual fonte tem qual período, qual foi a base, e
+    # que a divergência é esperada) para o toast do Hub. Só lê período das
+    # fontes, não recalcula nenhum número.
     nota_reconciliacao = None
+    reconciliacao_resumo = None
     if avisos_reconciliacao:
         nota_reconciliacao = (
             "Atenção: diferença entre fontes detectada. " +
             "; ".join(avisos_reconciliacao[:2])
         )
+        fontes_info = []
+        if est11:
+            r = _rotulos_periodo_w011a(est11)
+            fontes_info.append(("W011A", r["periodo_label"], r["n_meses"]))
+        if est15:
+            r = _rotulos_periodo_w015a(est15)
+            fontes_info.append(("W015A", r["periodo_label"], r["n_meses"]))
+        if est16:
+            r = P.rotulos_periodo(est16)
+            fontes_info.append(("W016A", r["periodo_label"], est16.n_meses))
+        if est15p:
+            r = _rotulos_periodo_w015p(est15p)
+            fontes_info.append(("W015P", r["periodo_label"], r["n_meses"]))
+        if len(fontes_info) >= 2:
+            reconciliacao_resumo = _resumo_reconciliacao(fontes_info, base_nome)
 
     cfg = {
         "cliente_linha1": linha1,
@@ -661,6 +749,7 @@ def montar_config_multi_fonte(
         # Metadados para o endpoint (não usados pelo template)
         "_serie_mensal_ativa": tem_mensal,
         "_nota_reconciliacao": nota_reconciliacao,
+        "_reconciliacao_resumo": reconciliacao_resumo,
     }
     if num_bloco:
         cfg["bloco"] = {

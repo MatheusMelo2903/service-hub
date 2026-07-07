@@ -1279,3 +1279,77 @@ def test_w016a_mais_w015a_combinado_nunca_bloqueia():
     bloqueios = _reconciliar({"W015A": est15, "W016A": e16}, avisos)
     assert bloqueios == [], "par com W016A nunca bloqueia, mesmo com divergencia alta"
     assert len(avisos) > 0, "divergencia grande deve virar aviso ambar"
+
+
+# ── 10. Texto do aviso de reconciliacao (claro, sem hifen) ───────────────────
+
+def test_resumo_reconciliacao_periodos_diferentes_uma_fonte_por_periodo():
+    """Caso 1: W011A (12m) + W016A (11m). Diz o periodo de cada fonte, a base e
+    que a fonte de periodo diferente entrou so para conferencia."""
+    from app.pipeline import _resumo_reconciliacao
+    info = [("W011A", "JUL/2025 a JUN/2026", 12), ("W016A", "AGO/2025 a JUN/2026", 11)]
+    txt = _resumo_reconciliacao(info, "W011A")
+    assert "-" not in txt, "aviso nao pode conter hifen (regra do projeto)"
+    assert "W011A cobre JUL/2025 a JUN/2026 (12 meses)" in txt
+    assert "W016A cobre AGO/2025 a JUN/2026 (11 meses)" in txt
+    assert "base W011A" in txt
+    assert "conferência" in txt
+    assert "não é erro" in txt
+
+
+def test_resumo_reconciliacao_agrupa_fontes_do_mesmo_periodo():
+    """Caso 2: W011A e W015A (mesmo periodo 12m) + W016A (11m). Agrupa as duas
+    que compartilham periodo e aponta a que diverge."""
+    from app.pipeline import _resumo_reconciliacao
+    info = [("W011A", "AGO/2025 a JUL/2026", 12),
+            ("W015A", "AGO/2025 a JUL/2026", 12),
+            ("W016A", "AGO/2025 a JUN/2026", 11)]
+    txt = _resumo_reconciliacao(info, "W011A")
+    assert "-" not in txt
+    assert "W011A e W015A cobrem AGO/2025 a JUL/2026 (12 meses)" in txt
+    assert "W016A cobre AGO/2025 a JUN/2026 (11 meses)" in txt
+    assert "o W016A de 11 meses entrou apenas para conferência" in txt
+
+
+def test_resumo_reconciliacao_mesmo_periodo_diferenca_de_valor():
+    """Caso 3: mesmo periodo em todas as fontes, divergencia so de valor."""
+    from app.pipeline import _resumo_reconciliacao
+    info = [("W011A", "AGO/2025 a JUL/2026", 12), ("W015A", "AGO/2025 a JUL/2026", 12)]
+    txt = _resumo_reconciliacao(info, "W011A")
+    assert "-" not in txt
+    assert txt.startswith("Mesmo período nas fontes")
+    assert "não é erro" in txt
+
+
+@SKIP_W016A_REAL
+def test_resumo_reconciliacao_no_config_real():
+    """O resumo chega no CONFIG do fluxo real (W011A + W016A do Buritis) e nao
+    tem hifen."""
+    from app.pipeline import orquestrar_multi_fonte
+    w11 = _encontrar_pdf_ano_cheio_w011a() or _encontrar_pdf_por_tipo("w011a")
+    w16 = _encontrar_pdf_por_tipo("w016a")
+    if not w11 or not w16:
+        import pytest as _pt; _pt.skip("fixtures w011a/w016a ausentes")
+    cfgs, capa, serie, avisos = orquestrar_multi_fonte(
+        [(w11, "W011A"), (w16, "W016A")], prosa=None)
+    resumo = cfgs[0].get("_reconciliacao_resumo")
+    assert resumo, "deve haver resumo quando os periodos divergem"
+    assert "-" not in resumo
+    assert "base" in resumo and "conferência" in resumo
+
+
+def test_resumo_reconciliacao_tres_periodos_distintos_meses_corretos():
+    """Regressao (achado do revisor): com 3+ periodos distintos, cada fonte de
+    conferencia leva o SEU numero de meses, nao o de outra."""
+    from app.pipeline import _resumo_reconciliacao
+    info = [("W011A", "AGO/2025 a JUL/2026", 12),
+            ("W015A", "AGO/2025 a MAI/2026", 10),
+            ("W016A", "AGO/2025 a MAR/2026", 8)]
+    txt = _resumo_reconciliacao(info, "W011A")
+    assert "-" not in txt
+    # cada fonte de conferencia com o seu proprio n de meses
+    assert "o W015A de 10 meses" in txt
+    assert "o W016A de 8 meses" in txt
+    assert "entraram apenas para conferência" in txt
+    # nao pode dizer 10 meses para o W016A (o bug antigo)
+    assert "W016A de 10 meses" not in txt

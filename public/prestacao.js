@@ -1957,9 +1957,14 @@ async function prestacaoGerarServico() {
         partesStatus.push('Série mensal: ativa');
       }
       if (dados.avisos_reconciliacao && dados.avisos_reconciliacao.length > 0) {
-        // Aviso de reconciliação: exibe como toast separado (âmbar) sem bloquear o download.
-        toast('Atenção: diferença entre fontes detectada. Verifique os totais.', 'warn');
-        console.warn('[prestacao] avisos de reconciliação:', dados.avisos_reconciliacao);
+        // Aviso de reconciliação: toast âmbar separado, sem bloquear o download.
+        // Usa o resumo claro (qual fonte, qual período, qual base) quando o
+        // servidor devolve; senão cai no texto genérico.
+        var msgReconc = dados.reconciliacao_resumo
+          ? dados.reconciliacao_resumo
+          : 'Atenção: diferença entre fontes detectada. Confira os totais.';
+        toast(msgReconc, 'warn');
+        console.warn('[prestacao] reconciliação:', msgReconc, dados.avisos_reconciliacao);
       }
 
       var msgStatus = partesStatus.length > 0 ? ' ' + partesStatus.join('. ') + '.' : '';
