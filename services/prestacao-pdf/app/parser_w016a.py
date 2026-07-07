@@ -102,6 +102,24 @@ def _e_caixa_alta(texto: str) -> bool:
     return bool(letras) and all(not c.islower() for c in letras)
 
 
+def _e_ruido_cabecalho(texto: str, cliente: str) -> bool:
+    """True quando a linha e o nome do condominio repetido no topo de cada
+    pagina (cabecalho de pagina), que nao e grupo de despesa nem continuacao de
+    descricao. Comparacao normalizada (sem caixa) contra o nome ja lido do
+    cabecalho do relatorio; generico para qualquer condominio, sem hardcode."""
+    if not cliente:
+        return False
+    return texto.strip().casefold() == cliente.strip().casefold()
+
+
+def _norm(s: str) -> str:
+    """Colapsa espacos internos para comparar o cabecalho de um grupo com o seu
+    "Total de <grupo>" de forma robusta ao espacamento inconsistente que o
+    Superlogica as vezes renderiza (ex: "RETENÇÕES -NOTAS" vs "RETENÇÕES - NOTAS").
+    Sem isso, uma divergencia sutil faria o grupo nao abrir/fechar e sumir."""
+    return re.sub(r"\s+", " ", s.strip())
+
+
 def _linhas_da_pagina(page):
     """Reconstrói linhas (texto, valor) a partir das palavras com coordenadas."""
     palavras = page.extract_words()
@@ -129,6 +147,26 @@ def _meses_entre(d0: str, d1: str) -> int:
     return (a1 - a0) * 12 + (m1 - m0) + 1
 
 
+def _coletar_grupos_validos(pdf) -> set:
+    """Nomes de grupo de despesa validos = os que tem um "Total de <nome>" no
+    proprio relatorio. Um cabecalho de grupo real e sempre fechado pelo seu
+    total; uma linha em caixa alta SEM "Total de" correspondente (o nome do
+    condominio repetido no topo de cada pagina, ou uma descricao solta em
+    maiuscula) NAO e grupo, e por isso nao pode abrir um grupo nem trocar o
+    grupo atual na quebra de pagina. Pre-passada barata sobre as mesmas linhas."""
+    validos = set()
+    for page in pdf.pages:
+        for texto, valor in _linhas_da_pagina(page):
+            if valor is None or not texto:
+                continue
+            m = RE_TOTAL_GRUPO.match(texto)
+            if m:
+                alvo = m.group(1).strip()
+                if alvo not in ("Receitas", "Despesas"):
+                    validos.add(_norm(alvo))
+    return validos
+
+
 def parsear(caminho_pdf: str) -> EstruturaW016A:
     est = EstruturaW016A()
     secao = None          # None -> 'receitas' -> 'despesas' -> 'fim'
@@ -137,6 +175,12 @@ def parsear(caminho_pdf: str) -> EstruturaW016A:
     aguardando_saldo = None  # data do "Saldo em <data>" cuja linha de valor vem junto
 
     with pdfplumber.open(caminho_pdf) as pdf:
+        # Pre-passada: descobre os grupos de despesa validos (os que tem um
+        # "Total de <nome>"). Sem isso, o nome do condominio repetido no topo
+        # de cada pagina (caixa alta) era lido como grupo e trocava o grupo
+        # atual na quebra de pagina, descartando grupos verdadeiros.
+        grupos_validos = _coletar_grupos_validos(pdf)
+
         for page in pdf.pages:
             if secao == "fim":
                 break
@@ -189,9 +233,9 @@ def parsear(caminho_pdf: str) -> EstruturaW016A:
                     elif alvo == "Despesas":
                         est.despesa_total = valor
                         grupo_atual = None
-                    elif subgrupos and alvo == subgrupos[-1]:
+                    elif subgrupos and _norm(alvo) == _norm(subgrupos[-1]):
                         subgrupos.pop()          # subtotal interno: ignorar
-                    elif grupo_atual is not None and alvo == grupo_atual.nome_relatorio:
+                    elif grupo_atual is not None and _norm(alvo) == _norm(grupo_atual.nome_relatorio):
                         grupo_atual.total = valor
                         est.grupos.append(grupo_atual)
                         grupo_atual = None
@@ -211,15 +255,27 @@ def parsear(caminho_pdf: str) -> EstruturaW016A:
 
                 if secao == "despesas":
                     if valor is None:
-                        if _e_caixa_alta(texto):
+                        # So abre grupo se a linha caixa alta tiver um
+                        # "Total de <ela>" no relatorio (grupo real). Isso
+                        # impede o nome do condominio e descricoes soltas em
+                        # maiuscula de virarem grupo e clobberar o grupo atual.
+                        if _e_caixa_alta(texto) and _norm(texto) in grupos_validos:
                             grupo_atual = GrupoDespesa(
                                 nome_relatorio=texto,
                                 categoria=MAPA_CATEGORIA.get(texto, texto.title()),
                             )
                             subgrupos = []
-                        elif grupo_atual is not None and len(texto.split()) <= 3 and all(p[:1].isupper() for p in texto.split() if p[:1].isalpha()):
-                            # palavra(s) capitalizada(s) curta(s) sem valor:
-                            # subgrupo aninhado (ex. "Obra" dentro de SERVIÇOS)
+                        elif _e_ruido_cabecalho(texto, est.cliente):
+                            # Nome do condominio (ou cabecalho de pagina
+                            # repetido) no topo da pagina: ignora, nao e grupo
+                            # nem continuacao de descricao.
+                            pass
+                        elif grupo_atual is not None and not _e_caixa_alta(texto) and len(texto.split()) <= 3 and all(p[:1].isupper() for p in texto.split() if p[:1].isalpha()):
+                            # subgrupo aninhado real e Title Case (ex. "Obra"
+                            # dentro de SERVIÇOS). Caixa alta e EXCLUIDA aqui:
+                            # um fragmento de descricao em maiuscula que quebrou
+                            # de linha nao pode ser tratado como subgrupo (senao
+                            # some da descricao em silencio).
                             subgrupos.append(texto)
                         elif grupo_atual is not None and grupo_atual.lancamentos:
                             grupo_atual.lancamentos[-1].descricao += " " + texto

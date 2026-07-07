@@ -1179,3 +1179,103 @@ def test_w015p_mais_w011a_reconciliam_sem_bloqueio():
     assert len(bloqueios) == 0, f"totais batendo nao devem bloquear: {bloqueios}"
     # E o saldo_final (ausente no W015P) nao entra na comparacao.
     assert not [x for x in avisos if "saldo_final" in x]
+
+
+# ── 9. Layout W016A: nome do condominio no topo da pagina nao vira grupo ──
+
+def _ref_w016a():
+    caminho = os.path.join(FIXTURES, "w016a_referencia.json")
+    if not os.path.isfile(caminho):
+        return None
+    with open(caminho, encoding="utf-8") as f:
+        return json.load(f)
+
+
+SKIP_W016A_REAL = _skip_sem_pdf("w016a")
+SKIP_W016A_REF = pytest.mark.skipif(
+    _ref_w016a() is None,
+    reason="w016a_referencia.json ausente em fixtures_local/ (gitignored)"
+)
+
+
+@SKIP_W016A_REAL
+def test_detector_classifica_w016a():
+    """(a): o W016A e classificado como W016A."""
+    from app.detector import detectar_tipo
+    assert detectar_tipo(_encontrar_pdf_por_tipo("w016a")) == "W016A"
+
+
+@SKIP_W016A_REAL
+@SKIP_W016A_REF
+def test_w016a_soma_grupos_bate_com_total_despesas():
+    """(a): correcao da causa raiz. A soma dos grupos de despesa fecha com o
+    Total de Despesas do relatorio (antes so somava 3 dos 10 grupos)."""
+    from app.parser_w016a import parsear
+    ref = _ref_w016a()
+    e = parsear(_encontrar_pdf_por_tipo("w016a"))
+    soma = round(sum(g.total for g in e.grupos), 2)
+    assert abs(soma - e.despesa_total) < 0.02, f"soma grupos {soma} != total {e.despesa_total}"
+    assert abs(e.despesa_total - ref["despesa_total"]) < 0.02
+    assert abs(e.receita_total - ref["receita_total"]) < 0.02
+    assert len(e.grupos) == ref["n_grupos_despesa"]
+    # Conservacao de caixa fecha (rede de seguranca legitima, sem afrouxar).
+    caixa = e.saldo_anterior + e.receita_total - e.despesa_total
+    assert abs(caixa - e.saldo_final) < 0.02
+
+
+@SKIP_W016A_REAL
+def test_w016a_nome_condominio_nao_vira_grupo():
+    """(b): o nome do condominio repetido no topo da pagina nao e lido como
+    grupo de despesa, nem polui a descricao de nenhum lancamento."""
+    from app.parser_w016a import parsear
+    e = parsear(_encontrar_pdf_por_tipo("w016a"))
+    cliente_norm = e.cliente.strip().casefold()
+    # Nenhum grupo tem o nome do condominio.
+    assert not any(g.nome_relatorio.strip().casefold() == cliente_norm for g in e.grupos)
+    # Descricao de lancamento nao contem o nome do condominio grudado.
+    for g in e.grupos:
+        for l in g.lancamentos:
+            assert e.cliente not in l.descricao, f"descricao poluida: {l.descricao!r}"
+
+
+@SKIP_W016A_REAL
+@SKIP_W016A_REF
+def test_w016a_periodo_dinamico_das_datas():
+    """(a): periodo detectado das datas do cabecalho, nunca fixo em 12."""
+    from app.parser_w016a import parsear
+    ref = _ref_w016a()
+    e = parsear(_encontrar_pdf_por_tipo("w016a"))
+    assert e.n_meses == ref["n_meses"]        # 11 neste fixture (Ago a Jun)
+    assert e.n_meses != 12
+    assert e.data_inicial == ref["data_inicial"]
+    assert e.data_final == ref["data_final"]
+
+
+@SKIP_W016A_REAL
+def test_w016a_mais_w011a_combinado_nunca_bloqueia():
+    """(c): W016A real + W011A sintetico geram combinado sem bloqueio. Com
+    totais iguais nao ha nem aviso; a garantia e que W016A nunca bloqueia."""
+    from app.pipeline import _reconciliar
+    from app.parser_w016a import parsear
+    e16 = parsear(_encontrar_pdf_por_tipo("w016a"))
+    est11 = _est11_sintetico()
+    est11.receita_total = e16.receita_total
+    est11.despesa_total = e16.despesa_total
+    est11.saldo_final = e16.saldo_final
+    avisos = []
+    bloqueios = _reconciliar({"W011A": est11, "W016A": e16}, avisos)
+    assert bloqueios == [], "W016A nunca deve bloquear"
+
+
+@SKIP_W016A_REAL
+def test_w016a_mais_w015a_combinado_nunca_bloqueia():
+    """(d): idem com W015A. Mesmo com divergencia grande, W016A nao bloqueia."""
+    from app.pipeline import _reconciliar
+    from app.parser_w016a import parsear
+    e16 = parsear(_encontrar_pdf_por_tipo("w016a"))
+    est15 = _est15_sintetico()
+    est15.receita_total = e16.receita_total * 2   # divergencia grosseira de proposito
+    avisos = []
+    bloqueios = _reconciliar({"W015A": est15, "W016A": e16}, avisos)
+    assert bloqueios == [], "par com W016A nunca bloqueia, mesmo com divergencia alta"
+    assert len(avisos) > 0, "divergencia grande deve virar aviso ambar"
