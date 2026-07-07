@@ -639,11 +639,17 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   if (typeof res.flushHeaders === 'function') res.flushHeaders();
-  res.write(':' + ' '.repeat(2048) + '\n\n'); // padding: força o edge a soltar o buffer já
+  // O edge do Railway libera o PRIMEIRO chunk na hora (pra estabelecer a resposta)
+  // mas bufferiza os writes seguintes por tamanho — um ping de ~30 bytes fica preso
+  // até a resposta acabar. Por isso cada ping vai acompanhado de um comentário SSE
+  // de padding (~4KB) que estoura o limiar de buffer e força o flush a cada 7s.
+  const PAD = ':' + ' '.repeat(4096) + '\n';
+  res.write(PAD + '\n'); // padding inicial: solta o buffer já
   const sse = (obj) => { if (!res.writableEnded) res.write('data: ' + JSON.stringify(obj) + '\n\n'); };
+  const ping = (t) => { if (!res.writableEnded) res.write(PAD + 'data: ' + JSON.stringify({ type: 'ping', t }) + '\n\n'); };
   let tick = 0;
-  const heartbeat = setInterval(() => { sse({ type: 'ping', t: ++tick }); }, 7000);
-  sse({ type: 'ping', t: 0 }); // primeiro evento imediato, tira a conexão do idle
+  const heartbeat = setInterval(() => ping(++tick), 7000);
+  ping(0); // primeiro evento imediato, tira a conexão do idle
   req.on('close', () => clearInterval(heartbeat));
   const enviarDone = (obj) => { clearInterval(heartbeat); if (!res.writableEnded) { sse(Object.assign({ type: 'done' }, obj)); res.end(); } };
   const enviarErro = (status, obj) => { clearInterval(heartbeat); if (!res.writableEnded) { sse(Object.assign({ type: 'error', status }, obj)); res.end(); } };
