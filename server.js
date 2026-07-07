@@ -609,59 +609,39 @@ function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
   });
 }
 
-app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
-  if (!ANTHROPIC_KEY) return res.status(500).json({ erro: 'anthropic_key_ausente' });
-  if (!ATA_SKILL_MD) return res.status(500).json({ erro: 'skill_md_nao_carregada', detalhe: 'skills-server/ata-condominial.md não encontrada no servidor' });
+// ─── Geração de ata ASSÍNCRONA (job + polling) ──────────────────────────────
+// Por que não streaming: o edge do Railway bufferiza o CORPO da resposta após o
+// primeiro byte — keepalive/heartbeat no meio do caminho NÃO chega ao navegador e
+// o Safari derruba a conexão ociosa ("Load failed"). Medido em 07/07/2026: nem
+// text/event-stream nem padding de 4KB por ping atravessam o buffer do edge (só o
+// primeiro chunk sai; o resto fica preso até a resposta acabar, ~80s de silêncio).
+// Solução: a geração roda em BACKGROUND no servidor e o frontend faz polling curto.
+// Cada request HTTP dura <1s — imune a timeout de borda e a idle do navegador. A
+// geração roda UMA vez e fica guardada no job: conexão que cai não vira retry que
+// cobra a API de novo (ataca o custo das tentativas falhas).
+// Assunção: instância única (Cenário A, uso interno). Se um dia escalar réplicas,
+// migrar este store em memória para Redis/DB (o polling pode cair em outra réplica).
+const atasJobs = new Map(); // jobId -> { status:'processing'|'done'|'error', criadoEm, payload?, erro? }
 
-  const userMessage = (req.body && req.body.userMessage) || '';
-  if (typeof userMessage !== 'string' || userMessage.length < 50) {
-    return res.status(400).json({ erro: 'userMessage_invalido', detalhe: 'envie a transcrição + dados da reunião como string em userMessage (mín 50 chars)' });
-  }
+// Remove o job 10min após concluir — evita vazamento de memória sem cortar polling
+// em andamento. unref pra não segurar o processo vivo por causa do timer.
+function agendarLimpezaJob(jobId) {
+  const tmr = setTimeout(() => atasJobs.delete(jobId), 10 * 60 * 1000);
+  if (typeof tmr.unref === 'function') tmr.unref();
+}
 
-  // ─── Resposta em STREAMING (SSE) com heartbeat ─────────────────────────────
-  // A geração da ata segura a requisição por dezenas de segundos (tentativas +
-  // auditoria). Se o Hub só respondesse no fim, o edge do Railway estouraria o
-  // tempo e devolveria 502 antes de qualquer byte. Precisamos mandar bytes JÁ e
-  // periodicamente até o fim.
-  //
-  // Por que SSE (text/event-stream) e não NDJSON: medimos que o edge do Railway
-  // (railway-hikari) BUFFERIZA respostas application/x-ndjson — só o primeiro byte
-  // chegava ao navegador e os pings seguintes ficavam presos até a resposta acabar
-  // (~49s de silêncio), fazendo o Safari derrubar a conexão ("Load failed"). O
-  // text/event-stream é o content-type que proxies universalmente entregam sem
-  // bufferizar; somado a um padding inicial de comentário (:...) que estoura
-  // qualquer limiar de buffer, garante que cada ping (a cada 7s) chegue ao cliente.
-  // Cada evento vai como "data: <json>\n\n"; o JSON.stringify escapa quebras de
-  // linha, então o texto da ata (campo 'ata') vai intacto, byte a byte, no evento
-  // final 'done' — mesmo shape de antes.
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  if (typeof res.flushHeaders === 'function') res.flushHeaders();
-  // O edge do Railway libera o PRIMEIRO chunk na hora (pra estabelecer a resposta)
-  // mas bufferiza os writes seguintes por tamanho — um ping de ~30 bytes fica preso
-  // até a resposta acabar. Por isso cada ping vai acompanhado de um comentário SSE
-  // de padding (~4KB) que estoura o limiar de buffer e força o flush a cada 7s.
-  const PAD = ':' + ' '.repeat(4096) + '\n';
-  res.write(PAD + '\n'); // padding inicial: solta o buffer já
-  const sse = (obj) => { if (!res.writableEnded) res.write('data: ' + JSON.stringify(obj) + '\n\n'); };
-  const ping = (t) => { if (!res.writableEnded) res.write(PAD + 'data: ' + JSON.stringify({ type: 'ping', t }) + '\n\n'); };
-  let tick = 0;
-  const heartbeat = setInterval(() => ping(++tick), 7000);
-  ping(0); // primeiro evento imediato, tira a conexão do idle
-  req.on('close', () => clearInterval(heartbeat));
-  const enviarDone = (obj) => { clearInterval(heartbeat); if (!res.writableEnded) { sse(Object.assign({ type: 'done' }, obj)); res.end(); } };
-  const enviarErro = (status, obj) => { clearInterval(heartbeat); if (!res.writableEnded) { sse(Object.assign({ type: 'error', status }, obj)); res.end(); } };
-
+// Motor de geração — roda em background, sem prender a requisição HTTP. Mantém a
+// invariante da versão anterior: toda ata entregue passou por validarAta; se o
+// segundo passe (auditoria) falhar na validação, devolve a original validada.
+async function gerarAtaJob(jobId, userMessage) {
   const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
+  const concluir = (payload) => { const j = atasJobs.get(jobId); if (j) { j.status = 'done'; j.payload = payload; } agendarLimpezaJob(jobId); };
+  const falhar = (status, obj) => { const j = atasJobs.get(jobId); if (j) { j.status = 'error'; j.erro = Object.assign({ status }, obj); } agendarLimpezaJob(jobId); };
 
-  // Helper local pra encadear segundo passe de auditoria e padronizar resposta.
-  // Invariante: toda ata entregue ao frontend passou por validarAta.
-  // Se a auditoria devolver texto que falha na validação heurística (markdown,
-  // pré-análise, encerramento removido, assinaturas perdidas), descartamos a saída
-  // do segundo passe e devolvemos a ata original validada.
+  // Encadeia o segundo passe de auditoria e padroniza o payload final (mesmo shape
+  // de antes: { ata, modelo_usado, tentativas, auditoria }). Descarta a saída da
+  // auditoria se ela falhar na validação heurística e devolve a original validada.
   async function entregarAtaAuditada(texto, modelo_usado, tentativaIdx, extras) {
     const auditada = await auditarFidelidadeAta(texto, userMessage);
     let ataFinal = texto;
@@ -678,7 +658,7 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
       }
     }
     tentativas[tentativaIdx].auditoria = auditoriaStatus;
-    return enviarDone(Object.assign({ ata: ataFinal, modelo_usado, tentativas, auditoria: auditoriaStatus }, extras || {}));
+    return concluir(Object.assign({ ata: ataFinal, modelo_usado, tentativas, auditoria: auditoriaStatus }, extras || {}));
   }
 
   try {
@@ -710,8 +690,8 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
       if (v.valido) return await entregarAtaAuditada(r.texto, 'claude-opus-4-7', 2, { fallback: true });
     }
 
-    // 3 tentativas falharam — evento de erro no stream (mesmo shape do 502 antigo)
-    return enviarErro(502, {
+    // 3 tentativas falharam — marca o job como erro (mesmo shape do 502 antigo)
+    return falhar(502, {
       erro: 'engine_falhou_3x',
       detalhe: 'Nenhuma das 3 tentativas produziu ata válida',
       tentativas,
@@ -719,8 +699,40 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
     });
   } catch (e) {
     console.error('[engine-ata] Erro inesperado na geração:', e && e.message);
-    return enviarErro(500, { erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' });
+    return falhar(500, { erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' });
   }
+}
+
+// POST dispara a geração em background e responde JÁ com o jobId (request curto).
+app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), (req, res) => {
+  if (!ANTHROPIC_KEY) return res.status(500).json({ erro: 'anthropic_key_ausente' });
+  if (!ATA_SKILL_MD) return res.status(500).json({ erro: 'skill_md_nao_carregada', detalhe: 'skills-server/ata-condominial.md não encontrada no servidor' });
+
+  const userMessage = (req.body && req.body.userMessage) || '';
+  if (typeof userMessage !== 'string' || userMessage.length < 50) {
+    return res.status(400).json({ erro: 'userMessage_invalido', detalhe: 'envie a transcrição + dados da reunião como string em userMessage (mín 50 chars)' });
+  }
+
+  const jobId = crypto.randomUUID();
+  atasJobs.set(jobId, { status: 'processing', criadoEm: Date.now() });
+  // fire-and-forget: não aguarda. gerarAtaJob já trata tudo internamente; o .catch
+  // é rede de segurança caso algo escape do try interno.
+  gerarAtaJob(jobId, userMessage).catch((e) => {
+    const j = atasJobs.get(jobId);
+    if (j && j.status === 'processing') { j.status = 'error'; j.erro = { status: 500, erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' }; }
+  });
+  return res.status(202).json({ jobId });
+});
+
+// GET faz o polling do status. Rápido — devolve o estado atual do job. Quando
+// 'done', o corpo traz o payload completo ({ ata, modelo_usado, ... }); quando
+// 'error', traz o detalhe. HTTP 200 nos dois pra o frontend ler o corpo.
+app.get('/api/atas/gerar/status/:jobId', requireAuth, (req, res) => {
+  const j = atasJobs.get(req.params.jobId);
+  if (!j) return res.status(404).json({ status: 'not_found' });
+  if (j.status === 'done') return res.json(Object.assign({ status: 'done' }, j.payload));
+  if (j.status === 'error') return res.json(Object.assign({ status: 'error' }, j.erro));
+  return res.json({ status: 'processing', esperando_s: Math.round((Date.now() - j.criadoEm) / 1000) });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
