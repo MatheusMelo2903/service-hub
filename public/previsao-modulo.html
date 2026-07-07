@@ -1769,6 +1769,9 @@ const _isNum = v => typeof v === 'number' && !isNaN(v);
  * no limite de palavra. São sugestões — o operador pode renomear (Seção E). */
 function _catName(raw) {
   let s = String(raw).replace(/[:\s]+$/, '').trim();
+  // "CONTRATOS:" no início do cabeçalho é só anotação administrativa (ex.: "CONTRATOS:
+  // MANUTENÇÃO E CONSERVAÇÃO" no Reserva Verde) — o nome da categoria é o que vem depois.
+  s = s.replace(/^CONTRATOS?:\s*/i, '').trim();
   // Overrides curados: alguns nomes crus da planilha precisam do nome exato do padrão ouro
   // (renome fixo, não o title case automático), igual ao deck de referência aprovado.
   if (/^DESPESA\s+COM\s+ADMINISTRATIVO$/i.test(s)) return 'Despesa Administrativa';
@@ -1905,6 +1908,35 @@ function parsePlanilhaPronta(rows, opts) {
     }
   }
 
+  // ---------- Gap B camada 2: TOTAL "só ordinárias" (A) vs "ordinárias + consumo" (B) ----------
+  // Localiza os dois totais candidatos por texto, mas quem decide se o bloco de
+  // consumo sai do panorama é a COMPARAÇÃO NUMÉRICA entre a taxa declarada
+  // (taxaNovaTotal, já lida no Gap A/B camada 1) e os dois valores — nunca o nome
+  // do condomínio. Só entra em ação quando os dois totais existem e são DIFERENTES
+  // entre si; se não achar os dois, ou se forem iguais (ex.: Via Mar e Caminho, onde
+  // consumo já está dentro do total único), nada muda — mesmo comportamento de hoje.
+  let totalSoOrdinarias = null, totalOrdinariasEConsumo = null;
+  for (let r = 0; r < N; r++) {
+    const s = labelOf(r) || txt(cell(r, 0)) || txt(cell(r, 1));
+    if (totalSoOrdinarias == null && /TOTAL\s+GERAL\s+DESPESAS\s+ORDIN[ÁA]RIAS/i.test(s)) {
+      const v = numAt(r, mensalCol) != null ? numAt(r, mensalCol) : firstNumInRow(r);
+      if (v != null) totalSoOrdinarias = v;
+    }
+    if (totalOrdinariasEConsumo == null && /DESPESAS\s+ORDIN[ÁA]RIAS\s+E\s+CONSUMO/i.test(s)) {
+      const v = numAt(r, mensalCol) != null ? numAt(r, mensalCol) : firstNumInRow(r);
+      if (v != null) totalOrdinariasEConsumo = v;
+    }
+  }
+  // taxaNovaTotal ≈ A (só ordinárias) → o bloco de consumo fica FORA do panorama
+  // (ex.: Reserva Verde). taxaNovaTotal ≈ B (combinado) ou nenhum dos dois → mantém
+  // (ex.: Reserva da Serra, que inclui consumo no total único).
+  let excluirBlocoConsumo = false;
+  if (totalSoOrdinarias != null && totalOrdinariasEConsumo != null &&
+      Math.abs(totalSoOrdinarias - totalOrdinariasEConsumo) > 0.01 &&
+      taxaNovaTotal != null && Math.abs(taxaNovaTotal - totalSoOrdinarias) <= 0.01) {
+    excluirBlocoConsumo = true;
+  }
+
   // ---------- V6/V11/V12: categorias por MENSAL×12 ----------
   const SKIP = /PARA RATEIO|A RATEAR|^TOTAL\b|FUNDO|FRA[ÇC][ÃA]O (POR|IDEAL|DAS|DE)|TAXA\b|VALOR RATEADO|PREVIS[ÃA]O OR|TORRE|GEST[ÃA]O|^RECEITAS?$|DESCONTO|ANTENA|DIVIDIDO|RATEIO$|^RATEIO\b/i;
   const catEnd = fracHdrRow > 0 ? fracHdrRow : N;
@@ -1929,7 +1961,20 @@ function parsePlanilhaPronta(rows, opts) {
   }
   if (cur) cats.push(cur);
 
-  const cObjs = cats.filter(c => c.itens.length).map(c => {
+  // Gap B camada 2: filtro determinístico do panorama (cats/porCat) — NÃO mexe no
+  // total do rateio (esse já vem ancorado na linha de TAXA, ver mensalRatear acima).
+  // "Estimativa Boleto..." nunca é categoria de despesa (é estimativa auxiliar de
+  // cobrança) e sai sempre, em qualquer planilha. O bloco "Contas de Consumo
+  // (Energia/Esgoto/Gás)" só sai quando a comparação numérica acima (excluirBlocoConsumo)
+  // confirmou que a taxa declarada é só das despesas ordinárias, sem o consumo.
+  const ESTIMATIVA_BOLETO = /ESTIMATIVA\s+(DE\s+)?BOLETO/i;
+  const catsFiltradas = cats.filter(c => {
+    if (ESTIMATIVA_BOLETO.test(c.nome)) return false;
+    if (excluirBlocoConsumo && c.nome === 'Contas de Consumo (Energia/Esgoto/Gás)') return false;
+    return true;
+  });
+
+  const cObjs = catsFiltradas.filter(c => c.itens.length).map(c => {
     const mensal = c.itens.reduce((s, it) => s + it.mensal, 0);
     const previsto = mensal * 12;
     return {
