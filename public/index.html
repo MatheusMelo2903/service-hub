@@ -5737,12 +5737,10 @@ async function gerarAtaIA() {
     const jobId = inicio.jobId;
     if (!jobId) throw new Error('servidor não retornou o identificador da geração');
 
-    // Polling curto até concluir. Teto de 10min: o pior caso do backend são 3
-    // tentativas de até 120s + auditoria de até 120s (~8min), então o teto precisa
-    // ser MAIOR que isso pra não errar "tempo esgotado" enquanto o job ainda termina
-    // (senão o usuário reenviaria e pagaria a API de novo). Cada consulta tem seu
-    // próprio timeout via AbortController (15s) pra um request pendurado não travar
-    // o laço e deixar o botão preso.
+    // Polling curto até concluir. Teto de 10min como salvaguarda. Cada consulta usa
+    // cache: 'no-store' (o navegador não guarda nem revalida com If-None-Match, então
+    // nunca recebe 304 — que antes travava a leitura do resultado). AbortController
+    // de 15s por consulta pra um request pendurado não travar o laço.
     let payload = null;
     let errosSeguidos = 0;
     const prazoMax = Date.now() + 10 * 60 * 1000;
@@ -5754,10 +5752,11 @@ async function gerarAtaIA() {
         const ac = new AbortController();
         const to = setTimeout(() => ac.abort(), 15000);
         try {
-          st = await apiAuthFetch('/api/atas/gerar/status/' + encodeURIComponent(jobId), { signal: ac.signal });
+          st = await apiAuthFetch('/api/atas/gerar/status/' + encodeURIComponent(jobId), { signal: ac.signal, cache: 'no-store' });
         } finally { clearTimeout(to); }
       } catch (_) { continue; } // rede caiu/abortou: tenta de novo no próximo ciclo
       // Trata status HTTP fora do contrato do job, pra não mascarar de "timeout".
+      if (st.status === 304) continue;                 // não modificado (defensivo): reconsulta
       if (st.status === 404) continue;                 // job ainda não visível ou processo reiniciou
       if (st.status === 429) { await new Promise((r) => setTimeout(r, 6000)); continue; } // rate limit: espera mais
       if (st.status === 401 || st.status === 403) throw new Error('sessão expirada — entre novamente e refaça');
@@ -5779,9 +5778,11 @@ async function gerarAtaIA() {
     const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     document.getElementById('ata-gerada-conteudo').innerHTML = renderAtaBlocos(texto, escHtml);
     document.getElementById('ata-gerada-modal').style.display = 'flex';
-    const sufixoModelo = payload.fallback ? ' [fallback Opus 4.7]' : '';
-    addHistorico('Ata gerada via IA: ' + cond + ' · ' + data + sufixoModelo);
-    toast('Ata gerada — revise antes de baixar' + sufixoModelo, 'ok');
+    // avisos não bloqueantes da validação (ex.: revisar assinaturas). A ata foi entregue.
+    const avisos = Array.isArray(payload.avisos) ? payload.avisos : [];
+    addHistorico('Ata gerada via IA: ' + cond + ' · ' + data + (avisos.length ? ' (com avisos)' : ''));
+    if (avisos.length) toast('Ata gerada. Pontos para revisar: ' + avisos.join('; '), 'warn');
+    else toast('Ata gerada. Revise antes de baixar.', 'ok');
   } catch (e) {
     toast('Falha ao gerar ata: ' + (e.message || 'erro'), 'err');
   } finally {

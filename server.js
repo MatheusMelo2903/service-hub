@@ -538,30 +538,45 @@ async function auditarFidelidadeAta(ataGerada, userMessageOriginal) {
 //   - termina com ponto final (não foi cortada no meio)
 //   - tem pelo menos 4 blocos de assinatura (ex.: Síndico, Subsíndico, Conselho, Presidente, Secretária; a administradora nunca assina)
 //   - tem tamanho mínimo plausível (atas reais têm 6000+ chars)
+// REGRA DE OURO (2026-07-07): a validação NUNCA bloqueia a entrega nem dispara
+// retry caro. Melhor entregar a ata com um aviso do que falhar, demorar e queimar
+// crédito. Esta função só APONTA avisos (não bloqueantes) pro usuário revisar.
+//
+// Em especial, a composição de ASSINATURAS é adaptável: varia por tipo de assembleia
+// (uma AGE de destituição tem composição diferente de uma AGO; nem toda ata tem
+// conselho fiscal). NÃO existe número fixo obrigatório. Só marcamos aviso se não
+// houver praticamente nenhuma linha de assinatura (sinal de truncamento), nunca por
+// "faltar" pra chegar a um número arbitrário.
+//
+// 'pareceAta' distingue texto de ata real de uma recusa/erro do modelo — usado APENAS
+// pra decidir se a saída da auditoria pode substituir o original, nunca pra retry.
 function validarAta(resposta) {
-  if (!resposta || typeof resposta !== 'string') return { valido: false, motivo: 'resposta_vazia' };
+  if (!resposta || typeof resposta !== 'string' || !resposta.trim()) {
+    return { pareceAta: false, avisos: ['a geração veio vazia'], blocosAssinatura: 0 };
+  }
   const temEncerramento = resposta.includes('Nada mais havendo a tratar');
   const blocosAssinatura = (resposta.match(/_{30,}/g) || []).length;
   const tamanhoOk = resposta.length > 6000;
-  // Markdown count — qualquer marcador acima do limiar invalida (forçando retry/Opus)
   const headers = (resposta.match(/^#{1,6} /gm) || []).length;
   const negritos = (resposta.match(/\*\*[^*]+\*\*/g) || []).length;
   const tabelas = (resposta.match(/^\|/gm) || []).length;
   const separadores = (resposta.match(/^---+$/gm) || []).length;
-  // Pré-análise: ata real começa com "ATA DA ASSEMBLEIA" ou nome do condomínio em CAIXA ALTA.
-  // Se a resposta começa com "Vou processar", "Mapeamento", "##", etc → pré-conteúdo presente
+  // Pré-análise: se a resposta começa com "Vou processar", "Mapeamento", "##", etc.
   const inicio = resposta.trim().slice(0, 200).toLowerCase();
   const temPreAnalise = /vou (processar|analisar|redigir|mapear)|mapeamento|reconstituindo|aqui (est[aá]|vai)|^##|^---|^an[aá]lise/m.test(inicio);
 
-  if (!temEncerramento) return { valido: false, motivo: 'sem_encerramento' };
-  if (blocosAssinatura < 4) return { valido: false, motivo: 'assinaturas_insuficientes', encontradas: blocosAssinatura };
-  if (!tamanhoOk) return { valido: false, motivo: 'muito_curta', tamanho: resposta.length };
-  if (temPreAnalise) return { valido: false, motivo: 'pre_analise_presente', inicio: resposta.trim().slice(0, 100) };
-  if (headers > 0) return { valido: false, motivo: 'markdown_headers', count: headers };
-  if (negritos > 5) return { valido: false, motivo: 'markdown_negritos_excessivos', count: negritos };
-  if (tabelas > 0) return { valido: false, motivo: 'markdown_tabelas', count: tabelas };
-  if (separadores > 0) return { valido: false, motivo: 'markdown_separadores', count: separadores };
-  return { valido: true };
+  // Avisos NÃO bloqueantes — a ata é entregue de qualquer forma.
+  const avisos = [];
+  if (!temEncerramento) avisos.push('não encontrei a frase de encerramento padrão; a ata pode estar truncada');
+  if (!tamanhoOk) avisos.push('ata curta (' + resposta.length + ' caracteres); confirme se está completa');
+  if (blocosAssinatura < 2) avisos.push('poucas linhas de assinatura (' + blocosAssinatura + '); revise o bloco de assinaturas');
+  if (temPreAnalise) avisos.push('o início parece conter texto de análise antes da ata; revise as primeiras linhas');
+  if (headers > 0 || tabelas > 0 || separadores > 0 || negritos > 5) avisos.push('detectei formatação markdown (títulos/tabelas/negritos); revise a formatação');
+
+  // "Parece ata": tem encerramento OU é longa o suficiente, e não abre com pré-análise.
+  // Só serve pra não deixar a auditoria trocar uma ata boa por uma saída quebrada.
+  const pareceAta = (temEncerramento || tamanhoOk) && !temPreAnalise;
+  return { pareceAta, avisos, blocosAssinatura };
 }
 
 // Wrapper Promise pra chamada Anthropic /v1/messages com timeout 120s.
@@ -630,72 +645,63 @@ function agendarLimpezaJob(jobId) {
   if (typeof tmr.unref === 'function') tmr.unref();
 }
 
-// Motor de geração — roda em background, sem prender a requisição HTTP. Mantém a
-// invariante da versão anterior: toda ata entregue passou por validarAta; se o
-// segundo passe (auditoria) falhar na validação, devolve a original validada.
+// Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
+// PRIMEIRA passada Sonnet que retornar texto; a validação é só aviso, nunca bloqueia
+// nem dispara retry. Retry (1x, Sonnet) só se a API não retornar texto. Sem Opus.
 async function gerarAtaJob(jobId, userMessage) {
   const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
   const concluir = (payload) => { const j = atasJobs.get(jobId); if (j) { j.status = 'done'; j.payload = payload; } agendarLimpezaJob(jobId); };
   const falhar = (status, obj) => { const j = atasJobs.get(jobId); if (j) { j.status = 'error'; j.erro = Object.assign({ status }, obj); } agendarLimpezaJob(jobId); };
 
-  // Encadeia o segundo passe de auditoria e padroniza o payload final (mesmo shape
-  // de antes: { ata, modelo_usado, tentativas, auditoria }). Descarta a saída da
-  // auditoria se ela falhar na validação heurística e devolve a original validada.
-  async function entregarAtaAuditada(texto, modelo_usado, tentativaIdx, extras) {
+  // Entrega a ata: roda a auditoria de fidelidade (2a passada Sonnet) e monta o
+  // payload final. A validação é só AVISO — nunca descarta a ata por conta dela.
+  // A auditoria só substitui o original se a saída dela ainda "parece ata" (guarda
+  // contra a auditoria devolver algo quebrado); senão mantém o original.
+  async function entregarAta(texto, modelo_usado, tentativaIdx) {
     const auditada = await auditarFidelidadeAta(texto, userMessage);
     let ataFinal = texto;
     let auditoriaStatus = 'falhou_usou_original';
     if (auditada) {
-      const vAud = validarAta(auditada);
-      if (vAud.valido) {
-        ataFinal = auditada;
-        auditoriaStatus = 'aplicada';
-      } else {
-        auditoriaStatus = 'rejeitada_validacao_usou_original';
-        tentativas[tentativaIdx].auditoria_validacao = vAud;
-        console.warn('[engine-ata] Segundo passe rejeitado pela validação heurística:', JSON.stringify(vAud));
-      }
+      if (validarAta(auditada).pareceAta) { ataFinal = auditada; auditoriaStatus = 'aplicada'; }
+      else { auditoriaStatus = 'rejeitada_usou_original'; }
     }
     tentativas[tentativaIdx].auditoria = auditoriaStatus;
-    return concluir(Object.assign({ ata: ataFinal, modelo_usado, tentativas, auditoria: auditoriaStatus }, extras || {}));
+    const vFinal = validarAta(ataFinal);
+    tentativas[tentativaIdx].validacao_final = vFinal;
+    // avisos: lista não bloqueante pro usuário revisar (assinaturas, truncamento, etc.)
+    return concluir({ ata: ataFinal, modelo_usado, tentativas, auditoria: auditoriaStatus, avisos: vFinal.avisos });
   }
 
+  // REGRA DE OURO: nenhuma geração custa mais que uma passada normal por causa de
+  // validação. Se a API devolveu TEXTO, entregamos (a validação vira aviso, nunca
+  // rejeita). Só há retry se a API NÃO devolveu texto (rede/timeout/erro real), e
+  // no MÁXIMO 1 retry. NUNCA cai pro Opus automaticamente. Custo teto: 2 chamadas
+  // Sonnet de geração (só se a 1a falhar de verdade) + 1 de auditoria.
   try {
     // Tentativa 1: Sonnet 4.6 + 16k
     let r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, system, userMessage);
     tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 16000, status: r.status, erro: r.erro || null });
-    if (r.ok) {
-      const v = validarAta(r.texto);
-      tentativas[0].validacao = v;
-      if (v.valido) return await entregarAtaAuditada(r.texto, 'claude-sonnet-4-6', 0);
+    if (r.ok && r.texto && r.texto.trim()) {
+      tentativas[0].validacao = validarAta(r.texto);
+      return await entregarAta(r.texto, 'claude-sonnet-4-6', 0);
     }
 
-    // Tentativa 2: Sonnet 4.6 + 20k (max_tokens +25%)
+    // Só chega aqui se a API NÃO retornou texto na 1a. UM único retry Sonnet.
+    console.warn('[engine-ata] Tentativa 1 sem texto (' + (r.erro || 'status ' + r.status) + '). Fazendo 1 retry Sonnet (SEM Opus).');
     r = await chamarAnthropicAta('claude-sonnet-4-6', 20000, system, userMessage);
     tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 20000, status: r.status, erro: r.erro || null });
-    if (r.ok) {
-      const v = validarAta(r.texto);
-      tentativas[1].validacao = v;
-      if (v.valido) return await entregarAtaAuditada(r.texto, 'claude-sonnet-4-6', 1);
+    if (r.ok && r.texto && r.texto.trim()) {
+      tentativas[1].validacao = validarAta(r.texto);
+      return await entregarAta(r.texto, 'claude-sonnet-4-6', 1);
     }
 
-    // Tentativa 3: Opus 4.7 fallback. Logado pra acompanhar frequência em prod.
-    console.warn('[engine-ata] Fallback Opus 4.7 acionado após 2 tentativas Sonnet inválidas. Tentativas:', JSON.stringify(tentativas));
-    r = await chamarAnthropicAta('claude-opus-4-7', 20000, system, userMessage);
-    tentativas.push({ modelo: 'claude-opus-4-7', max_tokens: 20000, status: r.status, erro: r.erro || null });
-    if (r.ok) {
-      const v = validarAta(r.texto);
-      tentativas[2].validacao = v;
-      if (v.valido) return await entregarAtaAuditada(r.texto, 'claude-opus-4-7', 2, { fallback: true });
-    }
-
-    // 3 tentativas falharam — marca o job como erro (mesmo shape do 502 antigo)
+    // 2 falhas REAIS de geração (API sem texto). Sem cascata Opus. Devolve erro.
+    console.error('[engine-ata] Geração sem texto em 2 tentativas Sonnet. Sem Opus. Tentativas:', JSON.stringify(tentativas));
     return falhar(502, {
-      erro: 'engine_falhou_3x',
-      detalhe: 'Nenhuma das 3 tentativas produziu ata válida',
-      tentativas,
-      ultima_resposta: r.texto ? r.texto.slice(0, 2000) + (r.texto.length > 2000 ? '...[truncado]' : '') : null
+      erro: 'geracao_sem_texto',
+      detalhe: 'O gerador não retornou texto em 2 tentativas. Tente novamente em instantes.',
+      tentativas
     });
   } catch (e) {
     console.error('[engine-ata] Erro inesperado na geração:', e && e.message);
@@ -727,7 +733,15 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), (req, 
 // GET faz o polling do status. Rápido — devolve o estado atual do job. Quando
 // 'done', o corpo traz o payload completo ({ ata, modelo_usado, ... }); quando
 // 'error', traz o detalhe. HTTP 200 nos dois pra o frontend ler o corpo.
+//
+// Cache DESLIGADO nesta rota: o Express põe ETag automático em res.json, e o
+// navegador passava a revalidar com If-None-Match recebendo 304 (sem corpo) —
+// aí o frontend nunca lia o estado final do job e o polling não terminava. Com
+// no-store + ETag removido, toda consulta volta 200 com o corpo real.
 app.get('/api/atas/gerar/status/:jobId', requireAuth, (req, res) => {
+  // no-store: o navegador não guarda a resposta, então não revalida com
+  // If-None-Match e nunca recebe 304 — cada consulta volta 200 com o corpo real.
+  res.set('Cache-Control', 'no-store');
   const j = atasJobs.get(req.params.jobId);
   if (!j) return res.status(404).json({ status: 'not_found' });
   if (j.status === 'done') return res.json(Object.assign({ status: 'done' }, j.payload));
