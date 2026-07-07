@@ -515,7 +515,11 @@ REGRAS DE SAÍDA:
 
 // Segundo passe: roda Sonnet 4.6 com a ata + transcrição original e devolve a ata
 // corrigida. Sem fallback. Em caso de erro, retorna null e o caller usa a ata original.
-async function auditarFidelidadeAta(ataGerada, userMessageOriginal) {
+async function auditarFidelidadeAta(ataGerada, userMessageOriginal, callFn) {
+  // callFn: função de chamada COM teto hard (passada por gerarAtaJob). Assim a chamada
+  // da auditoria também conta no teto de 3 por geração. Fallback pra chamada direta
+  // se invocada fora do motor (mantém compatibilidade).
+  const chamar = callFn || chamarAnthropicAta;
   const auditMessage = '=== ATA GERADA (a auditar) ===\n' + ataGerada +
     '\n\n=== TRANSCRIÇÃO ORIGINAL E DADOS DA REUNIÃO ===\n' + userMessageOriginal +
     '\n\nAudite a ata acima contra a transcrição e devolva a ata corrigida seguindo o procedimento e as regras de saída.';
@@ -524,7 +528,7 @@ async function auditarFidelidadeAta(ataGerada, userMessageOriginal) {
   // Glossário anexado também aqui: sem ele, a auditoria não reconhece correções de
   // vocabulário legítimas do passe principal e as rebaixava para [a confirmar].
   const systemAuditoria = PROMPT_AUDITORIA + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
-  const r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, systemAuditoria, auditMessage);
+  const r = await chamar('claude-sonnet-4-6', 16000, systemAuditoria, auditMessage);
   if (!r.ok || !r.texto) {
     console.warn('[engine-ata] Segundo passe de auditoria falhou (status ' + (r.status || 'sem_status') + '): ' + (r.erro || 'sem_texto'));
     return null;
@@ -645,6 +649,11 @@ function agendarLimpezaJob(jobId) {
   if (typeof tmr.unref === 'function') tmr.unref();
 }
 
+// Teto HARD absoluto de chamadas à API Anthropic por geração de ata. Pior caso
+// legítimo = 3 (1 geração + 1 retry por falha de API + 1 auditoria), tudo Sonnet.
+// Qualquer chamada além disso é abortada (ver 'chamar' em gerarAtaJob).
+const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 3;
+
 // Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
 // PRIMEIRA passada Sonnet que retornar texto; a validação é só aviso, nunca bloqueia
 // nem dispara retry. Retry (1x, Sonnet) só se a API não retornar texto. Sem Opus.
@@ -654,12 +663,25 @@ async function gerarAtaJob(jobId, userMessage) {
   const concluir = (payload) => { const j = atasJobs.get(jobId); if (j) { j.status = 'done'; j.payload = payload; } agendarLimpezaJob(jobId); };
   const falhar = (status, obj) => { const j = atasJobs.get(jobId); if (j) { j.status = 'error'; j.erro = Object.assign({ status }, obj); } agendarLimpezaJob(jobId); };
 
+  // ─── TETO HARD DE CHAMADAS À API (proteção de custo) ───────────────────────
+  // Contador que CORTA de vez: toda chamada Anthropic desta geração passa por 'chamar',
+  // que aborta ao tentar a (MAX+1)-ésima. Cobre as tentativas E a auditoria. Se um bug
+  // futuro introduzir qualquer loop ou nova cascata, isto barra antes de gastar mais.
+  // MAX = 3 = pior caso legítimo (1 geração + 1 retry + 1 auditoria). Tudo Sonnet.
+  let _chamadas = 0;
+  const chamar = (modelo, maxTokens, sys, msg) => {
+    if (++_chamadas > MAX_CHAMADAS_ANTHROPIC_POR_ATA) {
+      throw new Error('TETO_CHAMADAS: teto de ' + MAX_CHAMADAS_ANTHROPIC_POR_ATA + ' chamadas à API por geração atingido; abortado para não gerar custo');
+    }
+    return chamarAnthropicAta(modelo, maxTokens, sys, msg);
+  };
+
   // Entrega a ata: roda a auditoria de fidelidade (2a passada Sonnet) e monta o
   // payload final. A validação é só AVISO — nunca descarta a ata por conta dela.
   // A auditoria só substitui o original se a saída dela ainda "parece ata" (guarda
   // contra a auditoria devolver algo quebrado); senão mantém o original.
   async function entregarAta(texto, modelo_usado, tentativaIdx) {
-    const auditada = await auditarFidelidadeAta(texto, userMessage);
+    const auditada = await auditarFidelidadeAta(texto, userMessage, chamar);
     let ataFinal = texto;
     let auditoriaStatus = 'falhou_usou_original';
     if (auditada) {
@@ -680,7 +702,7 @@ async function gerarAtaJob(jobId, userMessage) {
   // Sonnet de geração (só se a 1a falhar de verdade) + 1 de auditoria.
   try {
     // Tentativa 1: Sonnet 4.6 + 16k
-    let r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, system, userMessage);
+    let r = await chamar('claude-sonnet-4-6', 16000, system, userMessage);
     tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 16000, status: r.status, erro: r.erro || null });
     if (r.ok && r.texto && r.texto.trim()) {
       tentativas[0].validacao = validarAta(r.texto);
@@ -689,7 +711,7 @@ async function gerarAtaJob(jobId, userMessage) {
 
     // Só chega aqui se a API NÃO retornou texto na 1a. UM único retry Sonnet.
     console.warn('[engine-ata] Tentativa 1 sem texto (' + (r.erro || 'status ' + r.status) + '). Fazendo 1 retry Sonnet (SEM Opus).');
-    r = await chamarAnthropicAta('claude-sonnet-4-6', 20000, system, userMessage);
+    r = await chamar('claude-sonnet-4-6', 20000, system, userMessage);
     tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 20000, status: r.status, erro: r.erro || null });
     if (r.ok && r.texto && r.texto.trim()) {
       tentativas[1].validacao = validarAta(r.texto);
@@ -704,6 +726,11 @@ async function gerarAtaJob(jobId, userMessage) {
       tentativas
     });
   } catch (e) {
+    // Corte do teto hard de chamadas → erro dedicado (nunca deixa gastar além do teto).
+    if (e && typeof e.message === 'string' && e.message.startsWith('TETO_CHAMADAS')) {
+      console.error('[engine-ata] ' + e.message + ' (chamadas=' + _chamadas + ')');
+      return falhar(500, { erro: 'teto_chamadas_atingido', detalhe: 'Geração abortada pelo teto de segurança de chamadas à API. Nenhuma chamada extra foi feita.', tentativas });
+    }
     console.error('[engine-ata] Erro inesperado na geração:', e && e.message);
     return falhar(500, { erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' });
   }
