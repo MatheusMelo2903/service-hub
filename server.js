@@ -739,14 +739,18 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), (req, 
 // aí o frontend nunca lia o estado final do job e o polling não terminava. Com
 // no-store + ETag removido, toda consulta volta 200 com o corpo real.
 app.get('/api/atas/gerar/status/:jobId', requireAuth, (req, res) => {
-  // no-store: o navegador não guarda a resposta, então não revalida com
-  // If-None-Match e nunca recebe 304 — cada consulta volta 200 com o corpo real.
-  res.set('Cache-Control', 'no-store');
+  // Sem cache E sem ETag nesta rota. O Express põe ETag automático em res.json/res.send,
+  // e o navegador passava a revalidar com If-None-Match recebendo 304 (sem corpo) — aí o
+  // polling nunca lia o resultado final. Aqui: Cache-Control no-store + envio via res.end
+  // (que NÃO passa pela geração de ETag do Express), então nenhuma consulta pode virar 304.
+  const enviar = (status, obj) => {
+    res.status(status).set('Cache-Control', 'no-store').type('application/json').end(JSON.stringify(obj));
+  };
   const j = atasJobs.get(req.params.jobId);
-  if (!j) return res.status(404).json({ status: 'not_found' });
-  if (j.status === 'done') return res.json(Object.assign({ status: 'done' }, j.payload));
-  if (j.status === 'error') return res.json(Object.assign({ status: 'error' }, j.erro));
-  return res.json({ status: 'processing', esperando_s: Math.round((Date.now() - j.criadoEm) / 1000) });
+  if (!j) return enviar(404, { status: 'not_found' });
+  if (j.status === 'done') return enviar(200, Object.assign({ status: 'done' }, j.payload));
+  if (j.status === 'error') return enviar(200, Object.assign({ status: 'error' }, j.erro));
+  return enviar(200, { status: 'processing', esperando_s: Math.round((Date.now() - j.criadoEm) / 1000) });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
