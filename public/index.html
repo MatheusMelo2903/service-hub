@@ -5737,17 +5737,35 @@ async function gerarAtaIA() {
     const jobId = inicio.jobId;
     if (!jobId) throw new Error('servidor não retornou o identificador da geração');
 
-    // Polling curto até concluir. Teto de 5min como salvaguarda.
+    // Polling curto até concluir. Teto de 10min: o pior caso do backend são 3
+    // tentativas de até 120s + auditoria de até 120s (~8min), então o teto precisa
+    // ser MAIOR que isso pra não errar "tempo esgotado" enquanto o job ainda termina
+    // (senão o usuário reenviaria e pagaria a API de novo). Cada consulta tem seu
+    // próprio timeout via AbortController (15s) pra um request pendurado não travar
+    // o laço e deixar o botão preso.
     let payload = null;
-    const prazoMax = Date.now() + 5 * 60 * 1000;
+    let errosSeguidos = 0;
+    const prazoMax = Date.now() + 10 * 60 * 1000;
     for (;;) {
       await new Promise((r) => setTimeout(r, 4000));
-      if (Date.now() > prazoMax) throw new Error('tempo esgotado (5 min) — tente novamente');
+      if (Date.now() > prazoMax) throw new Error('tempo esgotado (10 min) — tente novamente');
       let st;
       try {
-        st = await apiAuthFetch('/api/atas/gerar/status/' + encodeURIComponent(jobId));
-      } catch (_) { continue; } // hipo de rede: tenta de novo no próximo ciclo
-      if (st.status === 404) continue; // job ainda não visível — reconsulta
+        const ac = new AbortController();
+        const to = setTimeout(() => ac.abort(), 15000);
+        try {
+          st = await apiAuthFetch('/api/atas/gerar/status/' + encodeURIComponent(jobId), { signal: ac.signal });
+        } finally { clearTimeout(to); }
+      } catch (_) { continue; } // rede caiu/abortou: tenta de novo no próximo ciclo
+      // Trata status HTTP fora do contrato do job, pra não mascarar de "timeout".
+      if (st.status === 404) continue;                 // job ainda não visível ou processo reiniciou
+      if (st.status === 429) { await new Promise((r) => setTimeout(r, 6000)); continue; } // rate limit: espera mais
+      if (st.status === 401 || st.status === 403) throw new Error('sessão expirada — entre novamente e refaça');
+      if (!st.ok) {                                     // 5xx/inesperado: tolera transitório, desiste após 3
+        if (++errosSeguidos >= 3) throw new Error('erro no servidor ao consultar o status (HTTP ' + st.status + ')');
+        continue;
+      }
+      errosSeguidos = 0;
       const body = await st.json().catch(() => ({}));
       if (body.status === 'processing') continue;
       if (body.status === 'error') throw new Error(body.detalhe || body.erro || ('HTTP ' + body.status));
