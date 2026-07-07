@@ -618,22 +618,35 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
     return res.status(400).json({ erro: 'userMessage_invalido', detalhe: 'envie a transcrição + dados da reunião como string em userMessage (mín 50 chars)' });
   }
 
-  // ─── Resposta em STREAMING com heartbeat ───────────────────────────────────
+  // ─── Resposta em STREAMING (SSE) com heartbeat ─────────────────────────────
   // A geração da ata segura a requisição por dezenas de segundos (tentativas +
   // auditoria). Se o Hub só respondesse no fim, o edge do Railway estouraria o
-  // tempo e devolveria 502 antes de qualquer byte. Solução: responder JÁ, mandando
-  // pings NDJSON a cada 7s enquanto gera, e no fim UM evento 'done' com o payload
-  // no MESMO shape de antes. O edge sempre vê bytes e nunca dá 502. Os pings são
-  // linhas separadas que o frontend descarta; o texto da ata (campo 'ata') vai
-  // intacto, byte a byte igual, no evento final.
-  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  // tempo e devolveria 502 antes de qualquer byte. Precisamos mandar bytes JÁ e
+  // periodicamente até o fim.
+  //
+  // Por que SSE (text/event-stream) e não NDJSON: medimos que o edge do Railway
+  // (railway-hikari) BUFFERIZA respostas application/x-ndjson — só o primeiro byte
+  // chegava ao navegador e os pings seguintes ficavam presos até a resposta acabar
+  // (~49s de silêncio), fazendo o Safari derrubar a conexão ("Load failed"). O
+  // text/event-stream é o content-type que proxies universalmente entregam sem
+  // bufferizar; somado a um padding inicial de comentário (:...) que estoura
+  // qualquer limiar de buffer, garante que cada ping (a cada 7s) chegue ao cliente.
+  // Cada evento vai como "data: <json>\n\n"; o JSON.stringify escapa quebras de
+  // linha, então o texto da ata (campo 'ata') vai intacto, byte a byte, no evento
+  // final 'done' — mesmo shape de antes.
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
-  const heartbeat = setInterval(() => { if (!res.writableEnded) res.write('{"type":"ping"}\n'); }, 7000);
-  res.write('{"type":"ping"}\n'); // primeiro byte imediato, tira a conexão do idle
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+  res.write(':' + ' '.repeat(2048) + '\n\n'); // padding: força o edge a soltar o buffer já
+  const sse = (obj) => { if (!res.writableEnded) res.write('data: ' + JSON.stringify(obj) + '\n\n'); };
+  let tick = 0;
+  const heartbeat = setInterval(() => { sse({ type: 'ping', t: ++tick }); }, 7000);
+  sse({ type: 'ping', t: 0 }); // primeiro evento imediato, tira a conexão do idle
   req.on('close', () => clearInterval(heartbeat));
-  const enviarDone = (obj) => { clearInterval(heartbeat); if (!res.writableEnded) { res.write(JSON.stringify(Object.assign({ type: 'done' }, obj)) + '\n'); res.end(); } };
-  const enviarErro = (status, obj) => { clearInterval(heartbeat); if (!res.writableEnded) { res.write(JSON.stringify(Object.assign({ type: 'error', status }, obj)) + '\n'); res.end(); } };
+  const enviarDone = (obj) => { clearInterval(heartbeat); if (!res.writableEnded) { sse(Object.assign({ type: 'done' }, obj)); res.end(); } };
+  const enviarErro = (status, obj) => { clearInterval(heartbeat); if (!res.writableEnded) { sse(Object.assign({ type: 'error', status }, obj)); res.end(); } };
 
   const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
