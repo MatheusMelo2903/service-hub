@@ -291,12 +291,13 @@ app.post('/api/claude/messages', requireAuth, express.json({limit:'10mb'}), (req
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Engine de geração de ata — Sonnet 4.6 com fallback Opus 4.7
+// Engine de geração de ata — SÓ Sonnet 4.6 (sem Opus, sem cascata por validação)
 //
-// Pipeline (até 3 tentativas):
-//   1. Sonnet 4.6 + max_tokens 16000 → validarAta
-//   2. Se inválida: Sonnet 4.6 + max_tokens 20000
-//   3. Se inválida: Opus 4.7 + max_tokens 20000 (fallback)
+// Pipeline (teto HARD de 3 chamadas Anthropic por geração, ver MAX_CHAMADAS_ANTHROPIC_POR_ATA):
+//   1. Sonnet 4.6 + max_tokens 16000 → se retornou texto, ENTREGA (validação é só aviso)
+//   2. Só se a API NÃO retornou texto (rede/timeout): 1 retry Sonnet 4.6 + 20000
+//   3. Auditoria de fidelidade (Sonnet 4.6) na ata entregue
+// NUNCA há fallback Opus. Validação nunca dispara retry (ver REGRA DE OURO no motor).
 //
 // System prompt = SKILL.md integral + contexto fixo Grupo Service + regras anti-erro.
 // SKILL.md carregada no boot e mantida em memória.
