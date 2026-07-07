@@ -1841,10 +1841,13 @@ function parsePlanilhaPronta(rows, opts) {
   if (!nome) nome = 'Condomínio';
 
   // ---------- V3: linhas de TAXA / VALOR RATEADO / PREVISÃO ANO {ano} ----------
+  // Gap A: "TAXA DE CONDOMÍNIO {ano}:" (ex.: Reserva Verde) é um rótulo tão válido
+  // quanto "TAXA DE CONDOMÍNIO POR FRAÇÃO IDEAL {ano}:" (ex.: Via Mar, Caminho) —
+  // o "POR FRAÇÃO IDEAL" é opcional, nunca célula fixa, pra cobrir os dois de uma vez.
   const taxas = [];
   for (let r = 0; r < N; r++) {
     const s = labelOf(r) || txt(cell(r, 0)) || txt(cell(r, 1));
-    const m = s.match(/(?:FRA[ÇC][ÃA]O\s+IDEAL|VALOR\s+RATEADO\s+EM|PREVIS[ÃA]O\s+OR[ÇC]AMENT[ÁA]RIA\s+ANO)\s*(\d{4})\s*:/i);
+    const m = s.match(/(?:TAXA\s+DE\s+CONDOM[ÍI]NIO(?:\s+POR\s+FRA[ÇC][ÃA]O\s+IDEAL)?|VALOR\s+RATEADO\s+EM|PREVIS[ÃA]O\s+OR[ÇC]AMENT[ÁA]RIA\s+ANO)\s*(\d{4})\s*:/i);
     if (m) { const val = firstNumInRow(r); if (val != null) taxas.push({ ano: +m[1], valor: val }); }
   }
   taxas.sort((a, b) => a.ano - b.ano);
@@ -1926,11 +1929,16 @@ function parsePlanilhaPronta(rows, opts) {
   if (taxaNovaTotal == null) taxaNovaTotal = mensal;
 
   // ---------- V9: reajuste (truncado) + caso mantida ----------
-  let headlinePct = (taxaNovaTotal != null && taxaBase) ? (taxaNovaTotal / taxaBase - 1) : 0;
-  const mantida = Math.abs(headlinePct) < 0.00005;       // < 0,005% → "taxa mantida"
+  // Gap A (Guarda 2): taxaBase nula é FALHA DE PARSE (rótulo de TAXA não encontrado),
+  // não pode virar "0,00% mantida" por acidente — só é "mantida" quando a base FOI
+  // lida e é igual à nova (caso legítimo, ex.: Camarás). taxaBaseNaoEncontrada fica
+  // exposta em M pra quem chama bloquear a geração do deck e avisar o operador.
+  const taxaBaseNaoEncontrada = taxaBase == null;
+  let headlinePct = (!taxaBaseNaoEncontrada && taxaNovaTotal != null) ? (taxaNovaTotal / taxaBase - 1) : 0;
+  const mantida = !taxaBaseNaoEncontrada && Math.abs(headlinePct) < 0.00005; // < 0,005% → "taxa mantida"
   if (mantida) headlinePct = 0;
   let impactoMensalCond = mantida ? 0
-    : (taxaNovaTotal != null && taxaBase != null) ? _round2(taxaNovaTotal - taxaBase) : 0;
+    : (!taxaBaseNaoEncontrada && taxaNovaTotal != null) ? _round2(taxaNovaTotal - taxaBase) : 0;
 
   // ---------- V2/V7/V8/V14: tabela de frações ----------
   const fr = parseFracoes(rows, { dataStart, fracHdrRow, mensalTotal: mensal, antenaMensal, mantida, txt, numAt, labelOf, cell });
@@ -1946,7 +1954,7 @@ function parsePlanilhaPronta(rows, opts) {
 
   const M = {
     exercicio: ano, condominio: nome,
-    headlinePct, impactoMensalCond,
+    headlinePct, impactoMensalCond, taxaBaseNaoEncontrada,
     taxaCondAtual: taxaBase, taxaCondNova: taxaNovaTotal,
     top2, pesoTop2, cats: catNames,
     comReaj: [], semReaj: cObjs, soAno: true,
@@ -2294,6 +2302,9 @@ function importarPlanilhaPronta(inp){
       modoA_rows=rows; modoA_antBase='mensal';
       const M=parsePlanilhaPronta(rows);
       if(!M.r.rateio.tipos.length) throw new Error('não encontrei a tabela de frações por unidade — confira se a planilha é a versão FINAL do pai.');
+      // Guarda 2 (Gap A): taxa base não encontrada é falha de leitura, não pode virar
+      // "0,00% mantida" por engano — bloqueia a geração até o operador confirmar a planilha.
+      if(M.taxaBaseNaoEncontrada) throw new Error('não encontrei a taxa de condomínio do ano anterior (procure por um rótulo como "TAXA DE CONDOMÍNIO ' + (M.exercicio-1) + ':" na planilha) — confira o arquivo antes de gerar o deck.');
       modoA_M=M;
       P.condominio=M.condominio||P.condominio; P.exercicio=M.exercicio||P.exercicio;
       P.params.pctFundo=M.pr.pctFundo; P.params.modoRateio='Fração Ideal';
