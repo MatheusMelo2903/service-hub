@@ -83,7 +83,8 @@ async def gerar(
 
         # Detecta o tipo de cada arquivo enviado.
         # Arquivo desconhecido dispara 422 imediato (nunca gera deck com dado duvidoso).
-        fontes_detectadas = {"W011A": False, "W015A": False, "W016A": False}
+        fontes_detectadas = {"W011A": False, "W015A": False,
+                             "W016A": False, "W015P": False}
         for cam in caminhos:
             tipo = detectar_tipo(cam)
             if tipo == "DESCONHECIDO":
@@ -97,7 +98,7 @@ async def gerar(
             fontes_detectadas[tipo] = True
 
         # Roteamento: todos W016A → fluxo legado (multi-período por W016A).
-        # Qualquer W011A ou W015A → fluxo multi-fonte (único período).
+        # Qualquer W011A, W015A ou W015P → fluxo multi-fonte (único período).
         todos_w016a = all(t == "W016A" for _, t in caminhos_e_tipos)
         serie_mensal_ativa = False
         avisos_reconciliacao: list = []
