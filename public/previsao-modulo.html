@@ -1925,7 +1925,16 @@ function parsePlanilhaPronta(rows, opts) {
     };
   });
   const mensal = _round2(cObjs.reduce((s, c) => s + c.previsto / 12, 0));
-  const totalPrev = _round2(mensal * 12);
+  // Gap B camada 1: o TOTAL A RATEAR tem que vir da linha de TAXA da própria
+  // planilha (taxaNovaTotal) — é a fonte de verdade que o síndico declarou,
+  // não a soma dos blocos de categoria detectados. Em planilhas onde consumo
+  // (água/esgoto) fica FORA do rateio da taxa (ex.: Reserva Verde), a soma de
+  // categorias pega um bloco de total extra por engano e infla o valor. Em
+  // planilhas onde consumo entra no mesmo total (ex.: Serra), taxaNovaTotal já
+  // é igual à soma de categorias — ancorar aqui não muda nada pra elas. Sem
+  // linha de TAXA reconhecida, cai pro fallback de sempre (soma das categorias).
+  const mensalRatear = taxaNovaTotal != null ? _round2(taxaNovaTotal) : mensal;
+  const totalPrev = _round2(mensalRatear * 12);
   if (taxaNovaTotal == null) taxaNovaTotal = mensal;
 
   // ---------- V9: reajuste (truncado) + caso mantida ----------
@@ -1941,7 +1950,7 @@ function parsePlanilhaPronta(rows, opts) {
     : (!taxaBaseNaoEncontrada && taxaNovaTotal != null) ? _round2(taxaNovaTotal - taxaBase) : 0;
 
   // ---------- V2/V7/V8/V14: tabela de frações ----------
-  const fr = parseFracoes(rows, { dataStart, fracHdrRow, mensalTotal: mensal, antenaMensal, mantida, txt, numAt, labelOf, cell });
+  const fr = parseFracoes(rows, { dataStart, fracHdrRow, mensalTotal: mensalRatear, antenaMensal, mantida, txt, numAt, labelOf, cell });
   const rateioTorres = fr.torres;
   const flatTipos = fr.flat;
 
@@ -1958,7 +1967,7 @@ function parsePlanilhaPronta(rows, opts) {
     taxaCondAtual: taxaBase, taxaCondNova: taxaNovaTotal,
     top2, pesoTop2, cats: catNames,
     comReaj: [], semReaj: cObjs, soAno: true,
-    r: { totalBase: totalPrev, totalPrev, mensal, porCat, rateio: { modo: 'Fração Ideal', tipos: flatTipos } },
+    r: { totalBase: totalPrev, totalPrev, mensal: mensalRatear, porCat, rateio: { modo: 'Fração Ideal', tipos: flatTipos } },
     pr: { modoRateio: 'Fração Ideal', pctFundo, saldoFundo: null, mesesRelatorio: 12,
           fracoes: flatTipos.map(t => ({ fracao: t.fracao, taxaAtual: t.taxaAtual, taxaNova: t.taxaNova, unidades: t.unidades, tipo: t.tipo })) },
   };
