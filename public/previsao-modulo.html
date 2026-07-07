@@ -1844,12 +1844,25 @@ function parsePlanilhaPronta(rows, opts) {
   // Gap A: "TAXA DE CONDOMÍNIO {ano}:" (ex.: Reserva Verde) é um rótulo tão válido
   // quanto "TAXA DE CONDOMÍNIO POR FRAÇÃO IDEAL {ano}:" (ex.: Via Mar, Caminho) —
   // o "POR FRAÇÃO IDEAL" é opcional, nunca célula fixa, pra cobrir os dois de uma vez.
-  const taxas = [];
+  const taxasEncontradas = [];
   for (let r = 0; r < N; r++) {
     const s = labelOf(r) || txt(cell(r, 0)) || txt(cell(r, 1));
     const m = s.match(/(?:TAXA\s+DE\s+CONDOM[ÍI]NIO(?:\s+POR\s+FRA[ÇC][ÃA]O\s+IDEAL)?|VALOR\s+RATEADO\s+EM|PREVIS[ÃA]O\s+OR[ÇC]AMENT[ÁA]RIA\s+ANO)\s*(\d{4})\s*:/i);
-    if (m) { const val = firstNumInRow(r); if (val != null) taxas.push({ ano: +m[1], valor: val }); }
+    if (m) { const val = firstNumInRow(r); if (val != null) taxasEncontradas.push({ ano: +m[1], valor: val }); }
   }
+  // Hardening da Guarda 2: com o regex do Gap A mais abrangente, 2+ rótulos podem
+  // bater no MESMO ano (ex.: recapitulativo no rodapé). Se os valores forem iguais
+  // é so repetição do mesmo dado — dedupe e segue. Se DIVERGIREM, não dá pra escolher
+  // um em silêncio: é ambíguo, vira falha de parse (taxaAmbigua) igual à taxa não
+  // encontrada, nunca um índice aleatório do array.
+  const taxaPorAno = new Map();
+  let taxaAmbigua = false;
+  for (const t of taxasEncontradas) {
+    const anterior = taxaPorAno.get(t.ano);
+    if (anterior == null) taxaPorAno.set(t.ano, t.valor);
+    else if (Math.abs(anterior - t.valor) > 0.01) taxaAmbigua = true;
+  }
+  const taxas = [...taxaPorAno.entries()].map(([ano, valor]) => ({ ano, valor }));
   taxas.sort((a, b) => a.ano - b.ano);
   const tBase = taxas.length >= 2 ? taxas[taxas.length - 2] : null;
   const tNova = taxas.length >= 1 ? taxas[taxas.length - 1] : null;
@@ -1935,6 +1948,11 @@ function parsePlanilhaPronta(rows, opts) {
   // linha de TAXA reconhecida, cai pro fallback de sempre (soma das categorias).
   const mensalRatear = taxaNovaTotal != null ? _round2(taxaNovaTotal) : mensal;
   const totalPrev = _round2(mensalRatear * 12);
+  // Fallback defensivo: no fluxo real, taxaNovaTotal só fica null quando taxaBase
+  // também fica null (mesmo array `taxas` vazio ou sem entrada mais recente) — e
+  // nesse caso a Guarda 2 logo abaixo já marca taxaBaseNaoEncontrada e quem chama
+  // (importarPlanilhaPronta) descarta o M com erro antes de qualquer uso. Fica aqui
+  // só como rede de segurança redundante, pra nunca sobrar `taxaNovaTotal` nulo.
   if (taxaNovaTotal == null) taxaNovaTotal = mensal;
 
   // ---------- V9: reajuste (truncado) + caso mantida ----------
@@ -1942,7 +1960,11 @@ function parsePlanilhaPronta(rows, opts) {
   // não pode virar "0,00% mantida" por acidente — só é "mantida" quando a base FOI
   // lida e é igual à nova (caso legítimo, ex.: Camarás). taxaBaseNaoEncontrada fica
   // exposta em M pra quem chama bloquear a geração do deck e avisar o operador.
-  const taxaBaseNaoEncontrada = taxaBase == null;
+  // Hardening: taxaBase<=0 também é inválida (taxa de condomínio zero não é cenário
+  // de negócio real — diferente de REAJUSTE zero, que é a variação, não a base) e
+  // taxaAmbigua (2+ rótulos do mesmo ano com valores divergentes) entra na mesma
+  // guarda — evita Infinity/NaN e evita escolher um valor em silêncio.
+  const taxaBaseNaoEncontrada = taxaBase == null || taxaBase <= 0 || taxaAmbigua;
   let headlinePct = (!taxaBaseNaoEncontrada && taxaNovaTotal != null) ? (taxaNovaTotal / taxaBase - 1) : 0;
   const mantida = !taxaBaseNaoEncontrada && Math.abs(headlinePct) < 0.00005; // < 0,005% → "taxa mantida"
   if (mantida) headlinePct = 0;
@@ -1963,7 +1985,7 @@ function parsePlanilhaPronta(rows, opts) {
 
   const M = {
     exercicio: ano, condominio: nome,
-    headlinePct, impactoMensalCond, taxaBaseNaoEncontrada,
+    headlinePct, impactoMensalCond, taxaBaseNaoEncontrada, taxaAmbigua,
     taxaCondAtual: taxaBase, taxaCondNova: taxaNovaTotal,
     top2, pesoTop2, cats: catNames,
     comReaj: [], semReaj: cObjs, soAno: true,
@@ -2311,8 +2333,10 @@ function importarPlanilhaPronta(inp){
       modoA_rows=rows; modoA_antBase='mensal';
       const M=parsePlanilhaPronta(rows);
       if(!M.r.rateio.tipos.length) throw new Error('não encontrei a tabela de frações por unidade — confira se a planilha é a versão FINAL do pai.');
-      // Guarda 2 (Gap A): taxa base não encontrada é falha de leitura, não pode virar
-      // "0,00% mantida" por engano — bloqueia a geração até o operador confirmar a planilha.
+      // Guarda 2 (Gap A + hardening): taxa base não encontrada, zerada ou ambígua é
+      // falha de leitura, não pode virar "0,00% mantida" por engano — bloqueia a
+      // geração até o operador confirmar a planilha, com o motivo certo na mensagem.
+      if(M.taxaAmbigua) throw new Error('encontrei mais de um valor de taxa de condomínio pro mesmo ano, com valores diferentes — confira se a planilha tem rótulos de taxa duplicados e conflitantes antes de gerar o deck.');
       if(M.taxaBaseNaoEncontrada) throw new Error('não encontrei a taxa de condomínio do ano anterior (procure por um rótulo como "TAXA DE CONDOMÍNIO ' + (M.exercicio-1) + ':" na planilha) — confira o arquivo antes de gerar o deck.');
       modoA_M=M;
       P.condominio=M.condominio||P.condominio; P.exercicio=M.exercicio||P.exercicio;
