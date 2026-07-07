@@ -4708,94 +4708,192 @@ function setAudioProgress(pct, label, log) {
   if (log !== undefined) document.getElementById('audio-log').textContent = log;
 }
 
+// ─── Compressão condicional de áudio (ffmpeg.wasm) ─────────────────────────
+// Áudio grande estoura o limite de ~5 min de upload do edge do Railway (502).
+// Solução: ACIMA de 60 MB, comprime automático no navegador pra mono/16kHz/64kbps
+// (setting TRAVADO, validado em 2026-07-07: preserva números, valores e decisões da
+// transcrição) antes de subir. ABAIXO de 60 MB, sobe original sem nem carregar o
+// ffmpeg.wasm (~30 MB). O usuário não escolhe nada; decide pelo tamanho.
+const AUDIO_COMPRESS_THRESHOLD = 60 * 1024 * 1024; // 60 MB
+let _ffmpeg = null;
+let _ffmpegProgressCb = null;
+
+function _injectScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector('script[data-vendor="' + src + '"]')) return resolve();
+    const s = document.createElement('script');
+    s.src = src; s.dataset.vendor = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('falha ao carregar ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+// Carrega o ffmpeg.wasm sob demanda (só quando precisa comprimir). Self-hosted em
+// /vendor/ffmpeg (sem CDN, sem COOP/COEP: o core single-thread não usa SharedArrayBuffer).
+async function carregarFfmpeg() {
+  if (_ffmpeg) return _ffmpeg;
+  await _injectScript('/vendor/ffmpeg/ffmpeg.js');
+  await _injectScript('/vendor/ffmpeg/util.js');
+  const ff = new window.FFmpegWASM.FFmpeg();
+  ff.on('progress', ({ progress }) => { if (_ffmpegProgressCb) _ffmpegProgressCb(progress); });
+  await ff.load({ coreURL: '/vendor/ffmpeg/ffmpeg-core.js', wasmURL: '/vendor/ffmpeg/ffmpeg-core.wasm' });
+  _ffmpeg = ff;
+  return ff;
+}
+
+// Comprime só se o arquivo for grande. Retorna { file, comprimido, origMB?, novoMB? }.
+async function comprimirAudioSeGrande(file, sig) {
+  if (file.size < AUDIO_COMPRESS_THRESHOLD) return { file, comprimido: false };
+  const origMB = (file.size / 1048576).toFixed(1);
+  setAudioProgress(2, 'Áudio grande (' + origMB + 'MB), otimizando para upload...', 'Carregando compressor (única vez)...');
+  const ff = await carregarFfmpeg();
+  _ffmpegProgressCb = (p) => {
+    const pct = Math.max(2, Math.min(99, Math.round(p * 100)));
+    setAudioProgress(pct, 'Áudio grande, otimizando para upload... ' + pct + '%', 'Comprimindo (mono 64k 16kHz)...');
+  };
+  try {
+    const { fetchFile } = window.FFmpegUtil;
+    await ff.writeFile('in', await fetchFile(file));
+    // SETTING TRAVADO (aprovado 2026-07-07): mono, 16 kHz, 64 kbps mp3. Não expor ao usuário.
+    await ff.exec(['-i', 'in', '-ac', '1', '-ar', '16000', '-b:a', '64k', '-f', 'mp3', 'out.mp3'], -1, sig ? { signal: sig } : undefined);
+    const data = await ff.readFile('out.mp3');
+    await ff.deleteFile('in').catch(() => {});
+    await ff.deleteFile('out.mp3').catch(() => {});
+    const nome = file.name.replace(/\.[^.]+$/, '') + '.mp3';
+    const novo = new File([data], nome, { type: 'audio/mpeg' });
+    const novoMB = (novo.size / 1048576).toFixed(1);
+    setAudioProgress(15, 'Otimizado: ' + origMB + 'MB → ' + novoMB + 'MB', 'Compressão concluída ✓');
+    return { file: novo, comprimido: true, origMB, novoMB };
+  } catch (e) {
+    _ffmpeg = null; // instância pode ter sido terminada; força reload limpo na próxima
+    throw e;
+  } finally { _ffmpegProgressCb = null; }
+}
+
+// fetch com timeout de etapa (via AbortController). Marca err.__timeout=true no estouro,
+// pra o retry saber que NÃO deve re-tentar (não re-sobe um arquivo grande à toa).
+async function fetchComTimeout(url, opts, ms, signalExterno) {
+  const ac = new AbortController();
+  let estourou = false;
+  const timer = setTimeout(() => { estourou = true; ac.abort(); }, ms);
+  const onAbort = () => ac.abort();
+  if (signalExterno) signalExterno.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await fetch(url, Object.assign({}, opts, { signal: ac.signal }));
+  } catch (e) {
+    if (estourou) { const err = new Error('esta etapa demorou demais (timeout)'); err.__timeout = true; throw err; }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    if (signalExterno) signalExterno.removeEventListener('abort', onAbort);
+  }
+}
+
 async function processarArquivoAudio(file) {
   audioAbortController = new AbortController();
+  const sig = audioAbortController.signal;
   document.getElementById('audio-file-nome').textContent = file.name;
   document.getElementById('audio-progress-wrap').style.display = 'block';
   document.getElementById('btn-cancelar-audio').style.display = 'inline-flex';
   document.getElementById('audio-log').textContent = '';
 
+  const authH = () => (window.AUTH_TOKEN ? { 'Authorization': 'Bearer ' + window.AUTH_TOKEN } : {});
+  const pctAtual = () => parseInt(document.getElementById('audio-progress-bar').style.width) || 5;
+  // Retry SÓ em falha rápida/transitória (rede, 5xx imediato). NUNCA em timeout de etapa
+  // nem em cancelamento — re-subir cego um arquivo grande que estourou o tempo é o que
+  // não pode acontecer. Upload e transcrição são grátis, então o retry ali é seguro.
+  async function comRetry(fn, label) {
+    let ultimo;
+    for (let n = 1; n <= 3; n++) { // 1 tentativa + 2 retries
+      if (sig.aborted) throw new Error('Cancelado');
+      try { return await fn(); }
+      catch (e) {
+        if (e.message === 'Cancelado' || e.name === 'AbortError' || e.__timeout) throw e;
+        ultimo = e;
+        if (n < 3) { setAudioProgress(pctAtual(), label + ' falhou, tentando de novo (' + (n + 1) + '/3)...', String(e.message || e)); await new Promise(r => setTimeout(r, 1500 * n)); }
+      }
+    }
+    throw ultimo;
+  }
+
   try {
-    // PASSO 1: Upload do arquivo
-    const tamanhoMB = (file.size / 1024 / 1024).toFixed(1);
-    setAudioProgress(5, `Enviando arquivo (${tamanhoMB}MB)...`, 'Conectando ao AssemblyAI...');
+    // PASSO 0: comprime se for grande (senão sobe o original sem tocar)
+    const comp = await comprimirAudioSeGrande(file, sig);
+    const arquivo = comp.file;
+    const tamMB = (arquivo.size / 1048576).toFixed(1);
 
-    const uploadResp = await apiAuthFetch(AAI_UPLOAD_URL, {
-      method: 'POST',
-      body: file,
-      signal: audioAbortController?.signal
-    });
+    // PASSO 1: upload (retry só em falha rápida; timeout de etapa de 6 min)
+    setAudioProgress(comp.comprimido ? 18 : 5, 'Enviando arquivo (' + tamMB + 'MB)...', comp.comprimido ? 'Enviando versão otimizada...' : 'Conectando ao AssemblyAI...');
+    const upload_url = await comRetry(async () => {
+      const r = await fetchComTimeout(AAI_UPLOAD_URL, { method: 'POST', headers: authH(), body: arquivo }, 6 * 60 * 1000, sig);
+      if (!r.ok) throw new Error('Falha no upload: HTTP ' + r.status);
+      const j = await r.json();
+      if (!j.upload_url) throw new Error('upload não retornou URL');
+      return j.upload_url;
+    }, 'Upload');
+    setAudioProgress(30, 'Arquivo enviado! Iniciando transcrição...', 'Upload concluído ✓');
 
-    if (!uploadResp.ok) throw new Error('Falha no upload: ' + uploadResp.status);
-    const { upload_url } = await uploadResp.json();
-    setAudioProgress(20, 'Arquivo enviado! Iniciando transcrição...', 'Upload concluído ✓');
+    // PASSO 2: inicia transcrição (retry só em falha rápida; timeout 30s)
+    const id = await comRetry(async () => {
+      const r = await fetchComTimeout(AAI_TRANSCRIPT_URL, {
+        method: 'POST',
+        headers: Object.assign({ 'content-type': 'application/json' }, authH()),
+        body: JSON.stringify({
+          audio_url: upload_url,
+          // universal-3-5-pro com fallback universal-2. keyterms_prompt e prompt são
+          // mutuamente exclusivos; language_detection é exclusivo com language_code.
+          speech_models: ['universal-3-5-pro', 'universal-2'],
+          language_detection: true,
+          speaker_labels: true,
+          keyterms_prompt: [
+            'síndico', 'subsíndico', 'conselho fiscal', 'quórum', 'fundo de reserva',
+            'convenção', 'regimento interno', 'taxa condominial', 'rateio',
+            'prestação de contas', 'inadimplência', 'assembleia geral ordinária',
+            'assembleia geral extraordinária', 'previsão orçamentária', 'ata'
+          ],
+          punctuate: true, format_text: true, disfluencies: false
+        })
+      }, 30 * 1000, sig);
+      if (!r.ok) throw new Error('Falha ao iniciar transcrição: HTTP ' + r.status);
+      const j = await r.json();
+      if (!j.id) throw new Error('transcrição não retornou ID');
+      return j.id;
+    }, 'Início da transcrição');
+    setAudioProgress(35, 'Transcrevendo... (pode levar alguns minutos)', 'ID: ' + id);
 
-    // PASSO 2: Inicia transcrição
-    const transcriptResp = await apiAuthFetch(AAI_TRANSCRIPT_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        audio_url: upload_url,
-        // Modelo novo (universal-3-5-pro) com fallback pra universal-2. O universal-3-pro
-        // foi deprecado pela AssemblyAI, que recomenda o universal-3-5-pro no lugar.
-        speech_models: ['universal-3-5-pro', 'universal-2'],
-        // Deteccao automatica de idioma (mutuamente exclusiva com language_code, por
-        // isso o language_code: 'pt' fixo foi removido) e rotulos de locutor.
-        language_detection: true,
-        speaker_labels: true,
-        // Vocabulario condominial pra melhorar termos do dominio. NUNCA usar junto com
-        // "prompt": keyterms_prompt e prompt sao mutuamente exclusivos na AssemblyAI.
-        keyterms_prompt: [
-          'síndico', 'subsíndico', 'conselho fiscal', 'quórum', 'fundo de reserva',
-          'convenção', 'regimento interno', 'taxa condominial', 'rateio',
-          'prestação de contas', 'inadimplência', 'assembleia geral ordinária',
-          'assembleia geral extraordinária', 'previsão orçamentária', 'ata'
-        ],
-        punctuate: true,
-        format_text: true,
-        disfluencies: false
-      }),
-      signal: audioAbortController?.signal
-    });
-
-    if (!transcriptResp.ok) throw new Error('Falha ao iniciar transcrição: ' + transcriptResp.status);
-    const { id } = await transcriptResp.json();
-    setAudioProgress(25, 'Transcrevendo... (pode levar alguns minutos)', 'ID: ' + id);
-
-    // PASSO 3: Poll até concluir
-    let progresso = 25;
-    await new Promise((resolve, reject) => {
+    // PASSO 3: poll até concluir. Timeout global de 25 min; erros transitórios de poll
+    // só re-consultam (não derrubam). Ao concluir/errar/estourar, para o intervalo.
+    const prazo = Date.now() + 25 * 60 * 1000;
+    let progresso = 35;
+    const texto = await new Promise((resolve, reject) => {
       pollTimer = setInterval(async () => {
-        if (audioAbortController?.signal.aborted) { clearInterval(pollTimer); reject(new Error('Cancelado')); return; }
+        if (sig.aborted) { clearInterval(pollTimer); pollTimer = null; reject(new Error('Cancelado')); return; }
+        if (Date.now() > prazo) { clearInterval(pollTimer); pollTimer = null; const e = new Error('a transcrição excedeu 25 min'); e.__timeout = true; reject(e); return; }
         try {
-          const pollResp = await apiAuthFetch(AAI_POLL_BASE + id);
-          const result = await pollResp.json();
-
-          if (result.status === 'completed') {
-            clearInterval(pollTimer);
-            setAudioProgress(100, 'Transcrição concluída!', result.text?.slice(0, 200) + '...');
-            document.getElementById('ata-transcricao').value = result.text || '';
-            document.getElementById('btn-cancelar-audio').style.display = 'none';
-            toast('Transcrição concluída! ' + (result.text?.length || 0) + ' caracteres', 'ok');
-            resolve();
-          } else if (result.status === 'error') {
-            clearInterval(pollTimer);
-            reject(new Error(result.error || 'Erro na transcrição'));
-          } else {
-            // ainda processando
-            progresso = Math.min(progresso + 2, 90);
-            setAudioProgress(progresso, 'Transcrevendo... (' + result.status + ')', 'Aguardando AssemblyAI...');
-          }
-        } catch(e) { if (e.name !== 'AbortError') console.error(e); }
+          const r = await fetchComTimeout(AAI_POLL_BASE + id, { headers: authH() }, 20 * 1000, sig);
+          const result = await r.json();
+          if (result.status === 'completed') { clearInterval(pollTimer); pollTimer = null; resolve(result.text || ''); }
+          else if (result.status === 'error') { clearInterval(pollTimer); pollTimer = null; reject(new Error(result.error || 'erro na transcrição')); }
+          else { progresso = Math.min(progresso + 2, 92); setAudioProgress(progresso, 'Transcrevendo... (' + result.status + ')', 'Aguardando AssemblyAI...'); }
+        } catch (e) { if (e.name !== 'AbortError' && !e.__timeout) console.warn('poll transitório, reconsulta:', e.message); }
       }, 3000);
     });
 
-  } catch(e) {
-    if (e.name === 'AbortError' || e.message === 'Cancelado') return;
-    setAudioProgress(0, 'Erro: ' + e.message, '');
-    document.getElementById('audio-log').innerHTML = '<span style="color:var(--danger)">' + e.message + '</span>';
+    setAudioProgress(100, 'Transcrição concluída!', texto.slice(0, 200) + '...');
+    document.getElementById('ata-transcricao').value = texto;
     document.getElementById('btn-cancelar-audio').style.display = 'none';
-    toast('Erro: ' + e.message, 'err');
+    toast('Transcrição concluída! ' + texto.length + ' caracteres' + (comp.comprimido ? ' (áudio otimizado)' : ''), 'ok');
+
+  } catch (e) {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (e.name === 'AbortError' || e.message === 'Cancelado') return; // cancelamento: silencioso
+    // Erro SEMPRE visível: mensagem clara na tela + toast, e o botão volta ao normal.
+    const msg = e.__timeout ? 'Tempo esgotado nesta etapa. Tente novamente.' : (e.message || 'erro');
+    setAudioProgress(0, 'Erro: ' + msg, '');
+    document.getElementById('audio-log').innerHTML = '<span style="color:var(--danger)">' + msg + '</span>';
+    document.getElementById('btn-cancelar-audio').style.display = 'none';
+    toast('Erro na transcrição: ' + msg, 'err');
   }
 }
 
