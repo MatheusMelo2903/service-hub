@@ -677,7 +677,7 @@ function valoresCanonicos(txt) {
   for (const m of s.matchAll(/(\d+(?:[.,]\d+)?)\s*mil\b/gi)) { const c = _numPtBr(m[1], 1000); if (c) set.add(c); }
   for (const m of s.matchAll(/(\d[\d.]*)\s*(?:reais|conto)/gi)) { const c = _numPtBr(m[1]); if (c) set.add(c); }
   // 'R$ X' / 'R$ X.XXX' sem centavos (ex.: 'R$2.071', 'R$ 450'); exclui 'R$ X mil' e 'R$ X,XX'
-  for (const m of s.matchAll(/R\$\s*(\d{1,3}(?:\.\d{3})*)(?!\s*mil)(?![,.]\d)/gi)) { const c = _numPtBr(m[1]); if (c) set.add(c); }
+  for (const m of s.matchAll(/R\$\s*(\d{1,3}(?:\.\d{3})*)(?!\s*mil)(?!\d)(?![.,]\d)/gi)) { const c = _numPtBr(m[1]); if (c) set.add(c); }
   return set;
 }
 
@@ -695,7 +695,7 @@ function mencoesMonetarias(txt) {
   for (const m of s.matchAll(/\d[\d.]*,\d{2}/g)) push(m.index, m[0].length, _numPtBr(m[0]));
   for (const m of s.matchAll(/(\d+(?:[.,]\d+)?)\s*mil\b/gi)) push(m.index, m[0].length, _numPtBr(m[1], 1000));
   for (const m of s.matchAll(/(\d[\d.]*)\s*(?:reais|conto)/gi)) push(m.index, m[0].length, _numPtBr(m[1]));
-  for (const m of s.matchAll(/R\$\s*(\d{1,3}(?:\.\d{3})*)(?!\s*mil)(?![,.]\d)/gi)) push(m.index, m[0].length, _numPtBr(m[1]));
+  for (const m of s.matchAll(/R\$\s*(\d{1,3}(?:\.\d{3})*)(?!\s*mil)(?!\d)(?![.,]\d)/gi)) push(m.index, m[0].length, _numPtBr(m[1]));
   return out;
 }
 
