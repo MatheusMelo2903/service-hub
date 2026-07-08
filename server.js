@@ -487,7 +487,9 @@ DET 1. DECOMPOSIÇÃO ITEM A ITEM OBRIGATÓRIA. Todo item de pauta que contenha 
 
 DET 2. NUNCA CONDENSAR O QUE FOI DETALHADO NA FALA. Se a transcrição traz a decomposição (categoria por categoria, valor por valor, nome por nome), a ata reproduz a decomposição COMPLETA. É PROIBIDO substituir uma lista detalhada por uma frase-resumo do tipo "as despesas do período foram apresentadas por categoria" ou "foram detalhados os valores". Reproduza a lista.
 
-DET 3. DETALHAR NÃO É INVENTAR. Detalhamento máximo significa NÃO DESCARTAR o que existe na fonte; NUNCA significa criar dado que a fonte não traz. As REGRAS DE FIDELIDADE abaixo (FID) e a anti-invenção continuam ABSOLUTAS e têm precedência: o que não estiver claro na transcrição vira [a confirmar]. A ordem é: detalhar por completo o que existe na fonte, e marcar com [a confirmar] só o que falta ou está incerto.`;
+DET 3. DETALHAR NÃO É INVENTAR. Detalhamento máximo significa NÃO DESCARTAR o que existe na fonte; NUNCA significa criar dado que a fonte não traz. As REGRAS DE FIDELIDADE abaixo (FID) e a anti-invenção continuam ABSOLUTAS e têm precedência: o que não estiver claro na transcrição vira [a confirmar]. A ordem é: detalhar por completo o que existe na fonte, e marcar com [a confirmar] só o que falta ou está incerto.
+
+DET 4. ITEM DA PAUTA SEM CONTEÚDO NA FALA: REGISTRO SECO, SEM COMENTAR A GRAVAÇÃO. Se um item constava do edital mas a transcrição NÃO traz apresentação nem debate sobre ele, registrar de forma SECA e curta, por exemplo "Item não deliberado nesta assembleia." ou os dados do item como [a confirmar]. É TERMINANTEMENTE PROIBIDO, aqui como em qualquer item, escrever no corpo da ata comentário sobre a transcrição, a gravação ou o processo de redação (ex.: "não houve registro na transcrição", "o tema não foi tratado no áudio", "a informação pode ter sido prestada antes do início da gravação"). Isso repete e reforça a FID 6 abaixo: o detalhamento máximo vale SOMENTE para os itens que TÊM conteúdo na fonte; para item sem conteúdo, registro seco e limpo, nunca uma explicação sobre o que faltou na gravação.`;
 
 const REGRAS_FIDELIDADE_TRANSCRICAO = `REGRAS DE FIDELIDADE FACTUAL À TRANSCRIÇÃO
 
@@ -627,7 +629,12 @@ function validarAta(resposta) {
   return { pareceAta, avisos, blocosAssinatura };
 }
 
-// Wrapper Promise pra chamada Anthropic /v1/messages com timeout 120s.
+// Wrapper Promise pra chamada Anthropic /v1/messages com timeout 600s (10min).
+// Subido de 120s p/ 600s (2026-07-07): a chamada é NÃO streaming (Anthropic só
+// envia bytes quando termina de gerar), então o timeout tem que cobrir a geração
+// inteira. Uma ata de reunião de 3h passava de 120s e a chamada morria (timeout_120s,
+// engine_falhou). 600s dá folga pra atas longas. Roda em background (job), sem prender
+// requisição HTTP do cliente.
 // Retorna { ok, status, texto, raw, erro }.
 function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
   return new Promise((resolve) => {
@@ -647,7 +654,7 @@ function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
         'content-type': 'application/json',
         'content-length': Buffer.byteLength(body)
       },
-      timeout: 120000
+      timeout: 600000
     };
     const r = https.request(opts, (resp) => {
       const chunks = [];
@@ -667,7 +674,7 @@ function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
       });
     });
     r.on('error', (e) => resolve({ ok: false, status: 500, erro: e.message }));
-    r.on('timeout', () => { r.destroy(); resolve({ ok: false, status: 504, erro: 'timeout_120s' }); });
+    r.on('timeout', () => { r.destroy(); resolve({ ok: false, status: 504, erro: 'timeout_600s' }); });
     r.write(body); r.end();
   });
 }
@@ -705,7 +712,10 @@ async function gerarAtaJob(jobId, userMessage) {
   const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_DETALHAMENTO_MAXIMO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
   const concluir = (payload) => { const j = atasJobs.get(jobId); if (j) { j.status = 'done'; j.payload = payload; } agendarLimpezaJob(jobId); };
-  const falhar = (status, obj) => { const j = atasJobs.get(jobId); if (j) { j.status = 'error'; j.erro = Object.assign({ status }, obj); } agendarLimpezaJob(jobId); };
+  // httpStatus (não 'status') pra NÃO colidir com o campo status do job. A rota /status
+  // faz Object.assign({ status:'error' }, j.erro); se o erro trouxesse 'status', ele
+  // sobrescreveria 'error' e o front ficava em polling infinito sem ver a falha.
+  const falhar = (httpStatus, obj) => { const j = atasJobs.get(jobId); if (j) { j.status = 'error'; j.erro = Object.assign({ httpStatus }, obj); } agendarLimpezaJob(jobId); };
 
   // ─── TETO HARD DE CHAMADAS À API (proteção de custo) ───────────────────────
   // Contador que CORTA de vez: toda chamada Anthropic desta geração passa por 'chamar',
@@ -798,7 +808,7 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), (req, 
   // é rede de segurança caso algo escape do try interno.
   gerarAtaJob(jobId, userMessage).catch((e) => {
     const j = atasJobs.get(jobId);
-    if (j && j.status === 'processing') { j.status = 'error'; j.erro = { status: 500, erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' }; }
+    if (j && j.status === 'processing') { j.status = 'error'; j.erro = { httpStatus: 500, erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' }; }
   });
   return res.status(202).json({ jobId });
 });
