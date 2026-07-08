@@ -582,6 +582,96 @@ async function auditarFidelidadeAta(ataGerada, userMessageOriginal, callFn) {
   return r.texto;
 }
 
+// ─── Auditoria de COMPLETUDE FRACIONADA (2026-07-07) ───────────────────────
+// Em atas longas (reunião de 3h) a auditoria única sobre ~36k tokens dilui a atenção
+// e o Sonnet deixa passar valores (Enseada perdeu R$ 2.071,00 e R$ 2.500,00). Solução:
+// dividir a transcrição em blocos e auditar cada um COM FOCO (menos volume por passada
+// = mais exaustividade), consolidar lacunas, inserir CIRURGICAMENTE o que faltou (sem
+// reescrever/condensar). Opus entra SÓ se, após a inserção Sonnet, um valor REAL da
+// transcrição ainda faltar (gatilho determinístico; quase nunca dispara).
+const PROMPT_AUDITORIA_BLOCO = `Você é auditor de COMPLETUDE de uma ata condominial. Recebe a ATA completa e UM TRECHO da transcrição da mesma assembleia.
+
+Sua ÚNICA tarefa: listar os fatos concretos ditos NESTE TRECHO da transcrição que estão FALTANDO na ata, ou que aparecem na ata de forma DIVERGENTE do trecho. Foque em: valores monetários (R$), itens de pauta, serviços, deliberações, resultados de votação, percentuais, prazos, nomes próprios e quantidades ditos neste trecho.
+
+REGRAS DE SAÍDA:
+- NÃO reescreva a ata, NÃO devolva a ata. Devolva SÓ a lista de lacunas.
+- ANTI-INVENÇÃO: aponte apenas o que ESTE trecho realmente sustenta. Nunca peça pra ata registrar o que o trecho não diz.
+- Uma lacuna por linha, começando com "LACUNA: ".
+- Se a lacuna envolve valor monetário, comece pelo valor: "LACUNA (R$ X.XXX,XX): <o que é e em qual item entra>".
+- Ignore diferenças de estilo, ordem ou redação; aponte só FATO faltando ou número/nome divergente.
+- Se ESTE trecho já está integralmente refletido na ata, responda EXATAMENTE: NENHUMA LACUNA`;
+
+const PROMPT_INSERCAO_LACUNAS = `Você recebe uma ATA condominial já redigida e uma LISTA DE LACUNAS (fatos ditos na assembleia que faltaram na ata).
+
+Tarefa: INSERIR CIRURGICAMENTE cada lacuna no item correto da ata, preservando INTEGRALMENTE todo o texto e o detalhamento que já existem. Você ADICIONA o que falta; NUNCA reescreve, resume, condensa ou remove o que já está na ata.
+
+REGRAS:
+- A ata de saída tem, no mínimo, tudo o que a de entrada tinha, MAIS as lacunas inseridas. Nunca encurte.
+- Insira cada fato no item de pauta correto, no mesmo estilo (prosa corrida, subitens (i)(ii)(iii), valores no padrão R$ X.XXX,XX).
+- Se uma lacuna aponta um valor ou nome NA ata DIVERGENTE da transcrição, ajuste para o que a transcrição sustenta, ou marque [a confirmar] se ambíguo.
+- ANTI-INVENÇÃO ABSOLUTA: insira só o que a lacuna afirma. Se estiver incerto, insira com [a confirmar]. Nunca invente.
+- Fidelidade: sem hífen ou travessão no corpo (exceto endereço, linha de assinatura, título de anexo). NUNCA comente a transcrição, a gravação ou o processo de redação dentro da ata.
+- Se uma "lacuna" já estiver na ata, ignore (não duplique).
+- Devolva APENAS a ata completa corrigida, do cabeçalho até a última linha de assinatura. Nada antes, nada depois, sem comentários.`;
+
+// Extrai só a transcrição de dentro do userMessage (pra auditar em blocos).
+function extrairTranscricao(um) {
+  const partes = String(um).split(/=== TRANSCRIÇÃO COMPLETA DA REUNIÃO ===/);
+  if (partes.length < 2) return String(um);
+  return partes[1].replace(/\n\s*Gere a ata completa[\s\S]*$/i, '').trim();
+}
+
+// Número de blocos pela carga da transcrição (1 a 3). Fracionar só ajuda em ata longa.
+function numBlocosAuditoria(transcricao) {
+  const c = transcricao.length;
+  if (c < 40000) return 1;
+  if (c < 90000) return 2;
+  return 3;
+}
+
+// Divide em n blocos cortando SEMPRE em fim de frase (nunca no meio), com sobreposição
+// (overlap) pra não perder contexto na emenda entre blocos.
+function dividirEmBlocos(txt, n) {
+  if (n <= 1 || txt.length < 3000) return [txt];
+  const cortes = [0];
+  for (let k = 1; k < n; k++) {
+    let alvo = Math.round(txt.length * k / n);
+    const janela = txt.slice(alvo, Math.min(txt.length, alvo + 600));
+    const m = janela.search(/[.!?]\s/);
+    if (m >= 0) alvo = alvo + m + 1;
+    cortes.push(alvo);
+  }
+  cortes.push(txt.length);
+  const overlap = 800;
+  const blocos = [];
+  for (let k = 0; k < n; k++) {
+    const ini = k === 0 ? cortes[k] : Math.max(0, cortes[k] - overlap);
+    blocos.push(txt.slice(ini, cortes[k + 1]).trim());
+  }
+  return blocos.filter((b) => b.length > 0);
+}
+
+// Valores monetários distintos (R$ X.XXX,XX) num texto.
+function valoresMonetarios(txt) {
+  return [...new Set((String(txt).match(/\d[\d.]*,\d{2}/g) || []))];
+}
+
+// Auditoria de completude de UM bloco: devolve a lista de lacunas (texto) ou '' se nada.
+async function auditarBlocoCompletude(ata, bloco, i, n, chamar) {
+  const sys = PROMPT_AUDITORIA_BLOCO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+  const msg = '=== ATA GERADA (completa) ===\n' + ata + '\n\n=== TRECHO ' + i + ' DE ' + n + ' DA TRANSCRIÇÃO ===\n' + bloco + '\n\nListe as lacunas DESTE trecho conforme as regras.';
+  const r = await chamar('claude-sonnet-4-6', 8000, sys, msg);
+  return (r.ok && r.texto) ? r.texto.trim() : '';
+}
+
+// Inserção cirúrgica das lacunas (modelo = sonnet ou opus). Devolve a ata ou null.
+async function inserirLacunasNaAta(ata, listaLacunas, modelo, chamar) {
+  const sys = PROMPT_INSERCAO_LACUNAS + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+  const msg = '=== ATA ATUAL ===\n' + ata + '\n\n=== LACUNAS A INSERIR (fatos da transcrição que faltaram) ===\n' + listaLacunas + '\n\nInsira cirurgicamente cada lacuna no item correto e devolva a ATA COMPLETA corrigida.';
+  const r = await chamar(modelo, 32000, sys, msg);
+  return (r.ok && r.texto && r.texto.trim()) ? r.texto.trim() : null;
+}
+
 // Validação heurística pós-geração — detecta truncamento e formato quebrado.
 // Critérios derivados das atas de referência do handoff:
 //   - tem frase de encerramento padrão
@@ -701,9 +791,10 @@ function agendarLimpezaJob(jobId) {
 }
 
 // Teto HARD absoluto de chamadas à API Anthropic por geração de ata. Pior caso
-// legítimo = 3 (1 geração + 1 retry por falha de API + 1 auditoria), tudo Sonnet.
-// Qualquer chamada além disso é abortada (ver 'chamar' em gerarAtaJob).
-const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 3;
+// legítimo = 7 com a auditoria fracionada: 1 geração + 1 retry(falha de API) +
+// até 3 auditorias de bloco + 1 inserção Sonnet + 1 inserção Opus (último recurso).
+// Típico: 2 a 5 (sem Opus). Qualquer chamada além do teto é abortada (ver 'chamar').
+const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 7;
 
 // Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
 // PRIMEIRA passada Sonnet que retornar texto; a validação é só aviso, nunca bloqueia
@@ -730,23 +821,52 @@ async function gerarAtaJob(jobId, userMessage) {
     return chamarAnthropicAta(modelo, maxTokens, sys, msg);
   };
 
-  // Entrega a ata: roda a auditoria de fidelidade (2a passada Sonnet) e monta o
-  // payload final. A validação é só AVISO — nunca descarta a ata por conta dela.
-  // A auditoria só substitui o original se a saída dela ainda "parece ata" (guarda
-  // contra a auditoria devolver algo quebrado); senão mantém o original.
+  // Entrega a ata com AUDITORIA DE COMPLETUDE FRACIONADA:
+  //  1) a ata já veio gerada (texto);
+  //  2) divide a transcrição em N blocos (1..3 por tamanho) e audita cada bloco (Sonnet)
+  //     buscando fatos/valores daquele trecho ausentes na ata;
+  //  3) havendo lacunas, insere CIRURGICAMENTE (Sonnet), sem reescrever/condensar;
+  //  4) OPUS só se, após a inserção Sonnet, um valor REAL da transcrição ainda faltar.
   async function entregarAta(texto, modelo_usado, tentativaIdx) {
-    const auditada = await auditarFidelidadeAta(texto, userMessage, chamar);
-    let ataFinal = texto;
-    let auditoriaStatus = 'falhou_usou_original';
-    if (auditada) {
-      if (validarAta(auditada).pareceAta) { ataFinal = auditada; auditoriaStatus = 'aplicada'; }
-      else { auditoriaStatus = 'rejeitada_usou_original'; }
+    const transcricao = extrairTranscricao(userMessage);
+    const blocos = dividirEmBlocos(transcricao, numBlocosAuditoria(transcricao));
+    let lacunas = '';
+    for (let i = 0; i < blocos.length; i++) {
+      const res = await auditarBlocoCompletude(texto, blocos[i], i + 1, blocos.length, chamar);
+      if (res && /LACUNA/i.test(res) && !/^NENHUMA LACUNA\s*$/i.test(res)) lacunas += res + '\n';
     }
-    tentativas[tentativaIdx].auditoria = auditoriaStatus;
+    lacunas = lacunas.trim();
+    // valores REALMENTE ausentes = citados nas lacunas, presentes na transcrição e fora da ata
+    const valsFaltando = valoresMonetarios(lacunas).filter((v) => transcricao.includes(v) && !texto.includes(v));
+
+    let ataFinal = texto;
+    let etapa = 'sem_lacuna';
+    let usouOpus = false;
+    if (lacunas.length > 0) {
+      const inserida = await inserirLacunasNaAta(texto, lacunas, 'claude-sonnet-4-6', chamar);
+      if (inserida && validarAta(inserida).pareceAta) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
+      else etapa = 'insercao_sonnet_rejeitada_usou_original';
+      // gatilho determinístico do Opus: valor real ainda ausente depois da inserção Sonnet
+      const aindaFaltando = valsFaltando.filter((v) => !ataFinal.includes(v));
+      if (aindaFaltando.length > 0) {
+        try {
+          const opus = await inserirLacunasNaAta(ataFinal, 'ATENÇÃO: os seguintes valores ditos na transcrição AINDA NÃO estão na ata e precisam entrar: ' + aindaFaltando.join('; ') + '.\n\n' + lacunas, 'claude-opus-4-7', chamar);
+          if (opus && validarAta(opus).pareceAta) { ataFinal = opus; etapa = 'insercao_opus'; usouOpus = true; }
+        } catch (e) {
+          if (!/TETO_CHAMADAS/.test(String(e && e.message))) throw e; // teto: fica com a versão Sonnet
+        }
+      }
+    }
     const vFinal = validarAta(ataFinal);
-    tentativas[tentativaIdx].validacao_final = vFinal;
-    // avisos: lista não bloqueante pro usuário revisar (assinaturas, truncamento, etc.)
-    return concluir({ ata: ataFinal, modelo_usado, tentativas, auditoria: auditoriaStatus, avisos: vFinal.avisos });
+    tentativas[tentativaIdx].auditoria_fracionada = {
+      blocos: blocos.length, etapa, usouOpus, chamadas: _chamadas,
+      valores_lacuna: valsFaltando, valores_ainda_faltando: valsFaltando.filter((v) => !ataFinal.includes(v))
+    };
+    return concluir({
+      ata: ataFinal,
+      modelo_usado: usouOpus ? modelo_usado + ' + opus (inserção)' : modelo_usado,
+      tentativas, auditoria: etapa, avisos: vFinal.avisos
+    });
   }
 
   // REGRA DE OURO: nenhuma geração custa mais que uma passada normal por causa de
