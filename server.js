@@ -679,6 +679,23 @@ function valoresCanonicos(txt) {
   return set;
 }
 
+// Menções monetárias da fala COM o trecho ao redor (contexto), pra alimentar a inserção
+// de forma determinística: garante que todo valor dito (formal/informal) que falte na ata
+// entre na lista de lacunas mesmo que a auditoria de bloco (LLM) tenha deixado passar.
+function mencoesMonetarias(txt) {
+  const s = String(txt);
+  const out = [];
+  const push = (idx, len, canon) => {
+    if (!canon) return;
+    const trecho = s.slice(Math.max(0, idx - 70), Math.min(s.length, idx + len + 70)).replace(/\s+/g, ' ').trim();
+    out.push({ canon, trecho });
+  };
+  for (const m of s.matchAll(/\d[\d.]*,\d{2}/g)) push(m.index, m[0].length, _numPtBr(m[0]));
+  for (const m of s.matchAll(/(\d+(?:[.,]\d+)?)\s*mil\b/gi)) push(m.index, m[0].length, _numPtBr(m[1], 1000));
+  for (const m of s.matchAll(/(\d[\d.]*)\s*(?:reais|conto)/gi)) push(m.index, m[0].length, _numPtBr(m[1]));
+  return out;
+}
+
 // Auditoria de completude de UM bloco: devolve a lista de lacunas (texto) ou '' se nada.
 async function auditarBlocoCompletude(ata, bloco, i, n, chamar) {
   const sys = PROMPT_AUDITORIA_BLOCO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
@@ -859,29 +876,38 @@ async function gerarAtaJob(jobId, userMessage) {
       if (res && /LACUNA/i.test(res) && !/^NENHUMA LACUNA\s*$/i.test(res)) lacunas += res + '\n';
     }
     lacunas = lacunas.trim();
-    // Valores REALMENTE ausentes por comparação CANÔNICA (pega formal E informal: '21 mil'
-    // = 21000 = 'R$ 21.000,00'). Um valor canônico citado nas lacunas conta como lacuna real
-    // se está na fala (qualquer forma) e fora da ata base. Assim '21 mil' na transcrição não
-    // escapa mais do gatilho. Falso positivo é contido porque os valores partem das LACUNAS
-    // (já filtradas pelo LLM como monetárias), não de um regex cru na transcrição.
     const fmtBRL = (c) => 'R$ ' + c.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const canonTransc = valoresCanonicos(transcricao);
     const canonAtaBase = valoresCanonicos(texto);
-    const valsFaltando = [...valoresCanonicos(lacunas)].filter((c) => canonTransc.has(c) && !canonAtaBase.has(c));
+    // GARANTIA DETERMINÍSTICA de valor: toda menção monetária da FALA (formal/informal) ausente
+    // da ata base vira lacuna COM o trecho da fala como contexto, mesmo que a auditoria de bloco
+    // (LLM, não determinística) tenha deixado passar. Fecha a variância (ex.: 2.071 no Enseada).
+    const jaFlag = valoresCanonicos(lacunas);
+    const vistos = new Set();
+    const gapsDet = [];
+    for (const mnc of mencoesMonetarias(transcricao)) {
+      if (canonAtaBase.has(mnc.canon) || jaFlag.has(mnc.canon) || vistos.has(mnc.canon)) continue;
+      vistos.add(mnc.canon);
+      gapsDet.push('LACUNA (' + fmtBRL(mnc.canon) + '): valor dito na assembleia, confira se entra em algum item — "' + mnc.trecho + '"');
+    }
+    const gapList = [lacunas, gapsDet.join('\n')].filter(Boolean).join('\n').trim();
+    // Gatilho do Opus CONSERVADOR: só valores que o LLM flagou como lacuna real (relevância já
+    // julgada), pra não disparar Opus por um valor da fala que legitimamente não vai pra ata.
+    const valsFaltandoLLM = [...jaFlag].filter((c) => canonTransc.has(c) && !canonAtaBase.has(c));
 
     let ataFinal = texto;
     let etapa = 'sem_lacuna';
     let usouOpus = false;
-    if (lacunas.length > 0) {
-      const inserida = await inserirLacunasNaAta(texto, lacunas, 'claude-sonnet-4-6', chamar);
+    if (gapList.length > 0) {
+      const inserida = await inserirLacunasNaAta(texto, gapList, 'claude-sonnet-4-6', chamar);
       if (inserida && validarAta(inserida).pareceAta) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
       else etapa = 'insercao_sonnet_rejeitada_usou_original';
-      // gatilho determinístico do Opus: valor real (canônico) ainda ausente após a inserção Sonnet
       const canonAtaFinal = valoresCanonicos(ataFinal);
-      const aindaFaltando = valsFaltando.filter((c) => !canonAtaFinal.has(c));
+      const aindaFaltando = valsFaltandoLLM.filter((c) => !canonAtaFinal.has(c));
       if (aindaFaltando.length > 0) {
         try {
-          const opus = await inserirLacunasNaAta(ataFinal, 'ATENÇÃO: os seguintes valores ditos na transcrição AINDA NÃO estão na ata e precisam entrar (normalize para R$ X.XXX,XX): ' + aindaFaltando.map(fmtBRL).join('; ') + '.\n\n' + lacunas, 'claude-opus-4-7', chamar);
+          const ctx = mencoesMonetarias(transcricao).filter((m) => aindaFaltando.includes(m.canon)).map((m) => fmtBRL(m.canon) + ' — "' + m.trecho + '"');
+          const opus = await inserirLacunasNaAta(ataFinal, 'ATENÇÃO: valores ditos na assembleia AINDA NÃO inseridos (normalize para R$ X.XXX,XX e coloque no item certo):\n' + ctx.join('\n'), 'claude-opus-4-7', chamar);
           if (opus && validarAta(opus).pareceAta) { ataFinal = opus; etapa = 'insercao_opus'; usouOpus = true; }
         } catch (e) {
           if (!/TETO_CHAMADAS/.test(String(e && e.message))) throw e; // teto: fica com a versão Sonnet
@@ -890,9 +916,11 @@ async function gerarAtaJob(jobId, userMessage) {
     }
     const vFinal = validarAta(ataFinal);
     const canonFinal = valoresCanonicos(ataFinal);
+    // valores_fala_faltando = diagnóstico determinístico: valores da fala fora da ata final.
+    const falaFaltandoFinal = [...new Set(mencoesMonetarias(transcricao).map((m) => m.canon))].filter((c) => !canonFinal.has(c));
     tentativas[tentativaIdx].auditoria_fracionada = {
-      blocos: blocos.length, etapa, usouOpus, chamadas: _chamadas,
-      valores_lacuna: valsFaltando.map(fmtBRL), valores_ainda_faltando: valsFaltando.filter((c) => !canonFinal.has(c)).map(fmtBRL)
+      blocos: blocos.length, etapa, usouOpus, chamadas: _chamadas, gaps_deterministicos: gapsDet.length,
+      valores_fala_faltando_final: falaFaltandoFinal.map(fmtBRL)
     };
     return concluir({
       ata: ataFinal,
