@@ -597,7 +597,9 @@ REGRAS DE SAÍDA:
 - NÃO reescreva a ata, NÃO devolva a ata. Devolva SÓ a lista de lacunas.
 - ANTI-INVENÇÃO: aponte apenas o que ESTE trecho realmente sustenta. Nunca peça pra ata registrar o que o trecho não diz.
 - Uma lacuna por linha, começando com "LACUNA: ".
-- Se a lacuna envolve valor monetário, comece pelo valor: "LACUNA (R$ X.XXX,XX): <o que é e em qual item entra>".
+- Se a lacuna envolve valor monetário, comece pelo valor JÁ NORMALIZADO no formato R$ X.XXX,XX: "LACUNA (R$ X.XXX,XX): <o que é e em qual item entra>".
+- RECONHEÇA valores ditos de forma INFORMAL na fala e normalize para R$ X.XXX,XX na lacuna: "X mil" / "X mil reais" (ex.: "21 mil" vira R$ 21.000,00), "X reais" / "X conto" (ex.: "quinhentos reais" vira R$ 500,00), valor por extenso ("dois mil e quinhentos" vira R$ 2.500,00, "quatrocentos" vira R$ 400,00), e "R$" antes de informal ("R$ 21 mil" vira R$ 21.000,00). Um valor dito informalmente na fala e AUSENTE da ata É uma lacuna, tanto quanto um valor formal.
+- CUIDADO pra não confundir com NÃO valores: ano ("dois mil e vinte e seis"), quantidade de pessoas, votos, unidades ou parcelas não são valores monetários. Só trate como valor o que a fala apresenta como quantia em dinheiro (reais).
 - Ignore diferenças de estilo, ordem ou redação; aponte só FATO faltando ou número/nome divergente.
 - Se ESTE trecho já está integralmente refletido na ata, responda EXATAMENTE: NENHUMA LACUNA`;
 
@@ -608,6 +610,7 @@ Tarefa: INSERIR CIRURGICAMENTE cada lacuna no item correto da ata, preservando I
 REGRAS:
 - A ata de saída tem, no mínimo, tudo o que a de entrada tinha, MAIS as lacunas inseridas. Nunca encurte.
 - Insira cada fato no item de pauta correto, no mesmo estilo (prosa corrida, subitens (i)(ii)(iii), valores no padrão R$ X.XXX,XX).
+- NORMALIZE valores informais para o padrão formal ao inserir: "21 mil" vira "R$ 21.000,00", "quinhentos reais" vira "R$ 500,00", "dois mil e quinhentos" vira "R$ 2.500,00". A ata é documento formal; nunca deixe o valor em forma coloquial.
 - Se uma lacuna aponta um valor ou nome NA ata DIVERGENTE da transcrição, ajuste para o que a transcrição sustenta, ou marque [a confirmar] se ambíguo.
 - ANTI-INVENÇÃO ABSOLUTA: insira só o que a lacuna afirma. Se estiver incerto, insira com [a confirmar]. Nunca invente.
 - Fidelidade: sem hífen ou travessão no corpo (exceto endereço, linha de assinatura, título de anexo). NUNCA comente a transcrição, a gravação ou o processo de redação dentro da ata.
@@ -654,6 +657,26 @@ function dividirEmBlocos(txt, n) {
 // Valores monetários distintos (R$ X.XXX,XX) num texto.
 function valoresMonetarios(txt) {
   return [...new Set((String(txt).match(/\d[\d.]*,\d{2}/g) || []))];
+}
+
+// Canoniza um número escrito pt-BR ('21.000,00', '21', '1,5') pra Number (em reais).
+function _numPtBr(str, mult) {
+  const n = parseFloat(String(str).trim().replace(/\./g, '').replace(',', '.'));
+  return isNaN(n) ? null : Math.round(n * (mult || 1) * 100) / 100;
+}
+
+// Conjunto de valores monetários CANÔNICOS (Number em reais) de um texto, cobrindo:
+// formal (R$ 21.000,00), 'X mil'/'R$ X mil' (21 mil = 21000), 'X reais'/'X conto'
+// (500 reais = 500). Valores por extenso ('dois mil e quinhentos') ficam com o LLM
+// (auditoria de bloco normaliza pra R$ X.XXX,XX, que este extrator então pega).
+// Usado só pra COMPARAR (o que a fala tem vs o que a ata tem) e armar o Opus.
+function valoresCanonicos(txt) {
+  const s = String(txt);
+  const set = new Set();
+  for (const m of s.matchAll(/\d[\d.]*,\d{2}/g)) { const c = _numPtBr(m[0]); if (c) set.add(c); }
+  for (const m of s.matchAll(/(\d+(?:[.,]\d+)?)\s*mil\b/gi)) { const c = _numPtBr(m[1], 1000); if (c) set.add(c); }
+  for (const m of s.matchAll(/(\d[\d.]*)\s*(?:reais|conto)/gi)) { const c = _numPtBr(m[1]); if (c) set.add(c); }
+  return set;
 }
 
 // Auditoria de completude de UM bloco: devolve a lista de lacunas (texto) ou '' se nada.
@@ -836,8 +859,15 @@ async function gerarAtaJob(jobId, userMessage) {
       if (res && /LACUNA/i.test(res) && !/^NENHUMA LACUNA\s*$/i.test(res)) lacunas += res + '\n';
     }
     lacunas = lacunas.trim();
-    // valores REALMENTE ausentes = citados nas lacunas, presentes na transcrição e fora da ata
-    const valsFaltando = valoresMonetarios(lacunas).filter((v) => transcricao.includes(v) && !texto.includes(v));
+    // Valores REALMENTE ausentes por comparação CANÔNICA (pega formal E informal: '21 mil'
+    // = 21000 = 'R$ 21.000,00'). Um valor canônico citado nas lacunas conta como lacuna real
+    // se está na fala (qualquer forma) e fora da ata base. Assim '21 mil' na transcrição não
+    // escapa mais do gatilho. Falso positivo é contido porque os valores partem das LACUNAS
+    // (já filtradas pelo LLM como monetárias), não de um regex cru na transcrição.
+    const fmtBRL = (c) => 'R$ ' + c.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const canonTransc = valoresCanonicos(transcricao);
+    const canonAtaBase = valoresCanonicos(texto);
+    const valsFaltando = [...valoresCanonicos(lacunas)].filter((c) => canonTransc.has(c) && !canonAtaBase.has(c));
 
     let ataFinal = texto;
     let etapa = 'sem_lacuna';
@@ -846,11 +876,12 @@ async function gerarAtaJob(jobId, userMessage) {
       const inserida = await inserirLacunasNaAta(texto, lacunas, 'claude-sonnet-4-6', chamar);
       if (inserida && validarAta(inserida).pareceAta) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
       else etapa = 'insercao_sonnet_rejeitada_usou_original';
-      // gatilho determinístico do Opus: valor real ainda ausente depois da inserção Sonnet
-      const aindaFaltando = valsFaltando.filter((v) => !ataFinal.includes(v));
+      // gatilho determinístico do Opus: valor real (canônico) ainda ausente após a inserção Sonnet
+      const canonAtaFinal = valoresCanonicos(ataFinal);
+      const aindaFaltando = valsFaltando.filter((c) => !canonAtaFinal.has(c));
       if (aindaFaltando.length > 0) {
         try {
-          const opus = await inserirLacunasNaAta(ataFinal, 'ATENÇÃO: os seguintes valores ditos na transcrição AINDA NÃO estão na ata e precisam entrar: ' + aindaFaltando.join('; ') + '.\n\n' + lacunas, 'claude-opus-4-7', chamar);
+          const opus = await inserirLacunasNaAta(ataFinal, 'ATENÇÃO: os seguintes valores ditos na transcrição AINDA NÃO estão na ata e precisam entrar (normalize para R$ X.XXX,XX): ' + aindaFaltando.map(fmtBRL).join('; ') + '.\n\n' + lacunas, 'claude-opus-4-7', chamar);
           if (opus && validarAta(opus).pareceAta) { ataFinal = opus; etapa = 'insercao_opus'; usouOpus = true; }
         } catch (e) {
           if (!/TETO_CHAMADAS/.test(String(e && e.message))) throw e; // teto: fica com a versão Sonnet
@@ -858,9 +889,10 @@ async function gerarAtaJob(jobId, userMessage) {
       }
     }
     const vFinal = validarAta(ataFinal);
+    const canonFinal = valoresCanonicos(ataFinal);
     tentativas[tentativaIdx].auditoria_fracionada = {
       blocos: blocos.length, etapa, usouOpus, chamadas: _chamadas,
-      valores_lacuna: valsFaltando, valores_ainda_faltando: valsFaltando.filter((v) => !ataFinal.includes(v))
+      valores_lacuna: valsFaltando.map(fmtBRL), valores_ainda_faltando: valsFaltando.filter((c) => !canonFinal.has(c)).map(fmtBRL)
     };
     return concluir({
       ata: ataFinal,
