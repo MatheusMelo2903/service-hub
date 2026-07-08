@@ -316,15 +316,18 @@ app.post('/api/claude/messages', requireAuth, express.json({limit:'10mb'}), (req
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Engine de geração de ata — SÓ Sonnet 4.6 (sem Opus, sem cascata por validação)
+// Engine de geração de ata — Sonnet 4.6 primário + Opus 4.7 último recurso CONDICIONAL.
 //
-// Pipeline (teto HARD de 3 chamadas Anthropic por geração, ver MAX_CHAMADAS_ANTHROPIC_POR_ATA):
-//   1. Sonnet 4.6 + max_tokens 16000 → se retornou texto, ENTREGA (validação é só aviso)
-//   2. Só se a API NÃO retornou texto (rede/timeout): 1 retry Sonnet 4.6 + 20000
-//   3. Auditoria de fidelidade (Sonnet 4.6) na ata entregue
-// NUNCA há fallback Opus. Validação nunca dispara retry (ver REGRA DE OURO no motor).
+// Pipeline (teto HARD de 7 chamadas Anthropic por geração, ver MAX_CHAMADAS_ANTHROPIC_POR_ATA):
+//   1. Sonnet 4.6 + max_tokens 32000 → se retornou texto, ENTREGA (validação é só aviso).
+//   2. Só se a API NÃO retornou texto (rede/timeout): 1 retry Sonnet 4.6 + 32000.
+//   3. Auditoria de COMPLETUDE FRACIONADA: transcrição em 1-3 blocos (por tamanho), cada bloco
+//      auditado (Sonnet) por lacunas + garantia determinística de todo valor monetário da fala.
+//   4. Inserção CIRÚRGICA das lacunas (Sonnet), sem reescrever/condensar (guarda de tamanho).
+//   5. OPUS só se a inserção Sonnet QUEBRAR (nunca por validação nem por valor individual).
+// Validação nunca dispara retry (ver REGRA DE OURO). Anti-invenção/FID/DET preservados.
 //
-// System prompt = SKILL.md integral + contexto fixo Grupo Service + regras anti-erro.
+// System prompt = SKILL.md + contexto Grupo Service + anti-erro + detalhamento + fidelidade.
 // SKILL.md carregada no boot e mantida em memória.
 //
 // Refs: CORRECAO_SERVICE_HUB_ATAS.md (handoff Matheus)
@@ -556,39 +559,17 @@ REGRAS DE SAÍDA:
 7. NUNCA escreva no corpo da ata comentário, justificativa, dúvida ou observação sobre a transcrição, a contagem de votos, o áudio ou o próprio processo de redação. Dado incerto vira apenas o marcador limpo, sem explicar o motivo.
 8. NUNCA ENCURTAR, RESUMIR OU CONDENSAR. Preserve integralmente a extensão e o detalhamento da ata de entrada. Se a ata de entrada decompõe despesas, receitas, propostas, candidatos ou votações item a item no formato (i), (ii), (iii) com valores e categorias nomeadas, a saída MANTÉM essa decomposição COMPLETA, item a item. Sua função é SOMENTE marcar incertezas com [a confirmar] e incluir fatos omitidos da transcrição; JAMAIS remover, agrupar, sintetizar ou trocar por frase-resumo qualquer detalhe que já esteja na ata. A ata auditada tem, no mínimo, o mesmo detalhamento e a mesma extensão da ata de entrada.`;
 
-// Segundo passe: roda Sonnet 4.6 com a ata + transcrição original e devolve a ata
-// corrigida. Sem fallback. Em caso de erro, retorna null e o caller usa a ata original.
-async function auditarFidelidadeAta(ataGerada, userMessageOriginal, callFn) {
-  // callFn: função de chamada COM teto hard (passada por gerarAtaJob). Assim a chamada
-  // da auditoria também conta no teto de 3 por geração. Fallback pra chamada direta
-  // se invocada fora do motor (mantém compatibilidade).
-  const chamar = callFn || chamarAnthropicAta;
-  const auditMessage = '=== ATA GERADA (a auditar) ===\n' + ataGerada +
-    '\n\n=== TRANSCRIÇÃO ORIGINAL E DADOS DA REUNIÃO ===\n' + userMessageOriginal +
-    '\n\nAudite a ata acima contra a transcrição e devolva a ata corrigida seguindo o procedimento e as regras de saída.';
-  // max_tokens subido de 16k p/ 32k (opção "a", 2026-07-07): alinhado com a geração.
-  // CRÍTICO: a auditoria REESCREVE a ata inteira; com teto de 16k ela truncava/condensava
-  // uma ata rica (>16k tokens) ao devolvê-la, e a versão truncada podia substituir a
-  // original. Com 32k a auditoria reproduz a ata longa por completo. A regra 8 do
-  // PROMPT_AUDITORIA proíbe encurtar: ela só marca [a confirmar] e inclui fatos omitidos.
-  // Glossário anexado também aqui: sem ele, a auditoria não reconhece correções de
-  // vocabulário legítimas do passe principal e as rebaixava para [a confirmar].
-  const systemAuditoria = PROMPT_AUDITORIA + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
-  const r = await chamar('claude-sonnet-4-6', 32000, systemAuditoria, auditMessage);
-  if (!r.ok || !r.texto) {
-    console.warn('[engine-ata] Segundo passe de auditoria falhou (status ' + (r.status || 'sem_status') + '): ' + (r.erro || 'sem_texto'));
-    return null;
-  }
-  return r.texto;
-}
+// [removido 2026-07-08] auditarFidelidadeAta (passe único de fidelidade) foi substituído
+// pela auditoria de COMPLETUDE FRACIONADA (ver entregarAta). PROMPT_AUDITORIA acima ficou
+// só como referência histórica do critério de fidelidade, não é mais chamado no pipeline.
 
 // ─── Auditoria de COMPLETUDE FRACIONADA (2026-07-07) ───────────────────────
 // Em atas longas (reunião de 3h) a auditoria única sobre ~36k tokens dilui a atenção
 // e o Sonnet deixa passar valores (Enseada perdeu R$ 2.071,00 e R$ 2.500,00). Solução:
 // dividir a transcrição em blocos e auditar cada um COM FOCO (menos volume por passada
 // = mais exaustividade), consolidar lacunas, inserir CIRURGICAMENTE o que faltou (sem
-// reescrever/condensar). Opus entra SÓ se, após a inserção Sonnet, um valor REAL da
-// transcrição ainda faltar (gatilho determinístico; quase nunca dispara).
+// reescrever/condensar). Opus entra SÓ se a inserção Sonnet QUEBRAR (a guarda de
+// tamanho/pareceAta rejeitar o resultado), nunca por validação nem por valor individual.
 const PROMPT_AUDITORIA_BLOCO = `Você é auditor de COMPLETUDE de uma ata condominial. Recebe a ATA completa e UM TRECHO da transcrição da mesma assembleia.
 
 Sua ÚNICA tarefa: listar os fatos concretos ditos NESTE TRECHO da transcrição que estão FALTANDO na ata, ou que aparecem na ata de forma DIVERGENTE do trecho. Foque em: valores monetários (R$), itens de pauta, serviços, deliberações, resultados de votação, percentuais, prazos, nomes próprios e quantidades ditos neste trecho.
@@ -654,54 +635,73 @@ function dividirEmBlocos(txt, n) {
   return blocos.filter((b) => b.length > 0);
 }
 
-// Valores monetários distintos (R$ X.XXX,XX) num texto.
-function valoresMonetarios(txt) {
-  return [...new Set((String(txt).match(/\d[\d.]*,\d{2}/g) || []))];
-}
-
 // Canoniza um número escrito pt-BR ('21.000,00', '21', '1,5') pra Number (em reais).
 function _numPtBr(str, mult) {
   const n = parseFloat(String(str).trim().replace(/\./g, '').replace(',', '.'));
   return isNaN(n) ? null : Math.round(n * (mult || 1) * 100) / 100;
 }
 
-// Conjunto de valores monetários CANÔNICOS (Number em reais) de um texto, cobrindo:
-// formal (R$ 21.000,00), 'X mil'/'R$ X mil' (21 mil = 21000), 'X reais'/'X conto'
-// (500 reais = 500). Valores por extenso ('dois mil e quinhentos') ficam com o LLM
-// (auditoria de bloco normaliza pra R$ X.XXX,XX, que este extrator então pega).
-// Usado só pra COMPARAR (o que a fala tem vs o que a ata tem) e armar o Opus.
-function valoresCanonicos(txt) {
-  const s = String(txt);
-  const set = new Set();
-  for (const m of s.matchAll(/\d[\d.]*,\d{2}/g)) { const c = _numPtBr(m[0]); if (c) set.add(c); }
-  for (const m of s.matchAll(/(\d+(?:[.,]\d+)?)\s*mil\b/gi)) { const c = _numPtBr(m[1], 1000); if (c) set.add(c); }
-  for (const m of s.matchAll(/(\d[\d.]*)\s*(?:reais|conto)/gi)) { const c = _numPtBr(m[1]); if (c) set.add(c); }
-  // 'R$ X' / 'R$ X.XXX' sem centavos (ex.: 'R$2.071', 'R$ 450'); exclui 'R$ X mil' e 'R$ X,XX'
-  for (const m of s.matchAll(/R\$\s*(\d{1,3}(?:\.\d{3})*)(?!\s*mil)(?!\d)(?![.,]\d)/gi)) { const c = _numPtBr(m[1]); if (c) set.add(c); }
-  return set;
+// Palavras de contexto que sinalizam DINHEIRO perto do número. Sem sinal de dinheiro, um
+// número no formato X,XX NÃO é tratado como valor (era o bug: "2,00%", "56,32 m²" viravam moeda).
+const _CTX_MONETARIO = /(r\$|reais|real|valor|custo|despes|saldo|montante|arrecad|receit|pagament|pre[çc]o|or[çc]ament|verba|fundo|d[ée]bito|d[ií]vida|reembols|honor[áa]ri|rateio|aquisi[çc]|contrato|proposta|taxa|multa|parcela|caixa|invest|totaliz|som(a|ou|aram)|import[âa]ncia|quantia|gast|or[çc]ad)/i;
+// Unidade NÃO monetária logo após o número: desqualifica (percentual, medida).
+const _POS_NAO_MONETARIO = /^\s*(%|por\s*cento|m²|m2\b|metros?\b|km\b|kg\b|litros?\b)/i;
+
+// Decide se um número casado é MONETÁRIO: não pode ser seguido de unidade não monetária E
+// precisa ter sinal de dinheiro (R$ imediatamente antes, 'reais'/'real' logo depois, ou
+// palavra de contexto monetário perto). temMoedaNoMatch=true quando o próprio casamento já
+// traz o sinal (R$, 'reais', 'conto', 'mil reais').
+function _ehMonetario(s, idx, matchLen, temMoedaNoMatch) {
+  const depois = s.slice(idx + matchLen, idx + matchLen + 16);
+  if (_POS_NAO_MONETARIO.test(depois)) return false;         // 2,00% / 56,32 m² -> NÃO é dinheiro
+  if (temMoedaNoMatch) return true;
+  if (/r\$\s*$/i.test(s.slice(Math.max(0, idx - 6), idx))) return true;   // R$ imediatamente antes
+  if (/^\s*(reais|real\b)/i.test(depois)) return true;                     // 'reais'/'real' logo depois
+  return _CTX_MONETARIO.test(s.slice(Math.max(0, idx - 40), idx));         // contexto monetário perto
 }
 
-// Menções monetárias da fala COM o trecho ao redor (contexto), pra alimentar a inserção
-// de forma determinística: garante que todo valor dito (formal/informal) que falte na ata
-// entre na lista de lacunas mesmo que a auditoria de bloco (LLM) tenha deixado passar.
-function mencoesMonetarias(txt) {
+// Extrai as menções MONETÁRIAS de um texto (formal R$ X.XXX,XX, 'X mil'/'X mil reais',
+// 'X reais'/'X conto', 'R$ X' sem centavos), cada uma com valor canônico e o trecho ao redor.
+// SÓ conta o que tem sinal de dinheiro: número seguido de %, m², metros etc. NUNCA vira valor.
+// (Por extenso, ex. 'dois mil e quinhentos', fica com o LLM, que normaliza pra R$ X.XXX,XX.)
+function extrairMencoesMonetarias(txt) {
   const s = String(txt);
   const out = [];
-  const push = (idx, len, canon) => {
+  const add = (idx, len, canon) => {
     if (!canon) return;
-    const trecho = s.slice(Math.max(0, idx - 70), Math.min(s.length, idx + len + 70)).replace(/\s+/g, ' ').trim();
-    out.push({ canon, trecho });
+    out.push({ canon, trecho: s.slice(Math.max(0, idx - 70), Math.min(s.length, idx + len + 70)).replace(/\s+/g, ' ').trim() });
   };
-  for (const m of s.matchAll(/\d[\d.]*,\d{2}/g)) push(m.index, m[0].length, _numPtBr(m[0]));
-  for (const m of s.matchAll(/(\d+(?:[.,]\d+)?)\s*mil\b/gi)) push(m.index, m[0].length, _numPtBr(m[1], 1000));
-  for (const m of s.matchAll(/(\d[\d.]*)\s*(?:reais|conto)/gi)) push(m.index, m[0].length, _numPtBr(m[1]));
-  for (const m of s.matchAll(/R\$\s*(\d{1,3}(?:\.\d{3})*)(?!\s*mil)(?!\d)(?![.,]\d)/gi)) push(m.index, m[0].length, _numPtBr(m[1]));
+  for (const m of s.matchAll(/\d[\d.]*,\d{2}/g)) {
+    if (_ehMonetario(s, m.index, m[0].length, false)) add(m.index, m[0].length, _numPtBr(m[0]));
+  }
+  for (const m of s.matchAll(/(\d+(?:[.,]\d+)?)\s*mil(\s*reais)?\b/gi)) {
+    if (_ehMonetario(s, m.index, m[0].length, !!m[2])) add(m.index, m[0].length, _numPtBr(m[1], 1000));
+  }
+  for (const m of s.matchAll(/(\d[\d.]*)\s*(?:reais|conto)/gi)) {
+    if (_ehMonetario(s, m.index, m[0].length, true)) add(m.index, m[0].length, _numPtBr(m[1]));
+  }
+  for (const m of s.matchAll(/R\$\s*(\d{1,3}(?:\.\d{3})*)(?!\s*mil)(?!\d)(?![.,]\d)/gi)) {
+    if (_ehMonetario(s, m.index, m[0].length, true)) add(m.index, m[0].length, _numPtBr(m[1]));
+  }
   return out;
+}
+
+// Conjunto de valores monetários CANÔNICOS (Number em reais). Deriva de extrairMencoesMonetarias,
+// então herda o filtro de sinal de dinheiro (não pega percentual nem medida).
+function valoresCanonicos(txt) {
+  return new Set(extrairMencoesMonetarias(txt).map((m) => m.canon));
+}
+
+// Menções monetárias COM o trecho ao redor (contexto), pra alimentar a inserção de forma
+// determinística (todo valor dito que falte na ata entra na lista, mesmo que a auditoria de
+// bloco/LLM tenha deixado passar).
+function mencoesMonetarias(txt) {
+  return extrairMencoesMonetarias(txt);
 }
 
 // Auditoria de completude de UM bloco: devolve a lista de lacunas (texto) ou '' se nada.
 async function auditarBlocoCompletude(ata, bloco, i, n, chamar) {
-  const sys = PROMPT_AUDITORIA_BLOCO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+  const sys = PROMPT_AUDITORIA_BLOCO + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const msg = '=== ATA GERADA (completa) ===\n' + ata + '\n\n=== TRECHO ' + i + ' DE ' + n + ' DA TRANSCRIÇÃO ===\n' + bloco + '\n\nListe as lacunas DESTE trecho conforme as regras.';
   const r = await chamar('claude-sonnet-4-6', 8000, sys, msg);
   return (r.ok && r.texto) ? r.texto.trim() : '';
@@ -709,7 +709,7 @@ async function auditarBlocoCompletude(ata, bloco, i, n, chamar) {
 
 // Inserção cirúrgica das lacunas (modelo = sonnet ou opus). Devolve a ata ou null.
 async function inserirLacunasNaAta(ata, listaLacunas, modelo, chamar) {
-  const sys = PROMPT_INSERCAO_LACUNAS + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+  const sys = PROMPT_INSERCAO_LACUNAS + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const msg = '=== ATA ATUAL ===\n' + ata + '\n\n=== LACUNAS A INSERIR (fatos da transcrição que faltaram) ===\n' + listaLacunas + '\n\nInsira cirurgicamente cada lacuna no item correto e devolva a ATA COMPLETA corrigida.';
   const r = await chamar(modelo, 32000, sys, msg);
   return (r.ok && r.texto && r.texto.trim()) ? r.texto.trim() : null;
@@ -855,7 +855,8 @@ async function gerarAtaJob(jobId, userMessage) {
   // Contador que CORTA de vez: toda chamada Anthropic desta geração passa por 'chamar',
   // que aborta ao tentar a (MAX+1)-ésima. Cobre as tentativas E a auditoria. Se um bug
   // futuro introduzir qualquer loop ou nova cascata, isto barra antes de gastar mais.
-  // MAX = 3 = pior caso legítimo (1 geração + 1 retry + 1 auditoria). Tudo Sonnet.
+  // MAX = 7 = pior caso legítimo (1 geração + 1 retry + até 3 auditorias de bloco +
+  // 1 inserção Sonnet + 1 inserção Opus). Típico: 2 a 5, sem Opus.
   let _chamadas = 0;
   const chamar = (modelo, maxTokens, sys, msg) => {
     if (++_chamadas > MAX_CHAMADAS_ANTHROPIC_POR_ATA) {
@@ -869,64 +870,67 @@ async function gerarAtaJob(jobId, userMessage) {
   //  2) divide a transcrição em N blocos (1..3 por tamanho) e audita cada bloco (Sonnet)
   //     buscando fatos/valores daquele trecho ausentes na ata;
   //  3) havendo lacunas, insere CIRURGICAMENTE (Sonnet), sem reescrever/condensar;
-  //  4) OPUS só se, após a inserção Sonnet, um valor REAL da transcrição ainda faltar.
+  //  4) OPUS só se a inserção Sonnet QUEBRAR (guarda de tamanho/pareceAta rejeitar).
   async function entregarAta(texto, modelo_usado, tentativaIdx) {
     const transcricao = extrairTranscricao(userMessage);
-    const blocos = dividirEmBlocos(transcricao, numBlocosAuditoria(transcricao));
-    let lacunas = '';
-    for (let i = 0; i < blocos.length; i++) {
-      const res = await auditarBlocoCompletude(texto, blocos[i], i + 1, blocos.length, chamar);
-      if (res && /LACUNA/i.test(res) && !/^NENHUMA LACUNA\s*$/i.test(res)) lacunas += res + '\n';
-    }
-    lacunas = lacunas.trim();
     const fmtBRL = (c) => 'R$ ' + c.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const canonTransc = valoresCanonicos(transcricao);
     const canonAtaBase = valoresCanonicos(texto);
-    // GARANTIA DETERMINÍSTICA de valor: toda menção monetária da FALA (formal/informal) ausente
-    // da ata base vira lacuna COM o trecho da fala como contexto, mesmo que a auditoria de bloco
-    // (LLM, não determinística) tenha deixado passar. Fecha a variância (ex.: 2.071 no Enseada).
-    const jaFlag = valoresCanonicos(lacunas);
-    const vistos = new Set();
-    const gapsDet = [];
-    for (const mnc of mencoesMonetarias(transcricao)) {
-      if (canonAtaBase.has(mnc.canon) || jaFlag.has(mnc.canon) || vistos.has(mnc.canon)) continue;
-      vistos.add(mnc.canon);
-      gapsDet.push('LACUNA (' + fmtBRL(mnc.canon) + '): valor dito na assembleia, confira se entra em algum item — "' + mnc.trecho + '"');
-    }
-    const gapList = [lacunas, gapsDet.join('\n')].filter(Boolean).join('\n').trim();
-    // Gatilho do Opus CONSERVADOR: só valores que o LLM flagou como lacuna real (relevância já
-    // julgada), pra não disparar Opus por um valor da fala que legitimamente não vai pra ata.
-    const valsFaltandoLLM = [...jaFlag].filter((c) => canonTransc.has(c) && !canonAtaBase.has(c));
+    // GUARDA DE CONDENSAÇÃO (crítico 2): a inserção só pode ACRESCENTAR. Se a saída ficar
+    // menor que a ata base (encurtou/condensou), REJEITA e mantém a ata rica original.
+    const aceitaInsercao = (res) => !!(res && validarAta(res).pareceAta && res.length >= texto.length * 0.95);
 
     let ataFinal = texto;
     let etapa = 'sem_lacuna';
     let usouOpus = false;
-    let insercaoQuebrou = false;
-    if (gapList.length > 0) {
-      const inserida = await inserirLacunasNaAta(texto, gapList, 'claude-sonnet-4-6', chamar);
-      if (inserida && validarAta(inserida).pareceAta) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
-      else { etapa = 'insercao_sonnet_rejeitada_usou_original'; insercaoQuebrou = true; }
-      // OPUS último recurso CONSERVADOR: só entra se a inserção Sonnet QUEBROU (saída não
-      // pareceu ata). NÃO dispara por valor individual: a inserção recebeu todos os valores
-      // da fala (com contexto) e já julgou relevância; sobrescrever por um valor de discussão
-      // que o Sonnet corretamente não pôs seria Opus (~US$2) à toa. valsFaltandoLLM fica só
-      // como diagnóstico. Assim Opus praticamente nunca aciona, e quando aciona é falha real.
-      if (insercaoQuebrou) {
-        try {
+    let cortadoPorTeto = false;
+    let numBlocos = 0;
+    let numGapsDet = 0;
+    // Moderado 6: TODO o fluxo de auditoria/inserção sob try. Se o teto de chamadas estourar
+    // no meio (loop de blocos ou inserção), entrega a MELHOR ata que já temos, em vez de
+    // descartar a ata gerada com sucesso.
+    try {
+      const blocos = dividirEmBlocos(transcricao, numBlocosAuditoria(transcricao));
+      numBlocos = blocos.length;
+      let lacunas = '';
+      for (let i = 0; i < blocos.length; i++) {
+        const res = await auditarBlocoCompletude(texto, blocos[i], i + 1, blocos.length, chamar);
+        if (res && /LACUNA/i.test(res) && !/^NENHUMA LACUNA\s*$/i.test(res)) lacunas += res + '\n';
+      }
+      lacunas = lacunas.trim();
+      // GARANTIA DETERMINÍSTICA de valor: toda menção monetária da FALA (formal/informal) ausente
+      // da ata base vira lacuna COM contexto, mesmo que a auditoria de bloco (LLM) tenha deixado
+      // passar. Fecha a variância (ex.: 2.071 no Enseada).
+      const jaFlag = valoresCanonicos(lacunas);
+      const vistos = new Set();
+      const gapsDet = [];
+      for (const mnc of mencoesMonetarias(transcricao)) {
+        if (canonAtaBase.has(mnc.canon) || jaFlag.has(mnc.canon) || vistos.has(mnc.canon)) continue;
+        vistos.add(mnc.canon);
+        gapsDet.push('LACUNA (' + fmtBRL(mnc.canon) + '): valor dito na assembleia, confira se entra em algum item — "' + mnc.trecho + '"');
+      }
+      numGapsDet = gapsDet.length;
+      const gapList = [lacunas, gapsDet.join('\n')].filter(Boolean).join('\n').trim();
+      if (gapList.length > 0) {
+        const inserida = await inserirLacunasNaAta(texto, gapList, 'claude-sonnet-4-6', chamar);
+        if (aceitaInsercao(inserida)) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
+        else {
+          // inserção Sonnet quebrou OU tentou condensar → mantém original e tenta OPUS (último recurso).
+          etapa = inserida ? 'insercao_sonnet_condensou_usou_original' : 'insercao_sonnet_quebrou_usou_original';
           const opus = await inserirLacunasNaAta(texto, gapList, 'claude-opus-4-7', chamar);
-          if (opus && validarAta(opus).pareceAta) { ataFinal = opus; etapa = 'insercao_opus'; usouOpus = true; }
-        } catch (e) {
-          if (!/TETO_CHAMADAS/.test(String(e && e.message))) throw e; // teto: fica com a versão anterior
+          if (aceitaInsercao(opus)) { ataFinal = opus; etapa = 'insercao_opus'; usouOpus = true; }
         }
       }
+    } catch (e) {
+      if (/TETO_CHAMADAS/.test(String(e && e.message))) { cortadoPorTeto = true; if (etapa === 'sem_lacuna') etapa = 'teto_cortou_entregou_base'; }
+      else { throw e; }
     }
-    void valsFaltandoLLM;
+
     const vFinal = validarAta(ataFinal);
     const canonFinal = valoresCanonicos(ataFinal);
-    // valores_fala_faltando = diagnóstico determinístico: valores da fala fora da ata final.
+    // diagnóstico determinístico: valores da fala fora da ata final.
     const falaFaltandoFinal = [...new Set(mencoesMonetarias(transcricao).map((m) => m.canon))].filter((c) => !canonFinal.has(c));
     tentativas[tentativaIdx].auditoria_fracionada = {
-      blocos: blocos.length, etapa, usouOpus, chamadas: _chamadas, gaps_deterministicos: gapsDet.length,
+      blocos: numBlocos, etapa, usouOpus, cortadoPorTeto, chamadas: _chamadas, gaps_deterministicos: numGapsDet,
       valores_fala_faltando_final: falaFaltandoFinal.map(fmtBRL)
     };
     return concluir({
