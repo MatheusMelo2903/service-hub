@@ -50,3 +50,12 @@ services/prestacao-pdf/tests/fixtures_local/
 scripts/previsao-harness/node_modules/
 # motor-extraido.js e gerado a cada `node run.js` a partir do HTML — nunca commitar, sempre reproduzir
 scripts/previsao-harness/motor-extraido.js
+
+# Harness Node isolado do Importar Unidades (nao entra no deploy, so o codigo do harness importa)
+scripts/import-unidades-harness/node_modules/
+# motor-extraido.js e gerado a cada `node run.js` a partir do HTML — nunca commitar, sempre reproduzir
+scripts/import-unidades-harness/motor-extraido.js
+# As 7 planilhas reais de amostra (dados de cliente) NUNCA vao pro git — o harness le de
+# ~/Downloads por caminho absoluto e qualquer copia/conversao local fica fora do repo.
+scripts/import-unidades-harness/fixtures_local/
+scripts/import-unidades-harness/amostras/
