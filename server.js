@@ -901,22 +901,26 @@ async function gerarAtaJob(jobId, userMessage) {
     let ataFinal = texto;
     let etapa = 'sem_lacuna';
     let usouOpus = false;
+    let insercaoQuebrou = false;
     if (gapList.length > 0) {
       const inserida = await inserirLacunasNaAta(texto, gapList, 'claude-sonnet-4-6', chamar);
       if (inserida && validarAta(inserida).pareceAta) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
-      else etapa = 'insercao_sonnet_rejeitada_usou_original';
-      const canonAtaFinal = valoresCanonicos(ataFinal);
-      const aindaFaltando = valsFaltandoLLM.filter((c) => !canonAtaFinal.has(c));
-      if (aindaFaltando.length > 0) {
+      else { etapa = 'insercao_sonnet_rejeitada_usou_original'; insercaoQuebrou = true; }
+      // OPUS último recurso CONSERVADOR: só entra se a inserção Sonnet QUEBROU (saída não
+      // pareceu ata). NÃO dispara por valor individual: a inserção recebeu todos os valores
+      // da fala (com contexto) e já julgou relevância; sobrescrever por um valor de discussão
+      // que o Sonnet corretamente não pôs seria Opus (~US$2) à toa. valsFaltandoLLM fica só
+      // como diagnóstico. Assim Opus praticamente nunca aciona, e quando aciona é falha real.
+      if (insercaoQuebrou) {
         try {
-          const ctx = mencoesMonetarias(transcricao).filter((m) => aindaFaltando.includes(m.canon)).map((m) => fmtBRL(m.canon) + ' — "' + m.trecho + '"');
-          const opus = await inserirLacunasNaAta(ataFinal, 'ATENÇÃO: valores ditos na assembleia AINDA NÃO inseridos (normalize para R$ X.XXX,XX e coloque no item certo):\n' + ctx.join('\n'), 'claude-opus-4-7', chamar);
+          const opus = await inserirLacunasNaAta(texto, gapList, 'claude-opus-4-7', chamar);
           if (opus && validarAta(opus).pareceAta) { ataFinal = opus; etapa = 'insercao_opus'; usouOpus = true; }
         } catch (e) {
-          if (!/TETO_CHAMADAS/.test(String(e && e.message))) throw e; // teto: fica com a versão Sonnet
+          if (!/TETO_CHAMADAS/.test(String(e && e.message))) throw e; // teto: fica com a versão anterior
         }
       }
     }
+    void valsFaltandoLLM;
     const vFinal = validarAta(ataFinal);
     const canonFinal = valoresCanonicos(ataFinal);
     // valores_fala_faltando = diagnóstico determinístico: valores da fala fora da ata final.
