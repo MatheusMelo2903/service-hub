@@ -475,6 +475,20 @@ candidatos diferentes (ex: Dari 19 e Dani 21), registrar AMBOS literalmente.`;
 // Vêm DEPOIS das regras anti-erro no system prompt para ganhar precedência por ordem.
 // Alvo: corrigir invenção de números, completamento por palpite e fatos omitidos
 // identificados nos testes Happy Days Manguinhos e Lara Hoffman.
+// Detalhamento máximo obrigatório (opção "a", 2026-07-07). Força a ata a reproduzir a
+// decomposição item a item que a fala trouxe, em QUALQUER item, em vez de condensar em
+// prosa resumida. Vem ANTES das regras de fidelidade de propósito: FID fica por último
+// e mantém a palavra final (anti-invenção), e a DET 3 abaixo defere explicitamente a FID.
+const REGRAS_DETALHAMENTO_MAXIMO = `DETALHAMENTO MÁXIMO OBRIGATÓRIO
+
+Esta ata é documento formal. A prioridade absoluta é COMPLETUDE e RIQUEZA FACTUAL, não concisão. NÃO resumir, NÃO sintetizar, NÃO condensar, NÃO omitir nenhum detalhe presente na fonte (transcrição e edital). Vale para QUALQUER item de QUALQUER ata, não só prestação de contas.
+
+DET 1. DECOMPOSIÇÃO ITEM A ITEM OBRIGATÓRIA. Todo item de pauta que contenha enumeração de despesas, receitas, categorias de custo, rubricas, propostas, orçamentos, candidatos, chapas ou votações deve ser DECOMPOSTO item a item, no formato (i), (ii), (iii)... dentro da prosa corrida, com: (a) cada categoria ou rubrica nomeada explicitamente; (b) TODOS os valores monetários no padrão R$ X.XXX,XX; (c) TODAS as justificativas, esclarecimentos e observações ditos, registrados. Se a fala detalhou N categorias, a ata registra as N categorias, uma a uma. Exemplo: numa prestação de contas cuja fala discrimina mão de obra, consumo, despesas financeiras, materiais, serviços, despesas administrativas, manutenção e investimento, a ata registra cada uma dessas rubricas com o respectivo valor, JAMAIS um total condensado ou uma frase-resumo.
+
+DET 2. NUNCA CONDENSAR O QUE FOI DETALHADO NA FALA. Se a transcrição traz a decomposição (categoria por categoria, valor por valor, nome por nome), a ata reproduz a decomposição COMPLETA. É PROIBIDO substituir uma lista detalhada por uma frase-resumo do tipo "as despesas do período foram apresentadas por categoria" ou "foram detalhados os valores". Reproduza a lista.
+
+DET 3. DETALHAR NÃO É INVENTAR. Detalhamento máximo significa NÃO DESCARTAR o que existe na fonte; NUNCA significa criar dado que a fonte não traz. As REGRAS DE FIDELIDADE abaixo (FID) e a anti-invenção continuam ABSOLUTAS e têm precedência: o que não estiver claro na transcrição vira [a confirmar]. A ordem é: detalhar por completo o que existe na fonte, e marcar com [a confirmar] só o que falta ou está incerto.`;
+
 const REGRAS_FIDELIDADE_TRANSCRICAO = `REGRAS DE FIDELIDADE FACTUAL À TRANSCRIÇÃO
 
 Estas regras têm PRIORIDADE MÁXIMA sobre fluência e completude. A ata deve ser fiel ao que a transcrição sustenta, mesmo à custa de um documento com várias marcações [a confirmar]. Prefira a ata "incompleta mas correta" à ata "fluente mas inventada".
@@ -537,7 +551,8 @@ REGRAS DE SAÍDA:
 4. Marcação de TERMO (palavra técnica ouvida errada que não dá pra corrigir com segurança pelo glossário) é SEMPRE completa: [termo a confirmar: 'texto original da transcrição'], com o trecho original entre aspas simples dentro dos colchetes. Se o trecho estiver ininteligível e não houver texto citável, usar [trecho ininteligível a confirmar]. É PROIBIDO [termo a confirmar] seco, sem o texto original.
 5. NUNCA OMITIR item, serviço, valor ou informação que já estava na ata ou na transcrição. Se um termo veio errado e você não consegue corrigir com segurança pelo glossário, MANTENHA o item e marque o trecho pela regra 4 (com o original entre aspas). Omitir é violação grave.
 6. PRESERVE os marcadores [termo a confirmar: '...'] que já vierem na ata de entrada. Não apague, não esvazie e não rebaixe para [a confirmar] seco.
-7. NUNCA escreva no corpo da ata comentário, justificativa, dúvida ou observação sobre a transcrição, a contagem de votos, o áudio ou o próprio processo de redação. Dado incerto vira apenas o marcador limpo, sem explicar o motivo.`;
+7. NUNCA escreva no corpo da ata comentário, justificativa, dúvida ou observação sobre a transcrição, a contagem de votos, o áudio ou o próprio processo de redação. Dado incerto vira apenas o marcador limpo, sem explicar o motivo.
+8. NUNCA ENCURTAR, RESUMIR OU CONDENSAR. Preserve integralmente a extensão e o detalhamento da ata de entrada. Se a ata de entrada decompõe despesas, receitas, propostas, candidatos ou votações item a item no formato (i), (ii), (iii) com valores e categorias nomeadas, a saída MANTÉM essa decomposição COMPLETA, item a item. Sua função é SOMENTE marcar incertezas com [a confirmar] e incluir fatos omitidos da transcrição; JAMAIS remover, agrupar, sintetizar ou trocar por frase-resumo qualquer detalhe que já esteja na ata. A ata auditada tem, no mínimo, o mesmo detalhamento e a mesma extensão da ata de entrada.`;
 
 // Segundo passe: roda Sonnet 4.6 com a ata + transcrição original e devolve a ata
 // corrigida. Sem fallback. Em caso de erro, retorna null e o caller usa a ata original.
@@ -549,12 +564,15 @@ async function auditarFidelidadeAta(ataGerada, userMessageOriginal, callFn) {
   const auditMessage = '=== ATA GERADA (a auditar) ===\n' + ataGerada +
     '\n\n=== TRANSCRIÇÃO ORIGINAL E DADOS DA REUNIÃO ===\n' + userMessageOriginal +
     '\n\nAudite a ata acima contra a transcrição e devolva a ata corrigida seguindo o procedimento e as regras de saída.';
-  // max_tokens alinhado com a tentativa 1 do passe principal (regra reviewer.md: ≤16000).
-  // Auditoria substitui trechos por [a confirmar] e adiciona fatos curtos — não expande conteúdo.
+  // max_tokens subido de 16k p/ 32k (opção "a", 2026-07-07): alinhado com a geração.
+  // CRÍTICO: a auditoria REESCREVE a ata inteira; com teto de 16k ela truncava/condensava
+  // uma ata rica (>16k tokens) ao devolvê-la, e a versão truncada podia substituir a
+  // original. Com 32k a auditoria reproduz a ata longa por completo. A regra 8 do
+  // PROMPT_AUDITORIA proíbe encurtar: ela só marca [a confirmar] e inclui fatos omitidos.
   // Glossário anexado também aqui: sem ele, a auditoria não reconhece correções de
   // vocabulário legítimas do passe principal e as rebaixava para [a confirmar].
   const systemAuditoria = PROMPT_AUDITORIA + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
-  const r = await chamar('claude-sonnet-4-6', 16000, systemAuditoria, auditMessage);
+  const r = await chamar('claude-sonnet-4-6', 32000, systemAuditoria, auditMessage);
   if (!r.ok || !r.texto) {
     console.warn('[engine-ata] Segundo passe de auditoria falhou (status ' + (r.status || 'sem_status') + '): ' + (r.erro || 'sem_texto'));
     return null;
@@ -684,7 +702,7 @@ const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 3;
 // PRIMEIRA passada Sonnet que retornar texto; a validação é só aviso, nunca bloqueia
 // nem dispara retry. Retry (1x, Sonnet) só se a API não retornar texto. Sem Opus.
 async function gerarAtaJob(jobId, userMessage) {
-  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_DETALHAMENTO_MAXIMO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
   const concluir = (payload) => { const j = atasJobs.get(jobId); if (j) { j.status = 'done'; j.payload = payload; } agendarLimpezaJob(jobId); };
   const falhar = (status, obj) => { const j = atasJobs.get(jobId); if (j) { j.status = 'error'; j.erro = Object.assign({ status }, obj); } agendarLimpezaJob(jobId); };
@@ -727,9 +745,11 @@ async function gerarAtaJob(jobId, userMessage) {
   // no MÁXIMO 1 retry. NUNCA cai pro Opus automaticamente. Custo teto: 2 chamadas
   // Sonnet de geração (só se a 1a falhar de verdade) + 1 de auditoria.
   try {
-    // Tentativa 1: Sonnet 4.6 + 16k
-    let r = await chamar('claude-sonnet-4-6', 16000, system, userMessage);
-    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 16000, status: r.status, erro: r.erro || null });
+    // Tentativa 1: Sonnet 4.6 + 32k. max_tokens subido de 16k p/ 32k (opção "a",
+    // 2026-07-07): atas ricas (decomposição por categoria) passavam de 16k tokens e
+    // eram truncadas/condensadas; 32k dá folga pra sair completa.
+    let r = await chamar('claude-sonnet-4-6', 32000, system, userMessage);
+    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 32000, status: r.status, erro: r.erro || null });
     if (r.ok && r.texto && r.texto.trim()) {
       tentativas[0].validacao = validarAta(r.texto);
       return await entregarAta(r.texto, 'claude-sonnet-4-6', 0);
@@ -737,8 +757,8 @@ async function gerarAtaJob(jobId, userMessage) {
 
     // Só chega aqui se a API NÃO retornou texto na 1a. UM único retry Sonnet.
     console.warn('[engine-ata] Tentativa 1 sem texto (' + (r.erro || 'status ' + r.status) + '). Fazendo 1 retry Sonnet (SEM Opus).');
-    r = await chamar('claude-sonnet-4-6', 20000, system, userMessage);
-    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 20000, status: r.status, erro: r.erro || null });
+    r = await chamar('claude-sonnet-4-6', 32000, system, userMessage);
+    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 32000, status: r.status, erro: r.erro || null });
     if (r.ok && r.texto && r.texto.trim()) {
       tentativas[1].validacao = validarAta(r.texto);
       return await entregarAta(r.texto, 'claude-sonnet-4-6', 1);
