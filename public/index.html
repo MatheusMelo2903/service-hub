@@ -5953,6 +5953,13 @@ async function processarEditalFile(file) {
   const progressWrap = document.getElementById('edital-progress-wrap');
   const progressBar = document.getElementById('edital-progress-bar');
 
+  // Zera SEMPRE no topo, antes de qualquer validação ou return cedo: isolamento entre
+  // condomínios. Sem isso, se o Haiku falhar ao processar um edital novo, o texto do edital
+  // ANTERIOR (de outro condomínio) sobrevivia nas globais e podia vazar para a ata deste. Uma
+  // reanexação que falha perde de propósito o edital anterior, para nunca contaminar em silêncio.
+  _editalDropzoneTexto = '';
+  _editalDropzoneNome = '';
+
   // Validacoes basicas
   const accepted = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
   if (!accepted.includes(file.type)) {
@@ -6040,9 +6047,20 @@ async function processarEditalFile(file) {
     } else { _editalDropzoneTexto = ''; _editalDropzoneNome = ''; }
     progressBar.style.width = '100%';
     const n = ['condominio','data','tipo','sindico','local'].filter(k => json[k]).length;
-    status.textContent = `✓ ${n}/5 campos preenchidos. Revise antes de prosseguir.`;
-    status.style.color = 'var(--success)';
-    toast(`Edital lido: ${n}/5 campos preenchidos`, 'ok');
+    // CORREÇÃO (2026-07-09): se for PDF e a extração de texto (pdf.js) falhou por dentro, o
+    // autopreenchimento dos 5 campos ainda deu certo, mas o TEXTO que alimenta a geração da ata
+    // ficou vazio. Sem este aviso a UI mostrava sucesso pleno e reintroduzia o bug H1 em silêncio
+    // (cabeçalho da ata podendo sair incompleto sem nenhum sinal pro usuário). Imagem não avisa
+    // porque não extrai texto para geração por desenho (não é falha, é o comportamento esperado).
+    if (isPdf && !_editalDropzoneTexto) {
+      status.textContent = `⚠ ${n}/5 campos preenchidos, mas o texto do edital não foi lido para a geração. O cabeçalho pode sair incompleto. Reanexe o PDF.`;
+      status.style.color = 'var(--warning)';
+      toast('Campos preenchidos, mas texto do edital não lido. Reanexe o PDF.', 'warn');
+    } else {
+      status.textContent = `✓ ${n}/5 campos preenchidos. Revise antes de prosseguir.`;
+      status.style.color = 'var(--success)';
+      toast(`Edital lido: ${n}/5 campos preenchidos`, 'ok');
+    }
     setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
   } catch (e) {
     status.textContent = '✕ ' + (e.message || 'Falha ao processar edital');

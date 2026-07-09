@@ -903,6 +903,12 @@ function corrigirPlaceholdersDeliberacao(ataTxt, transcricao) {
 // "Cervalp") passaram a morrer depois do conserto de 2026-07-09 no existeLiteral.
 // ─────────────────────────────────────────────────────────────────────────
 
+// Escapa caractere especial de regex antes de montar um padrão a partir de texto livre
+// (nome vindo da ata/transcrição). Extraída porque a mesma expressão vivia duplicada em 3
+// pontos do passe (_expandirNomeCompleto, existeLiteral, aplicarConsolidacao) — desduplicação
+// pura, sem mudança de comportamento.
+function _escapeRegex(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
 // Conectores minúsculos aceitos NO MEIO de um nome próprio composto (ex.: "João da Silva").
 // Nunca no início nem no fim da captura — só entre dois tokens capitalizados.
 const _CONECTORES_NOME = new Set(['da', 'de', 'do', 'das', 'dos', 'e']);
@@ -972,7 +978,7 @@ function _candidatosGatilho(txt) {
 // mas o nome completo foi dito por extenso em outro momento da mesma reunião.
 function _expandirNomeCompleto(nome, transcricaoTxt) {
   if (!nome || nome.trim().includes(' ')) return nome;
-  const re = new RegExp('\\b' + nome.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+([A-ZÀ-Ý][a-zà-ÿ]*)');
+  const re = new RegExp('\\b' + _escapeRegex(nome) + '\\s+([A-ZÀ-Ý][a-zà-ÿ]*)');
   const m = re.exec(transcricaoTxt);
   return m ? (nome + ' ' + m[1]) : nome;
 }
@@ -1098,13 +1104,16 @@ function _buscarAncoraPorValor(valorAncora, transcricaoTxt) {
 // de letra (inclusive acento) do replace da etapa 4 (server.js, aplicarConsolidacao). Nome
 // composto ("Marcelo Soares") casa o espaço interno literal; a fronteira vai só nas pontas, então
 // não quebra. A transcrição é normalizada por _normLoose (acento removido, minúscula), então o
-// alvo também é — a comparação é acento-insensível como antes, só que por palavra.
+// alvo também é — a comparação é acento-insensível como antes, só que por palavra. CORREÇÃO
+// 2026-07-09 (2): a fronteira bloqueava só letra, então "Bit" ainda casava como substring dentro
+// de "Bit2024" ou "Bit-Tech" (dígito e hífen colados não contavam como parte da palavra). Agora a
+// classe negada também bloqueia dígito (0-9), hífen (-) e apóstrofo (') nas duas pontas.
 function existeLiteral(alvoRaw, transcricaoTxt) {
   const transcricaoNorm = _normLoose(String(transcricaoTxt || '')).replace(/\s+/g, ' ');
   const alvo = _normLoose(String(alvoRaw || '')).replace(/\s+/g, ' ').trim();
   if (!alvo) return false;
-  const esc = alvo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp('(?<![A-Za-zÀ-ÿ])' + esc + '(?![A-Za-zÀ-ÿ])');
+  const esc = _escapeRegex(alvo);
+  const re = new RegExp('(?<![A-Za-zÀ-ÿ0-9\'-])' + esc + '(?![A-Za-zÀ-ÿ0-9\'-])');
   return re.test(transcricaoNorm);
 }
 
@@ -1177,16 +1186,17 @@ function aplicarConsolidacao(ataTxt, decisoes, transcricaoTxt) {
     const alvos = [d.textoOriginal, ...(d.variantes || [])].filter((a) => a && a !== d.forma_canonica);
     let tentativa = ata;
     let trocou = false;
-    const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     for (const alvo of alvos) {
       const antes = tentativa;
       if (alvo.includes('[')) {
         // marcador "[nome a confirmar: ...]": string única e literal, substituição direta segura.
         tentativa = tentativa.split(alvo).join(d.forma_canonica);
       } else {
-        // nome: substitui SÓ como palavra inteira (fronteira por letra, com acento), pra não
-        // corromper um nome maior que o contenha (ex.: "Marcel" dentro de "Marcelo Soares").
-        const re = new RegExp('(?<![A-Za-zÀ-ÿ])' + escRe(alvo) + '(?![A-Za-zÀ-ÿ])', 'g');
+        // nome: substitui SÓ como palavra inteira, com a MESMA fronteira do grounding em
+        // existeLiteral (letra com acento, dígito, hífen e apóstrofo bloqueados nas pontas), pra
+        // não corromper um nome maior que o contenha (ex.: "Marcel" dentro de "Marcelo Soares")
+        // nem casar "Bit" dentro de "Bit2024"/"Bit-Tech". Coerência entre grounding e replace.
+        const re = new RegExp('(?<![A-Za-zÀ-ÿ0-9\'-])' + _escapeRegex(alvo) + '(?![A-Za-zÀ-ÿ0-9\'-])', 'g');
         tentativa = tentativa.replace(re, d.forma_canonica);
       }
       if (tentativa !== antes) trocou = true;
@@ -1424,6 +1434,11 @@ function agendarLimpezaJob(jobId) {
 // legítimo = 7 com a auditoria fracionada: 1 geração + 1 retry(falha de API) +
 // até 3 auditorias de bloco + 1 inserção Sonnet + 1 inserção Opus (último recurso).
 // Típico: 2 a 5 (sem Opus). Qualquer chamada além do teto é abortada (ver 'chamar').
+// ATUALIZAÇÃO (2026-07-09): a etapa 3 do passe de consolidação de nome próprio
+// (consolidarNomesProprios) pode somar mais 1 chamada quando sobra candidato ambíguo, então
+// o pior caso real pode chegar a 8. O teto abaixo continua sendo o corte HARD de verdade —
+// se a 8ª chamada estourar o teto, a etapa 3 falha ABERTA (try/catch próprio, telemetria
+// 'pulada_teto') e a ata segue sem a consolidação daquele passe, nunca aborta a geração inteira.
 const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 7;
 
 // Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
@@ -1443,7 +1458,9 @@ async function gerarAtaJob(jobId, userMessage) {
   // que aborta ao tentar a (MAX+1)-ésima. Cobre as tentativas E a auditoria. Se um bug
   // futuro introduzir qualquer loop ou nova cascata, isto barra antes de gastar mais.
   // MAX = 7 = pior caso legítimo (1 geração + 1 retry + até 3 auditorias de bloco +
-  // 1 inserção Sonnet + 1 inserção Opus). Típico: 2 a 5, sem Opus.
+  // 1 inserção Sonnet + 1 inserção Opus). Típico: 2 a 5, sem Opus. A etapa 3 do passe de
+  // consolidação de nome próprio pode somar mais 1 (pior caso real = 8); se estourar o teto
+  // aqui, ela falha ABERTA sozinha (ver consolidarNomesProprios), não aborta a geração.
   let _chamadas = 0;
   const chamar = (modelo, maxTokens, sys, msg) => {
     if (++_chamadas > MAX_CHAMADAS_ANTHROPIC_POR_ATA) {
