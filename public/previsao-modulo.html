@@ -1769,6 +1769,9 @@ const _isNum = v => typeof v === 'number' && !isNaN(v);
  * no limite de palavra. São sugestões — o operador pode renomear (Seção E). */
 function _catName(raw) {
   let s = String(raw).replace(/[:\s]+$/, '').trim();
+  // "CONTRATOS:" no início do cabeçalho é só anotação administrativa (ex.: "CONTRATOS:
+  // MANUTENÇÃO E CONSERVAÇÃO" no Reserva Verde) — o nome da categoria é o que vem depois.
+  s = s.replace(/^CONTRATOS?:\s*/i, '').trim();
   // Overrides curados: alguns nomes crus da planilha precisam do nome exato do padrão ouro
   // (renome fixo, não o title case automático), igual ao deck de referência aprovado.
   if (/^DESPESA\s+COM\s+ADMINISTRATIVO$/i.test(s)) return 'Despesa Administrativa';
@@ -1841,12 +1844,28 @@ function parsePlanilhaPronta(rows, opts) {
   if (!nome) nome = 'Condomínio';
 
   // ---------- V3: linhas de TAXA / VALOR RATEADO / PREVISÃO ANO {ano} ----------
-  const taxas = [];
+  // Gap A: "TAXA DE CONDOMÍNIO {ano}:" (ex.: Reserva Verde) é um rótulo tão válido
+  // quanto "TAXA DE CONDOMÍNIO POR FRAÇÃO IDEAL {ano}:" (ex.: Via Mar, Caminho) —
+  // o "POR FRAÇÃO IDEAL" é opcional, nunca célula fixa, pra cobrir os dois de uma vez.
+  const taxasEncontradas = [];
   for (let r = 0; r < N; r++) {
     const s = labelOf(r) || txt(cell(r, 0)) || txt(cell(r, 1));
-    const m = s.match(/(?:FRA[ÇC][ÃA]O\s+IDEAL|VALOR\s+RATEADO\s+EM|PREVIS[ÃA]O\s+OR[ÇC]AMENT[ÁA]RIA\s+ANO)\s*(\d{4})\s*:/i);
-    if (m) { const val = firstNumInRow(r); if (val != null) taxas.push({ ano: +m[1], valor: val }); }
+    const m = s.match(/(?:TAXA\s+DE\s+CONDOM[ÍI]NIO(?:\s+POR\s+FRA[ÇC][ÃA]O\s+IDEAL)?|VALOR\s+RATEADO\s+EM|PREVIS[ÃA]O\s+OR[ÇC]AMENT[ÁA]RIA\s+ANO)\s*(\d{4})\s*:/i);
+    if (m) { const val = firstNumInRow(r); if (val != null) taxasEncontradas.push({ ano: +m[1], valor: val }); }
   }
+  // Hardening da Guarda 2: com o regex do Gap A mais abrangente, 2+ rótulos podem
+  // bater no MESMO ano (ex.: recapitulativo no rodapé). Se os valores forem iguais
+  // é so repetição do mesmo dado — dedupe e segue. Se DIVERGIREM, não dá pra escolher
+  // um em silêncio: é ambíguo, vira falha de parse (taxaAmbigua) igual à taxa não
+  // encontrada, nunca um índice aleatório do array.
+  const taxaPorAno = new Map();
+  let taxaAmbigua = false;
+  for (const t of taxasEncontradas) {
+    const anterior = taxaPorAno.get(t.ano);
+    if (anterior == null) taxaPorAno.set(t.ano, t.valor);
+    else if (Math.abs(anterior - t.valor) > 0.01) taxaAmbigua = true;
+  }
+  const taxas = [...taxaPorAno.entries()].map(([ano, valor]) => ({ ano, valor }));
   taxas.sort((a, b) => a.ano - b.ano);
   const tBase = taxas.length >= 2 ? taxas[taxas.length - 2] : null;
   const tNova = taxas.length >= 1 ? taxas[taxas.length - 1] : null;
@@ -1889,6 +1908,35 @@ function parsePlanilhaPronta(rows, opts) {
     }
   }
 
+  // ---------- Gap B camada 2: TOTAL "só ordinárias" (A) vs "ordinárias + consumo" (B) ----------
+  // Localiza os dois totais candidatos por texto, mas quem decide se o bloco de
+  // consumo sai do panorama é a COMPARAÇÃO NUMÉRICA entre a taxa declarada
+  // (taxaNovaTotal, já lida no Gap A/B camada 1) e os dois valores — nunca o nome
+  // do condomínio. Só entra em ação quando os dois totais existem e são DIFERENTES
+  // entre si; se não achar os dois, ou se forem iguais (ex.: Via Mar e Caminho, onde
+  // consumo já está dentro do total único), nada muda — mesmo comportamento de hoje.
+  let totalSoOrdinarias = null, totalOrdinariasEConsumo = null;
+  for (let r = 0; r < N; r++) {
+    const s = labelOf(r) || txt(cell(r, 0)) || txt(cell(r, 1));
+    if (totalSoOrdinarias == null && /TOTAL\s+GERAL\s+DESPESAS\s+ORDIN[ÁA]RIAS/i.test(s)) {
+      const v = numAt(r, mensalCol) != null ? numAt(r, mensalCol) : firstNumInRow(r);
+      if (v != null) totalSoOrdinarias = v;
+    }
+    if (totalOrdinariasEConsumo == null && /DESPESAS\s+ORDIN[ÁA]RIAS\s+E\s+CONSUMO/i.test(s)) {
+      const v = numAt(r, mensalCol) != null ? numAt(r, mensalCol) : firstNumInRow(r);
+      if (v != null) totalOrdinariasEConsumo = v;
+    }
+  }
+  // taxaNovaTotal ≈ A (só ordinárias) → o bloco de consumo fica FORA do panorama
+  // (ex.: Reserva Verde). taxaNovaTotal ≈ B (combinado) ou nenhum dos dois → mantém
+  // (ex.: Reserva da Serra, que inclui consumo no total único).
+  let excluirBlocoConsumo = false;
+  if (totalSoOrdinarias != null && totalOrdinariasEConsumo != null &&
+      Math.abs(totalSoOrdinarias - totalOrdinariasEConsumo) > 0.01 &&
+      taxaNovaTotal != null && Math.abs(taxaNovaTotal - totalSoOrdinarias) <= 0.01) {
+    excluirBlocoConsumo = true;
+  }
+
   // ---------- V6/V11/V12: categorias por MENSAL×12 ----------
   const SKIP = /PARA RATEIO|A RATEAR|^TOTAL\b|FUNDO|FRA[ÇC][ÃA]O (POR|IDEAL|DAS|DE)|TAXA\b|VALOR RATEADO|PREVIS[ÃA]O OR|TORRE|GEST[ÃA]O|^RECEITAS?$|DESCONTO|ANTENA|DIVIDIDO|RATEIO$|^RATEIO\b/i;
   const catEnd = fracHdrRow > 0 ? fracHdrRow : N;
@@ -1913,7 +1961,20 @@ function parsePlanilhaPronta(rows, opts) {
   }
   if (cur) cats.push(cur);
 
-  const cObjs = cats.filter(c => c.itens.length).map(c => {
+  // Gap B camada 2: filtro determinístico do panorama (cats/porCat) — NÃO mexe no
+  // total do rateio (esse já vem ancorado na linha de TAXA, ver mensalRatear acima).
+  // "Estimativa Boleto..." nunca é categoria de despesa (é estimativa auxiliar de
+  // cobrança) e sai sempre, em qualquer planilha. O bloco "Contas de Consumo
+  // (Energia/Esgoto/Gás)" só sai quando a comparação numérica acima (excluirBlocoConsumo)
+  // confirmou que a taxa declarada é só das despesas ordinárias, sem o consumo.
+  const ESTIMATIVA_BOLETO = /ESTIMATIVA\s+(DE\s+)?BOLETO/i;
+  const catsFiltradas = cats.filter(c => {
+    if (ESTIMATIVA_BOLETO.test(c.nome)) return false;
+    if (excluirBlocoConsumo && c.nome === 'Contas de Consumo (Energia/Esgoto/Gás)') return false;
+    return true;
+  });
+
+  const cObjs = catsFiltradas.filter(c => c.itens.length).map(c => {
     const mensal = c.itens.reduce((s, it) => s + it.mensal, 0);
     const previsto = mensal * 12;
     return {
@@ -1922,18 +1983,41 @@ function parsePlanilhaPronta(rows, opts) {
     };
   });
   const mensal = _round2(cObjs.reduce((s, c) => s + c.previsto / 12, 0));
-  const totalPrev = _round2(mensal * 12);
+  // Gap B camada 1: o TOTAL A RATEAR tem que vir da linha de TAXA da própria
+  // planilha (taxaNovaTotal) — é a fonte de verdade que o síndico declarou,
+  // não a soma dos blocos de categoria detectados. Em planilhas onde consumo
+  // (água/esgoto) fica FORA do rateio da taxa (ex.: Reserva Verde), a soma de
+  // categorias pega um bloco de total extra por engano e infla o valor. Em
+  // planilhas onde consumo entra no mesmo total (ex.: Serra), taxaNovaTotal já
+  // é igual à soma de categorias — ancorar aqui não muda nada pra elas. Sem
+  // linha de TAXA reconhecida, cai pro fallback de sempre (soma das categorias).
+  const mensalRatear = taxaNovaTotal != null ? _round2(taxaNovaTotal) : mensal;
+  const totalPrev = _round2(mensalRatear * 12);
+  // Fallback defensivo: no fluxo real, taxaNovaTotal só fica null quando taxaBase
+  // também fica null (mesmo array `taxas` vazio ou sem entrada mais recente) — e
+  // nesse caso a Guarda 2 logo abaixo já marca taxaBaseNaoEncontrada e quem chama
+  // (importarPlanilhaPronta) descarta o M com erro antes de qualquer uso. Fica aqui
+  // só como rede de segurança redundante, pra nunca sobrar `taxaNovaTotal` nulo.
   if (taxaNovaTotal == null) taxaNovaTotal = mensal;
 
   // ---------- V9: reajuste (truncado) + caso mantida ----------
-  let headlinePct = (taxaNovaTotal != null && taxaBase) ? (taxaNovaTotal / taxaBase - 1) : 0;
-  const mantida = Math.abs(headlinePct) < 0.00005;       // < 0,005% → "taxa mantida"
+  // Gap A (Guarda 2): taxaBase nula é FALHA DE PARSE (rótulo de TAXA não encontrado),
+  // não pode virar "0,00% mantida" por acidente — só é "mantida" quando a base FOI
+  // lida e é igual à nova (caso legítimo, ex.: Camarás). taxaBaseNaoEncontrada fica
+  // exposta em M pra quem chama bloquear a geração do deck e avisar o operador.
+  // Hardening: taxaBase<=0 também é inválida (taxa de condomínio zero não é cenário
+  // de negócio real — diferente de REAJUSTE zero, que é a variação, não a base) e
+  // taxaAmbigua (2+ rótulos do mesmo ano com valores divergentes) entra na mesma
+  // guarda — evita Infinity/NaN e evita escolher um valor em silêncio.
+  const taxaBaseNaoEncontrada = taxaBase == null || taxaBase <= 0 || taxaAmbigua;
+  let headlinePct = (!taxaBaseNaoEncontrada && taxaNovaTotal != null) ? (taxaNovaTotal / taxaBase - 1) : 0;
+  const mantida = !taxaBaseNaoEncontrada && Math.abs(headlinePct) < 0.00005; // < 0,005% → "taxa mantida"
   if (mantida) headlinePct = 0;
   let impactoMensalCond = mantida ? 0
-    : (taxaNovaTotal != null && taxaBase != null) ? _round2(taxaNovaTotal - taxaBase) : 0;
+    : (!taxaBaseNaoEncontrada && taxaNovaTotal != null) ? _round2(taxaNovaTotal - taxaBase) : 0;
 
   // ---------- V2/V7/V8/V14: tabela de frações ----------
-  const fr = parseFracoes(rows, { dataStart, fracHdrRow, mensalTotal: mensal, antenaMensal, mantida, txt, numAt, labelOf, cell });
+  const fr = parseFracoes(rows, { dataStart, fracHdrRow, mensalTotal: mensalRatear, antenaMensal, mantida, txt, numAt, labelOf, cell });
   const rateioTorres = fr.torres;
   const flatTipos = fr.flat;
 
@@ -1946,11 +2030,11 @@ function parsePlanilhaPronta(rows, opts) {
 
   const M = {
     exercicio: ano, condominio: nome,
-    headlinePct, impactoMensalCond,
+    headlinePct, impactoMensalCond, taxaBaseNaoEncontrada, taxaAmbigua,
     taxaCondAtual: taxaBase, taxaCondNova: taxaNovaTotal,
     top2, pesoTop2, cats: catNames,
     comReaj: [], semReaj: cObjs, soAno: true,
-    r: { totalBase: totalPrev, totalPrev, mensal, porCat, rateio: { modo: 'Fração Ideal', tipos: flatTipos } },
+    r: { totalBase: totalPrev, totalPrev, mensal: mensalRatear, porCat, rateio: { modo: 'Fração Ideal', tipos: flatTipos } },
     pr: { modoRateio: 'Fração Ideal', pctFundo, saldoFundo: null, mesesRelatorio: 12,
           fracoes: flatTipos.map(t => ({ fracao: t.fracao, taxaAtual: t.taxaAtual, taxaNova: t.taxaNova, unidades: t.unidades, tipo: t.tipo })) },
   };
@@ -2139,7 +2223,7 @@ function _modoAPlanilhaPreviewHTML(){
     else if(isHeader) s='background:#2E7BC7;color:#fff;font-weight:700';
     else if(isTotal) s='background:#FDE9CC;color:#7a4a06;font-weight:700';
     else if(isSecao) s='background:#EAF1FB;color:#143A87;font-weight:700';
-    else s='background:'+(ri%2===1?'#eef3fa':'#f7f9fc');
+    else s='background:'+(ri%2===1?'#eef3fa':'#f7f9fc')+';color:#1E2533';   // Gap C: linhas comuns nao tinham cor de texto — herdavam claro sobre claro
     return `<tr style="${s}">${tds}</tr>`;
   }).join('');
   return `<details open style="margin:10px 0 14px">
@@ -2294,6 +2378,11 @@ function importarPlanilhaPronta(inp){
       modoA_rows=rows; modoA_antBase='mensal';
       const M=parsePlanilhaPronta(rows);
       if(!M.r.rateio.tipos.length) throw new Error('não encontrei a tabela de frações por unidade — confira se a planilha é a versão FINAL do pai.');
+      // Guarda 2 (Gap A + hardening): taxa base não encontrada, zerada ou ambígua é
+      // falha de leitura, não pode virar "0,00% mantida" por engano — bloqueia a
+      // geração até o operador confirmar a planilha, com o motivo certo na mensagem.
+      if(M.taxaAmbigua) throw new Error('encontrei mais de um valor de taxa de condomínio pro mesmo ano, com valores diferentes — confira se a planilha tem rótulos de taxa duplicados e conflitantes antes de gerar o deck.');
+      if(M.taxaBaseNaoEncontrada) throw new Error('não encontrei a taxa de condomínio do ano anterior (procure por um rótulo como "TAXA DE CONDOMÍNIO ' + (M.exercicio-1) + ':" na planilha) — confira o arquivo antes de gerar o deck.');
       modoA_M=M;
       P.condominio=M.condominio||P.condominio; P.exercicio=M.exercicio||P.exercicio;
       P.params.pctFundo=M.pr.pctFundo; P.params.modoRateio='Fração Ideal';

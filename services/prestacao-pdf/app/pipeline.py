@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Pipeline multi-fonte (W011A/W015A/W016A) → CONFIG → deck (PPTX + auditoria + PDF).
+"""Pipeline multi-fonte (W011A/W015A/W016A/W015P) → CONFIG → deck (PPTX + auditoria + PDF).
 
 Mantém o fluxo legado W016A intacto (orquestrar/montar_config).
 Adiciona fluxo multi-fonte via montar_config_multi_fonte/orquestrar_multi_fonte.
 
 Prioridade de dados por campo:
-- Receitas e despesas: W011A se presente, senão W015A, senão W016A.
-- Séries mensais: exclusivamente W011A (W015A e W016A não têm).
-- Reconciliação: quando >1 fonte, compara totais. Aviso acima de TOLER_AVISO,
-  bloqueio acima de TOLER_BLOQUEIO (relativos à diferença percentual).
+- Receitas e despesas: W011A se presente, senão W015A, senão W016A, senão W015P.
+- Séries mensais: W011A ou W015P (W015A e W016A não têm).
+- Reconciliação: quando >1 fonte, compara totais. Aviso acima de TOLER_AVISO;
+  só bloqueia acima de TOLER_SANIDADE (diferença grosseira, provável arquivo
+  trocado). W016A nunca bloqueia (conferência); saldo ausente (W015P) não entra
+  na comparação de saldo.
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ sys.path.insert(0, os.path.abspath(VENDOR))
 from . import parser_w016a as P
 from . import parser_w011a as P11
 from . import parser_w015a as P15
+from . import parser_w015p as P15P
 from .agrupador import agrupar, MAX_LINHAS_RECEITA
 from collections import namedtuple
 
@@ -31,10 +34,13 @@ from collections import namedtuple
 _LancAdapt = namedtuple("_LancAdapt", ["descricao", "valor"])
 
 # Tolerâncias de reconciliação entre fontes.
-# Aviso: diferença > 1% nos totais de período (exibe nota âmbar no deck).
-# Bloqueio: diferença > 5% (retorna 422 para revisão humana).
+# Aviso: diferença > 1% nos totais de período (exibe nota âmbar no deck, NÃO trava).
+# Sanidade: só bloqueia acima de 30%, que indica arquivo trocado (condomínio ou
+# período errado), não divergência legítima entre relatórios do mesmo período.
+# Entre 1% e 30% é sempre aviso âmbar. Decisão de produto: a prestação é gerada
+# a partir de UMA fonte por prioridade; a reconciliação é conferência, não trava.
 TOLER_AVISO_PCT = 1.0
-TOLER_BLOQUEIO_PCT = 5.0
+TOLER_SANIDADE_PCT = 30.0
 
 # Títulos dos slides de detalhamento por categoria canônica.
 TITULOS = {
@@ -253,37 +259,61 @@ def _rotulos_periodo_w015a(est: P15.EstruturaW015A) -> dict:
     }
 
 
+def _rotulos_periodo_w015p(est: "P15P.EstruturaW015P") -> dict:
+    """Deriva rótulos de período de uma EstruturaW015P (mesmo formato do W011A).
+    Período detectado das colunas mensais do relatório, nunca fixo."""
+    MESES_EXTENSO = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+                     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"]
+    MESES_ABREV = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN",
+                   "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"]
+    m0 = int(est.data_inicial[3:5])
+    a0 = int(est.data_inicial[6:10])
+    m1 = int(est.data_final[3:5])
+    a1 = int(est.data_final[6:10])
+    label = f"{MESES_ABREV[m0-1]}/{a0} a {MESES_ABREV[m1-1]}/{a1}"
+    n_meses = (a1 - a0) * 12 + (m1 - m0) + 1
+    return {
+        "periodo_label": label,
+        "periodo_extenso": f"{MESES_EXTENSO[m0-1]} de {a0} a {MESES_EXTENSO[m1-1]} de {a1}",
+        "exercicio_titulo": f"Exercício {label}",
+        "n_meses": n_meses,
+        "data_inicial": est.data_inicial,
+        "data_final": est.data_final,
+    }
+
+
 def _reconciliar(fontes: dict, avisos: list) -> list:
     """Compara totais de período entre as fontes presentes.
 
-    Retorna lista de erros de bloqueio (>= TOLER_BLOQUEIO_PCT).
-    Popula `avisos` com alertas de aviso (>= TOLER_AVISO_PCT mas < bloqueio).
+    Retorna lista de bloqueios (só diferença grosseira >= TOLER_SANIDADE_PCT,
+    fora das exceções abaixo). Popula `avisos` com divergências entre 1% e o
+    teto de sanidade — âmbar, não trava.
 
     Campos comparados: receita_total, despesa_total, saldo_final.
+
+    Exceções que NUNCA bloqueiam (no máximo viram aviso):
+    - Qualquer par envolvendo W016A (relatório de conferência).
+    - Campo saldo_final quando uma das fontes não tem saldo bancário real
+      (ex: W015P, "Demonstrativo por Período", que só tem resultado de fluxo).
+      Nesse caso o campo saldo_final é ignorado por completo (nem aviso).
     """
-    # Extrai totais por fonte presente
+    # Extrai totais por fonte presente. _tem_saldo_real distingue fontes com
+    # saldo bancário (W011A/W015A/W016A) de fontes de fluxo sem saldo (W015P).
     totais: dict[str, dict] = {}
-    w11 = fontes.get("W011A")
-    w15 = fontes.get("W015A")
-    w16 = fontes.get("W016A")
-    if w11:
-        totais["W011A"] = {
-            "receita_total": w11.receita_total,
-            "despesa_total": w11.despesa_total,
-            "saldo_final": w11.saldo_final,
-        }
-    if w15:
-        totais["W015A"] = {
-            "receita_total": w15.receita_total,
-            "despesa_total": w15.despesa_total,
-            "saldo_final": w15.saldo_final,
-        }
-    if w16:
-        totais["W016A"] = {
-            "receita_total": w16.receita_total,
-            "despesa_total": w16.despesa_total,
-            "saldo_final": w16.saldo_final,
-        }
+    especs = [
+        ("W011A", fontes.get("W011A"), True),
+        ("W015A", fontes.get("W015A"), True),
+        ("W016A", fontes.get("W016A"), True),
+        ("W015P", fontes.get("W015P"), False),
+    ]
+    for nome, est, tem_saldo in especs:
+        if est:
+            totais[nome] = {
+                "receita_total": est.receita_total,
+                "despesa_total": est.despesa_total,
+                "saldo_final": est.saldo_final,
+                "_tem_saldo_real": tem_saldo,
+            }
 
     if len(totais) < 2:
         return []
@@ -291,21 +321,40 @@ def _reconciliar(fontes: dict, avisos: list) -> list:
     bloqueios = []
     pares = [(a, b) for i, a in enumerate(totais) for b in list(totais)[i+1:]]
     for fa, fb in pares:
+        envolve_w16 = "W016A" in (fa, fb)
         for campo in ("receita_total", "despesa_total", "saldo_final"):
+            # Saldo só é comparável se AMBAS as fontes têm saldo bancário real.
+            if campo == "saldo_final" and not (
+                totais[fa]["_tem_saldo_real"] and totais[fb]["_tem_saldo_real"]
+            ):
+                continue
             va = totais[fa][campo]
             vb = totais[fb][campo]
-            # Quando ambos os valores são praticamente zero (< R$0,01), não há
-            # diferença relevante — pular evita divisão por valor ínfimo que
-            # inflacionaria o percentual artificialmente (ex: 0.001 vs 0.002 = 100%).
+            # Ambos ~zero: sem diferença relevante. Evita percentual inflado por
+            # divisão por valor ínfimo (ex: 0.001 vs 0.002 = 100%).
             if abs(va) < 0.01 and abs(vb) < 0.01:
                 continue
             ref = max(abs(va), abs(vb))
-            diff_pct = abs(va - vb) / ref * 100
+            diff_abs = abs(va - vb)
+            diff_pct = diff_abs / ref * 100
             msg = (
                 f"{campo}: {fa}={va:.2f} vs {fb}={vb:.2f} "
                 f"(diferença {diff_pct:.2f}%)"
             )
-            if diff_pct >= TOLER_BLOQUEIO_PCT:
+            # W016A nunca bloqueia; acima do teto de sanidade bloqueia; entre o
+            # aviso e o teto, âmbar. Log de auditoria detalhado em stderr.
+            bloqueia = (diff_pct >= TOLER_SANIDADE_PCT) and not envolve_w16
+            if diff_pct >= TOLER_AVISO_PCT:
+                limiar = ("SANIDADE(bloqueio)" if bloqueia
+                          else "AVISO(nao bloqueia)")
+                print(f"[reconciliacao] {campo} {fa} vs {fb}: "
+                      f"{fa}={va:.2f} {fb}={vb:.2f} | "
+                      f"delta_abs=R${diff_abs:.2f} delta_pct={diff_pct:.2f}% | "
+                      f"limiar aviso={TOLER_AVISO_PCT}% sanidade={TOLER_SANIDADE_PCT}% "
+                      f"| {limiar}"
+                      + (" | W016A: nunca bloqueia" if envolve_w16 and diff_pct >= TOLER_SANIDADE_PCT else ""),
+                      file=sys.stderr)
+            if bloqueia:
                 bloqueios.append(msg)
             elif diff_pct >= TOLER_AVISO_PCT:
                 avisos.append(msg)
@@ -413,26 +462,143 @@ def _despesas_de_w015a(est15: P15.EstruturaW015A) -> tuple[list, dict]:
     return despesas_cat, detalhes
 
 
+def _receitas_de_w015p(est15p) -> list:
+    """Monta receitas_cat a partir do W015P (Demonstrativo por Período).
+    Mesma lógica do W011A: achata no nível de item, redutores negativos viram
+    a linha 'Descontos e Estornos'. Usa _LancAdapt (campo total → valor)."""
+    redutores = [l for l in est15p.receitas if l.total < 0]
+    positivas = [l for l in est15p.receitas if l.total >= 0]
+    soma_red = round(sum(l.total for l in redutores), 2)
+    soma_pos = round(sum(l.total for l in positivas), 2)
+    max_pos = MAX_LINHAS_RECEITA - 1 if redutores else MAX_LINHAS_RECEITA
+    lanc_pos = [_LancAdapt(l.descricao, l.total) for l in positivas]
+    rec_linhas = agrupar(lanc_pos, soma_pos, "Receitas", max_pos, "Demais Receitas")
+    receitas_cat = [
+        (l.rotulo, l.valor, _pct(l.valor, est15p.receita_total))
+        for l in rec_linhas
+    ]
+    if redutores:
+        receitas_cat.append(
+            ("Descontos e Estornos", soma_red, _pct(soma_red, est15p.receita_total))
+        )
+    return receitas_cat
+
+
+def _despesas_de_w015p(est15p) -> tuple[list, dict]:
+    """Monta despesas_cat e detalhes a partir do W015P, com séries mensais por
+    categoria (o W015P tem matriz mensal como o W011A). Despesas já em sinal
+    positivo (o parser normalizou o negativo do relatório uma única vez)."""
+    grupos_ord = sorted(est15p.grupos, key=lambda g: -g.total)
+    despesas_cat = [
+        (g.categoria, g.total, _pct(g.total, est15p.despesa_total))
+        for g in grupos_ord
+    ]
+    detalhes = {}
+    for g in grupos_ord:
+        lancs = [_LancAdapt(l.descricao, l.total) for l in g.lancamentos]
+        linhas = agrupar(lancs, g.total, g.categoria)
+        t1, t2 = TITULOS.get(g.categoria, (g.categoria, ""))
+        detalhes[g.categoria] = {
+            "titulo1": t1, "titulo2": t2,
+            "descricao": "",
+            "serie_mensal": g.total_mes,   # série mensal por categoria
+            "lancamentos": [(l.rotulo, l.valor) for l in linhas],
+            "nota": None,
+            "_membros": {l.rotulo: l.membros for l in linhas},
+        }
+    return despesas_cat, detalhes
+
+
+def _juntar_nomes(nomes: list) -> str:
+    """Junta nomes de fonte em texto natural: ['W011A'] -> 'W011A';
+    ['W011A','W015A'] -> 'W011A e W015A'; tres ou mais com virgula e 'e'."""
+    if len(nomes) == 1:
+        return nomes[0]
+    if len(nomes) == 2:
+        return nomes[0] + " e " + nomes[1]
+    return ", ".join(nomes[:-1]) + " e " + nomes[-1]
+
+
+def _resumo_reconciliacao(fontes_info: list, base_nome: str) -> str:
+    """Compoe o texto claro do aviso de reconciliacao a partir do periodo de
+    cada fonte e da fonte base. So le periodo, nao recalcula nenhum numero.
+
+    fontes_info: lista de (nome, periodo_label, n_meses).
+    IMPORTANTE: o texto gerado NAO pode conter hifen (regra do projeto). Os
+    rotulos de periodo ja vem sem hifen (ex: 'AGO/2025 a JUN/2026')."""
+    # Agrupa fontes por periodo (mesma data e mesmo numero de meses).
+    grupos = []
+    for nome, label, n in fontes_info:
+        chave = (label, n)
+        existente = next((g for g in grupos if g[0] == chave), None)
+        if existente:
+            existente[1].append(nome)
+        else:
+            grupos.append((chave, [nome]))
+
+    # Todas as fontes no mesmo período: divergência é só de valor (escopo).
+    if len(grupos) == 1:
+        return ("Mesmo período nas fontes, pequena diferença de valores entre "
+                "relatórios, esperada, não é erro.")
+
+    # Períodos diferentes: descreve cada grupo de período.
+    partes = []
+    for (label, n), nomes in grupos:
+        artigo = "O " if len(nomes) == 1 else ""
+        verbo = "cobre" if len(nomes) == 1 else "cobrem"
+        partes.append(f"{artigo}{_juntar_nomes(nomes)} {verbo} {label} ({n} meses)")
+
+    # Período do deck = período da fonte base. As demais fontes (período
+    # diferente do base) entraram só para conferência. A frase de conferência é
+    # composta POR grupo de período: cada grupo leva o SEU número de meses. Um
+    # único n_meses aplicado a fontes de períodos distintos reportaria mês
+    # errado quando há três ou mais períodos diferentes.
+    base = next(f for f in fontes_info if f[0] == base_nome)
+    base_label, base_n = base[1], base[2]
+    frases_conf = []
+    total_conf = 0
+    for (label, n), nomes in grupos:
+        if (label, n) == (base_label, base_n):
+            continue
+        artigo = "o" if len(nomes) == 1 else "os"
+        frases_conf.append(f"{artigo} {_juntar_nomes(nomes)} de {n} meses")
+        total_conf += len(nomes)
+    verbo_conf = "entrou" if total_conf == 1 else "entraram"
+
+    return (
+        "Fontes com períodos diferentes. "
+        + ". ".join(partes) + ". "
+        + f"O deck foi gerado com {base_n} meses, base {base_nome}; "
+        + f"{_juntar_nomes(frases_conf)} {verbo_conf} apenas para conferência. "
+        + "Diferença entre fontes de períodos distintos é esperada, não é erro."
+    )
+
+
 def montar_config_multi_fonte(
     est11: P11.EstruturaW011A | None,
     est15: P15.EstruturaW015A | None,
     est16: P.EstruturaW016A | None,
     avisos_reconciliacao: list,
     num_bloco: str | None = None,
+    est15p: "P15P.EstruturaW015P | None" = None,
 ) -> dict:
-    """Monta CONFIG a partir das fontes disponíveis (W011A/W015A/W016A).
+    """Monta CONFIG a partir das fontes disponíveis (W011A/W015A/W016A/W015P).
 
     Prioridade dos campos:
-    - Identificação e totais: W011A > W015A > W016A
-    - Receitas e despesas detalhadas: W011A > W015A > W016A
-    - Séries mensais: exclusivamente W011A (None se ausente)
-    - Saldo anterior/final: W011A > W015A > W016A
+    - Identificação e totais: W011A > W015A > W016A > W015P
+    - Receitas e despesas detalhadas: W011A > W015A > W016A > W015P
+    - Séries mensais: W011A ou W015P (None se nenhuma das duas)
+    - Saldo anterior/final: W011A > W015A > W016A > W015P
+
+    O W015P fica por último na prioridade de totais/saldo por ser a única fonte
+    sem saldo bancário real: só vira primário quando é a única fonte disponível.
 
     Reconciliação: já realizada antes desta chamada (avisos_reconciliacao
     é preenchido pelo orquestrador antes de montar o CONFIG).
     """
-    # Fonte de identificação e totais (prioridade W011A > W015A > W016A)
+    # Fonte de identificação e totais (prioridade W011A > W015A > W016A > W015P)
     if est11:
+        base_nome = "W011A"
         condominio = est11.condominio
         rot = _rotulos_periodo_w011a(est11)
         receita_total = est11.receita_total
@@ -440,6 +606,7 @@ def montar_config_multi_fonte(
         saldo_anterior = est11.saldo_anterior
         saldo_final = est11.saldo_final
     elif est15:
+        base_nome = "W015A"
         condominio = est15.condominio
         rot = _rotulos_periodo_w015a(est15)
         receita_total = est15.receita_total
@@ -447,12 +614,21 @@ def montar_config_multi_fonte(
         saldo_anterior = est15.saldo_anterior
         saldo_final = est15.saldo_final
     elif est16:
+        base_nome = "W016A"
         condominio = est16.cliente
         rot = P.rotulos_periodo(est16)
         receita_total = est16.receita_total
         despesa_total = est16.despesa_total
         saldo_anterior = est16.saldo_anterior
         saldo_final = est16.saldo_final
+    elif est15p:
+        base_nome = "W015P"
+        condominio = est15p.condominio
+        rot = _rotulos_periodo_w015p(est15p)
+        receita_total = est15p.receita_total
+        despesa_total = est15p.despesa_total
+        saldo_anterior = est15p.saldo_anterior      # 0.0 sintético
+        saldo_final = est15p.saldo_final            # resultado acumulado
     else:
         raise ValueError("montar_config_multi_fonte: nenhuma fonte disponível")
 
@@ -465,41 +641,56 @@ def montar_config_multi_fonte(
     if not est11 and not est15 and est16:
         cfg_16_cache = montar_config(est16)
 
-    # Receitas detalhadas: prioridade W011A > W015A > W016A
+    # Receitas detalhadas: prioridade W011A > W015A > W016A > W015P
     if est11:
         receitas_cat = _receitas_de_w011a(est11)
     elif est15:
         receitas_cat = _receitas_de_w015a(est15)
-    else:
+    elif est16:
         # Fallback W016A: usa o cache calculado acima
         receitas_cat = cfg_16_cache["receitas_cat"]
+    else:
+        receitas_cat = _receitas_de_w015p(est15p)
 
-    # Despesas detalhadas: prioridade W011A > W015A > W016A
+    # Despesas detalhadas: prioridade W011A > W015A > W016A > W015P
     if est11:
         despesas_cat, detalhes = _despesas_de_w011a(est11)
     elif est15:
         despesas_cat, detalhes = _despesas_de_w015a(est15)
-    else:
+    elif est16:
         despesas_cat = cfg_16_cache["despesas_cat"]
         detalhes = cfg_16_cache["detalhes"]
+    else:
+        despesas_cat, detalhes = _despesas_de_w015p(est15p)
 
-    # Séries mensais: exclusivamente W011A
-    tem_mensal = est11 is not None
+    # Séries mensais: W011A, ou W015P SOMENTE quando ele também é a fonte
+    # primária de totais/saldo (nenhum W011A/W015A/W016A presente). Isso evita
+    # misturar saldo bancário real (de W015A/W016A) com a série de saldo
+    # sintética do W015P no mesmo slide, o que faria o gráfico não bater com o
+    # card de saldo final.
+    if est11:
+        fonte_mensal = est11
+    elif est15p and not est15 and not est16:
+        fonte_mensal = est15p
+    else:
+        fonte_mensal = None
+    tem_mensal = fonte_mensal is not None
     if tem_mensal:
         # O template usa meses_label (abreviado), meses_ini (inicial única),
         # receitas_mes, despesas_mes e saldo_fim_mes.
         # saldo_fim_mes = saldo_anterior do mês SEGUINTE = saldo_anterior_mes[1:]
         # com o saldo_final como último elemento.
-        meses_label = est11.meses_labels   # ["Jul/2025", ..., "Jun/2026"]
+        meses_label = fonte_mensal.meses_labels   # ["Jul/2025", ..., "Jun/2026"]
         meses_ini = [m[:3] for m in meses_label]  # ["Jul", ..., "Jun"]
-        receitas_mes = est11.receita_total_mes
-        despesas_mes = est11.despesa_total_mes
+        receitas_mes = fonte_mensal.receita_total_mes
+        despesas_mes = fonte_mensal.despesa_total_mes
         # Saldo fim de cada mês = saldo anterior do mês seguinte.
-        # est11.saldo_anterior_mes[i] = saldo no INÍCIO do mês i.
+        # saldo_anterior_mes[i] = saldo no INÍCIO do mês i (sintético no W015P).
         # saldo_fim_mes[i] = saldo_anterior_mes[i] + superavit_mes[i]
         saldo_fim_mes = [
             round(saldo + superav, 2)
-            for saldo, superav in zip(est11.saldo_anterior_mes, est11.superavit_mes)
+            for saldo, superav in zip(fonte_mensal.saldo_anterior_mes,
+                                      fonte_mensal.superavit_mes)
         ]
     else:
         meses_label = None
@@ -508,13 +699,32 @@ def montar_config_multi_fonte(
         despesas_mes = None
         saldo_fim_mes = None
 
-    # Nota âmbar de reconciliação quando há avisos
+    # Nota âmbar de reconciliação quando há avisos. Além da nota curta do deck,
+    # compõe um resumo claro (qual fonte tem qual período, qual foi a base, e
+    # que a divergência é esperada) para o toast do Hub. Só lê período das
+    # fontes, não recalcula nenhum número.
     nota_reconciliacao = None
+    reconciliacao_resumo = None
     if avisos_reconciliacao:
         nota_reconciliacao = (
             "Atenção: diferença entre fontes detectada. " +
             "; ".join(avisos_reconciliacao[:2])
         )
+        fontes_info = []
+        if est11:
+            r = _rotulos_periodo_w011a(est11)
+            fontes_info.append(("W011A", r["periodo_label"], r["n_meses"]))
+        if est15:
+            r = _rotulos_periodo_w015a(est15)
+            fontes_info.append(("W015A", r["periodo_label"], r["n_meses"]))
+        if est16:
+            r = P.rotulos_periodo(est16)
+            fontes_info.append(("W016A", r["periodo_label"], est16.n_meses))
+        if est15p:
+            r = _rotulos_periodo_w015p(est15p)
+            fontes_info.append(("W015P", r["periodo_label"], r["n_meses"]))
+        if len(fontes_info) >= 2:
+            reconciliacao_resumo = _resumo_reconciliacao(fontes_info, base_nome)
 
     cfg = {
         "cliente_linha1": linha1,
@@ -539,6 +749,7 @@ def montar_config_multi_fonte(
         # Metadados para o endpoint (não usados pelo template)
         "_serie_mensal_ativa": tem_mensal,
         "_nota_reconciliacao": nota_reconciliacao,
+        "_reconciliacao_resumo": reconciliacao_resumo,
     }
     if num_bloco:
         cfg["bloco"] = {
@@ -565,12 +776,14 @@ def orquestrar_multi_fonte(
     período (um deck = um período = 1 CONFIG). Para múltiplos períodos
     com W016A, use orquestrar().
 
-    Levanta ValueError para bloqueio de reconciliação (>5% de diferença).
+    Levanta ValueError para bloqueio de reconciliação (só diferença grosseira
+    acima do teto de sanidade; ver _reconciliar).
     """
     # Parseia cada arquivo pelo tipo detectado
     est11: P11.EstruturaW011A | None = None
     est15: P15.EstruturaW015A | None = None
     est16: P.EstruturaW016A | None = None
+    est15p: "P15P.EstruturaW015P | None" = None
 
     for caminho, tipo in caminhos_e_tipos:
         if tipo == "W011A":
@@ -579,6 +792,8 @@ def orquestrar_multi_fonte(
             est15 = P15.parsear(caminho)
         elif tipo == "W016A":
             est16 = P.parsear(caminho)
+        elif tipo == "W015P":
+            est15p = P15P.parsear(caminho)
 
     # Reconciliação entre fontes disponíveis
     avisos: list = []
@@ -589,6 +804,8 @@ def orquestrar_multi_fonte(
         fontes["W015A"] = est15
     if est16:
         fontes["W016A"] = est16
+    if est15p:
+        fontes["W015P"] = est15p
 
     bloqueios = _reconciliar(fontes, avisos)
     if bloqueios:
@@ -596,11 +813,11 @@ def orquestrar_multi_fonte(
             "reconciliacao_bloqueante: " + "; ".join(bloqueios)
         )
 
-    cfg = montar_config_multi_fonte(est11, est15, est16, avisos)
+    cfg = montar_config_multi_fonte(est11, est15, est16, avisos, est15p=est15p)
     if prosa is not None:
         cfg = prosa.aplicar(cfg)
 
-    serie_mensal_ativa = est11 is not None
+    serie_mensal_ativa = (est11 is not None) or (est15p is not None)
     return [cfg], None, serie_mensal_ativa, avisos
 
 

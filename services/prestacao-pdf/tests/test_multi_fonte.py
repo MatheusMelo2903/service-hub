@@ -15,6 +15,7 @@ NÃO há constantes com valores financeiros reais neste arquivo.
 from __future__ import annotations
 
 import glob
+import json
 import math
 import os
 import sys
@@ -98,6 +99,7 @@ SKIP_AMBOS = pytest.mark.skipif(
     _encontrar_pdf_por_tipo("w011a") is None or _encontrar_pdf_por_tipo("w015a") is None,
     reason="PDFs w011a e w015a necessarios nao encontrados em fixtures_local/"
 )
+SKIP_W015P = _skip_sem_pdf("w015p")
 
 # Tolerância em reais para comparações de float
 TOL = 0.02
@@ -182,6 +184,39 @@ def _est15_sintetico():
         saldo_final=86000.0,
         saldo_final_comp=86000.0,
         mov_liquido=36000.0,
+    )
+    return est
+
+
+def _est15p_sintetico():
+    """EstruturaW015P com os mesmos totais de receita/despesa que os sintéticos,
+    mas sem saldo bancário real (saldo_final = resultado acumulado)."""
+    from app.parser_w015p import EstruturaW015P, GrupoW015P, LancamentoW015P
+    est = EstruturaW015P(
+        condominio="Condominio Modelo",
+        data_inicial="01/07/2025",
+        data_final="30/06/2026",
+        meses_labels=[
+            "Jul/2025", "Ago/2025", "Set/2025", "Out/2025", "Nov/2025", "Dez/2025",
+            "Jan/2026", "Fev/2026", "Mar/2026", "Abr/2026", "Mai/2026", "Jun/2026",
+        ],
+        n_meses=12,
+        receitas=[LancamentoW015P("Taxa de Condominio", "1.01.01", 120000.0, [10000.0] * 12)],
+        receita_total=120000.0,
+        receita_total_mes=[10000.0] * 12,
+        grupos=[
+            GrupoW015P("Pessoal", "2.01", 60000.0, [5000.0] * 12,
+                       [LancamentoW015P("Salarios", "2.01.01", 60000.0, [5000.0] * 12)]),
+            GrupoW015P("Consumo", "2.04", 24000.0, [2000.0] * 12,
+                       [LancamentoW015P("Agua", "2.04.01", 24000.0, [2000.0] * 12)]),
+        ],
+        despesa_total=84000.0,
+        despesa_total_mes=[7000.0] * 12,
+        saldo_anterior=0.0,
+        saldo_anterior_mes=[0.0] + [3000.0 * i for i in range(1, 12)],
+        saldo_final=36000.0,        # resultado acumulado (120000 - 84000)
+        mov_liquido=36000.0,
+        superavit_mes=[3000.0] * 12,
     )
     return est
 
@@ -425,17 +460,56 @@ def test_reconciliacao_sem_bloqueio_sintetico():
     assert len(avisos) == 0, f"Nao deve haver avisos com fontes identicas: {avisos}"
 
 
-def test_reconciliacao_bloqueio_sintetico():
-    """Diferença de 10% dispara bloqueio."""
+def test_reconciliacao_10pct_vira_aviso_nao_bloqueio():
+    """Política nova (abordagem B): diferença de 10% é aviso âmbar, NÃO bloqueia.
+    Só diferença grosseira acima do teto de sanidade (30%) bloqueia."""
     from app.pipeline import _reconciliar
-    from app.parser_w011a import EstruturaW011A
     est11 = _est11_sintetico()
-    # W015A com receita_total 10% maior → diferença > TOLER_BLOQUEIO_PCT (5%)
     est15 = _est15_sintetico()
-    est15.receita_total = est11.receita_total * 1.10
+    est15.receita_total = est11.receita_total * 1.10   # 9,09% de diferença
     avisos = []
     bloqueios = _reconciliar({"W011A": est11, "W015A": est15}, avisos)
-    assert len(bloqueios) > 0, "Diferença de 10% deve gerar bloqueio"
+    assert len(bloqueios) == 0, "10% nao deve mais bloquear (vira aviso)"
+    assert len(avisos) > 0, "10% deve gerar aviso ambar"
+
+
+def test_reconciliacao_bloqueio_acima_sanidade():
+    """Diferença grosseira acima de 30% (provavel arquivo trocado) bloqueia."""
+    from app.pipeline import _reconciliar
+    est11 = _est11_sintetico()
+    est15 = _est15_sintetico()
+    est15.receita_total = est11.receita_total * 1.50   # 33% de diferença
+    avisos = []
+    bloqueios = _reconciliar({"W011A": est11, "W015A": est15}, avisos)
+    assert len(bloqueios) > 0, "Diferença acima de 30% deve bloquear"
+
+
+def test_reconciliacao_w016a_nunca_bloqueia():
+    """W016A é conferência: mesmo com diferença grosseira, nunca bloqueia."""
+    from app.pipeline import _reconciliar
+    est11 = _est11_sintetico()
+    est16 = _est11_sintetico()   # reusa forma; só precisa dos 3 totais
+    est16.receita_total = est11.receita_total * 2.0    # 100% de diferença
+    avisos = []
+    bloqueios = _reconciliar({"W011A": est11, "W016A": est16}, avisos)
+    assert len(bloqueios) == 0, "Par com W016A nunca deve bloquear"
+    assert len(avisos) > 0, "Deve virar aviso, nao bloqueio"
+
+
+def test_reconciliacao_w015p_saldo_ausente_nao_compara():
+    """W015P nao tem saldo bancario real: o campo saldo_final nao entra na
+    comparacao (nem aviso nem bloqueio), mesmo com diferenca enorme de saldo."""
+    from app.pipeline import _reconciliar
+    est11 = _est11_sintetico()
+    est15p = _est15p_sintetico()
+    # Totais de receita/despesa iguais; saldo radicalmente diferente.
+    est15p.receita_total = est11.receita_total
+    est15p.despesa_total = est11.despesa_total
+    est15p.saldo_final = 0.0            # W015P (resultado), est11.saldo_final=86000
+    avisos = []
+    bloqueios = _reconciliar({"W011A": est11, "W015P": est15p}, avisos)
+    achou_saldo = [x for x in (bloqueios + avisos) if "saldo_final" in x]
+    assert not achou_saldo, "saldo_final nao deve ser comparado quando falta saldo real"
 
 
 def test_reconciliacao_aviso_sintetico():
@@ -946,3 +1020,336 @@ def test_passo4_condominios_fechados_intactos():
     if os.path.isfile(bur):
         est = parsear(bur)
         assert len(est.meses_labels) == 12
+
+
+# ── 8. Layout W015P "Demonstrativo de Receitas e Despesas por Período" ────────
+
+# Números de referência ficam num JSON dev-only em fixtures_local/ (gitignored),
+# nunca versionados no código: o fixture carrega dado financeiro real de cliente
+# e nenhum total deve entrar no histórico do git (o resto do arquivo já usa só
+# dados sintéticos por esse mesmo motivo).
+def _ref_w015p():
+    caminho = os.path.join(FIXTURES, "w015p_referencia.json")
+    if not os.path.isfile(caminho):
+        return None
+    with open(caminho, encoding="utf-8") as f:
+        return json.load(f)
+
+
+SKIP_W015P_REF = pytest.mark.skipif(
+    _ref_w015p() is None,
+    reason="w015p_referencia.json ausente em fixtures_local/ (gitignored)"
+)
+
+
+@SKIP_W015P
+def test_detector_classifica_w015p():
+    """(a)/(b): o Demonstrativo por Período é classificado como W015P e NUNCA
+    mais como W011A (que era o bug do fallback cego de paisagem)."""
+    from app.detector import detectar_tipo
+    tipo = detectar_tipo(_encontrar_pdf_por_tipo("w015p"))
+    assert tipo == "W015P", f"esperado W015P, veio {tipo}"
+    assert tipo != "W011A", "regressao: W015P nao pode voltar a virar W011A"
+
+
+@SKIP_W015P
+@SKIP_W015P_REF
+def test_w015p_totais_batem_com_referencia():
+    """(c): parser do W015P extrai os totais reais com fidelidade."""
+    from app.parser_w015p import parsear
+    ref = _ref_w015p()
+    est = parsear(_encontrar_pdf_por_tipo("w015p"))
+    assert abs(est.receita_total - ref["receita_total"]) < TOL
+    assert abs(est.despesa_total - ref["despesa_total"]) < TOL
+    # Resultado = receita menos despesa, e bate com a linha RESULTADO Por Período.
+    assert abs((est.receita_total - est.despesa_total) - ref["resultado"]) < TOL
+    assert abs(sum(est.superavit_mes) - ref["resultado"]) < TOL
+
+
+@SKIP_W015P
+def test_w015p_descricoes_sem_poluicao_de_cabecalho():
+    """Regressao (achado do revisor): titulo/periodo/rodape repetidos por pagina
+    nao podem grudar na descricao de nenhum lancamento."""
+    from app.parser_w015p import parsear
+    est = parsear(_encontrar_pdf_por_tipo("w015p"))
+    lixo = ("Demonstrativo", "Período:", "Periodo:", "Administração",
+            "Administracao", "Pág.", "Pag.", "Total Média")
+    todos = list(est.receitas) + [l for g in est.grupos for l in g.lancamentos]
+    for l in todos:
+        for termo in lixo:
+            assert termo not in l.descricao, \
+                f"descricao poluida por cabecalho/rodape: {l.codigo} {l.descricao!r}"
+
+
+@SKIP_W015P
+def test_w015p_periodo_dinamico_12_meses():
+    """(e): período detectado das colunas, 12 meses no fixture."""
+    from app.parser_w015p import parsear
+    est = parsear(_encontrar_pdf_por_tipo("w015p"))
+    assert est.n_meses == 12
+    assert len(est.meses_labels) == 12
+    assert est.meses_labels[0] == "Jan/2025"
+    assert est.meses_labels[-1] == "Dez/2025"
+    assert len(est.receita_total_mes) == 12
+    assert len(est.despesa_total_mes) == 12
+
+
+def test_w015p_periodo_dinamico_3_6_meses_unit():
+    """(e): a geração de rótulos e o fatiamento são dinâmicos (3, 6 ou 12),
+    nunca fixos em 12. Testado no nível de função, sem depender de 3 PDFs reais."""
+    from app.parser_w015p import _gerar_labels, _fatiar
+    # 3 meses cruzando o ano (Nov/2025 a Jan/2026)
+    labels3 = _gerar_labels(11, 2025, 3)
+    assert labels3 == ["Nov/2025", "Dez/2025", "Jan/2026"]
+    # 6 meses
+    labels6 = _gerar_labels(1, 2025, 6)
+    assert labels6 == ["Jan/2025", "Fev/2025", "Mar/2025",
+                       "Abr/2025", "Mai/2025", "Jun/2025"]
+    # _fatiar separa N meses + Total (ignora Média) para N=3 e N=6
+    serie, total = _fatiar([10.0, 20.0, 30.0, 60.0, 20.0], 3)
+    assert serie == [10.0, 20.0, 30.0] and total == 60.0
+    serie6, total6 = _fatiar([1, 2, 3, 4, 5, 6, 21, 3.5], 6)
+    assert serie6 == [1, 2, 3, 4, 5, 6] and total6 == 21
+
+
+@SKIP_W015P
+def test_w015p_despesa_negativa_somada_sem_inverter_sinal():
+    """(d): despesas do relatório vêm negativas; o total deve ser a soma dos
+    valores em módulo, sem inverter sinal duas vezes nem ignorar o negativo."""
+    from app.parser_w015p import parsear
+    est = parsear(_encontrar_pdf_por_tipo("w015p"))
+    # Todos os grupos de despesa saem positivos (sinal já normalizado uma vez).
+    assert all(g.total >= 0 for g in est.grupos)
+    # Soma dos grupos = despesa_total (positiva).
+    assert abs(sum(g.total for g in est.grupos) - est.despesa_total) < 1.0
+    # Resultado mês a mês = receita_mes menos despesa_mes, igual à linha RESULTADO.
+    for i in range(est.n_meses):
+        esperado = round(est.receita_total_mes[i] - est.despesa_total_mes[i], 2)
+        assert abs(est.superavit_mes[i] - esperado) < TOL
+
+
+@SKIP_W015P
+def test_w015p_sozinho_gera_config_completo():
+    """(c): W015P sozinho monta CONFIG completo (sem quebrar na conservação de
+    caixa do template): saldo_anterior 0, saldo_final = resultado acumulado."""
+    from app.pipeline import orquestrar_multi_fonte
+    caminho = _encontrar_pdf_por_tipo("w015p")
+    configs, capa, serie_mensal, avisos = orquestrar_multi_fonte(
+        [(caminho, "W015P")], prosa=None
+    )
+    cfg = configs[0]
+    assert serie_mensal is True, "W015P tem série mensal por categoria"
+    # Conservação de caixa fecha com o saldo sintético.
+    caixa = cfg["saldo_anterior"] + cfg["receita_total"] - cfg["despesa_total"]
+    assert abs(caixa - cfg["saldo_final"]) < TOL
+    assert abs(cfg["saldo_anterior"]) < TOL, "saldo inicial sintético = 0"
+    assert cfg["receitas_cat"] and cfg["despesas_cat"], "deck enriquecido por categoria"
+    assert len(cfg["meses_label"]) == 12
+
+
+def test_w015p_serie_nao_mistura_com_saldo_real_de_outra_fonte():
+    """Regressao (achado do revisor): W015A (saldo real) + W015P (saldo
+    sintetico) sem W011A NAO deve ativar serie mensal, para o grafico de saldo
+    nao divergir do card de saldo final. Usa sinteticos, sem PDF."""
+    from app.pipeline import montar_config_multi_fonte
+    est15 = _est15_sintetico()      # tem saldo bancario real
+    est15p = _est15p_sintetico()    # tem serie mensal, saldo sintetico
+    avisos = []
+    cfg = montar_config_multi_fonte(None, est15, None, avisos, est15p=est15p)
+    assert cfg["_serie_mensal_ativa"] is False, \
+        "serie mensal nao pode vir do W015P quando os totais/saldo vem do W015A"
+    assert cfg["meses_label"] is None
+    # Saldo final exibido continua sendo o real (do W015A).
+    assert abs(cfg["saldo_final"] - est15.saldo_final) < TOL
+
+
+@SKIP_W015P
+def test_w015p_mais_w011a_reconciliam_sem_bloqueio():
+    """(d): W015P real + W011A sintético do MESMO período e mesmos totais
+    reconciliam sem bloqueio (saldo ausente do W015P não trava)."""
+    from app.pipeline import _reconciliar
+    from app.parser_w015p import parsear
+    est15p = parsear(_encontrar_pdf_por_tipo("w015p"))
+    est11 = _est11_sintetico()
+    # Alinha os totais de fluxo do W011A aos do W015P real (mesmo período).
+    est11.receita_total = est15p.receita_total
+    est11.despesa_total = est15p.despesa_total
+    avisos = []
+    bloqueios = _reconciliar({"W011A": est11, "W015P": est15p}, avisos)
+    assert len(bloqueios) == 0, f"totais batendo nao devem bloquear: {bloqueios}"
+    # E o saldo_final (ausente no W015P) nao entra na comparacao.
+    assert not [x for x in avisos if "saldo_final" in x]
+
+
+# ── 9. Layout W016A: nome do condominio no topo da pagina nao vira grupo ──
+
+def _ref_w016a():
+    caminho = os.path.join(FIXTURES, "w016a_referencia.json")
+    if not os.path.isfile(caminho):
+        return None
+    with open(caminho, encoding="utf-8") as f:
+        return json.load(f)
+
+
+SKIP_W016A_REAL = _skip_sem_pdf("w016a")
+SKIP_W016A_REF = pytest.mark.skipif(
+    _ref_w016a() is None,
+    reason="w016a_referencia.json ausente em fixtures_local/ (gitignored)"
+)
+
+
+@SKIP_W016A_REAL
+def test_detector_classifica_w016a():
+    """(a): o W016A e classificado como W016A."""
+    from app.detector import detectar_tipo
+    assert detectar_tipo(_encontrar_pdf_por_tipo("w016a")) == "W016A"
+
+
+@SKIP_W016A_REAL
+@SKIP_W016A_REF
+def test_w016a_soma_grupos_bate_com_total_despesas():
+    """(a): correcao da causa raiz. A soma dos grupos de despesa fecha com o
+    Total de Despesas do relatorio (antes so somava 3 dos 10 grupos)."""
+    from app.parser_w016a import parsear
+    ref = _ref_w016a()
+    e = parsear(_encontrar_pdf_por_tipo("w016a"))
+    soma = round(sum(g.total for g in e.grupos), 2)
+    assert abs(soma - e.despesa_total) < 0.02, f"soma grupos {soma} != total {e.despesa_total}"
+    assert abs(e.despesa_total - ref["despesa_total"]) < 0.02
+    assert abs(e.receita_total - ref["receita_total"]) < 0.02
+    assert len(e.grupos) == ref["n_grupos_despesa"]
+    # Conservacao de caixa fecha (rede de seguranca legitima, sem afrouxar).
+    caixa = e.saldo_anterior + e.receita_total - e.despesa_total
+    assert abs(caixa - e.saldo_final) < 0.02
+
+
+@SKIP_W016A_REAL
+def test_w016a_nome_condominio_nao_vira_grupo():
+    """(b): o nome do condominio repetido no topo da pagina nao e lido como
+    grupo de despesa, nem polui a descricao de nenhum lancamento."""
+    from app.parser_w016a import parsear
+    e = parsear(_encontrar_pdf_por_tipo("w016a"))
+    cliente_norm = e.cliente.strip().casefold()
+    # Nenhum grupo tem o nome do condominio.
+    assert not any(g.nome_relatorio.strip().casefold() == cliente_norm for g in e.grupos)
+    # Descricao de lancamento nao contem o nome do condominio grudado.
+    for g in e.grupos:
+        for l in g.lancamentos:
+            assert e.cliente not in l.descricao, f"descricao poluida: {l.descricao!r}"
+
+
+@SKIP_W016A_REAL
+@SKIP_W016A_REF
+def test_w016a_periodo_dinamico_das_datas():
+    """(a): periodo detectado das datas do cabecalho, nunca fixo em 12."""
+    from app.parser_w016a import parsear
+    ref = _ref_w016a()
+    e = parsear(_encontrar_pdf_por_tipo("w016a"))
+    assert e.n_meses == ref["n_meses"]        # 11 neste fixture (Ago a Jun)
+    assert e.n_meses != 12
+    assert e.data_inicial == ref["data_inicial"]
+    assert e.data_final == ref["data_final"]
+
+
+@SKIP_W016A_REAL
+def test_w016a_mais_w011a_combinado_nunca_bloqueia():
+    """(c): W016A real + W011A sintetico geram combinado sem bloqueio. Com
+    totais iguais nao ha nem aviso; a garantia e que W016A nunca bloqueia."""
+    from app.pipeline import _reconciliar
+    from app.parser_w016a import parsear
+    e16 = parsear(_encontrar_pdf_por_tipo("w016a"))
+    est11 = _est11_sintetico()
+    est11.receita_total = e16.receita_total
+    est11.despesa_total = e16.despesa_total
+    est11.saldo_final = e16.saldo_final
+    avisos = []
+    bloqueios = _reconciliar({"W011A": est11, "W016A": e16}, avisos)
+    assert bloqueios == [], "W016A nunca deve bloquear"
+
+
+@SKIP_W016A_REAL
+def test_w016a_mais_w015a_combinado_nunca_bloqueia():
+    """(d): idem com W015A. Mesmo com divergencia grande, W016A nao bloqueia."""
+    from app.pipeline import _reconciliar
+    from app.parser_w016a import parsear
+    e16 = parsear(_encontrar_pdf_por_tipo("w016a"))
+    est15 = _est15_sintetico()
+    est15.receita_total = e16.receita_total * 2   # divergencia grosseira de proposito
+    avisos = []
+    bloqueios = _reconciliar({"W015A": est15, "W016A": e16}, avisos)
+    assert bloqueios == [], "par com W016A nunca bloqueia, mesmo com divergencia alta"
+    assert len(avisos) > 0, "divergencia grande deve virar aviso ambar"
+
+
+# ── 10. Texto do aviso de reconciliacao (claro, sem hifen) ───────────────────
+
+def test_resumo_reconciliacao_periodos_diferentes_uma_fonte_por_periodo():
+    """Caso 1: W011A (12m) + W016A (11m). Diz o periodo de cada fonte, a base e
+    que a fonte de periodo diferente entrou so para conferencia."""
+    from app.pipeline import _resumo_reconciliacao
+    info = [("W011A", "JUL/2025 a JUN/2026", 12), ("W016A", "AGO/2025 a JUN/2026", 11)]
+    txt = _resumo_reconciliacao(info, "W011A")
+    assert "-" not in txt, "aviso nao pode conter hifen (regra do projeto)"
+    assert "W011A cobre JUL/2025 a JUN/2026 (12 meses)" in txt
+    assert "W016A cobre AGO/2025 a JUN/2026 (11 meses)" in txt
+    assert "base W011A" in txt
+    assert "conferência" in txt
+    assert "não é erro" in txt
+
+
+def test_resumo_reconciliacao_agrupa_fontes_do_mesmo_periodo():
+    """Caso 2: W011A e W015A (mesmo periodo 12m) + W016A (11m). Agrupa as duas
+    que compartilham periodo e aponta a que diverge."""
+    from app.pipeline import _resumo_reconciliacao
+    info = [("W011A", "AGO/2025 a JUL/2026", 12),
+            ("W015A", "AGO/2025 a JUL/2026", 12),
+            ("W016A", "AGO/2025 a JUN/2026", 11)]
+    txt = _resumo_reconciliacao(info, "W011A")
+    assert "-" not in txt
+    assert "W011A e W015A cobrem AGO/2025 a JUL/2026 (12 meses)" in txt
+    assert "W016A cobre AGO/2025 a JUN/2026 (11 meses)" in txt
+    assert "o W016A de 11 meses entrou apenas para conferência" in txt
+
+
+def test_resumo_reconciliacao_mesmo_periodo_diferenca_de_valor():
+    """Caso 3: mesmo periodo em todas as fontes, divergencia so de valor."""
+    from app.pipeline import _resumo_reconciliacao
+    info = [("W011A", "AGO/2025 a JUL/2026", 12), ("W015A", "AGO/2025 a JUL/2026", 12)]
+    txt = _resumo_reconciliacao(info, "W011A")
+    assert "-" not in txt
+    assert txt.startswith("Mesmo período nas fontes")
+    assert "não é erro" in txt
+
+
+@SKIP_W016A_REAL
+def test_resumo_reconciliacao_no_config_real():
+    """O resumo chega no CONFIG do fluxo real (W011A + W016A do Buritis) e nao
+    tem hifen."""
+    from app.pipeline import orquestrar_multi_fonte
+    w11 = _encontrar_pdf_ano_cheio_w011a() or _encontrar_pdf_por_tipo("w011a")
+    w16 = _encontrar_pdf_por_tipo("w016a")
+    if not w11 or not w16:
+        import pytest as _pt; _pt.skip("fixtures w011a/w016a ausentes")
+    cfgs, capa, serie, avisos = orquestrar_multi_fonte(
+        [(w11, "W011A"), (w16, "W016A")], prosa=None)
+    resumo = cfgs[0].get("_reconciliacao_resumo")
+    assert resumo, "deve haver resumo quando os periodos divergem"
+    assert "-" not in resumo
+    assert "base" in resumo and "conferência" in resumo
+
+
+def test_resumo_reconciliacao_tres_periodos_distintos_meses_corretos():
+    """Regressao (achado do revisor): com 3+ periodos distintos, cada fonte de
+    conferencia leva o SEU numero de meses, nao o de outra."""
+    from app.pipeline import _resumo_reconciliacao
+    info = [("W011A", "AGO/2025 a JUL/2026", 12),
+            ("W015A", "AGO/2025 a MAI/2026", 10),
+            ("W016A", "AGO/2025 a MAR/2026", 8)]
+    txt = _resumo_reconciliacao(info, "W011A")
+    assert "-" not in txt
+    # cada fonte de conferencia com o seu proprio n de meses
+    assert "o W015A de 10 meses" in txt
+    assert "o W016A de 8 meses" in txt
+    assert "entraram apenas para conferência" in txt
+    # nao pode dizer 10 meses para o W016A (o bug antigo)
+    assert "W016A de 10 meses" not in txt

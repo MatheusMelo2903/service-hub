@@ -1,0 +1,13 @@
+{
+  "name": "previsao-harness",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Harness Node isolado que valida parsePlanilhaPronta (public/previsao-modulo.html) contra fixtures reais. Nao faz parte do deploy do Service Hub.",
+  "scripts": {
+    "extrai": "node extrai-motor.js",
+    "test": "node run.js"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  }
+}

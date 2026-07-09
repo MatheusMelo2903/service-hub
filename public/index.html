@@ -1285,9 +1285,11 @@
           <span class="card-title">Revisão de papéis</span>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost" onclick="descartarRevisao()" style="font-size:12px;padding:6px 12px">✕ Descartar</button>
+            <button class="btn btn-ghost" onclick="baixarRevisaoXLSX()" style="font-size:12px;padding:6px 12px">⬇ Baixar XLSX</button>
             <button class="btn btn-primary" onclick="confirmarRevisao()" style="font-size:12px;padding:6px 12px">✓ Confirmar e preparar import</button>
           </div>
         </div>
+        <div id="revisao-funil" style="font-size:12px;font-family:var(--mono);color:var(--muted);margin-bottom:6px"></div>
         <div id="revisao-resumo" style="font-size:12px;font-family:var(--mono);color:var(--text);margin-bottom:8px"></div>
         <div class="chips" id="revisao-filtro-chips"></div>
         <div class="table-wrap" style="max-height:460px;overflow:auto;border:1px solid var(--border);border-radius:8px"><table id="revisao-table"></table></div>
@@ -2435,6 +2437,72 @@ function handleFile(e, type) {
 // ============================================================
 // LEITURA DE PLANILHA
 // ============================================================
+
+// Rotulos esperados na linha de cabecalho real das planilhas de unidades. A
+// linha de cabecalho nao tem posicao fixa (familias 1 e 2 usam a linha 0,
+// W045A e Quattro usam a linha 3), entao a deteccao varre as primeiras
+// linhas e escolhe a que mais bate com este dicionario, nunca um indice fixo.
+const ROTULOS_CABECALHO_UNIDADES = ['unidade','bloco','pavimento','grupo','empreendimento','nome','proprietario','proponente','cpf','cnpj','tipo','email','telefone','celular','fone','endereco','cep','fracao','rg'];
+// Numero minimo de rotulos batendo numa linha pra considera la cabecalho valido.
+const MIN_ROTULOS_CABECALHO = 3;
+
+// Varre as ate 12 primeiras linhas da planilha e escolhe a linha de cabecalho
+// pela quantidade de celulas que batem no dicionario de rotulos esperados, em
+// vez de um indice fixo. Devolve o indice da melhor linha, ou -1 se nenhuma
+// linha bater o minimo (mantem o erro atual de planilha invalida).
+function detectarLinhaCabecalho(allRows) {
+  const norm = (s) => String(s || '').trim().toLowerCase()
+    .normalize('NFKD').replace(/[̀-ͯ]/g, '');
+  let melhorIdx = -1, melhorScore = 0;
+  const limite = Math.min(12, allRows.length);
+  for (let i = 0; i < limite; i++) {
+    const row = allRows[i] || [];
+    if (!row.length) continue;
+    let score = 0;
+    row.forEach((cell) => {
+      const c = norm(cell);
+      if (!c) return;
+      if (ROTULOS_CABECALHO_UNIDADES.some((r) => c.indexOf(r) !== -1)) score++;
+    });
+    if (score > melhorScore) { melhorScore = score; melhorIdx = i; }
+  }
+  return melhorScore >= MIN_ROTULOS_CABECALHO ? melhorIdx : -1;
+}
+
+// M6/M7: filtra linhas com CONTEUDO REAL (qualquer celula preenchida). Esta e
+// a mesma base usada por TODAS as familias tanto pra contar "linhas na
+// origem" quanto pra alimentar os parsers, sem assumir coluna 0 = Unidade
+// (cada parser localiza a coluna Unidade pelo proprio cabecalho e decide
+// sozinho o que processar). Antes disso o pre filtro checava r[0] direto, o
+// que so era verdade pra algumas familias e descartava linha por posicao
+// fixa antes do parser da familia rodar.
+function linhasComConteudoReal(rows) {
+  return (rows || []).filter(r =>
+    r && r.some(c => c !== null && c !== undefined && String(c).trim() !== '')
+  );
+}
+
+// C1 (root cause de PJ excluido): normaliza UMA celula lida com raw:true.
+// raw:false formatava numero grande (ex CNPJ 62232889000190) em notacao
+// cientifica ("6.22329E+13"), perdendo digitos de CNPJ/CPF/telefone/RG/CEP
+// longos. Com raw:true a celula chega crua (Date, number ou string) e esta
+// funcao devolve sempre string, do mesmo jeito que o resto do fluxo (roteador,
+// parsers) ja espera: Date vira dd/mm/aaaa (mesmo formato do dateNF antigo);
+// number inteiro ou decimal vira String(n) com os digitos completos, sem
+// notacao cientifica (numeros ate 1e21 nao viram exponencial em JS, e CNPJ/
+// CPF tem no maximo 14 digitos); qualquer outro valor (inclusive texto com
+// zero a esquerda, ex CPF "00767920724" guardado como texto na planilha) vira
+// String(v) sem alteracao, pois raw:true preserva texto como texto.
+function normalizarCelula(v) {
+  if (v === null || v === undefined) return v;
+  if (v instanceof Date) {
+    const dd = String(v.getDate()).padStart(2, '0');
+    const mm = String(v.getMonth() + 1).padStart(2, '0');
+    return dd + '/' + mm + '/' + v.getFullYear();
+  }
+  return String(v);
+}
+
 function processFile(file, type) {
   // PDF de unidades vai pelo caminho por codigo (reconhecedores posicionais).
   // Demais tipos e planilhas seguem pela leitura via SheetJS abaixo.
@@ -2446,65 +2514,90 @@ function processFile(file, type) {
     const data = new Uint8Array(e.target.result);
     const wb = XLSX.read(data, { type: 'array', cellDates: true });
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const allRows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: 'DD/MM/YYYY' });
+    // C1: raw:true preserva os digitos completos de campos numericos longos
+    // (CNPJ, CPF, telefone, RG, CEP, unidade); normalizarCelula formata cada
+    // celula pro mesmo formato string que o resto do fluxo ja espera.
+    const allRows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true })
+      .map(row => (row || []).map(normalizarCelula));
 
     if (allRows.length < 2) { toast('Planilha vazia ou sem dados', 'err'); return; }
 
     if (type === 'unidades') {
-      // Tenta o índice fixo 3 (linha 4 da planilha do Superlogica).
-      // Fallback: varre as primeiras 10 linhas procurando "unidade" ou "tipo" na coluna 0.
-      // "tipo" é o cabeçalho da planilha unificada (26 colunas A-Z) que começa na linha 1.
-      let headerIdx = 3;
-      const headerRow = allRows[headerIdx] || null;
-      const col0 = headerRow ? String(headerRow[0] || '').toLowerCase() : '';
-      const col0Valid = col0.includes('unidade') || col0 === 'tipo';
-      if (!col0Valid) {
-        let achou = false;
-        for (let i = 0; i < Math.min(10, allRows.length); i++) {
-          const row = allRows[i] || [];
-          const c0 = String(row[0] || '').toLowerCase();
-          if (c0.includes('unidade') || c0 === 'tipo') { headerIdx = i; achou = true; break; }
-        }
-        // Planilha curta demais ou sem linha de cabeçalho reconhecível
-        if (!achou && !headerRow) {
-          toast('Planilha inválida: cabecalho nao encontrado.', 'err');
-          return;
-        }
+      // Detecta a linha de cabecalho real pelo CONTEUDO dos rotulos, nao por
+      // indice fixo: familias 1 e 2 tem cabecalho na linha 0, W045A e Quattro
+      // na linha 3.
+      const headerIdx = detectarLinhaCabecalho(allRows);
+      if (headerIdx === -1) {
+        toast('Planilha inválida: cabecalho nao encontrado.', 'err');
+        return;
       }
       const safeHeader = allRows[headerIdx] || [];
       const headers = safeHeader.map(h => String(h||'').trim());
+      const linhasRestantes = allRows.slice(headerIdx + 1);
 
-      // Familia A2 (W045A "Contatos das unidades" tabular): roteia para a tela de
-      // revisao de papel. NAO filtra linhas de unidade em branco aqui, pois elas
-      // herdam a unidade de cima (forward fill feito dentro de parseW045AContatos).
-      const familiaPlanilha = detectarFamiliaPlanilha(headers);
-      if (familiaPlanilha === 'w045a-contatos') {
-        const contatos = inferirPapeis(parseW045AContatos(headers, allRows.slice(headerIdx + 1)));
+      // Roteador de estrutura: classifica a planilha numa das familias
+      // conhecidas e delega ao parser certo, do mais estrito ao mais generico.
+      const familia = detectarFamiliaPlanilha(headers);
+
+      // M6/M7: base de linhas padronizada pra TODAS as familias, medida ANTES
+      // de qualquer filtro especifico de parser (ver linhasComConteudoReal).
+      const linhasComConteudo = linhasComConteudoReal(linhasRestantes);
+
+      // Familia 3 (W045A "Contatos das unidades" tabular): roteia para a tela
+      // de revisao de papel. NAO filtra linhas de unidade em branco aqui, pois
+      // elas herdam a unidade de cima (forward fill dentro de parseW045AContatos).
+      // Antes de parsear, corrige por assinatura de conteudo o deslocamento de
+      // celulas causado por Telefone vazio (B1), sem tocar em parseW045AContatos.
+      // C2: valida documento por contato (regra B4) antes de abrir a revisao,
+      // pra documento faltando/invalido nao subir em silencio.
+      if (familia === 'w045a-contatos') {
+        const linhasCorrigidas = corrigirDeslocamentoW045A(headers, linhasRestantes);
+        const contatos = validarDocumentosW045A(inferirPapeis(parseW045AContatos(headers, linhasCorrigidas)));
         if (!contatos.length) { toast('Nenhum contato reconhecido na planilha', 'err'); return; }
-        abrirRevisao(contatos, file.name);
+        abrirRevisao(contatos, file.name, linhasComConteudo.length);
         toast(contatos.length + ' contatos lidos de "' + file.name + '". Revise os papéis antes de importar.', 'ok');
         return;
       }
 
-      const data_rows = allRows.slice(headerIdx + 1).filter(r =>
-        r && r[0] && String(r[0]).trim() !== '' && String(r[0]).trim() !== 'Unidade'
-      );
-      // Seleciona o parser conforme o formato detectado nos cabeçalhos.
-      // Formato unificado (26 colunas A-Z): usa o novo parser multi-tipo.
-      // Formato antigo (planilha Superlógica 30+ colunas): usa o parser original.
-      const formato = detectarFormatoPlanilhaUnificada(headers);
-      const processed = (formato === 'unificado')
-        ? processUnidadesDataUnificada(headers, data_rows)
-        : processUnidadesData(headers, data_rows);
-      state.unidades.headers = headers;
-      state.unidades.raw = data_rows;
-      state.unidades.processed = processed;
-      renderPreviewUnidades(processed, file.name);
-      toast(processed.length + ' unidades detectadas e normalizadas de "' + file.name + '"', 'ok');
-      // Exibe avisos não fatais do parser (UF desconhecida, proprietário duplicado) sem interromper
-      if (processed.avisos && processed.avisos.length) {
-        toast(processed.avisos.join(' | '), 'warn');
+      // Formato unificado (26 colunas A-Z): ja e o formato interno alvo,
+      // plenamente especificado, entao segue direto pra pre visualizacao sem
+      // passar pela tela de revisao.
+      if (familia === 'unificado') {
+        const processed = processUnidadesDataUnificada(headers, linhasComConteudo);
+        state.unidades.headers = headers;
+        state.unidades.raw = linhasComConteudo;
+        state.unidades.processed = processed;
+        renderPreviewUnidades(processed, file.name);
+        toast(processed.length + ' unidades detectadas e normalizadas de "' + file.name + '"', 'ok');
+        // Exibe avisos não fatais do parser (UF desconhecida, proprietário duplicado) sem interromper
+        if (processed.avisos && processed.avisos.length) {
+          toast(processed.avisos.join(' | '), 'warn');
+        }
+        return;
       }
+
+      // Familias 1 (Plana), 2 (Proponentes) e 4 (Quattro): parsers dedicados
+      // que agrupam por unidade, validam (_erros/_valido) e convertem pra
+      // lista plana de pessoas antes de abrir a MESMA tela de revisao das
+      // demais familias (decisao 1: nenhum caminho vai direto ao envio).
+      const LABEL_FAMILIA = { quattro: 'Quattro', proponentes: 'Proponentes', plana: 'Plana' };
+      if (LABEL_FAMILIA[familia]) {
+        const agrupado = familia === 'quattro'
+          ? validarUnidadesAgrupadas(processUnidadesData(headers, linhasComConteudo), false)
+          : familia === 'proponentes'
+            ? processFamiliaProponentes(headers, linhasComConteudo)
+            : processFamiliaPlana(headers, linhasComConteudo);
+        if (!agrupado.length) { toast('Nenhuma unidade reconhecida na planilha', 'err'); return; }
+        const contatos = unidadesAgrupadasParaContatos(agrupado, LABEL_FAMILIA[familia]);
+        abrirRevisao(contatos, file.name, linhasComConteudo.length);
+        if (agrupado.avisos && agrupado.avisos.length) toast(agrupado.avisos.join(' | '), 'warn');
+        toast(contatos.length + ' pessoas lidas de "' + file.name + '". Revise os papéis antes de importar.', 'ok');
+        return;
+      }
+
+      // Nenhuma familia reconhecida por codigo: orienta o mesmo fallback do
+      // PDF, nunca processa uma estrutura desconhecida em silencio.
+      toast('Não reconheci a estrutura desta planilha. Use "Normalizar via IA" para reformatar antes de importar.', 'warn');
     } else {
       const headers = allRows[0].map(h => String(h||'').trim());
       const data_rows = allRows.slice(1).filter(r => r.some(c => c !== '' && c !== null && c !== undefined));
@@ -2608,6 +2701,88 @@ function omitirVazios(obj) {
     if (v !== null && v !== undefined && v !== '') out[k] = v;
   });
   return out;
+}
+
+// ============================================================
+// CAMADA DE ASSINATURA DE CONTEUDO
+// Nao confia so na posicao da coluna: em algumas planilhas (ex Villaggio) a
+// celula de telefone vem vazia, o que empurra as colunas seguintes uma
+// posicao pra esquerda naquela linha especifica. Estas funcoes validam o
+// CONTEUDO de uma celula contra o formato esperado, usadas para desempatar a
+// classificacao de familia e para corrigir deslocamento de coluna por linha.
+// ============================================================
+
+// CPF: exatamente 11 digitos.
+function isCPF(v) { return /^\d{11}$/.test(String(v || '').replace(/\D/g, '')); }
+
+// CNPJ: exatamente 14 digitos.
+function isCNPJ(v) { return /^\d{14}$/.test(String(v || '').replace(/\D/g, '')); }
+
+// Email: tem @ e um ponto depois do @.
+function isEmail(v) {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v || '').trim());
+}
+
+// UF: sigla de 2 letras presente na tabela UF_CODIGOS ja usada pelo formato unificado.
+function isUF(v) {
+  var s = String(v || '').trim().toUpperCase();
+  return s.length === 2 && Object.prototype.hasOwnProperty.call(UF_CODIGOS, s);
+}
+
+// CEP: exatamente 8 digitos.
+function isCEP(v) { return /^\d{8}$/.test(String(v || '').replace(/\D/g, '')); }
+
+// Fracao ideal: numero decimal entre 0 (exclusive) e 1 (inclusive), aceita virgula ou ponto.
+function isFracao(v) {
+  var s = String(v || '').trim().replace(',', '.');
+  if (!s) return false;
+  var n = parseFloat(s);
+  return isFinite(n) && n > 0 && n <= 1;
+}
+
+// Data no formato dd/mm/aaaa.
+function isData(v) { return /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(String(v || '').trim()); }
+
+// Conta quantos campos de uma linha batem o CONTEUDO esperado pelo colMap
+// (mapa nome do campo -> indice de coluna). Usada (a) pra desempatar a
+// classificacao de familia comparando a assinatura de mais de uma linha e (b)
+// pra corrigir deslocamento de coluna por linha: quando a celula na posicao
+// esperada nao bate o formato, quem chama tenta a posicao anterior antes de
+// marcar aviso, em vez de confiar cegamente na posicao fixa.
+function assinarLinha(row, colMap) {
+  var testes = {
+    cpf: isCPF, cnpj: isCNPJ, email: isEmail, estado: isUF, cep: isCEP,
+    fracao: isFracao, dtNasc: isData, dtEntrada: isData
+  };
+  var acertos = 0;
+  Object.keys(colMap).forEach(function(campo) {
+    var teste = testes[campo];
+    if (!teste) return;
+    var idx = colMap[campo];
+    if (idx == null || idx < 0) return;
+    if (teste(row[idx])) acertos++;
+  });
+  return acertos;
+}
+
+// Confirma por CONTEUDO que a coluna localizada por nome do cabecalho
+// realmente guarda o dado esperado (ex CPF/CNPJ), usada pelos parsers novos
+// (Plana, Proponentes) pra nao confiar cegamente no nome do cabecalho quando
+// o conteudo desmente. Roda numa amostra das primeiras linhas com valor na
+// coluna; se a maioria NAO bate o teste, a coluna volta como nao encontrada
+// (-1), o que aciona o mesmo aviso de "coluna nao identificada" ja existente.
+function confirmarColunaPorConteudo(rows, idx, teste, amostraMax) {
+  if (idx == null || idx < 0) return idx;
+  var vistos = 0, acertos = 0;
+  for (var i = 0; i < rows.length && vistos < (amostraMax || 15); i++) {
+    var v = rows[i] && rows[i][idx];
+    if (v === null || v === undefined || String(v).trim() === '') continue;
+    vistos++;
+    if (teste(v)) acertos++;
+  }
+  // Amostra insuficiente pra decidir com confianca: mantem a coluna encontrada por nome.
+  if (vistos < 3) return idx;
+  return (acertos / vistos) >= 0.5 ? idx : -1;
 }
 
 // Parser para a planilha unificada (26 colunas A-Z).
@@ -2891,27 +3066,342 @@ function renderPreviewUnidades(processed, filename) {
 // Estado da tela de revisao: lista plana de contatos + nome do arquivo de origem.
 let _revisaoContatos = null;
 let _revisaoSource = '';
-// Filtro por status (confianca) da tela de revisao: todos, alta, media ou incerta.
+// Filtro por status (confianca) da tela de revisao: todos, alta, media, incerta ou erro.
 let _revisaoFiltro = 'todos';
+// Quantidade de linhas lidas na planilha de origem, pro resumo fixo do funil
+// "X linhas na origem -> Y unidades -> Z pessoas".
+let _revisaoLinhasOrigem = 0;
 
-// Detecta se os cabecalhos sao da familia A2 (W045A tabular). Retorna
-// 'w045a-contatos' quando reconhece o layout, ou null para deixar o fluxo
-// padrao (formato unificado ou antigo) seguir. Heuristica: coluna 0 fala de
-// unidade, existe coluna Nome e coluna Tipo logo no inicio, e ha coluna de
-// contato (Celular ou CPF), o que distingue do formato unificado de 26 colunas.
+// Roteador de estrutura da planilha de unidades. Classifica os cabecalhos
+// numa das 5 familias conhecidas e devolve o identificador que processFile usa
+// pra escolher o parser certo, do mais estrito pro mais generico. Nunca chuta:
+// se nada bater, devolve null e o operador cai no fallback de Normalizar via
+// IA (nunca processa uma estrutura desconhecida em silencio).
+//   'unificado'      -> planilha 26 colunas A-Z, formato interno alvo
+//   'w045a-contatos' -> familia 3, W045A "Contatos das unidades" tabular
+//   'quattro'        -> familia 4, planilha larga do Superlogica (proprietario + inquilino em blocos de coluna)
+//   'proponentes'    -> familia 2, cabecalhos repetidos "1o/2o/3o Proponente"
+//   'plana'          -> familia 1, 1 linha = 1 unidade = 1 pessoa
 function detectarFamiliaPlanilha(headers) {
   if (!headers || headers.length < 3) return null;
   var h = headers.map(function(s) { return String(s || '').trim().toLowerCase(); });
+  var hNorm = h.map(function(s) { return s.normalize('NFKD').replace(/[̀-ͯ]/g, ''); });
+
+  // 1. Unificado (26 colunas A-Z): ja e o formato interno alvo, plenamente
+  // especificado. Testado primeiro por ser o mais estrito dos 5.
+  if (detectarFormatoPlanilhaUnificada(headers) === 'unificado') return 'unificado';
+
+  // 2. Familia 3 (W045A "Contatos das unidades" tabular): coluna 0 fala de
+  // unidade, existe coluna Nome e coluna Tipo logo no inicio, e ha coluna
+  // Celular, o que distingue esta familia do formato unificado de 26 colunas.
   var idxNome = h.indexOf('nome');
   var idxTipo = h.indexOf('tipo');
   var temUnidade = h[0].indexOf('unidade') !== -1;
   var temNome = idxNome !== -1 && idxNome <= 2;
   var temTipo = idxTipo !== -1 && idxTipo <= 3;
-  // Exige a coluna Celular: assinatura distintiva do W045A tabular, que separa
-  // esta familia do formato unificado (26 col) e do antigo do Superlogica.
   var temCelular = h.some(function(s) { return s.indexOf('celular') !== -1; });
   if (temUnidade && temNome && temTipo && temCelular) return 'w045a-contatos';
+
+  // 3. Familia 4 (Quattro, formato largo do Superlogica): muitas colunas
+  // (28 ou mais no formato original) mais rotulos caracteristicos de bloco,
+  // endereco, fracao e inquilino que nao aparecem nas familias mais simples.
+  var temBloco = hNorm.some(function(s) { return s.indexOf('bloco') !== -1 || s.indexOf('grupo') !== -1; });
+  var temEndereco = hNorm.some(function(s) { return s.indexOf('endereco') !== -1; });
+  var temFracao = hNorm.some(function(s) { return s.indexOf('fracao') !== -1; });
+  var temInquilino = hNorm.some(function(s) { return s.indexOf('inquilino') !== -1; });
+  if (headers.length >= 28 && temBloco && temEndereco && temFracao && temInquilino) return 'quattro';
+
+  // 4. Familia 2 (larga por proponentes): cabecalhos repetidos com sufixo
+  // ordinal ("1o Proponente", "2o Proponente", "3o Proponente"; tolera "1o",
+  // "1º" e "1 " como variacao do ordinal). 2 ou mais colunas de Proponente
+  // significa varias pessoas descritas na mesma linha.
+  var reProponente = /^\d+\s*o?\s*proponente$/;
+  var nProponentes = hNorm.filter(function(s) { return reProponente.test(s.replace(/\s+/g, ' ').trim()); }).length;
+  if (nProponentes >= 2) return 'proponentes';
+
+  // 5. Familia 1 (plana): assinatura minima Unidade + Nome + CPF ou CNPJ +
+  // Telefone + Email, sem repeticao de Proponente nem 28 ou mais colunas (o
+  // que caracterizaria a familia 4). E o formato mais generico, testado por ultimo.
+  var temDoc = hNorm.some(function(s) { return s.indexOf('cpf') !== -1 || s.indexOf('cnpj') !== -1; });
+  var temTelefone = hNorm.some(function(s) { return s.indexOf('telefone') !== -1 || s.indexOf('celular') !== -1 || s.indexOf('fone') !== -1; });
+  var temEmail = hNorm.some(function(s) { return s.indexOf('mail') !== -1; });
+  if (temUnidade && idxNome !== -1 && temDoc && temTelefone && temEmail && headers.length < 28) return 'plana';
+
   return null;
+}
+
+// Valida cada unidade agrupada (shape processUnidadesDataUnificada/processUnidadesData:
+// prop_* no nivel raiz + contatos_extras[]) e marca _erros/_valido em cada
+// item, sem alterar os parsers que a chamam. Reaproveitada pelas familias
+// Quattro, Proponentes e Plana pra que a mesma regra de erro (proprietario
+// ausente, documento invalido, unidade duplicada, coluna nao identificada)
+// valha nas 3 sem duplicar logica em cada parser. Erros excluem a unidade do
+// envio (ver confirmarRevisao) mas NUNCA some em silencio: fica visivel no
+// chip "Com erro" da tela de revisao.
+// B4 (vale pras 4 familias): a regra de documento e "e CPF VALIDO (11) OU
+// CNPJ VALIDO (14)", NUNCA "e CPF senao exclui". Proprietario pessoa juridica
+// (imobiliaria, SPE, construtora) e legitimo e nao pode ser reprovado.
+// processUnidadesData (Quattro) poe o documento em prop_cpf seja CPF ou CNPJ
+// (nao tem campo prop_cnpj proprio), entao o documento bruto e lido de
+// QUALQUER um dos dois campos antes de isCPF/isCNPJ decidirem pelo tamanho,
+// nunca amarrado a qual campo o parser usou pra guardar o valor.
+// M5: a mesma regra CPF-ou-CNPJ tambem valida o FORMATO do documento de cada
+// contato extra (dependente/inquilino) quando ha documento informado; nao
+// exige presenca (a maioria nao tem documento), so reprova formato invalido.
+function validarUnidadesAgrupadas(unidades, colunaDocAusente) {
+  var vistos = {};
+  var avisos = [];
+  if (colunaDocAusente) avisos.push('Coluna de CPF/CNPJ nao identificada na planilha, revise os documentos manualmente');
+  unidades.forEach(function(u) {
+    var erros = [];
+    var chave = (u.ST_UNIDADE_UNI || '') + '|' + (u.ST_BLOCO_UNI || '');
+    if (!u.prop_nome) erros.push('Unidade sem proprietario');
+    var docProprietario = u.prop_cpf || u.prop_cnpj || '';
+    if (colunaDocAusente) {
+      erros.push('Coluna de CPF/CNPJ nao identificada');
+    } else if (!docProprietario) {
+      erros.push('CPF/CNPJ ausente');
+    } else if (!isCPF(docProprietario) && !isCNPJ(docProprietario)) {
+      erros.push('CPF/CNPJ invalido');
+    }
+    (u.contatos_extras || []).forEach(function(c) {
+      var docExtra = (c && (c.cpf || c.cnpj)) || '';
+      if (docExtra && !isCPF(docExtra) && !isCNPJ(docExtra)) {
+        erros.push('CPF/CNPJ invalido em contato extra: ' + (c.nome || 'sem nome'));
+      }
+    });
+    if (vistos[chave]) erros.push('Unidade duplicada');
+    vistos[chave] = true;
+    u._erros = erros;
+    u._valido = erros.length === 0;
+  });
+  unidades.avisos = avisos;
+  return unidades;
+}
+
+// Converte a saida agrupada por unidade (prop_* + contatos_extras[], mesmo
+// shape de processUnidadesDataUnificada) numa lista plana de contatos: o
+// mesmo formato que abrirRevisao/renderRevisao ja sabem desenhar (usado hoje
+// por W045A, PDF e Normalizador IA). Isso permite que as familias novas
+// (Plana, Proponentes) e a Quattro reaproveitada passem pela MESMA tela de
+// revisao sem duplicar a logica de exibicao. O erro de validacao da unidade
+// (_erros/_valido) e herdado por todas as pessoas dela, ja que um erro como
+// "unidade duplicada" e do agrupamento, nao de uma pessoa isolada.
+function unidadesAgrupadasParaContatos(unidades, origemLabel) {
+  var contatos = [];
+  var seq = 0;
+  (unidades || []).forEach(function(u) {
+    var erros = u._erros || [];
+    var motivo = erros.length ? erros.join('; ') : ('Formato ' + origemLabel + ': dado estruturado, sem inferencia');
+    var confianca = erros.length ? 'incerta' : 'alta';
+    seq += 1;
+    contatos.push({
+      id: seq, unidade: u.ST_UNIDADE_UNI || '', bloco: u.ST_BLOCO_UNI || '',
+      nome: u.prop_nome || '', tipoOriginal: 'Proprietario',
+      papel: 'proprietario', confianca: confianca, motivo: motivo,
+      cpf: u.prop_cpf || '', cnpj: u.prop_cnpj || '', rg: u.prop_rg || '',
+      dtNasc: '', genero: '', email: u.prop_email || '',
+      ddi: (u.prop_fone || u.prop_cel) ? '55' : '', telefone: u.prop_cel || u.prop_fone || '', tipoTel: '',
+      cep: u.prop_cep || '', endereco: u.prop_endereco || '', numero: u.prop_numero || '',
+      complemento: u.prop_complemento || '', bairro: u.prop_bairro || '',
+      cidade: u.prop_cidade || '', estado: u.prop_estado || '', fracao: u.prop_fracao || '',
+      dtEntrada: '', dtSaida: '', recebeCobranca: '', obs: '',
+      _erros: erros, _valido: u._valido !== false
+    });
+    (u.contatos_extras || []).forEach(function(c) {
+      seq += 1;
+      contatos.push({
+        id: seq, unidade: u.ST_UNIDADE_UNI || '', bloco: u.ST_BLOCO_UNI || '',
+        nome: c.nome || '', tipoOriginal: c.tipo === 'inquilino' ? 'Inquilino' : 'Dependente',
+        papel: c.tipo === 'inquilino' ? 'inquilino' : 'dependente', confianca: confianca, motivo: motivo,
+        cpf: c.cpf || '', cnpj: c.cnpj || '', rg: c.rg || '',
+        dtNasc: c.dtNasc || '', genero: c.genero || '', email: c.email || '',
+        ddi: c.ddi || '', telefone: c.telefone || '', tipoTel: c.tipoTel || '',
+        cep: c.cep || '', endereco: c.endereco || '', numero: c.numero || '',
+        complemento: c.complemento || '', bairro: c.bairro || '',
+        cidade: c.cidade || '', estado: c.estado || '', fracao: '',
+        dtEntrada: c.dtEntrada || '', dtSaida: '', recebeCobranca: c.recebeCobranca || '', obs: '',
+        _erros: erros, _valido: u._valido !== false
+      });
+    });
+  });
+  return contatos;
+}
+
+// Familia 1 (Plana): 1 linha = 1 unidade = 1 pessoa (proprietario). Cabecalho
+// tipico "Unidade | Pavimento | Nome | CPF/CNPJ | Telefone | E-mail" na linha
+// 0. Localiza colunas por nome (tolerante a variacao), separa CPF de CNPJ
+// pela REGRA DURA de tamanho (limparDocumento, 11 digitos = CPF, 14 = CNPJ) e
+// valida cada unidade via validarUnidadesAgrupadas antes de devolver.
+function processFamiliaPlana(headers, rows) {
+  var hNorm = headers.map(function(s) {
+    return String(s || '').trim().toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
+  });
+  var acharCol = function(preds) {
+    for (var i = 0; i < hNorm.length; i++) {
+      for (var p = 0; p < preds.length; p++) { if (hNorm[i].indexOf(preds[p]) !== -1) return i; }
+    }
+    return -1;
+  };
+  var iUnidade = acharCol(['unidade']);
+  var iBloco   = acharCol(['bloco', 'grupo']);
+  var iNome    = acharCol(['nome']);
+  var iDoc     = acharCol(['cpf/cnpj', 'cpf', 'cnpj']);
+  var iTel     = acharCol(['telefone', 'celular', 'fone']);
+  var iEmail   = acharCol(['mail']);
+  // B1: confirma por CONTEUDO que a coluna encontrada pelo nome do cabecalho
+  // realmente guarda CPF/CNPJ; senao trata como coluna ausente.
+  iDoc = confirmarColunaPorConteudo(rows, iDoc, function(v) {
+    var d = limparDocumento(v);
+    return !!(d.cpf || d.cnpj);
+  });
+  var colunaDocAusente = (iDoc === -1);
+
+  var cleanVal = function(v) { return v === null || v === undefined ? '' : String(v).trim(); };
+  var cleanDigits = function(v) { return cleanVal(v).replace(/\D/g, ''); };
+
+  var out = [];
+  for (var ri = 0; ri < rows.length; ri++) {
+    var row = rows[ri];
+    if (!row || !row.length) continue;
+    var unidadeRaw = iUnidade >= 0 ? cleanVal(row[iUnidade]) : '';
+    if (!unidadeRaw) continue;
+    var doc = limparDocumento(iDoc >= 0 ? cleanVal(row[iDoc]) : '');
+    out.push({
+      _linha: ri + 2,
+      _unidadeRaw: unidadeRaw,
+      ST_UNIDADE_UNI: unidadeRaw,
+      ST_BLOCO_UNI: iBloco >= 0 ? cleanVal(row[iBloco]) : '',
+      prop_nome:  iNome >= 0 ? cleanVal(row[iNome]) : '',
+      prop_cpf:   doc.cpf,
+      prop_cnpj:  doc.cnpj,
+      prop_rg:    '',
+      prop_email: iEmail >= 0 ? cleanVal(row[iEmail]) : '',
+      prop_fone:  iTel >= 0 ? cleanDigits(row[iTel]) : '',
+      prop_cel:   '',
+      contatos_extras: []
+    });
+  }
+  return validarUnidadesAgrupadas(out, colunaDocAusente);
+}
+
+// Familia 2 (larga por proponentes): varias pessoas nas colunas 1o/2o/3o
+// Proponente na mesma linha (ex CADASTRO 2 ETAPA). Localiza o bloco de
+// colunas de cada proponente pela coluna "N Proponente" (nome) e busca
+// documento/RG/email/telefone dentro do intervalo ate o proximo bloco.
+// REGRA GERAL DO MOTOR (decisao 2): o 1o Proponente vira proprietario titular
+// da unidade; 2o, 3o e qualquer extra viram contatos_extras com tipo
+// dependente, nome puro, sem marca nenhuma.
+function processFamiliaProponentes(headers, rows) {
+  var hNorm = headers.map(function(s) {
+    return String(s || '').trim().toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '');
+  });
+  var reProponente = /^\d+\s*o?\s*proponente$/;
+  var blocosNome = [];
+  hNorm.forEach(function(h, i) {
+    var m = reProponente.test(h.replace(/\s+/g, ' ').trim());
+    if (m) blocosNome.push({ ordinal: parseInt(h, 10) || (blocosNome.length + 1), idx: i });
+  });
+  blocosNome.sort(function(a, b) { return a.idx - b.idx; });
+
+  var iUnidade = hNorm.indexOf('unidade');
+  // B3: localiza Bloco/Grupo/Empreendimento/Torre por nome, igual
+  // processFamiliaPlana faz com iBloco. Sem isso ST_BLOCO_UNI fica sempre
+  // vazio e unidades de blocos diferentes colidem na chave unidade+bloco,
+  // virando falso "duplicada". Testa cada coluna da esquerda pra direita,
+  // devolvendo a primeira que bater qualquer um dos rotulos.
+  var iBloco = -1;
+  var rotulosBloco = ['bloco', 'grupo', 'empreendimento', 'torre'];
+  for (var ib = 0; ib < hNorm.length && iBloco === -1; ib++) {
+    for (var rb = 0; rb < rotulosBloco.length; rb++) {
+      if (hNorm[ib].indexOf(rotulosBloco[rb]) !== -1) { iBloco = ib; break; }
+    }
+  }
+
+  var acharColNoIntervalo = function(preds, ini, fim) {
+    for (var i = ini; i < fim; i++) {
+      for (var p = 0; p < preds.length; p++) { if (hNorm[i].indexOf(preds[p]) !== -1) return i; }
+    }
+    return -1;
+  };
+
+  // Monta o mapa de colunas de cada proponente: o bloco vai da coluna "N
+  // Proponente" ate a proxima coluna "N Proponente" (ou o fim da planilha).
+  var blocos = blocosNome.map(function(b, i) {
+    var fim = (i + 1 < blocosNome.length) ? blocosNome[i + 1].idx : hNorm.length;
+    return {
+      iNome:  b.idx,
+      iDoc:   acharColNoIntervalo(['cpf', 'cnpj'], b.idx, fim),
+      iRg:    acharColNoIntervalo(['rg'], b.idx, fim),
+      iEmail: acharColNoIntervalo(['mail'], b.idx, fim),
+      iTel1:  acharColNoIntervalo(['telefone 1', 'telefone1', 'telefone'], b.idx, fim),
+      iTel2:  acharColNoIntervalo(['telefone 2', 'telefone2'], b.idx, fim)
+    };
+  });
+
+  var cleanVal = function(v) { return v === null || v === undefined ? '' : String(v).trim(); };
+  var cleanDigits = function(v) { return cleanVal(v).replace(/\D/g, ''); };
+  var colunaDocAusente = !blocos.length || blocos[0].iDoc === -1;
+  // B1: confirma por CONTEUDO que a coluna de documento do 1o Proponente
+  // realmente guarda CPF/CNPJ antes de confiar no nome do cabecalho.
+  if (!colunaDocAusente) {
+    var docConfirmado = confirmarColunaPorConteudo(rows, blocos[0].iDoc, function(v) {
+      var d = limparDocumento(v);
+      return !!(d.cpf || d.cnpj);
+    });
+    colunaDocAusente = (docConfirmado === -1);
+  }
+
+  var out = [];
+  for (var ri = 0; ri < rows.length; ri++) {
+    var row = rows[ri];
+    if (!row || !row.length) continue;
+    var unidadeRaw = iUnidade >= 0 ? cleanVal(row[iUnidade]) : '';
+    if (!unidadeRaw) continue;
+
+    var pessoas = blocos.map(function(b) {
+      var nome = cleanVal(row[b.iNome]);
+      if (!nome) return null;
+      var doc = limparDocumento(b.iDoc >= 0 ? cleanVal(row[b.iDoc]) : '');
+      var tel1 = b.iTel1 >= 0 ? cleanDigits(row[b.iTel1]) : '';
+      var tel2 = b.iTel2 >= 0 ? cleanDigits(row[b.iTel2]) : '';
+      return {
+        nome: nome, cpf: doc.cpf, cnpj: doc.cnpj,
+        rg: b.iRg >= 0 ? cleanVal(row[b.iRg]) : '',
+        email: b.iEmail >= 0 ? cleanVal(row[b.iEmail]) : '',
+        telefone: tel1 || tel2
+      };
+    }).filter(Boolean);
+
+    // B2: mesmo sem NENHUM proponente com nome, a unidade tem que entrar
+    // como item COM ERRO "Unidade sem proprietario" (validarUnidadesAgrupadas
+    // cuida disso via prop_nome vazio), nunca sumir em silencio. Espelha
+    // processFamiliaPlana, que sempre empurra a linha independente do nome.
+    var titular = pessoas[0] || { nome: '', cpf: '', cnpj: '', rg: '', email: '', telefone: '' };
+    var extras = pessoas.length > 1 ? pessoas.slice(1) : [];
+
+    out.push({
+      _linha: ri + 2,
+      _unidadeRaw: unidadeRaw,
+      ST_UNIDADE_UNI: unidadeRaw,
+      ST_BLOCO_UNI: iBloco >= 0 ? cleanVal(row[iBloco]) : '',
+      prop_nome:  titular.nome,
+      prop_cpf:   titular.cpf,
+      prop_cnpj:  titular.cnpj,
+      prop_rg:    titular.rg,
+      prop_email: titular.email,
+      prop_fone:  titular.telefone,
+      prop_cel:   '',
+      contatos_extras: extras.map(function(p) {
+        return {
+          tipo: 'dependente', tipoResp: '4', nome: p.nome, cpf: p.cpf, cnpj: p.cnpj,
+          rg: p.rg, email: p.email, telefone: p.telefone, ddi: p.telefone ? '55' : '',
+          dtEntrada: '', recebeCobranca: ''
+        };
+      })
+    });
+  }
+  return validarUnidadesAgrupadas(out, colunaDocAusente);
 }
 
 // Separa o texto da unidade em numero e bloco. No W045A o numero vem primeiro
@@ -2958,6 +3448,51 @@ function limparDocumento(str) {
 function anexarObs(obsAtual, trecho) {
   if (!trecho) return obsAtual || '';
   return obsAtual ? (obsAtual + ' | ' + trecho) : trecho;
+}
+
+// B1 (pre-correcao NAO destrutiva, autorizada pelo Matheus): confirma, linha
+// a linha, que Telefone/Celular/Endereco/.../Fracao estao na posicao
+// esperada usando a camada de assinatura de conteudo (CPF/CNPJ, email, UF,
+// CEP, fracao). Quando o encaixe da linha original bate PIOR que o encaixe
+// com os campos de Celular em diante deslocados uma posicao a direita
+// (sintoma classico de Telefone vazio empurrando o resto da linha pra
+// esquerda), corrige SO aquela linha antes de chamar parseW045AContatos, que
+// continua intocado e recebe dado ja limpo, aplicando a mesma logica de
+// papel/agrupamento de sempre. Localiza colunas do mesmo jeito tolerante que
+// parseW045AContatos (este e um passo anterior e independente do parser).
+function corrigirDeslocamentoW045A(headers, rawRows) {
+  var h = headers.map(function(s) { return String(s || '').trim().toLowerCase(); });
+  var acharCol = function(preds) {
+    for (var i = 0; i < h.length; i++) {
+      for (var p = 0; p < preds.length; p++) { if (h[i].indexOf(preds[p]) !== -1) return i; }
+    }
+    return -1;
+  };
+  var iTel    = acharCol(['telefone']);
+  var iEstado = acharCol(['estado', 'uf']);
+  var iCep    = acharCol(['cep']);
+  var iDoc    = acharCol(['cpf', 'cnpj']);
+  var iEmail  = acharCol(['mail']);
+  var iFracao = acharCol(['fração', 'fracao']);
+  // So corrige quando ha um bloco continuo Telefone..Fracao pra deslocar;
+  // senao nao ha o que comparar e as linhas voltam intactas.
+  if (iTel < 0 || iFracao < 0 || iFracao <= iTel) return rawRows;
+
+  var colMap = { cpf: iDoc, cnpj: iDoc, email: iEmail, estado: iEstado, cep: iCep, fracao: iFracao };
+  return rawRows.map(function(row) {
+    if (!row || !row.length) return row;
+    var scoreOriginal = assinarLinha(row, colMap);
+    // Candidato: Celular em diante desloca uma posicao a direita (Telefone
+    // "recebe" uma celula vazia de volta), recuperando o valor real que teria
+    // ficado deslocado por causa de um Telefone vazio na planilha de origem.
+    var candidato = row.slice();
+    for (var i = iFracao; i > iTel; i--) candidato[i] = row[i - 1];
+    candidato[iTel] = '';
+    var scoreCandidato = assinarLinha(candidato, colMap);
+    // So troca quando o encaixe deslocado bate ESTRITAMENTE melhor: nunca
+    // reordena uma linha que ja esta correta.
+    return scoreCandidato > scoreOriginal ? candidato : row;
+  });
 }
 
 // Le a planilha A2 (linhas a partir do cabecalho, SEM filtrar as linhas de
@@ -3396,6 +3931,41 @@ function inferirPapeis(contatos) {
   return contatos;
 }
 
+// C2: valida documento (CPF/CNPJ) por contato no caminho W045A, com a MESMA
+// regra do B4 ("e CPF valido de 11 digitos OU CNPJ valido de 14, nunca so
+// CPF"). parseW045AContatos + inferirPapeis produzem uma lista PLANA de
+// contatos (nao o shape agrupado de validarUnidadesAgrupadas), entao valida
+// direto sobre essa lista, sem forcar o shape agrupado nem reescrever os dois
+// parsers. Semantica igual ao resto do fluxo: proprietario sem documento
+// valido = erro; dependente/inquilino so reprovam quando HA documento e o
+// formato e invalido (M5), documento ausente neles nao e erro. Unidade que
+// nao elegeu nenhum proprietario (ex todos os contatos foram descartados)
+// marca "Unidade sem proprietario" em quem sobrou. Marca _erros/_valido em
+// cada contato pra cair no chip "Com erro" da tela de revisao (decisao 3:
+// nunca em silencio).
+function validarDocumentosW045A(contatos) {
+  var temProprietario = {};
+  (contatos || []).forEach(function(c) {
+    if (c.papel === 'proprietario') temProprietario[c.unidade + '|' + c.bloco] = true;
+  });
+  (contatos || []).forEach(function(c) {
+    var erros = [];
+    var doc = c.cpf || c.cnpj || '';
+    if (c.papel === 'proprietario') {
+      if (!doc) erros.push('CPF/CNPJ ausente');
+      else if (!isCPF(doc) && !isCNPJ(doc)) erros.push('CPF/CNPJ invalido');
+    } else if (c.papel !== 'descartar' && doc && !isCPF(doc) && !isCNPJ(doc)) {
+      erros.push('CPF/CNPJ invalido');
+    }
+    if (c.papel !== 'descartar' && !temProprietario[c.unidade + '|' + c.bloco]) {
+      erros.push('Unidade sem proprietario');
+    }
+    c._erros = erros;
+    c._valido = erros.length === 0;
+  });
+  return contatos;
+}
+
 // Converte um contato revisado numa linha de 26 colunas no formato unificado,
 // para reaproveitar processUnidadesDataUnificada (logica de agrupamento e envio
 // ja testada) sem reimplementar a montagem do payload do Superlogica.
@@ -3770,10 +4340,15 @@ var REVISAO_PAPEL_OPCOES = [
   { v: 'descartar',    label: 'Descartar' }
 ];
 
-function abrirRevisao(contatos, sourceName) {
+// Abre a tela de revisao com a lista plana de contatos ja classificada. O 3o
+// parametro (linhasOrigem) alimenta o resumo fixo do funil "X linhas na
+// origem -> Y unidades -> Z pessoas"; quando quem chama nao sabe o numero
+// exato de linhas lidas (PDF, IA), usa a quantidade de contatos como proxy.
+function abrirRevisao(contatos, sourceName, linhasOrigem) {
   _revisaoContatos = contatos;
   _revisaoSource = sourceName || '';
   _revisaoFiltro = 'todos';
+  _revisaoLinhasOrigem = (typeof linhasOrigem === 'number') ? linhasOrigem : (contatos ? contatos.length : 0);
   renderRevisao();
   var card = document.getElementById('revisao-unidades');
   card.style.display = 'block';
@@ -3784,7 +4359,7 @@ function abrirRevisao(contatos, sourceName) {
 function abrirRevisaoFromNormalizado() {
   if (!_normalizarRows || !_normalizarRows.length) { toast('Nada para revisar', 'err'); return; }
   var contatos = inferirPapeis(_normalizarRows.map(linha26ParaContato));
-  abrirRevisao(contatos, _normalizarSourceName || 'normalizado');
+  abrirRevisao(contatos, _normalizarSourceName || 'normalizado', _normalizarRows.length);
 }
 
 // Cor de borda por nivel de confianca: alta verde, media amarelo, incerta vermelho.
@@ -3800,13 +4375,14 @@ function corConfianca(conf) {
 function renderRevisao() {
   var table = document.getElementById('revisao-table');
   var resumo = document.getElementById('revisao-resumo');
+  var funil = document.getElementById('revisao-funil');
   var esc = function(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   };
   var cont = _revisaoContatos || [];
-  var nProp = 0, nInq = 0, nDep = 0, nDesc = 0, nIncerto = 0, nAlta = 0, nMedia = 0;
+  var nProp = 0, nInq = 0, nDep = 0, nDesc = 0, nIncerto = 0, nAlta = 0, nMedia = 0, nErro = 0;
   cont.forEach(function(c) {
     if (c.papel === 'proprietario') nProp++;
     else if (c.papel === 'inquilino') nInq++;
@@ -3815,13 +4391,26 @@ function renderRevisao() {
     if (c.confianca === 'incerta') nIncerto++;
     else if (c.confianca === 'alta') nAlta++;
     else if (c.confianca === 'media') nMedia++;
+    if (c._valido === false) nErro++;
   });
   var unidades = {};
   cont.forEach(function(c) { if (c.papel !== 'descartar') unidades[c.unidade + '|' + c.bloco] = 1; });
+  var unidadesTotal = {};
+  cont.forEach(function(c) { unidadesTotal[c.unidade + '|' + c.bloco] = 1; });
+
+  // Linha de resumo fixa do funil (sempre visivel, nunca filtravel): mostra o
+  // caminho completo dos dados, da linha crua da planilha ate a pessoa
+  // identificada, pra deixar claro quando a contagem nao bate 1 pra 1.
+  if (funil) {
+    funil.innerHTML = _revisaoLinhasOrigem + ' linhas na origem &rarr; ' +
+      Object.keys(unidadesTotal).length + ' unidades &rarr; ' + cont.length + ' pessoas';
+  }
+
   // Resumo do topo sempre reflete a lista inteira, independente do filtro de status escolhido abaixo.
   resumo.innerHTML = Object.keys(unidades).length + ' unidades · ' + nProp + ' proprietários · ' +
     nInq + ' inquilinos · ' + nDep + ' dependentes · ' + nDesc + ' descartados' +
-    (nIncerto ? ' · <b style="color:var(--danger)">' + nIncerto + ' incertos para decidir</b>' : '');
+    (nIncerto ? ' · <b style="color:var(--danger)">' + nIncerto + ' incertos para decidir</b>' : '') +
+    (nErro ? ' · <b style="color:var(--danger)">' + nErro + ' com erro, excluidos do envio</b>' : '');
 
   // Chips de filtro por status (confianca): selecao unica, contagem ao lado de cada rotulo.
   var chipsEl = document.getElementById('revisao-filtro-chips');
@@ -3830,7 +4419,8 @@ function renderRevisao() {
       { v: 'todos', label: 'Todos (' + cont.length + ')' },
       { v: 'alta', label: 'Confirmado (' + nAlta + ')' },
       { v: 'media', label: 'Inferido (' + nMedia + ')' },
-      { v: 'incerta', label: 'Incerto (' + nIncerto + ')' }
+      { v: 'incerta', label: 'Incerto (' + nIncerto + ')' },
+      { v: 'erro', label: 'Com erro (' + nErro + ')' }
     ];
     chipsEl.innerHTML = chipsDef.map(function(ch) {
       var ativo = ch.v === _revisaoFiltro ? ' active' : '';
@@ -3839,7 +4429,9 @@ function renderRevisao() {
   }
 
   // Tabela exibe so a lista filtrada pelo status escolhido; o resumo acima nunca filtra.
-  var contFiltrado = _revisaoFiltro === 'todos' ? cont : cont.filter(function(c) { return c.confianca === _revisaoFiltro; });
+  var contFiltrado = _revisaoFiltro === 'todos' ? cont
+    : _revisaoFiltro === 'erro' ? cont.filter(function(c) { return c._valido === false; })
+    : cont.filter(function(c) { return c.confianca === _revisaoFiltro; });
 
   var head = '<thead><tr>' +
     ['Unidade', 'Papel', 'Nome', 'Documento', 'Telefone', 'Email', 'Tipo no doc', 'Por quê']
@@ -3898,11 +4490,14 @@ function descartarRevisao() {
 
 // Confirma a revisao: emite linhas de 26 colunas dos contatos mantidos, monta o
 // modelo de import via processUnidadesDataUnificada e mostra a previa de import.
-// Nada e enviado aqui; o envio continua no botao Enviar unidades.
+// Nada e enviado aqui; o envio continua no botao Enviar unidades. Exclui do
+// envio tanto quem foi marcado Descartar quanto quem ficou invalido na
+// validacao (_valido === false); a linha invalida continua visivel no chip
+// "Com erro" da tela de revisao (decisao 3), nunca some em silencio.
 function confirmarRevisao() {
   var cont = _revisaoContatos || [];
-  var ativos = cont.filter(function(c) { return c.papel !== 'descartar'; });
-  if (!ativos.length) { toast('Nada para importar: todos descartados', 'err'); return; }
+  var ativos = cont.filter(function(c) { return c.papel !== 'descartar' && c._valido !== false; });
+  if (!ativos.length) { toast('Nada para importar: tudo descartado ou com erro', 'err'); return; }
 
   var rows = ativos.map(contatoParaLinha26);
   var processed = processUnidadesDataUnificada(NORMALIZAR_HEADERS, rows);
@@ -4708,81 +5303,192 @@ function setAudioProgress(pct, label, log) {
   if (log !== undefined) document.getElementById('audio-log').textContent = log;
 }
 
+// ─── Compressão condicional de áudio (ffmpeg.wasm) ─────────────────────────
+// Áudio grande estoura o limite de ~5 min de upload do edge do Railway (502).
+// Solução: ACIMA de 60 MB, comprime automático no navegador pra mono/16kHz/64kbps
+// (setting TRAVADO, validado em 2026-07-07: preserva números, valores e decisões da
+// transcrição) antes de subir. ABAIXO de 60 MB, sobe original sem nem carregar o
+// ffmpeg.wasm (~30 MB). O usuário não escolhe nada; decide pelo tamanho.
+const AUDIO_COMPRESS_THRESHOLD = 60 * 1024 * 1024; // 60 MB
+let _ffmpeg = null;
+let _ffmpegProgressCb = null;
+
+function _injectScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector('script[data-vendor="' + src + '"]')) return resolve();
+    const s = document.createElement('script');
+    s.src = src; s.dataset.vendor = src;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('falha ao carregar ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+// Carrega o ffmpeg.wasm sob demanda (só quando precisa comprimir). Self-hosted em
+// /vendor/ffmpeg (sem CDN, sem COOP/COEP: o core single-thread não usa SharedArrayBuffer).
+async function carregarFfmpeg() {
+  if (_ffmpeg) return _ffmpeg;
+  await _injectScript('/vendor/ffmpeg/ffmpeg.js');
+  await _injectScript('/vendor/ffmpeg/util.js');
+  const ff = new window.FFmpegWASM.FFmpeg();
+  ff.on('progress', ({ progress }) => { if (_ffmpegProgressCb) _ffmpegProgressCb(progress); });
+  await ff.load({ coreURL: '/vendor/ffmpeg/ffmpeg-core.js', wasmURL: '/vendor/ffmpeg/ffmpeg-core.wasm' });
+  _ffmpeg = ff;
+  return ff;
+}
+
+// Comprime só se o arquivo for grande. Retorna { file, comprimido, origMB?, novoMB? }.
+async function comprimirAudioSeGrande(file, sig) {
+  if (file.size < AUDIO_COMPRESS_THRESHOLD) return { file, comprimido: false };
+  const origMB = (file.size / 1048576).toFixed(1);
+  setAudioProgress(2, 'Áudio grande (' + origMB + 'MB), otimizando para upload...', 'Carregando compressor (única vez)...');
+  const ff = await carregarFfmpeg();
+  _ffmpegProgressCb = (p) => {
+    const pct = Math.max(2, Math.min(99, Math.round(p * 100)));
+    setAudioProgress(pct, 'Áudio grande, otimizando para upload... ' + pct + '%', 'Comprimindo (mono 64k 16kHz)...');
+  };
+  try {
+    const { fetchFile } = window.FFmpegUtil;
+    await ff.writeFile('in', await fetchFile(file));
+    // SETTING TRAVADO (aprovado 2026-07-07): mono, 16 kHz, 64 kbps mp3. Não expor ao usuário.
+    await ff.exec(['-i', 'in', '-ac', '1', '-ar', '16000', '-b:a', '64k', '-f', 'mp3', 'out.mp3'], -1, sig ? { signal: sig } : undefined);
+    const data = await ff.readFile('out.mp3');
+    await ff.deleteFile('in').catch(() => {});
+    await ff.deleteFile('out.mp3').catch(() => {});
+    const nome = file.name.replace(/\.[^.]+$/, '') + '.mp3';
+    const novo = new File([data], nome, { type: 'audio/mpeg' });
+    const novoMB = (novo.size / 1048576).toFixed(1);
+    setAudioProgress(15, 'Otimizado: ' + origMB + 'MB → ' + novoMB + 'MB', 'Compressão concluída ✓');
+    return { file: novo, comprimido: true, origMB, novoMB };
+  } catch (e) {
+    _ffmpeg = null; // instância pode ter sido terminada; força reload limpo na próxima
+    throw e;
+  } finally { _ffmpegProgressCb = null; }
+}
+
+// fetch com timeout de etapa (via AbortController). Marca err.__timeout=true no estouro,
+// pra o retry saber que NÃO deve re-tentar (não re-sobe um arquivo grande à toa).
+async function fetchComTimeout(url, opts, ms, signalExterno) {
+  const ac = new AbortController();
+  let estourou = false;
+  const timer = setTimeout(() => { estourou = true; ac.abort(); }, ms);
+  const onAbort = () => ac.abort();
+  if (signalExterno) signalExterno.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await fetch(url, Object.assign({}, opts, { signal: ac.signal }));
+  } catch (e) {
+    if (estourou) { const err = new Error('esta etapa demorou demais (timeout)'); err.__timeout = true; throw err; }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+    if (signalExterno) signalExterno.removeEventListener('abort', onAbort);
+  }
+}
+
 async function processarArquivoAudio(file) {
   audioAbortController = new AbortController();
+  const sig = audioAbortController.signal;
   document.getElementById('audio-file-nome').textContent = file.name;
   document.getElementById('audio-progress-wrap').style.display = 'block';
   document.getElementById('btn-cancelar-audio').style.display = 'inline-flex';
   document.getElementById('audio-log').textContent = '';
 
+  const authH = () => (window.AUTH_TOKEN ? { 'Authorization': 'Bearer ' + window.AUTH_TOKEN } : {});
+  const pctAtual = () => parseInt(document.getElementById('audio-progress-bar').style.width) || 5;
+  // Retry SÓ em falha rápida/transitória (rede, 5xx imediato). NUNCA em timeout de etapa
+  // nem em cancelamento — re-subir cego um arquivo grande que estourou o tempo é o que
+  // não pode acontecer. Upload e transcrição são grátis, então o retry ali é seguro.
+  async function comRetry(fn, label) {
+    let ultimo;
+    for (let n = 1; n <= 3; n++) { // 1 tentativa + 2 retries
+      if (sig.aborted) throw new Error('Cancelado');
+      try { return await fn(); }
+      catch (e) {
+        if (e.message === 'Cancelado' || e.name === 'AbortError' || e.__timeout) throw e;
+        ultimo = e;
+        if (n < 3) { setAudioProgress(pctAtual(), label + ' falhou, tentando de novo (' + (n + 1) + '/3)...', String(e.message || e)); await new Promise(r => setTimeout(r, 1500 * n)); }
+      }
+    }
+    throw ultimo;
+  }
+
   try {
-    // PASSO 1: Upload do arquivo
-    const tamanhoMB = (file.size / 1024 / 1024).toFixed(1);
-    setAudioProgress(5, `Enviando arquivo (${tamanhoMB}MB)...`, 'Conectando ao AssemblyAI...');
+    // PASSO 0: comprime se for grande (senão sobe o original sem tocar)
+    const comp = await comprimirAudioSeGrande(file, sig);
+    const arquivo = comp.file;
+    const tamMB = (arquivo.size / 1048576).toFixed(1);
 
-    const uploadResp = await apiAuthFetch(AAI_UPLOAD_URL, {
-      method: 'POST',
-      body: file,
-      signal: audioAbortController?.signal
-    });
+    // PASSO 1: upload (retry só em falha rápida; timeout de etapa de 6 min)
+    setAudioProgress(comp.comprimido ? 18 : 5, 'Enviando arquivo (' + tamMB + 'MB)...', comp.comprimido ? 'Enviando versão otimizada...' : 'Conectando ao AssemblyAI...');
+    const upload_url = await comRetry(async () => {
+      const r = await fetchComTimeout(AAI_UPLOAD_URL, { method: 'POST', headers: authH(), body: arquivo }, 6 * 60 * 1000, sig);
+      if (!r.ok) throw new Error('Falha no upload: HTTP ' + r.status);
+      const j = await r.json();
+      if (!j.upload_url) throw new Error('upload não retornou URL');
+      return j.upload_url;
+    }, 'Upload');
+    setAudioProgress(30, 'Arquivo enviado! Iniciando transcrição...', 'Upload concluído ✓');
 
-    if (!uploadResp.ok) throw new Error('Falha no upload: ' + uploadResp.status);
-    const { upload_url } = await uploadResp.json();
-    setAudioProgress(20, 'Arquivo enviado! Iniciando transcrição...', 'Upload concluído ✓');
+    // PASSO 2: inicia transcrição (retry só em falha rápida; timeout 30s)
+    const id = await comRetry(async () => {
+      const r = await fetchComTimeout(AAI_TRANSCRIPT_URL, {
+        method: 'POST',
+        headers: Object.assign({ 'content-type': 'application/json' }, authH()),
+        body: JSON.stringify({
+          audio_url: upload_url,
+          // universal-3-5-pro com fallback universal-2. keyterms_prompt e prompt são
+          // mutuamente exclusivos; language_detection é exclusivo com language_code.
+          speech_models: ['universal-3-5-pro', 'universal-2'],
+          language_detection: true,
+          speaker_labels: true,
+          keyterms_prompt: [
+            'síndico', 'subsíndico', 'conselho fiscal', 'quórum', 'fundo de reserva',
+            'convenção', 'regimento interno', 'taxa condominial', 'rateio',
+            'prestação de contas', 'inadimplência', 'assembleia geral ordinária',
+            'assembleia geral extraordinária', 'previsão orçamentária', 'ata'
+          ],
+          punctuate: true, format_text: true, disfluencies: false
+        })
+      }, 30 * 1000, sig);
+      if (!r.ok) throw new Error('Falha ao iniciar transcrição: HTTP ' + r.status);
+      const j = await r.json();
+      if (!j.id) throw new Error('transcrição não retornou ID');
+      return j.id;
+    }, 'Início da transcrição');
+    setAudioProgress(35, 'Transcrevendo... (pode levar alguns minutos)', 'ID: ' + id);
 
-    // PASSO 2: Inicia transcrição
-    const transcriptResp = await apiAuthFetch(AAI_TRANSCRIPT_URL, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        audio_url: upload_url,
-        language_code: 'pt',
-        speech_models: ['universal-2'],
-        punctuate: true,
-        format_text: true,
-        disfluencies: false
-      }),
-      signal: audioAbortController?.signal
-    });
-
-    if (!transcriptResp.ok) throw new Error('Falha ao iniciar transcrição: ' + transcriptResp.status);
-    const { id } = await transcriptResp.json();
-    setAudioProgress(25, 'Transcrevendo... (pode levar alguns minutos)', 'ID: ' + id);
-
-    // PASSO 3: Poll até concluir
-    let progresso = 25;
-    await new Promise((resolve, reject) => {
+    // PASSO 3: poll até concluir. Timeout global de 25 min; erros transitórios de poll
+    // só re-consultam (não derrubam). Ao concluir/errar/estourar, para o intervalo.
+    const prazo = Date.now() + 25 * 60 * 1000;
+    let progresso = 35;
+    const texto = await new Promise((resolve, reject) => {
       pollTimer = setInterval(async () => {
-        if (audioAbortController?.signal.aborted) { clearInterval(pollTimer); reject(new Error('Cancelado')); return; }
+        if (sig.aborted) { clearInterval(pollTimer); pollTimer = null; reject(new Error('Cancelado')); return; }
+        if (Date.now() > prazo) { clearInterval(pollTimer); pollTimer = null; const e = new Error('a transcrição excedeu 25 min'); e.__timeout = true; reject(e); return; }
         try {
-          const pollResp = await apiAuthFetch(AAI_POLL_BASE + id);
-          const result = await pollResp.json();
-
-          if (result.status === 'completed') {
-            clearInterval(pollTimer);
-            setAudioProgress(100, 'Transcrição concluída!', result.text?.slice(0, 200) + '...');
-            document.getElementById('ata-transcricao').value = result.text || '';
-            document.getElementById('btn-cancelar-audio').style.display = 'none';
-            toast('Transcrição concluída! ' + (result.text?.length || 0) + ' caracteres', 'ok');
-            resolve();
-          } else if (result.status === 'error') {
-            clearInterval(pollTimer);
-            reject(new Error(result.error || 'Erro na transcrição'));
-          } else {
-            // ainda processando
-            progresso = Math.min(progresso + 2, 90);
-            setAudioProgress(progresso, 'Transcrevendo... (' + result.status + ')', 'Aguardando AssemblyAI...');
-          }
-        } catch(e) { if (e.name !== 'AbortError') console.error(e); }
+          const r = await fetchComTimeout(AAI_POLL_BASE + id, { headers: authH() }, 20 * 1000, sig);
+          const result = await r.json();
+          if (result.status === 'completed') { clearInterval(pollTimer); pollTimer = null; resolve(result.text || ''); }
+          else if (result.status === 'error') { clearInterval(pollTimer); pollTimer = null; reject(new Error(result.error || 'erro na transcrição')); }
+          else { progresso = Math.min(progresso + 2, 92); setAudioProgress(progresso, 'Transcrevendo... (' + result.status + ')', 'Aguardando AssemblyAI...'); }
+        } catch (e) { if (e.name !== 'AbortError' && !e.__timeout) console.warn('poll transitório, reconsulta:', e.message); }
       }, 3000);
     });
 
-  } catch(e) {
-    if (e.name === 'AbortError' || e.message === 'Cancelado') return;
-    setAudioProgress(0, 'Erro: ' + e.message, '');
-    document.getElementById('audio-log').innerHTML = '<span style="color:var(--danger)">' + e.message + '</span>';
+    setAudioProgress(100, 'Transcrição concluída!', texto.slice(0, 200) + '...');
+    document.getElementById('ata-transcricao').value = texto;
     document.getElementById('btn-cancelar-audio').style.display = 'none';
-    toast('Erro: ' + e.message, 'err');
+    toast('Transcrição concluída! ' + texto.length + ' caracteres' + (comp.comprimido ? ' (áudio otimizado)' : ''), 'ok');
+
+  } catch (e) {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    if (e.name === 'AbortError' || e.message === 'Cancelado') return; // cancelamento: silencioso
+    // Erro SEMPRE visível: mensagem clara na tela + toast, e o botão volta ao normal.
+    const msg = e.__timeout ? 'Tempo esgotado nesta etapa. Tente novamente.' : (e.message || 'erro');
+    setAudioProgress(0, 'Erro: ' + msg, '');
+    document.getElementById('audio-log').innerHTML = '<span style="color:var(--danger)">' + msg + '</span>';
+    document.getElementById('btn-cancelar-audio').style.display = 'none';
+    toast('Erro na transcrição: ' + msg, 'err');
   }
 }
 
@@ -5591,6 +6297,23 @@ function baixarPlanilhaNormalizada() {
   toast('Planilha baixada', 'ok');
 }
 
+// Baixa a planilha 26 colunas com os contatos ativos da tela de revisao
+// (mesmos que seriam enviados por confirmarRevisao). Disponivel pras 4
+// familias, nao so pro Normalizador IA: qualquer origem que passe pela tela
+// de revisao ganha o mesmo botao de baixar antes de importar.
+function baixarRevisaoXLSX() {
+  var cont = _revisaoContatos || [];
+  var ativos = cont.filter(function(c) { return c.papel !== 'descartar' && c._valido !== false; });
+  if (!ativos.length) { toast('Nada pra baixar', 'err'); return; }
+  var aoa = [NORMALIZAR_HEADERS.slice()].concat(ativos.map(contatoParaLinha26));
+  var ws = XLSX.utils.aoa_to_sheet(aoa);
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Unidades');
+  var baseName = (_revisaoSource || 'unidades').replace(/\.[^.]+$/, '');
+  XLSX.writeFile(wb, baseName + '_revisado.xlsx');
+  toast('Planilha baixada', 'ok');
+}
+
 function limparAta() {
   document.getElementById('ata-cond').value = '';
   document.getElementById('ata-data').value = '';
@@ -5690,48 +6413,77 @@ async function gerarAtaIA() {
     'Gere a ata completa seguindo todas as regras e estrutura do sistema. Use [a confirmar] em qualquer dado ausente.'
   ].join('\n');
 
-  // UI: loading state
+  // UI: loading state com contador ao vivo. O botão mostra os segundos correndo
+  // (ticker local de 1s) pra deixar claro que está gerando e não travou.
   const btn = document.getElementById('btn-gerar-ata');
   const btnTextoOriginal = btn.textContent;
   btn.disabled = true;
-  btn.textContent = '⏳ Gerando ata...';
+  const geracaoT0 = Date.now();
+  btn.textContent = '⏳ Gerando ata... 0s';
+  const progTimer = setInterval(() => {
+    const seg = Math.round((Date.now() - geracaoT0) / 1000);
+    btn.textContent = `⏳ Gerando ata... ${seg}s`;
+  }, 1000);
+  toast('Gerando ata... pode levar até 1 minuto', 'info');
 
   try {
-    // Engine v2: backend monta system prompt (SKILL.md + contexto Grupo Service
-    // + regras anti-erro) e faz retry Sonnet → Opus com validação pós-geração.
+    // Geração ASSÍNCRONA (job + polling). Antes era uma requisição longa única, mas
+    // o edge do Railway bufferiza o corpo da resposta e o Safari derrubava a conexão
+    // ociosa ("Load failed") antes de a ata ficar pronta. Agora: o POST dispara a
+    // geração no servidor e volta na hora com um jobId; consultamos o status a cada
+    // 4s até 'done'/'error'. Cada request é curto, imune a timeout de borda e a idle
+    // do navegador. O backend monta o system prompt e faz retry Sonnet → Opus com
+    // validação pós-geração; o payload final ({ ata, modelo_usado, ... }) é o mesmo.
     const resp = await apiAuthFetch('/api/atas/gerar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userMessage })
     });
-    // Resposta em streaming NDJSON com heartbeat (mata o 502 do edge). O servidor
-    // manda pings enquanto gera e um evento final 'done' com o payload completo,
-    // no mesmo shape de antes. Descartamos os pings e usamos so o evento final. O
-    // texto da ata chega intacto no campo 'ata'. Erro antes do stream vem como JSON
-    // normal (resp nao ok); erro durante a geracao vem como evento 'error'.
     if (!resp.ok) {
       const errJson = await resp.json().catch(() => ({}));
       throw new Error(errJson.detalhe || errJson.erro || ('HTTP ' + resp.status));
     }
+    const inicio = await resp.json().catch(() => ({}));
+    const jobId = inicio.jobId;
+    if (!jobId) throw new Error('servidor não retornou o identificador da geração');
+
+    // Polling curto até concluir. Teto de 25min como salvaguarda (uma ata de reunião
+    // de 3h leva ~9-15 min de geração no motor fracionado; 10 min não dava margem e o
+    // front desistia enquanto o job do servidor ainda completava — a ata era gerada mas
+    // não resgatada, "gastava token sem entregar"). O job é assíncrono e limitado pelo
+    // teto de 7 chamadas (MAX_CHAMADAS_ANTHROPIC_POR_ATA), então o custo já está travado
+    // no servidor; este teto só existe pra não pendurar o front se o servidor morrer.
+    // Cada consulta usa cache: 'no-store' (o navegador não guarda nem revalida com
+    // If-None-Match, então nunca recebe 304 — que antes travava a leitura do resultado).
+    // AbortController de 15s por consulta pra um request pendurado não travar o laço.
     let payload = null;
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
+    let errosSeguidos = 0;
+    const prazoMax = Date.now() + 25 * 60 * 1000;
     for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const linha = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (!linha) continue;
-        let ev;
-        try { ev = JSON.parse(linha); } catch (_) { continue; }
-        if (ev.type === 'ping') continue;
-        if (ev.type === 'error') throw new Error(ev.detalhe || ev.erro || ('HTTP ' + ev.status));
-        if (ev.type === 'done') payload = ev;
+      await new Promise((r) => setTimeout(r, 4000));
+      if (Date.now() > prazoMax) throw new Error('tempo esgotado (25 min) — tente novamente');
+      let st;
+      try {
+        const ac = new AbortController();
+        const to = setTimeout(() => ac.abort(), 15000);
+        try {
+          st = await apiAuthFetch('/api/atas/gerar/status/' + encodeURIComponent(jobId), { signal: ac.signal, cache: 'no-store' });
+        } finally { clearTimeout(to); }
+      } catch (_) { continue; } // rede caiu/abortou: tenta de novo no próximo ciclo
+      // Trata status HTTP fora do contrato do job, pra não mascarar de "timeout".
+      if (st.status === 304) continue;                 // não modificado (defensivo): reconsulta
+      if (st.status === 404) continue;                 // job ainda não visível ou processo reiniciou
+      if (st.status === 429) { await new Promise((r) => setTimeout(r, 6000)); continue; } // rate limit: espera mais
+      if (st.status === 401 || st.status === 403) throw new Error('sessão expirada — entre novamente e refaça');
+      if (!st.ok) {                                     // 5xx/inesperado: tolera transitório, desiste após 3
+        if (++errosSeguidos >= 3) throw new Error('erro no servidor ao consultar o status (HTTP ' + st.status + ')');
+        continue;
       }
+      errosSeguidos = 0;
+      const body = await st.json().catch(() => ({}));
+      if (body.status === 'processing') continue;
+      if (body.status === 'error') throw new Error(body.detalhe || body.erro || ('HTTP ' + body.status));
+      if (body.status === 'done') { payload = body; break; }
     }
     if (!payload) throw new Error('resposta incompleta do servidor');
     const texto = (payload.ata || '').trim();
@@ -5741,12 +6493,15 @@ async function gerarAtaIA() {
     const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     document.getElementById('ata-gerada-conteudo').innerHTML = renderAtaBlocos(texto, escHtml);
     document.getElementById('ata-gerada-modal').style.display = 'flex';
-    const sufixoModelo = payload.fallback ? ' [fallback Opus 4.7]' : '';
-    addHistorico('Ata gerada via IA: ' + cond + ' · ' + data + sufixoModelo);
-    toast('Ata gerada — revise antes de baixar' + sufixoModelo, 'ok');
+    // avisos não bloqueantes da validação (ex.: revisar assinaturas). A ata foi entregue.
+    const avisos = Array.isArray(payload.avisos) ? payload.avisos : [];
+    addHistorico('Ata gerada via IA: ' + cond + ' · ' + data + (avisos.length ? ' (com avisos)' : ''));
+    if (avisos.length) toast('Ata gerada. Pontos para revisar: ' + avisos.join('; '), 'warn');
+    else toast('Ata gerada. Revise antes de baixar.', 'ok');
   } catch (e) {
     toast('Falha ao gerar ata: ' + (e.message || 'erro'), 'err');
   } finally {
+    clearInterval(progTimer);
     btn.disabled = false;
     btn.textContent = btnTextoOriginal;
   }

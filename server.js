@@ -256,11 +256,36 @@ app.get('/api/config', (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────
 // Proxies AssemblyAI — protegidos por requireAuth
 // ─────────────────────────────────────────────────────────────────────────
-app.post('/api/assemblyai/upload', requireAuth, express.raw({type:'*/*', limit:'5gb'}), (req, res) => {
-  const opts = { hostname:'api.assemblyai.com', path:'/v2/upload', method:'POST', headers:{'authorization':ASSEMBLYAI_KEY,'content-type':'application/octet-stream','content-length':req.body.length} };
-  const pr = https.request(opts, r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ try{res.json(JSON.parse(d))}catch(e){res.status(500).json({error:d})} }); });
-  pr.on('error', e => res.status(500).json({error:e.message}));
-  pr.write(req.body); pr.end();
+// Upload de áudio em STREAMING (sem express.raw). Encaminha os bytes direto pro
+// AssemblyAI conforme chegam do navegador, SEM carregar o arquivo na RAM. Antes,
+// express.raw bufferizava o arquivo inteiro e pr.write(req.body) copiava de novo
+// (~2x o tamanho na memória): um m4a de 187MB dava ~375MB de pico, estourava a RAM
+// do container (OOM), o container caía e o navegador via 502. Com req.pipe o uso de
+// memória é constante, independente do tamanho do arquivo. Content-Length repassado
+// do request original; timeout explícito + erro claro no lugar do 502 mudo.
+app.post('/api/assemblyai/upload', requireAuth, (req, res) => {
+  const len = req.headers['content-length'];
+  const opts = {
+    hostname: 'api.assemblyai.com', path: '/v2/upload', method: 'POST',
+    headers: Object.assign(
+      { 'authorization': ASSEMBLYAI_KEY, 'content-type': 'application/octet-stream' },
+      len ? { 'content-length': len } : { 'transfer-encoding': 'chunked' }
+    ),
+    timeout: 300000 // 5min: uploads grandes precisam de folga
+  };
+  const pr = https.request(opts, (r) => {
+    const chunks = [];
+    r.on('data', (c) => chunks.push(c));
+    r.on('end', () => {
+      const d = Buffer.concat(chunks).toString('utf8');
+      try { res.json(JSON.parse(d)); }
+      catch (e) { if (!res.headersSent) res.status(502).json({ error: 'resposta inválida do AssemblyAI no upload', detalhe: d.slice(0, 300) }); }
+    });
+  });
+  pr.on('error', (e) => { if (!res.headersSent) res.status(502).json({ error: 'falha ao enviar o áudio ao AssemblyAI', detalhe: e.message }); });
+  pr.on('timeout', () => { pr.destroy(); if (!res.headersSent) res.status(504).json({ error: 'timeout no upload ao AssemblyAI (5 min)' }); });
+  req.on('aborted', () => pr.destroy()); // cliente cancelou: corta o envio ao AssemblyAI
+  req.pipe(pr);
 });
 
 app.post('/api/assemblyai/transcript', requireAuth, express.json(), (req, res) => {
@@ -291,14 +316,18 @@ app.post('/api/claude/messages', requireAuth, express.json({limit:'10mb'}), (req
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Engine de geração de ata — Sonnet 4.6 com fallback Opus 4.7
+// Engine de geração de ata — Sonnet 4.6 primário + Opus 4.7 último recurso CONDICIONAL.
 //
-// Pipeline (até 3 tentativas):
-//   1. Sonnet 4.6 + max_tokens 16000 → validarAta
-//   2. Se inválida: Sonnet 4.6 + max_tokens 20000
-//   3. Se inválida: Opus 4.7 + max_tokens 20000 (fallback)
+// Pipeline (teto HARD de 7 chamadas Anthropic por geração, ver MAX_CHAMADAS_ANTHROPIC_POR_ATA):
+//   1. Sonnet 4.6 + max_tokens 32000 → se retornou texto, ENTREGA (validação é só aviso).
+//   2. Só se a API NÃO retornou texto (rede/timeout): 1 retry Sonnet 4.6 + 32000.
+//   3. Auditoria de COMPLETUDE FRACIONADA: transcrição em 1-3 blocos (por tamanho), cada bloco
+//      auditado (Sonnet) por lacunas + garantia determinística de todo valor monetário da fala.
+//   4. Inserção CIRÚRGICA das lacunas (Sonnet), sem reescrever/condensar (guarda de tamanho).
+//   5. OPUS só se a inserção Sonnet QUEBRAR (nunca por validação nem por valor individual).
+// Validação nunca dispara retry (ver REGRA DE OURO). Anti-invenção/FID/DET preservados.
 //
-// System prompt = SKILL.md integral + contexto fixo Grupo Service + regras anti-erro.
+// System prompt = SKILL.md + contexto Grupo Service + anti-erro + detalhamento + fidelidade.
 // SKILL.md carregada no boot e mantida em memória.
 //
 // Refs: CORRECAO_SERVICE_HUB_ATAS.md (handoff Matheus)
@@ -449,6 +478,22 @@ candidatos diferentes (ex: Dari 19 e Dani 21), registrar AMBOS literalmente.`;
 // Vêm DEPOIS das regras anti-erro no system prompt para ganhar precedência por ordem.
 // Alvo: corrigir invenção de números, completamento por palpite e fatos omitidos
 // identificados nos testes Happy Days Manguinhos e Lara Hoffman.
+// Detalhamento máximo obrigatório (opção "a", 2026-07-07). Força a ata a reproduzir a
+// decomposição item a item que a fala trouxe, em QUALQUER item, em vez de condensar em
+// prosa resumida. Vem ANTES das regras de fidelidade de propósito: FID fica por último
+// e mantém a palavra final (anti-invenção), e a DET 3 abaixo defere explicitamente a FID.
+const REGRAS_DETALHAMENTO_MAXIMO = `DETALHAMENTO MÁXIMO OBRIGATÓRIO
+
+Esta ata é documento formal. A prioridade absoluta é COMPLETUDE e RIQUEZA FACTUAL, não concisão. NÃO resumir, NÃO sintetizar, NÃO condensar, NÃO omitir nenhum detalhe presente na fonte (transcrição e edital). Vale para QUALQUER item de QUALQUER ata, não só prestação de contas.
+
+DET 1. DECOMPOSIÇÃO ITEM A ITEM OBRIGATÓRIA. Todo item de pauta que contenha enumeração de despesas, receitas, categorias de custo, rubricas, propostas, orçamentos, candidatos, chapas ou votações deve ser DECOMPOSTO item a item, no formato (i), (ii), (iii)... dentro da prosa corrida, com: (a) cada categoria ou rubrica nomeada explicitamente; (b) TODOS os valores monetários no padrão R$ X.XXX,XX; (c) TODAS as justificativas, esclarecimentos e observações ditos, registrados. Se a fala detalhou N categorias, a ata registra as N categorias, uma a uma. Exemplo: numa prestação de contas cuja fala discrimina mão de obra, consumo, despesas financeiras, materiais, serviços, despesas administrativas, manutenção e investimento, a ata registra cada uma dessas rubricas com o respectivo valor, JAMAIS um total condensado ou uma frase-resumo.
+
+DET 2. NUNCA CONDENSAR O QUE FOI DETALHADO NA FALA. Se a transcrição traz a decomposição (categoria por categoria, valor por valor, nome por nome), a ata reproduz a decomposição COMPLETA. É PROIBIDO substituir uma lista detalhada por uma frase-resumo do tipo "as despesas do período foram apresentadas por categoria" ou "foram detalhados os valores". Reproduza a lista.
+
+DET 3. DETALHAR NÃO É INVENTAR. Detalhamento máximo significa NÃO DESCARTAR o que existe na fonte; NUNCA significa criar dado que a fonte não traz. As REGRAS DE FIDELIDADE abaixo (FID) e a anti-invenção continuam ABSOLUTAS e têm precedência: o que não estiver claro na transcrição vira [a confirmar]. A ordem é: detalhar por completo o que existe na fonte, e marcar com [a confirmar] só o que falta ou está incerto.
+
+DET 4. ITEM DA PAUTA SEM CONTEÚDO NA FALA: REGISTRO SECO, SEM COMENTAR A GRAVAÇÃO. Se um item constava do edital mas a transcrição NÃO traz apresentação nem debate sobre ele, registrar de forma SECA e curta, por exemplo "Item não deliberado nesta assembleia." ou os dados do item como [a confirmar]. É TERMINANTEMENTE PROIBIDO, aqui como em qualquer item, escrever no corpo da ata comentário sobre a transcrição, a gravação ou o processo de redação (ex.: "não houve registro na transcrição", "o tema não foi tratado no áudio", "a informação pode ter sido prestada antes do início da gravação"). Isso repete e reforça a FID 6 abaixo: o detalhamento máximo vale SOMENTE para os itens que TÊM conteúdo na fonte; para item sem conteúdo, registro seco e limpo, nunca uma explicação sobre o que faltou na gravação.`;
+
 const REGRAS_FIDELIDADE_TRANSCRICAO = `REGRAS DE FIDELIDADE FACTUAL À TRANSCRIÇÃO
 
 Estas regras têm PRIORIDADE MÁXIMA sobre fluência e completude. A ata deve ser fiel ao que a transcrição sustenta, mesmo à custa de um documento com várias marcações [a confirmar]. Prefira a ata "incompleta mas correta" à ata "fluente mas inventada".
@@ -511,25 +556,335 @@ REGRAS DE SAÍDA:
 4. Marcação de TERMO (palavra técnica ouvida errada que não dá pra corrigir com segurança pelo glossário) é SEMPRE completa: [termo a confirmar: 'texto original da transcrição'], com o trecho original entre aspas simples dentro dos colchetes. Se o trecho estiver ininteligível e não houver texto citável, usar [trecho ininteligível a confirmar]. É PROIBIDO [termo a confirmar] seco, sem o texto original.
 5. NUNCA OMITIR item, serviço, valor ou informação que já estava na ata ou na transcrição. Se um termo veio errado e você não consegue corrigir com segurança pelo glossário, MANTENHA o item e marque o trecho pela regra 4 (com o original entre aspas). Omitir é violação grave.
 6. PRESERVE os marcadores [termo a confirmar: '...'] que já vierem na ata de entrada. Não apague, não esvazie e não rebaixe para [a confirmar] seco.
-7. NUNCA escreva no corpo da ata comentário, justificativa, dúvida ou observação sobre a transcrição, a contagem de votos, o áudio ou o próprio processo de redação. Dado incerto vira apenas o marcador limpo, sem explicar o motivo.`;
+7. NUNCA escreva no corpo da ata comentário, justificativa, dúvida ou observação sobre a transcrição, a contagem de votos, o áudio ou o próprio processo de redação. Dado incerto vira apenas o marcador limpo, sem explicar o motivo.
+8. NUNCA ENCURTAR, RESUMIR OU CONDENSAR. Preserve integralmente a extensão e o detalhamento da ata de entrada. Se a ata de entrada decompõe despesas, receitas, propostas, candidatos ou votações item a item no formato (i), (ii), (iii) com valores e categorias nomeadas, a saída MANTÉM essa decomposição COMPLETA, item a item. Sua função é SOMENTE marcar incertezas com [a confirmar] e incluir fatos omitidos da transcrição; JAMAIS remover, agrupar, sintetizar ou trocar por frase-resumo qualquer detalhe que já esteja na ata. A ata auditada tem, no mínimo, o mesmo detalhamento e a mesma extensão da ata de entrada.`;
 
-// Segundo passe: roda Sonnet 4.6 com a ata + transcrição original e devolve a ata
-// corrigida. Sem fallback. Em caso de erro, retorna null e o caller usa a ata original.
-async function auditarFidelidadeAta(ataGerada, userMessageOriginal) {
-  const auditMessage = '=== ATA GERADA (a auditar) ===\n' + ataGerada +
-    '\n\n=== TRANSCRIÇÃO ORIGINAL E DADOS DA REUNIÃO ===\n' + userMessageOriginal +
-    '\n\nAudite a ata acima contra a transcrição e devolva a ata corrigida seguindo o procedimento e as regras de saída.';
-  // max_tokens alinhado com a tentativa 1 do passe principal (regra reviewer.md: ≤16000).
-  // Auditoria substitui trechos por [a confirmar] e adiciona fatos curtos — não expande conteúdo.
-  // Glossário anexado também aqui: sem ele, a auditoria não reconhece correções de
-  // vocabulário legítimas do passe principal e as rebaixava para [a confirmar].
-  const systemAuditoria = PROMPT_AUDITORIA + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
-  const r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, systemAuditoria, auditMessage);
-  if (!r.ok || !r.texto) {
-    console.warn('[engine-ata] Segundo passe de auditoria falhou (status ' + (r.status || 'sem_status') + '): ' + (r.erro || 'sem_texto'));
-    return null;
+// [removido 2026-07-08] auditarFidelidadeAta (passe único de fidelidade) foi substituído
+// pela auditoria de COMPLETUDE FRACIONADA (ver entregarAta). PROMPT_AUDITORIA acima ficou
+// só como referência histórica do critério de fidelidade, não é mais chamado no pipeline.
+
+// ─── Auditoria de COMPLETUDE FRACIONADA (2026-07-07) ───────────────────────
+// Em atas longas (reunião de 3h) a auditoria única sobre ~36k tokens dilui a atenção
+// e o Sonnet deixa passar valores (Enseada perdeu R$ 2.071,00 e R$ 2.500,00). Solução:
+// dividir a transcrição em blocos e auditar cada um COM FOCO (menos volume por passada
+// = mais exaustividade), consolidar lacunas, inserir CIRURGICAMENTE o que faltou (sem
+// reescrever/condensar). Opus entra SÓ se a inserção Sonnet QUEBRAR (a guarda de
+// tamanho/pareceAta rejeitar o resultado), nunca por validação nem por valor individual.
+const PROMPT_AUDITORIA_BLOCO = `Você é auditor de COMPLETUDE de uma ata condominial. Recebe a ATA completa e UM TRECHO da transcrição da mesma assembleia.
+
+Sua ÚNICA tarefa: listar os fatos concretos ditos NESTE TRECHO da transcrição que estão FALTANDO na ata, ou que aparecem na ata de forma DIVERGENTE do trecho. Foque em: valores monetários (R$), itens de pauta, serviços, deliberações, resultados de votação, percentuais, prazos, nomes próprios e quantidades ditos neste trecho.
+
+REGRAS DE SAÍDA:
+- NÃO reescreva a ata, NÃO devolva a ata. Devolva SÓ a lista de lacunas.
+- ANTI-INVENÇÃO: aponte apenas o que ESTE trecho realmente sustenta. Nunca peça pra ata registrar o que o trecho não diz.
+- Uma lacuna por linha, começando com "LACUNA: ".
+- Se a lacuna envolve valor monetário, comece pelo valor JÁ NORMALIZADO no formato R$ X.XXX,XX: "LACUNA (R$ X.XXX,XX): <o que é e em qual item entra>".
+- RECONHEÇA valores ditos de forma INFORMAL na fala e normalize para R$ X.XXX,XX na lacuna: "X mil" / "X mil reais" (ex.: "21 mil" vira R$ 21.000,00), "X reais" / "X conto" (ex.: "quinhentos reais" vira R$ 500,00), valor por extenso ("dois mil e quinhentos" vira R$ 2.500,00, "quatrocentos" vira R$ 400,00), e "R$" antes de informal ("R$ 21 mil" vira R$ 21.000,00). Um valor dito informalmente na fala e AUSENTE da ata É uma lacuna, tanto quanto um valor formal.
+- CUIDADO pra não confundir com NÃO valores: ano ("dois mil e vinte e seis"), quantidade de pessoas, votos, unidades ou parcelas não são valores monetários. Só trate como valor o que a fala apresenta como quantia em dinheiro (reais).
+- Ignore diferenças de estilo, ordem ou redação; aponte só FATO faltando ou número/nome divergente.
+- Se ESTE trecho já está integralmente refletido na ata, responda EXATAMENTE: NENHUMA LACUNA`;
+
+const PROMPT_INSERCAO_LACUNAS = `Você recebe uma ATA condominial já redigida e uma LISTA DE LACUNAS (fatos ditos na assembleia que faltaram na ata).
+
+Tarefa: INSERIR CIRURGICAMENTE cada lacuna no item correto da ata, preservando INTEGRALMENTE todo o texto e o detalhamento que já existem. Você ADICIONA o que falta; NUNCA reescreve, resume, condensa ou remove o que já está na ata.
+
+REGRAS:
+- A ata de saída tem, no mínimo, tudo o que a de entrada tinha, MAIS as lacunas inseridas. Nunca encurte.
+- Insira cada fato no item de pauta correto, no mesmo estilo (prosa corrida, subitens (i)(ii)(iii), valores no padrão R$ X.XXX,XX).
+- NORMALIZE valores informais para o padrão formal ao inserir: "21 mil" vira "R$ 21.000,00", "quinhentos reais" vira "R$ 500,00", "dois mil e quinhentos" vira "R$ 2.500,00". A ata é documento formal; nunca deixe o valor em forma coloquial.
+- Se uma lacuna aponta um valor ou nome NA ata DIVERGENTE da transcrição, ajuste para o que a transcrição sustenta, ou marque [a confirmar] se ambíguo.
+- ANTI-INVENÇÃO ABSOLUTA: insira só o que a lacuna afirma. Se estiver incerto, insira com [a confirmar]. Nunca invente.
+- Fidelidade: sem hífen ou travessão no corpo (exceto endereço, linha de assinatura, título de anexo). NUNCA comente a transcrição, a gravação ou o processo de redação dentro da ata.
+- Se uma "lacuna" já estiver na ata, ignore (não duplique).
+- Devolva APENAS a ata completa corrigida, do cabeçalho até a última linha de assinatura. Nada antes, nada depois, sem comentários.`;
+
+// Extrai só a transcrição de dentro do userMessage (pra auditar em blocos).
+function extrairTranscricao(um) {
+  const partes = String(um).split(/=== TRANSCRIÇÃO COMPLETA DA REUNIÃO ===/);
+  if (partes.length < 2) return String(um);
+  return partes[1].replace(/\n\s*Gere a ata completa[\s\S]*$/i, '').trim();
+}
+
+// Número de blocos pela carga da transcrição (1 a 3). Fracionar só ajuda em ata longa.
+function numBlocosAuditoria(transcricao) {
+  const c = transcricao.length;
+  if (c < 40000) return 1;
+  if (c < 90000) return 2;
+  return 3;
+}
+
+// Divide em n blocos cortando SEMPRE em fim de frase (nunca no meio), com sobreposição
+// (overlap) pra não perder contexto na emenda entre blocos.
+function dividirEmBlocos(txt, n) {
+  if (n <= 1 || txt.length < 3000) return [txt];
+  const cortes = [0];
+  for (let k = 1; k < n; k++) {
+    let alvo = Math.round(txt.length * k / n);
+    const janela = txt.slice(alvo, Math.min(txt.length, alvo + 600));
+    const m = janela.search(/[.!?]\s/);
+    if (m >= 0) alvo = alvo + m + 1;
+    cortes.push(alvo);
   }
-  return r.texto;
+  cortes.push(txt.length);
+  const overlap = 800;
+  const blocos = [];
+  for (let k = 0; k < n; k++) {
+    const ini = k === 0 ? cortes[k] : Math.max(0, cortes[k] - overlap);
+    blocos.push(txt.slice(ini, cortes[k + 1]).trim());
+  }
+  return blocos.filter((b) => b.length > 0);
+}
+
+// Canoniza um número escrito pt-BR ('21.000,00', '21', '1,5') pra Number (em reais).
+function _numPtBr(str, mult) {
+  const n = parseFloat(String(str).trim().replace(/\./g, '').replace(',', '.'));
+  return isNaN(n) ? null : Math.round(n * (mult || 1) * 100) / 100;
+}
+
+// Palavras de contexto que sinalizam DINHEIRO perto do número. Sem sinal de dinheiro, um
+// número no formato X,XX NÃO é tratado como valor (era o bug: "2,00%", "56,32 m²" viravam moeda).
+const _CTX_MONETARIO = /(r\$|reais|real|valor|custo|despes|saldo|montante|arrecad|receit|pagament|pre[çc]o|or[çc]ament|verba|fundo|d[ée]bito|d[ií]vida|reembols|honor[áa]ri|rateio|aquisi[çc]|contrato|proposta|taxa|multa|parcela|caixa|invest|totaliz|som(a|ou|aram)|import[âa]ncia|quantia|gast|or[çc]ad)/i;
+// Unidade NÃO monetária logo após o número: desqualifica (percentual, medida).
+const _POS_NAO_MONETARIO = /^\s*(%|por\s*cento|m²|m2\b|metros?\b|km\b|kg\b|litros?\b)/i;
+
+// Decide se um número casado é MONETÁRIO: não pode ser seguido de unidade não monetária E
+// precisa ter sinal de dinheiro (R$ imediatamente antes, 'reais'/'real' logo depois, ou
+// palavra de contexto monetário perto). temMoedaNoMatch=true quando o próprio casamento já
+// traz o sinal (R$, 'reais', 'conto', 'mil reais').
+function _ehMonetario(s, idx, matchLen, temMoedaNoMatch) {
+  const depois = s.slice(idx + matchLen, idx + matchLen + 16);
+  if (_POS_NAO_MONETARIO.test(depois)) return false;         // 2,00% / 56,32 m² -> NÃO é dinheiro
+  if (temMoedaNoMatch) return true;
+  if (/r\$\s*$/i.test(s.slice(Math.max(0, idx - 6), idx))) return true;   // R$ imediatamente antes
+  if (/^\s*(reais|real\b)/i.test(depois)) return true;                     // 'reais'/'real' logo depois
+  return _CTX_MONETARIO.test(s.slice(Math.max(0, idx - 40), idx));         // contexto monetário perto
+}
+
+// Extrai as menções MONETÁRIAS de um texto (formal R$ X.XXX,XX, 'X mil'/'X mil reais',
+// 'X reais'/'X conto', 'R$ X' sem centavos), cada uma com valor canônico e o trecho ao redor.
+// SÓ conta o que tem sinal de dinheiro: número seguido de %, m², metros etc. NUNCA vira valor.
+// (Por extenso, ex. 'dois mil e quinhentos', fica com o LLM, que normaliza pra R$ X.XXX,XX.)
+function extrairMencoesMonetarias(txt) {
+  const s = String(txt);
+  const out = [];
+  const add = (idx, len, canon) => {
+    if (!canon) return;
+    out.push({ canon, trecho: s.slice(Math.max(0, idx - 70), Math.min(s.length, idx + len + 70)).replace(/\s+/g, ' ').trim() });
+  };
+  for (const m of s.matchAll(/\d[\d.]*,\d{2}/g)) {
+    if (_ehMonetario(s, m.index, m[0].length, false)) add(m.index, m[0].length, _numPtBr(m[0]));
+  }
+  for (const m of s.matchAll(/(\d+(?:[.,]\d+)?)\s*mil(\s*reais)?\b/gi)) {
+    if (_ehMonetario(s, m.index, m[0].length, !!m[2])) add(m.index, m[0].length, _numPtBr(m[1], 1000));
+  }
+  for (const m of s.matchAll(/(\d[\d.]*)\s*(?:reais|conto)/gi)) {
+    if (_ehMonetario(s, m.index, m[0].length, true)) add(m.index, m[0].length, _numPtBr(m[1]));
+  }
+  for (const m of s.matchAll(/R\$\s*(\d{1,3}(?:\.\d{3})*)(?!\s*mil)(?!\d)(?![.,]\d)/gi)) {
+    if (_ehMonetario(s, m.index, m[0].length, true)) add(m.index, m[0].length, _numPtBr(m[1]));
+  }
+  return out;
+}
+
+// Conjunto de valores monetários CANÔNICOS (Number em reais). Deriva de extrairMencoesMonetarias,
+// então herda o filtro de sinal de dinheiro (não pega percentual nem medida).
+function valoresCanonicos(txt) {
+  return new Set(extrairMencoesMonetarias(txt).map((m) => m.canon));
+}
+
+// Menções monetárias COM o trecho ao redor (contexto), pra alimentar a inserção de forma
+// determinística (todo valor dito que falte na ata entra na lista, mesmo que a auditoria de
+// bloco/LLM tenha deixado passar).
+function mencoesMonetarias(txt) {
+  return extrairMencoesMonetarias(txt);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// CORREÇÃO CIRÚRGICA DETERMINÍSTICA de valor de deliberação.
+//
+// O motor não PERDE valor às cegas: quando o Sonnet fica em dúvida sobre um valor
+// de deliberação falado, ele escreve "[valor a confirmar]" (ou quebra o formato, ex.
+// "R$ 3.519, R$ 159", e ainda marca o total como [valor a confirmar]). Isso é
+// não-determinístico (um run preenche, outro não). AQUI o código preenche esses
+// placeholders SEM depender do LLM. Para um valor da fala virar candidato de um
+// placeholder ele precisa: (1) estar em CONTEXTO DE DELIBERAÇÃO REAL na fala
+// (voto/aprovação/contratação), descartando ocorrência logo após condicional como
+// "caso aprovem" (hipotético) — ver _temDeliberacaoReal; (2) não estar já escrito de
+// forma FIRME na ata (mas valor que só aparece em HEDGE, "mencionado como R$ X",
+// volta a ser candidato — ver _valoresHedgeOnly). A força da âncora depende do sinal:
+//   - com GATILHO FORTE (voto contado + aprovação efetivada agregados em TODAS as
+//     ocorrências do valor na fala), QUALQUER palavra de conteúdo em comum serve,
+//     mesmo entidade recorrente tipo "Gilvânia" (df alto) — ver FIX 1/FIX 2;
+//   - sem gatilho forte, ainda exige âncora RARA (palavra em <=2 frases da ata).
+// Se EXATAMENTE UM valor casa → preenche (e apaga "R$ X" errado colado antes do
+// placeholder, ver _VALOR_COLADO_ANTES/FIX 3); se zero ou vários → mantém
+// [a confirmar] (NUNCA chuta) e reporta como ambíguo.
+// Refinamento futuro: cruzar com itens de pauta do edital nos casos ambíguos.
+// ─────────────────────────────────────────────────────────────────────────
+// Contexto de deliberação: voto/aprovação/ratificação/contratação. NÃO inclui
+// "orçamento"/"valor de"/"proposta" (largos demais: pegam opção só apresentada).
+const _CTX_DELIBERACAO = /(a favor\b|levanta.{0,8}plaquinha|plaquinha|aprova|aprovem|aprovad|vot(o|os|ar|ei|ou|amos|a[çc][aã]o|ada|ado)|delibera|delibere|decis[aã]o|decidi|decidiu|ratifica|contrata[çc]|homologa|escolh(er|eu|ido)|venc(eu|edor))/i;
+const _PLACEHOLDER_VALOR = /\[valor(?:\s+total)?\s+a\s+(?:confirmar|definir)\]/gi;
+// Gatilho forte (FIX 2): contagem de voto explícita ("17 votos", "maioria", "unanimidade").
+// Isolado de _CTX_DELIBERACAO porque aqui queremos algo BEM mais específico que "a favor".
+const _CTX_VOTO_FORTE = /\d+\s*votos?\b|\bmaioria\b|\bunanimidade\b/i;
+// Gatilho forte (FIX 2): palavra de aprovação/ratificação/homologação já EFETIVADA (global,
+// pra varrer todas as ocorrências no trecho e checar cada uma contra o marcador condicional).
+const _APROVACAO_FORTE = /aprovad[oa]s?|aprovaram|ratificad[oa]s?|homologad[oa]s?/gi;
+// Marcador condicional que, logo ANTES de uma palavra de aprovação, indica proposta ainda
+// hipotética ("caso vocês aprovem", "se aprovado", "seria aprovado") — não é votação de fato.
+const _COND_ANTES_APROVACAO = /\b(caso|se|quando|desde\s+que|seria)\b/i;
+function _normLoose(s) { return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+const _STOP_ANC = new Set('para pela pelo pelos como esse essa esta este isso aqui onde quem porque entao tambem tem uma uns umas dos das com sem por que nos nas ate vai ser foi sao mais mas ele ela isso esse valor valores reais real mil total conta contas sobre aos vao seria fica ficar deve pode todo toda todos todas cada qual quando muito pouco entre depois antes assim custo somente incluindo opcao opcoes confirmar razao social completa nome numero sobrenome mesmo mesma'.split(' '));
+// Âncoras de um trecho: palavras de conteúdo (>=5 letras), descartando o 1º e o último
+// token (o trecho corta a ±70 chars no meio de palavra, gerando fragmentos).
+function _ancorasCtx(trecho) {
+  const toks = _normLoose(trecho).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  return [...new Set(toks.slice(1, -1).filter((w) => w.length >= 5 && !_STOP_ANC.has(w) && !/^\d+$/.test(w)))];
+}
+// Valor "R$ X" colado (ignorando espaço) imediatamente ANTES do placeholder (FIX 3): quando o
+// LLM escreveu um número errado seguido do placeholder ("R$ 3.519,00 [valor a confirmar]"),
+// tem que apagar os dois juntos — senão o preenchimento gruda dois valores diferentes.
+const _VALOR_COLADO_ANTES = /R\$\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?\s*$/;
+// Verifica se HÁ, no trecho, alguma aprovação/ratificação/homologação que NÃO esteja logo
+// após um marcador condicional (~25 chars antes). Precisa varrer TODAS as ocorrências da
+// palavra no trecho porque pode haver uma hipotética ("caso aprovem") e outra real depois.
+function _temAprovacaoForte(trecho) {
+  _APROVACAO_FORTE.lastIndex = 0;
+  let m;
+  while ((m = _APROVACAO_FORTE.exec(trecho))) {
+    const antes = trecho.slice(Math.max(0, m.index - 25), m.index);
+    if (!_COND_ANTES_APROVACAO.test(antes)) return true;
+  }
+  return false;
+}
+// FIX 4 (questao a): versao GLOBAL de _CTX_DELIBERACAO, pra varrer TODAS as ocorrencias de
+// palavra de deliberacao num trecho (nao so a primeira que o regex sem 'g' acha).
+const _CTX_DELIBERACAO_G = /(a favor\b|levanta.{0,8}plaquinha|plaquinha|aprova|aprovem|aprovad|vot(o|os|ar|ei|ou|amos|a[çc][aã]o|ada|ado)|delibera|delibere|decis[aã]o|decidi|decidiu|ratifica|contrata[çc]|homologa|escolh(er|eu|ido)|venc(eu|edor))/gi;
+// Generaliza _temAprovacaoForte pra TODO o vocabulario de _CTX_DELIBERACAO (nao so
+// aprovacao): verifica se HA, no trecho, alguma palavra de deliberacao que NAO esteja logo
+// apos um marcador condicional (~25 chars antes). Fecha o vazamento onde "aprovem" dentro de
+// "caso voces aprovem" (hipotetico) casava _CTX_DELIBERACAO.test(trecho) puro e virava
+// candidato so por casar o regex, mesmo sendo so uma proposta ainda nao votada.
+// Se a ocorrencia estiver perto demais do INICIO do trecho (m.index < 25), a janela de ±70
+// chars do extrairMencoesMonetarias pode ja ter cortado fora o marcador condicional (ex.:
+// "Caso voces aprovem..." vira so "oces aprovem..." quando o valor falado esta loge na
+// frase) — nesse caso NAO da pra garantir que nao e condicional, entao trata como incerto e
+// NAO conta essa ocorrencia como deliberacao real (nunca chuta, por seguranca).
+function _temDeliberacaoReal(trecho) {
+  _CTX_DELIBERACAO_G.lastIndex = 0;
+  let m;
+  while ((m = _CTX_DELIBERACAO_G.exec(trecho))) {
+    if (m.index < 25) continue; // contexto insuficiente pra descartar condicional -> nao conta
+    const antes = trecho.slice(m.index - 25, m.index);
+    if (!_COND_ANTES_APROVACAO.test(antes)) return true;
+  }
+  return false;
+}
+// FIX 4 (questao a): verbo de HEDGE (mencionado/indicado/citado/referido/falado/dito) seguido
+// de "como" em ate ~15 chars: sinaliza que o valor foi so ANOTADO como alternativa/duvida na
+// ata, nunca AFIRMADO de forma firme. Funciona com ou sem parenteses ao redor (o sinal e o par
+// verbo+"como", nao a pontuacao) — cobre tanto "(mencionado como R$ X em determinado momento)"
+// quanto "indicado como R$ X e mencionado tambem como R$ Y" sem parenteses.
+const _HEDGE_COMO = /(?:mencionad[oa]s?|indicad[oa]s?|citad[oa]s?|referid[oa]s?|fal(?:ou|ado)|dit[oa])[^.]{0,15}?\bcomo\b/i;
+// Monta o conjunto de valores canonicos que aparecem na ata SOMENTE em anotacoes de HEDGE, e
+// NUNCA de forma firme. Precisa TODAS as ocorrencias do valor na ata serem hedge: uma unica
+// ocorrencia firme em qualquer ponto mantem o valor bloqueado (guarda de regressao — valor
+// firme na ata jamais pode ser reaberto pra preenchimento).
+function _valoresHedgeOnly(ataTxt) {
+  const todasHedgePorCanon = new Map();
+  for (const m of extrairMencoesMonetarias(ataTxt)) {
+    const hedge = _HEDGE_COMO.test(m.trecho);
+    const atual = todasHedgePorCanon.has(m.canon) ? todasHedgePorCanon.get(m.canon) : true;
+    todasHedgePorCanon.set(m.canon, atual && hedge);
+  }
+  const out = new Set();
+  for (const [canon, todasHedge] of todasHedgePorCanon) if (todasHedge) out.add(canon);
+  return out;
+}
+// Preenche [valor a confirmar] com o valor de deliberação falado (1-para-1). Retorna
+// { ata, preenchidos:[{canon}], ambiguos:[{candidatos}] }.
+function corrigirPlaceholdersDeliberacao(ataTxt, transcricao) {
+  const canonAta = valoresCanonicos(ataTxt);
+  // FIX 4 (questao a): valores que so aparecem em anotacao de HEDGE na ata (nunca de forma
+  // firme) voltam a ser candidatos — o bloqueio original ("ja esta na ata, nao mexe") era
+  // largo demais e travava a linha de DELIBERACAO quando o LLM so anotou o valor como duvida
+  // (ex. "(mencionado como R$ 4.100,00 em determinado momento)"). Valor FIRME continua
+  // bloqueado (guarda de regressao obrigatoria).
+  const hedgeOnlyAta = _valoresHedgeOnly(ataTxt);
+  // FIX 1: agrupa por valor CANÔNICO juntando TODAS as ocorrências na fala (não só a
+  // primeira) — a confirmação de votação forte de um valor às vezes está numa ocorrência
+  // diferente da primeira menção (ex.: 1ª ocorrência só apresenta o valor, a 3ª confirma o
+  // voto). Sem isso a âncora e o gatilho forte ficavam presos ao trecho mais fraco.
+  const porCanon = new Map();
+  for (const m of mencoesMonetarias(transcricao)) {
+    if (canonAta.has(m.canon) && !hedgeOnlyAta.has(m.canon)) continue; // firme na ata -> bloqueado; so-hedge -> libera candidatura
+    if (!porCanon.has(m.canon)) porCanon.set(m.canon, { anc: new Set(), entrouDeliberacao: false, votoForte: false, aprovacaoForte: false });
+    const g = porCanon.get(m.canon);
+    // FIX 4 (questao b): usa _temDeliberacaoReal (varre TODAS as ocorrencias e descarta as
+    // que vem logo apos condicional) em vez do _CTX_DELIBERACAO.test puro, que casava
+    // "aprovem" dentro de "caso voces aprovem" (hipotetico) e deixava vazar candidato ruido.
+    if (_temDeliberacaoReal(m.trecho)) g.entrouDeliberacao = true;
+    for (const a of _ancorasCtx(m.trecho)) g.anc.add(a);
+    if (_CTX_VOTO_FORTE.test(m.trecho)) g.votoForte = true;
+    if (_temAprovacaoForte(m.trecho)) g.aprovacaoForte = true;
+  }
+  const candidatos = [];
+  for (const [canon, g] of porCanon) {
+    if (!g.entrouDeliberacao) continue; // só deliberação, nunca ruído (em NENHUMA ocorrência)
+    // Gatilho forte: voto contado E aprovação de fato, juntos no contexto agregado do valor.
+    candidatos.push({ canon, anc: [...g.anc], gatilhoForte: g.votoForte && g.aprovacaoForte });
+  }
+  // docFreq por frase: quantas frases da ata contêm cada palavra (mede raridade).
+  const dfFrases = new Map();
+  for (const fr of ataTxt.split(/[.\n]/)) {
+    for (const w of new Set(_normLoose(fr).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter((x) => x.length >= 5))) {
+      dfFrases.set(w, (dfFrases.get(w) || 0) + 1);
+    }
+  }
+  const preenchidos = [], ambiguos = [];
+  let out = '', last = 0;
+  for (const pm of ataTxt.matchAll(_PLACEHOLDER_VALOR)) {
+    const idx = pm.index;
+    const ctxNorm = _normLoose(ataTxt.slice(Math.max(0, idx - 190), idx + 45));
+    // valores cujo trecho compartilha âncora com o contexto do placeholder. Se o valor tem
+    // GATILHO FORTE (voto + aprovação reais, agregados), dispensa a raridade da âncora
+    // (FIX 2); senão, exige âncora rara (<=2 frases na ata) como hoje.
+    const casaram = candidatos.filter((c) => c.anc.some((a) => ctxNorm.includes(a) && (c.gatilhoForte || (dfFrases.get(a) || 9) <= 2)));
+    if (casaram.length === 1) {
+      // FIX 3: se o texto imediatamente antes do placeholder já for um "R$ X" (valor errado
+      // colado pelo LLM), apaga os dois juntos pra não grudar dois valores diferentes.
+      const inicioJanela = Math.max(0, idx - 40);
+      const mColado = _VALOR_COLADO_ANTES.exec(ataTxt.slice(inicioJanela, idx));
+      const inicioCorte = mColado ? inicioJanela + mColado.index : idx;
+      out += ataTxt.slice(last, inicioCorte);
+      out += 'R$ ' + casaram[0].canon.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      preenchidos.push({ canon: casaram[0].canon });
+    } else {
+      out += ataTxt.slice(last, idx);
+      out += pm[0];
+      if (casaram.length > 1) ambiguos.push({ candidatos: casaram.map((c) => c.canon) });
+    }
+    last = idx + pm[0].length;
+  }
+  out += ataTxt.slice(last);
+  return { ata: out, preenchidos, ambiguos };
+}
+
+// Auditoria de completude de UM bloco: devolve a lista de lacunas (texto) ou '' se nada.
+async function auditarBlocoCompletude(ata, bloco, i, n, chamar) {
+  const sys = PROMPT_AUDITORIA_BLOCO + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+  const msg = '=== ATA GERADA (completa) ===\n' + ata + '\n\n=== TRECHO ' + i + ' DE ' + n + ' DA TRANSCRIÇÃO ===\n' + bloco + '\n\nListe as lacunas DESTE trecho conforme as regras.';
+  const r = await chamar('claude-sonnet-4-6', 8000, sys, msg);
+  return (r.ok && r.texto) ? r.texto.trim() : '';
+}
+
+// Inserção cirúrgica das lacunas (modelo = sonnet ou opus). Devolve a ata ou null.
+async function inserirLacunasNaAta(ata, listaLacunas, modelo, chamar) {
+  const sys = PROMPT_INSERCAO_LACUNAS + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+  const msg = '=== ATA ATUAL ===\n' + ata + '\n\n=== LACUNAS A INSERIR (fatos da transcrição que faltaram) ===\n' + listaLacunas + '\n\nInsira cirurgicamente cada lacuna no item correto e devolva a ATA COMPLETA corrigida.';
+  const r = await chamar(modelo, 32000, sys, msg);
+  return (r.ok && r.texto && r.texto.trim()) ? r.texto.trim() : null;
 }
 
 // Validação heurística pós-geração — detecta truncamento e formato quebrado.
@@ -538,39 +893,65 @@ async function auditarFidelidadeAta(ataGerada, userMessageOriginal) {
 //   - termina com ponto final (não foi cortada no meio)
 //   - tem pelo menos 4 blocos de assinatura (ex.: Síndico, Subsíndico, Conselho, Presidente, Secretária; a administradora nunca assina)
 //   - tem tamanho mínimo plausível (atas reais têm 6000+ chars)
+// REGRA DE OURO (2026-07-07): a validação NUNCA bloqueia a entrega nem dispara
+// retry caro. Melhor entregar a ata com um aviso do que falhar, demorar e queimar
+// crédito. Esta função só APONTA avisos (não bloqueantes) pro usuário revisar.
+//
+// Em especial, a composição de ASSINATURAS é adaptável: varia por tipo de assembleia
+// (uma AGE de destituição tem composição diferente de uma AGO; nem toda ata tem
+// conselho fiscal). NÃO existe número fixo obrigatório. Só marcamos aviso se não
+// houver praticamente nenhuma linha de assinatura (sinal de truncamento), nunca por
+// "faltar" pra chegar a um número arbitrário.
+//
+// 'pareceAta' distingue texto de ata real de uma recusa/erro do modelo — usado APENAS
+// pra decidir se a saída da auditoria pode substituir o original, nunca pra retry.
 function validarAta(resposta) {
-  if (!resposta || typeof resposta !== 'string') return { valido: false, motivo: 'resposta_vazia' };
+  if (!resposta || typeof resposta !== 'string' || !resposta.trim()) {
+    return { pareceAta: false, avisos: ['a geração veio vazia'], blocosAssinatura: 0 };
+  }
   const temEncerramento = resposta.includes('Nada mais havendo a tratar');
   const blocosAssinatura = (resposta.match(/_{30,}/g) || []).length;
   const tamanhoOk = resposta.length > 6000;
-  // Markdown count — qualquer marcador acima do limiar invalida (forçando retry/Opus)
   const headers = (resposta.match(/^#{1,6} /gm) || []).length;
   const negritos = (resposta.match(/\*\*[^*]+\*\*/g) || []).length;
   const tabelas = (resposta.match(/^\|/gm) || []).length;
   const separadores = (resposta.match(/^---+$/gm) || []).length;
-  // Pré-análise: ata real começa com "ATA DA ASSEMBLEIA" ou nome do condomínio em CAIXA ALTA.
-  // Se a resposta começa com "Vou processar", "Mapeamento", "##", etc → pré-conteúdo presente
+  // Pré-análise: se a resposta começa com "Vou processar", "Mapeamento", "##", etc.
   const inicio = resposta.trim().slice(0, 200).toLowerCase();
   const temPreAnalise = /vou (processar|analisar|redigir|mapear)|mapeamento|reconstituindo|aqui (est[aá]|vai)|^##|^---|^an[aá]lise/m.test(inicio);
 
-  if (!temEncerramento) return { valido: false, motivo: 'sem_encerramento' };
-  if (blocosAssinatura < 4) return { valido: false, motivo: 'assinaturas_insuficientes', encontradas: blocosAssinatura };
-  if (!tamanhoOk) return { valido: false, motivo: 'muito_curta', tamanho: resposta.length };
-  if (temPreAnalise) return { valido: false, motivo: 'pre_analise_presente', inicio: resposta.trim().slice(0, 100) };
-  if (headers > 0) return { valido: false, motivo: 'markdown_headers', count: headers };
-  if (negritos > 5) return { valido: false, motivo: 'markdown_negritos_excessivos', count: negritos };
-  if (tabelas > 0) return { valido: false, motivo: 'markdown_tabelas', count: tabelas };
-  if (separadores > 0) return { valido: false, motivo: 'markdown_separadores', count: separadores };
-  return { valido: true };
+  // Avisos NÃO bloqueantes — a ata é entregue de qualquer forma.
+  const avisos = [];
+  if (!temEncerramento) avisos.push('não encontrei a frase de encerramento padrão; a ata pode estar truncada');
+  if (!tamanhoOk) avisos.push('ata curta (' + resposta.length + ' caracteres); confirme se está completa');
+  if (blocosAssinatura < 2) avisos.push('poucas linhas de assinatura (' + blocosAssinatura + '); revise o bloco de assinaturas');
+  if (temPreAnalise) avisos.push('o início parece conter texto de análise antes da ata; revise as primeiras linhas');
+  if (headers > 0 || tabelas > 0 || separadores > 0 || negritos > 5) avisos.push('detectei formatação markdown (títulos/tabelas/negritos); revise a formatação');
+
+  // "Parece ata": tem encerramento OU é longa o suficiente, e não abre com pré-análise.
+  // Só serve pra não deixar a auditoria trocar uma ata boa por uma saída quebrada.
+  const pareceAta = (temEncerramento || tamanhoOk) && !temPreAnalise;
+  return { pareceAta, avisos, blocosAssinatura };
 }
 
-// Wrapper Promise pra chamada Anthropic /v1/messages com timeout 120s.
+// Wrapper Promise pra chamada Anthropic /v1/messages com timeout 600s (10min).
+// Subido de 120s p/ 600s (2026-07-07): a chamada é NÃO streaming (Anthropic só
+// envia bytes quando termina de gerar), então o timeout tem que cobrir a geração
+// inteira. Uma ata de reunião de 3h passava de 120s e a chamada morria (timeout_120s,
+// engine_falhou). 600s dá folga pra atas longas. Roda em background (job), sem prender
+// requisição HTTP do cliente.
 // Retorna { ok, status, texto, raw, erro }.
 function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
   return new Promise((resolve) => {
     const body = JSON.stringify({
       model: modelo,
       max_tokens: maxTokens,
+      // SEM temperature explicito: usa o default da API. Manter o estilo da ata que o
+      // Matheus ja validou pela interface. A consistencia de VALOR nao vem de temperature
+      // baixa (o reteste mostrou Enseada variando 14/13/12 mesmo com temperature 0), e sim
+      // da correcao cirurgica deterministica (corrigirPlaceholdersDeliberacao) + auditoria
+      // fracionada. Ver RÉGUA REALISTA no roadmap: alvo consertado por codigo, conflito real
+      // marcado [a confirmar], ruido fora. Reversao do temperature 0 autorizada em 2026-07-08.
       system,
       messages: [{ role: 'user', content: userMessage }]
     });
@@ -584,7 +965,7 @@ function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
         'content-type': 'application/json',
         'content-length': Buffer.byteLength(body)
       },
-      timeout: 120000
+      timeout: 600000
     };
     const r = https.request(opts, (resp) => {
       const chunks = [];
@@ -604,12 +985,193 @@ function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
       });
     });
     r.on('error', (e) => resolve({ ok: false, status: 500, erro: e.message }));
-    r.on('timeout', () => { r.destroy(); resolve({ ok: false, status: 504, erro: 'timeout_120s' }); });
+    r.on('timeout', () => { r.destroy(); resolve({ ok: false, status: 504, erro: 'timeout_600s' }); });
     r.write(body); r.end();
   });
 }
 
-app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
+// ─── Geração de ata ASSÍNCRONA (job + polling) ──────────────────────────────
+// Por que não streaming: o edge do Railway bufferiza o CORPO da resposta após o
+// primeiro byte — keepalive/heartbeat no meio do caminho NÃO chega ao navegador e
+// o Safari derruba a conexão ociosa ("Load failed"). Medido em 07/07/2026: nem
+// text/event-stream nem padding de 4KB por ping atravessam o buffer do edge (só o
+// primeiro chunk sai; o resto fica preso até a resposta acabar, ~80s de silêncio).
+// Solução: a geração roda em BACKGROUND no servidor e o frontend faz polling curto.
+// Cada request HTTP dura <1s — imune a timeout de borda e a idle do navegador. A
+// geração roda UMA vez e fica guardada no job: conexão que cai não vira retry que
+// cobra a API de novo (ataca o custo das tentativas falhas).
+// Assunção: instância única (Cenário A, uso interno). Se um dia escalar réplicas,
+// migrar este store em memória para Redis/DB (o polling pode cair em outra réplica).
+const atasJobs = new Map(); // jobId -> { status:'processing'|'done'|'error', criadoEm, payload?, erro? }
+
+// Remove o job 10min após concluir — evita vazamento de memória sem cortar polling
+// em andamento. unref pra não segurar o processo vivo por causa do timer.
+function agendarLimpezaJob(jobId) {
+  const tmr = setTimeout(() => atasJobs.delete(jobId), 10 * 60 * 1000);
+  if (typeof tmr.unref === 'function') tmr.unref();
+}
+
+// Teto HARD absoluto de chamadas à API Anthropic por geração de ata. Pior caso
+// legítimo = 7 com a auditoria fracionada: 1 geração + 1 retry(falha de API) +
+// até 3 auditorias de bloco + 1 inserção Sonnet + 1 inserção Opus (último recurso).
+// Típico: 2 a 5 (sem Opus). Qualquer chamada além do teto é abortada (ver 'chamar').
+const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 7;
+
+// Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
+// PRIMEIRA passada Sonnet que retornar texto; a validação é só aviso, nunca bloqueia
+// nem dispara retry. Retry (1x, Sonnet) só se a API não retornar texto. Sem Opus.
+async function gerarAtaJob(jobId, userMessage) {
+  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_DETALHAMENTO_MAXIMO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+  const tentativas = [];
+  const concluir = (payload) => { const j = atasJobs.get(jobId); if (j) { j.status = 'done'; j.payload = payload; } agendarLimpezaJob(jobId); };
+  // httpStatus (não 'status') pra NÃO colidir com o campo status do job. A rota /status
+  // faz Object.assign({ status:'error' }, j.erro); se o erro trouxesse 'status', ele
+  // sobrescreveria 'error' e o front ficava em polling infinito sem ver a falha.
+  const falhar = (httpStatus, obj) => { const j = atasJobs.get(jobId); if (j) { j.status = 'error'; j.erro = Object.assign({ httpStatus }, obj); } agendarLimpezaJob(jobId); };
+
+  // ─── TETO HARD DE CHAMADAS À API (proteção de custo) ───────────────────────
+  // Contador que CORTA de vez: toda chamada Anthropic desta geração passa por 'chamar',
+  // que aborta ao tentar a (MAX+1)-ésima. Cobre as tentativas E a auditoria. Se um bug
+  // futuro introduzir qualquer loop ou nova cascata, isto barra antes de gastar mais.
+  // MAX = 7 = pior caso legítimo (1 geração + 1 retry + até 3 auditorias de bloco +
+  // 1 inserção Sonnet + 1 inserção Opus). Típico: 2 a 5, sem Opus.
+  let _chamadas = 0;
+  const chamar = (modelo, maxTokens, sys, msg) => {
+    if (++_chamadas > MAX_CHAMADAS_ANTHROPIC_POR_ATA) {
+      throw new Error('TETO_CHAMADAS: teto de ' + MAX_CHAMADAS_ANTHROPIC_POR_ATA + ' chamadas à API por geração atingido; abortado para não gerar custo');
+    }
+    return chamarAnthropicAta(modelo, maxTokens, sys, msg);
+  };
+
+  // Entrega a ata com AUDITORIA DE COMPLETUDE FRACIONADA:
+  //  1) a ata já veio gerada (texto);
+  //  2) divide a transcrição em N blocos (1..3 por tamanho) e audita cada bloco (Sonnet)
+  //     buscando fatos/valores daquele trecho ausentes na ata;
+  //  3) havendo lacunas, insere CIRURGICAMENTE (Sonnet), sem reescrever/condensar;
+  //  4) OPUS só se a inserção Sonnet QUEBRAR (guarda de tamanho/pareceAta rejeitar).
+  async function entregarAta(texto, modelo_usado, tentativaIdx) {
+    const transcricao = extrairTranscricao(userMessage);
+    const fmtBRL = (c) => 'R$ ' + c.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const canonAtaBase = valoresCanonicos(texto);
+    // GUARDA DE CONDENSAÇÃO (crítico 2): a inserção só pode ACRESCENTAR. Se a saída ficar
+    // menor que a ata base (encurtou/condensou), REJEITA e mantém a ata rica original.
+    const aceitaInsercao = (res) => !!(res && validarAta(res).pareceAta && res.length >= texto.length * 0.95);
+
+    let ataFinal = texto;
+    let etapa = 'sem_lacuna';
+    let usouOpus = false;
+    let cortadoPorTeto = false;
+    let numBlocos = 0;
+    let numGapsDet = 0;
+    // Moderado 6: TODO o fluxo de auditoria/inserção sob try. Se o teto de chamadas estourar
+    // no meio (loop de blocos ou inserção), entrega a MELHOR ata que já temos, em vez de
+    // descartar a ata gerada com sucesso.
+    try {
+      const blocos = dividirEmBlocos(transcricao, numBlocosAuditoria(transcricao));
+      numBlocos = blocos.length;
+      let lacunas = '';
+      for (let i = 0; i < blocos.length; i++) {
+        const res = await auditarBlocoCompletude(texto, blocos[i], i + 1, blocos.length, chamar);
+        if (res && /LACUNA/i.test(res) && !/^NENHUMA LACUNA\s*$/i.test(res)) lacunas += res + '\n';
+      }
+      lacunas = lacunas.trim();
+      // GARANTIA DETERMINÍSTICA de valor: toda menção monetária da FALA (formal/informal) ausente
+      // da ata base vira lacuna COM contexto, mesmo que a auditoria de bloco (LLM) tenha deixado
+      // passar. Fecha a variância (ex.: 2.071 no Enseada).
+      const jaFlag = valoresCanonicos(lacunas);
+      const vistos = new Set();
+      const gapsDet = [];
+      for (const mnc of mencoesMonetarias(transcricao)) {
+        if (canonAtaBase.has(mnc.canon) || jaFlag.has(mnc.canon) || vistos.has(mnc.canon)) continue;
+        vistos.add(mnc.canon);
+        gapsDet.push('LACUNA (' + fmtBRL(mnc.canon) + '): valor dito na assembleia, confira se entra em algum item — "' + mnc.trecho + '"');
+      }
+      numGapsDet = gapsDet.length;
+      const gapList = [lacunas, gapsDet.join('\n')].filter(Boolean).join('\n').trim();
+      if (gapList.length > 0) {
+        const inserida = await inserirLacunasNaAta(texto, gapList, 'claude-sonnet-4-6', chamar);
+        if (aceitaInsercao(inserida)) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
+        else {
+          // inserção Sonnet quebrou OU tentou condensar → mantém original e tenta OPUS (último recurso).
+          etapa = inserida ? 'insercao_sonnet_condensou_usou_original' : 'insercao_sonnet_quebrou_usou_original';
+          const opus = await inserirLacunasNaAta(texto, gapList, 'claude-opus-4-7', chamar);
+          if (aceitaInsercao(opus)) { ataFinal = opus; etapa = 'insercao_opus'; usouOpus = true; }
+        }
+      }
+    } catch (e) {
+      if (/TETO_CHAMADAS/.test(String(e && e.message))) { cortadoPorTeto = true; if (etapa === 'sem_lacuna') etapa = 'teto_cortou_entregou_base'; }
+      else { throw e; }
+    }
+
+    // CORREÇÃO CIRÚRGICA DETERMINÍSTICA (por código, NÃO pelo LLM): preenche
+    // [valor a confirmar] com o valor de deliberação falado quando o casamento é
+    // 1-para-1. Fecha a variância do Sonnet (que ora preenche, ora deixa placeholder)
+    // sem forçar valor de ruído. Roda sobre a MELHOR ata que temos (mesmo se cortou por teto).
+    const cir = corrigirPlaceholdersDeliberacao(ataFinal, transcricao);
+    ataFinal = cir.ata;
+
+    const vFinal = validarAta(ataFinal);
+    const canonFinal = valoresCanonicos(ataFinal);
+    // diagnóstico determinístico: valores da fala fora da ata final.
+    const falaFaltandoFinal = [...new Set(mencoesMonetarias(transcricao).map((m) => m.canon))].filter((c) => !canonFinal.has(c));
+    tentativas[tentativaIdx].auditoria_fracionada = {
+      blocos: numBlocos, etapa, usouOpus, cortadoPorTeto, chamadas: _chamadas, gaps_deterministicos: numGapsDet,
+      placeholders_preenchidos: cir.preenchidos.map((p) => fmtBRL(p.canon)),
+      placeholders_ambiguos: cir.ambiguos.length,
+      valores_fala_faltando_final: falaFaltandoFinal.map(fmtBRL)
+    };
+    return concluir({
+      ata: ataFinal,
+      modelo_usado: usouOpus ? modelo_usado + ' + opus (inserção)' : modelo_usado,
+      tentativas, auditoria: etapa, avisos: vFinal.avisos
+    });
+  }
+
+  // REGRA DE OURO: nenhuma geração custa mais que uma passada normal por causa de
+  // validação. Se a API devolveu TEXTO, entregamos (a validação vira aviso, nunca
+  // rejeita). Só há retry se a API NÃO devolveu texto (rede/timeout/erro real), e
+  // no MÁXIMO 1 retry. NUNCA cai pro Opus automaticamente. Custo teto: 2 chamadas
+  // Sonnet de geração (só se a 1a falhar de verdade) + 1 de auditoria.
+  try {
+    // Tentativa 1: Sonnet 4.6 + 32k. max_tokens subido de 16k p/ 32k (opção "a",
+    // 2026-07-07): atas ricas (decomposição por categoria) passavam de 16k tokens e
+    // eram truncadas/condensadas; 32k dá folga pra sair completa.
+    let r = await chamar('claude-sonnet-4-6', 32000, system, userMessage);
+    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 32000, status: r.status, erro: r.erro || null });
+    if (r.ok && r.texto && r.texto.trim()) {
+      tentativas[0].validacao = validarAta(r.texto);
+      return await entregarAta(r.texto, 'claude-sonnet-4-6', 0);
+    }
+
+    // Só chega aqui se a API NÃO retornou texto na 1a. UM único retry Sonnet.
+    console.warn('[engine-ata] Tentativa 1 sem texto (' + (r.erro || 'status ' + r.status) + '). Fazendo 1 retry Sonnet (SEM Opus).');
+    r = await chamar('claude-sonnet-4-6', 32000, system, userMessage);
+    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 32000, status: r.status, erro: r.erro || null });
+    if (r.ok && r.texto && r.texto.trim()) {
+      tentativas[1].validacao = validarAta(r.texto);
+      return await entregarAta(r.texto, 'claude-sonnet-4-6', 1);
+    }
+
+    // 2 falhas REAIS de geração (API sem texto). Sem cascata Opus. Devolve erro.
+    console.error('[engine-ata] Geração sem texto em 2 tentativas Sonnet. Sem Opus. Tentativas:', JSON.stringify(tentativas));
+    return falhar(502, {
+      erro: 'geracao_sem_texto',
+      detalhe: 'O gerador não retornou texto em 2 tentativas. Tente novamente em instantes.',
+      tentativas
+    });
+  } catch (e) {
+    // Corte do teto hard de chamadas → erro dedicado (nunca deixa gastar além do teto).
+    if (e && typeof e.message === 'string' && e.message.startsWith('TETO_CHAMADAS')) {
+      console.error('[engine-ata] ' + e.message + ' (chamadas=' + _chamadas + ')');
+      return falhar(500, { erro: 'teto_chamadas_atingido', detalhe: 'Geração abortada pelo teto de segurança de chamadas à API. Nenhuma chamada extra foi feita.', tentativas });
+    }
+    console.error('[engine-ata] Erro inesperado na geração:', e && e.message);
+    return falhar(500, { erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' });
+  }
+}
+
+// POST dispara a geração em background e responde JÁ com o jobId (request curto).
+app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), (req, res) => {
   if (!ANTHROPIC_KEY) return res.status(500).json({ erro: 'anthropic_key_ausente' });
   if (!ATA_SKILL_MD) return res.status(500).json({ erro: 'skill_md_nao_carregada', detalhe: 'skills-server/ata-condominial.md não encontrada no servidor' });
 
@@ -618,90 +1180,38 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), async 
     return res.status(400).json({ erro: 'userMessage_invalido', detalhe: 'envie a transcrição + dados da reunião como string em userMessage (mín 50 chars)' });
   }
 
-  // ─── Resposta em STREAMING com heartbeat ───────────────────────────────────
-  // A geração da ata segura a requisição por dezenas de segundos (tentativas +
-  // auditoria). Se o Hub só respondesse no fim, o edge do Railway estouraria o
-  // tempo e devolveria 502 antes de qualquer byte. Solução: responder JÁ, mandando
-  // pings NDJSON a cada 7s enquanto gera, e no fim UM evento 'done' com o payload
-  // no MESMO shape de antes. O edge sempre vê bytes e nunca dá 502. Os pings são
-  // linhas separadas que o frontend descarta; o texto da ata (campo 'ata') vai
-  // intacto, byte a byte igual, no evento final.
-  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('X-Accel-Buffering', 'no');
-  const heartbeat = setInterval(() => { if (!res.writableEnded) res.write('{"type":"ping"}\n'); }, 7000);
-  res.write('{"type":"ping"}\n'); // primeiro byte imediato, tira a conexão do idle
-  req.on('close', () => clearInterval(heartbeat));
-  const enviarDone = (obj) => { clearInterval(heartbeat); if (!res.writableEnded) { res.write(JSON.stringify(Object.assign({ type: 'done' }, obj)) + '\n'); res.end(); } };
-  const enviarErro = (status, obj) => { clearInterval(heartbeat); if (!res.writableEnded) { res.write(JSON.stringify(Object.assign({ type: 'error', status }, obj)) + '\n'); res.end(); } };
+  const jobId = crypto.randomUUID();
+  atasJobs.set(jobId, { status: 'processing', criadoEm: Date.now() });
+  // fire-and-forget: não aguarda. gerarAtaJob já trata tudo internamente; o .catch
+  // é rede de segurança caso algo escape do try interno.
+  gerarAtaJob(jobId, userMessage).catch((e) => {
+    const j = atasJobs.get(jobId);
+    if (j && j.status === 'processing') { j.status = 'error'; j.erro = { httpStatus: 500, erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' }; }
+  });
+  return res.status(202).json({ jobId });
+});
 
-  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
-  const tentativas = [];
-
-  // Helper local pra encadear segundo passe de auditoria e padronizar resposta.
-  // Invariante: toda ata entregue ao frontend passou por validarAta.
-  // Se a auditoria devolver texto que falha na validação heurística (markdown,
-  // pré-análise, encerramento removido, assinaturas perdidas), descartamos a saída
-  // do segundo passe e devolvemos a ata original validada.
-  async function entregarAtaAuditada(texto, modelo_usado, tentativaIdx, extras) {
-    const auditada = await auditarFidelidadeAta(texto, userMessage);
-    let ataFinal = texto;
-    let auditoriaStatus = 'falhou_usou_original';
-    if (auditada) {
-      const vAud = validarAta(auditada);
-      if (vAud.valido) {
-        ataFinal = auditada;
-        auditoriaStatus = 'aplicada';
-      } else {
-        auditoriaStatus = 'rejeitada_validacao_usou_original';
-        tentativas[tentativaIdx].auditoria_validacao = vAud;
-        console.warn('[engine-ata] Segundo passe rejeitado pela validação heurística:', JSON.stringify(vAud));
-      }
-    }
-    tentativas[tentativaIdx].auditoria = auditoriaStatus;
-    return enviarDone(Object.assign({ ata: ataFinal, modelo_usado, tentativas, auditoria: auditoriaStatus }, extras || {}));
-  }
-
-  try {
-    // Tentativa 1: Sonnet 4.6 + 16k
-    let r = await chamarAnthropicAta('claude-sonnet-4-6', 16000, system, userMessage);
-    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 16000, status: r.status, erro: r.erro || null });
-    if (r.ok) {
-      const v = validarAta(r.texto);
-      tentativas[0].validacao = v;
-      if (v.valido) return await entregarAtaAuditada(r.texto, 'claude-sonnet-4-6', 0);
-    }
-
-    // Tentativa 2: Sonnet 4.6 + 20k (max_tokens +25%)
-    r = await chamarAnthropicAta('claude-sonnet-4-6', 20000, system, userMessage);
-    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 20000, status: r.status, erro: r.erro || null });
-    if (r.ok) {
-      const v = validarAta(r.texto);
-      tentativas[1].validacao = v;
-      if (v.valido) return await entregarAtaAuditada(r.texto, 'claude-sonnet-4-6', 1);
-    }
-
-    // Tentativa 3: Opus 4.7 fallback. Logado pra acompanhar frequência em prod.
-    console.warn('[engine-ata] Fallback Opus 4.7 acionado após 2 tentativas Sonnet inválidas. Tentativas:', JSON.stringify(tentativas));
-    r = await chamarAnthropicAta('claude-opus-4-7', 20000, system, userMessage);
-    tentativas.push({ modelo: 'claude-opus-4-7', max_tokens: 20000, status: r.status, erro: r.erro || null });
-    if (r.ok) {
-      const v = validarAta(r.texto);
-      tentativas[2].validacao = v;
-      if (v.valido) return await entregarAtaAuditada(r.texto, 'claude-opus-4-7', 2, { fallback: true });
-    }
-
-    // 3 tentativas falharam — evento de erro no stream (mesmo shape do 502 antigo)
-    return enviarErro(502, {
-      erro: 'engine_falhou_3x',
-      detalhe: 'Nenhuma das 3 tentativas produziu ata válida',
-      tentativas,
-      ultima_resposta: r.texto ? r.texto.slice(0, 2000) + (r.texto.length > 2000 ? '...[truncado]' : '') : null
-    });
-  } catch (e) {
-    console.error('[engine-ata] Erro inesperado na geração:', e && e.message);
-    return enviarErro(500, { erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' });
-  }
+// GET faz o polling do status. Rápido — devolve o estado atual do job. Quando
+// 'done', o corpo traz o payload completo ({ ata, modelo_usado, ... }); quando
+// 'error', traz o detalhe. HTTP 200 nos dois pra o frontend ler o corpo.
+//
+// Cache DESLIGADO nesta rota: o Express põe ETag automático em res.json, e o
+// navegador passava a revalidar com If-None-Match recebendo 304 (sem corpo) —
+// aí o frontend nunca lia o estado final do job e o polling não terminava. Com
+// no-store + ETag removido, toda consulta volta 200 com o corpo real.
+app.get('/api/atas/gerar/status/:jobId', requireAuth, (req, res) => {
+  // Sem cache E sem ETag nesta rota. O Express põe ETag automático em res.json/res.send,
+  // e o navegador passava a revalidar com If-None-Match recebendo 304 (sem corpo) — aí o
+  // polling nunca lia o resultado final. Aqui: Cache-Control no-store + envio via res.end
+  // (que NÃO passa pela geração de ETag do Express), então nenhuma consulta pode virar 304.
+  const enviar = (status, obj) => {
+    res.status(status).set('Cache-Control', 'no-store').type('application/json').end(JSON.stringify(obj));
+  };
+  const j = atasJobs.get(req.params.jobId);
+  if (!j) return enviar(404, { status: 'not_found' });
+  if (j.status === 'done') return enviar(200, Object.assign({ status: 'done' }, j.payload));
+  if (j.status === 'error') return enviar(200, Object.assign({ status: 'error' }, j.erro));
+  return enviar(200, { status: 'processing', esperando_s: Math.round((Date.now() - j.criadoEm) / 1000) });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1471,4 +1981,14 @@ app.get('/hub', (req, res) => { semCacheHtml(res); res.sendFile(path.join(__dirn
 
 // Qualquer rota desconhecida cai na landing, não no sistema
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
-app.listen(PORT, () => console.log('Service Hub porta ' + PORT));
+
+// Só sobe o listener quando executado direto (node server.js). Quando o arquivo é
+// requerido por um teste (require), NÃO abre porta — deixa as funções determinísticas
+// testáveis isoladas. Em produção o Railway roda `node server.js` direto, então
+// require.main === module é verdadeiro e o servidor sobe normal.
+if (require.main === module) {
+  app.listen(PORT, () => console.log('Service Hub porta ' + PORT));
+}
+
+// Export só para teste determinístico da correção cirúrgica (inerte em produção).
+module.exports = { corrigirPlaceholdersDeliberacao, valoresCanonicos, mencoesMonetarias };

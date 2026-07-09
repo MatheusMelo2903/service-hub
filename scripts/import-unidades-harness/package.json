@@ -1,0 +1,13 @@
+{
+  "name": "import-unidades-harness",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Harness Node isolado que valida o roteador de estrutura + parsers do painel Importar Unidades (public/index.html) contra as 7 planilhas reais de amostra. Nao faz parte do deploy do Service Hub. As planilhas fonte NAO ficam neste repositorio (dados de cliente).",
+  "scripts": {
+    "extrai": "node extrai-motor.js",
+    "test": "node run.js"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
+  }
+}

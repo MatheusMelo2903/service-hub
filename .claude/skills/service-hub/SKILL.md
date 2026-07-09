@@ -148,15 +148,50 @@ cpGerarApresentacao()             // generates a presentation (Gamma MCP or pptx
 
 ## 3.5 Painel Unidades — Formato Unificado (26 colunas A-Z)
 
-O painel `Importar Unidades` aceita dois formatos de planilha. O parser detecta automaticamente
-via `detectarFormatoPlanilhaUnificada(headers)` (HTML linha 2215), aplicando a heurística:
+O painel `Importar Unidades` usa um ROTEADOR DE ESTRUTURA que classifica a planilha em uma de
+várias famílias e delega ao parser certo. O ponto de entrada é `detectarLinhaCabecalho(allRows)`
+(acha o cabeçalho real, ora na linha 0, ora na linha 3) seguido de `detectarFamiliaPlanilha(headers)`,
+testado do mais estrito ao mais genérico:
 
 ```
-h[0] === 'tipo'  AND  h[5] === 'nome'  AND  algum header contém 'nascimento'
-  → formato 'unificado' (26 colunas, processUnidadesDataUnificada)
-caso contrário
-  → formato 'antigo' (30+ colunas Superlógica, processUnidadesData)
+unificado (26 colunas A a Z)        → processUnidadesDataUnificada
+w045a-contatos (coluna Tipo)        → corrigirDeslocamentoW045A + parseW045AContatos + inferirPapeis + validarDocumentosW045A
+quattro (35 colunas Superlógica)    → processUnidadesData + validarUnidadesAgrupadas
+proponentes (1º/2º/3º Proponente)   → processFamiliaProponentes
+plana (1 linha = 1 unidade)         → processFamiliaPlana
+nada bateu                          → orienta usar "Normalizar via IA"
 ```
+
+As 4 famílias de planilha crua (plana, proponentes, w045a, quattro) desaguam TODAS na mesma tela de
+revisão (`abrirRevisao`), com contagem unificada origem→unidades→pessoas e chip "Com erro (N)". A IA
+só produz a planilha de 26 colunas e entrega para o mesmo funil; quem conta e valida é o código, a
+partir das linhas reais. Duas leituras de apoio obrigatórias: `normalizarCelula(v)` lê número longo
+(CNPJ, telefone, RG, CEP, unidade) com os dígitos completos, sem notação científica (senão CNPJ de PJ
+como banco/imobiliária/SPE viraria `6.22329E+13` e seria perdido); e a assinatura de conteúdo
+(`isCPF`/`isCNPJ`/`isEmail`/`isUF`/`isCEP`/`isFracao`) valida cada coluna por conteúdo. Regra dura:
+CPF de 11 dígitos vai na coluna G, CNPJ de 14 na H, e um nunca reprova o outro (PJ como proprietário
+é legítimo e tem que passar). Harness de prova em `scripts/import-unidades-harness/` roda o motor real
+contra 7 amostras reais (7/7).
+
+### MARCO OURO da importação (referência, em produção)
+Estado de referência que importa TUDO certo de uma vez, validado em produção em 30/04/2026 (unidade
+1102 A2 do Villaggio Residencial, status 200 com ids reais da API):
+- **Fração** da unidade com valor certo, via `NM_FRACAO_UNI` no PUT do proprietário (commit `ee1fc03`, 2026-04-29).
+- **Nome, CPF e celular** de PROPRIETÁRIO, DEPENDENTE e INQUILINO, cada papel com seu próprio documento
+  e contato, sem se misturar (commit `014d72f`, 2026-04-30).
+
+Como o payload separa os papéis sem misturar:
+- Proprietário: contato do POST vazio + PUT com `FL_PROPRIETARIO_CON=1`, `ST_NOME_CON`, `ST_CPF_CON`,
+  `ST_TELEFONE_CON` (celular) e a `NM_FRACAO_UNI` no nível raiz da unidade.
+- Dependente: POST próprio via `buildPayloadContatoExtra` com `ID_TIPORESP_TRES=4`, `ID_TIPOCONTATO_TCON=1`,
+  e seu próprio nome/CPF/celular.
+- Inquilino: idem, com `ID_TIPORESP_TRES=7`.
+
+O motor novo (roteador + 4 famílias) reproduz esse marco campo a campo: cada parser desagua em
+`unidadesAgrupadasParaContatos` → `contatoParaLinha26` → `processUnidadesDataUnificada` → o mesmo
+`prop_*` / `contatos_extras[]` do marco, e o caminho de envio (`enviarUmaUnidade`,
+`buildPayloadContatoExtra`) é byte a byte idêntico ao de produção. Panorama completo em
+`tarefas/concluidas/panorama-import-unidades.md`.
 
 ### Cabeçalho exato (formato unificado)
 ```
@@ -214,6 +249,31 @@ Para o fluxo real de POST + PUT na API Superlógica que esta planilha alimenta, 
 
 **Cross-reference:** See `ata-condominial` skill for the exact tone, structure, and legal
 formatting required for Brazilian condominium meeting minutes.
+
+### RÉGUA REALISTA — critério OFICIAL de qualidade do motor de ata (aprovado 2026-07-08)
+
+Substitui o critério antigo "Enseada 14/14 idêntico sempre". A ata é documento formal
+apoiado em fala humana, então a barra é realista, não mecânica:
+
+1. **Valor CLARO na fala** → consertado/inserido DETERMINISTICAMENTE por código
+   (`corrigirPlaceholdersDeliberacao` no `server.js`), sempre presente. Nunca perder valor
+   claro. Fecha o bug de garbling.
+2. **Valor GENUINAMENTE ambíguo** (pessoa fala e se corrige, inaudível, conflito real) →
+   marcado `[a confirmar]` para revisão humana, NUNCA chutado. Marcar `[a confirmar]` num
+   valor que o próprio áudio deixou confuso é comportamento CORRETO, não bug.
+3. **Ruído** (hipotéticos, exemplos, propostas rejeitadas, arredondamentos de fala) → fora
+   da ata, como o gabarito humano faz.
+
+**Critério de "pronto":** valores-alvo consertados de forma CONSISTENTE entre rodadas +
+conflitos reais marcados `[a confirmar]` de forma PREVISÍVEL (não viram valor inventado).
+Percentual e medida seguem fora da contagem. Detalhe completo em
+`tarefas/em-andamento/roadmap-velocidade-ata.md` (seção RÉGUA REALISTA + REGRA DE FERRO).
+
+**Nota de config (2026-07-08):** a chamada Anthropic da ata NÃO usa `temperature` explícito
+(usa o default da API), para manter o estilo de ata já validado pela interface. O reteste
+mostrou que `temperature: 0` NÃO trouxe determinismo de valor (Enseada variou 14/13/12
+mesmo assim); a consistência vem da correção cirúrgica + auditoria fracionada, não da
+temperatura.
 
 ---
 
