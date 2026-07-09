@@ -1506,7 +1506,7 @@
           ondragleave="editalDragLeave(event)"
           ondrop="editalDrop(event)">
           <div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">📄 Anexar edital de convocação para autopreencher</div>
-          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:10px">Arraste o PDF/imagem aqui ou clique para selecionar. A IA lê o edital e preenche os campos abaixo. Revise antes de prosseguir.</p>
+          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:10px">Arraste o PDF/imagem aqui ou clique para selecionar. A IA lê o edital, preenche os campos abaixo e o texto do edital alimenta a geração da ata, então o cabeçalho (CNPJ, endereço, data e signatário) sai do próprio edital. Revise antes de prosseguir.</p>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <label id="edital-label" style="display:inline-flex;align-items:center;gap:8px;padding:8px 14px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:var(--sans);color:var(--gs-blue);transition:all 0.15s">
               📎 Selecionar edital
@@ -1641,9 +1641,10 @@
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:20px">
         <button class="btn btn-ghost" onclick="limparAta()">✕ Limpar tudo</button>
-        <button class="btn btn-ghost" id="btn-copiar-claude" onclick="copiarProClaude()" title="Copia o texto pra colar no Claude.ai externo (fallback)">⎘ Copiar pro Service Hub IA</button>
+        <button class="btn btn-ghost" id="btn-copiar-claude" onclick="copiarProClaude()" title="Fallback: copia o texto pra colar no Claude.ai externo. NÃO passa pela geração do servidor nem inclui o edital do autopreencher; os campos do edital podem sair como [a confirmar].">⎘ Copiar pro Service Hub IA</button>
         <button class="btn btn-primary" id="btn-gerar-ata" onclick="gerarAtaIA()">📄 Gerar ata</button>
       </div>
+      <p style="font-size:11px;color:var(--muted);font-family:var(--mono);margin:-12px 0 20px;text-align:right">Atenção: "Copiar pro Service Hub IA" é um atalho que NÃO passa pela geração do servidor e não inclui o edital anexado pelo autopreencher. Nesse caminho, CNPJ, endereço, data e signatário do edital podem sair como [a confirmar]. Prefira "Gerar ata".</p>
 
       <!-- MODAL: Ata gerada -->
       <div id="ata-gerada-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.5);justify-content:center;align-items:center;padding:24px">
@@ -5916,6 +5917,12 @@ const EDITAL_SYSTEM_PROMPT = [
   '- Condominio: extraia o nome oficial como aparece (sem aspas).',
 ].join('\n');
 
+// Texto do edital anexado pelo dropzone "autopreencher", extraído por pdf.js (client side,
+// grátis). Alimenta o bloco EDITAIS ANEXADOS da geração (ver gerarAtaIA). Sem isso o edital do
+// dropzone nunca chegava ao prompt e o cabeçalho saía [a confirmar] (bug de transporte H1).
+let _editalDropzoneTexto = '';
+let _editalDropzoneNome = '';
+
 async function anexarEdital(event) {
   const file = (event && event.target && event.target.files && event.target.files[0]) || null;
   if (!file) return;
@@ -6023,6 +6030,14 @@ async function processarEditalFile(file) {
     }
 
     aplicarCamposExtraidos(json);
+    // TRANSPORTE (H1): além de autopreencher via Haiku, extrai o TEXTO do edital com pdf.js
+    // (client side, zero API, zero latência de servidor) e guarda pra alimentar o bloco EDITAIS
+    // ANEXADOS da geração. É o conserto do bug em que o edital do dropzone nunca chegava ao
+    // prompt. Só PDF: imagem segue só no autopreencher (não há texto a extrair pra geração).
+    if (isPdf) {
+      try { _editalDropzoneTexto = await extrairTextoPdf(await file.arrayBuffer()); _editalDropzoneNome = file.name; }
+      catch (ePdf) { _editalDropzoneTexto = ''; _editalDropzoneNome = ''; }
+    } else { _editalDropzoneTexto = ''; _editalDropzoneNome = ''; }
     progressBar.style.width = '100%';
     const n = ['condominio','data','tipo','sindico','local'].filter(k => json[k]).length;
     status.textContent = `✓ ${n}/5 campos preenchidos. Revise antes de prosseguir.`;
@@ -6322,6 +6337,7 @@ function limparAta() {
   document.getElementById('ata-transcricao').value = '';
   document.getElementById('ata-participantes').value = '';
   // Reset uploader edital
+  _editalDropzoneTexto = ''; _editalDropzoneNome = '';
   const editalStatus = document.getElementById('edital-status');
   if (editalStatus) { editalStatus.textContent = ''; editalStatus.style.color = ''; }
   const editalProgress = document.getElementById('edital-progress-wrap');
@@ -6386,6 +6402,12 @@ async function gerarAtaIA() {
       pautasSemEdital.push(`${i+1}. ${texto}`);
     }
   });
+  // TRANSPORTE (H1): inclui na geração o edital anexado pelo dropzone "autopreencher". Antes só
+  // itens de pauta alimentavam o prompt, então o edital do dropzone não chegava e o cabeçalho
+  // saía [a confirmar]. Dedupe por texto pra não duplicar se o mesmo edital também virou item de pauta.
+  if (_editalDropzoneTexto && !editaisAnexos.some(e => e.texto === _editalDropzoneTexto)) {
+    editaisAnexos.push({ n: editaisAnexos.length + 1, titulo: '(edital de convocação)', arquivo: _editalDropzoneNome, texto: _editalDropzoneTexto });
+  }
   let blocoEditais = '';
   if (editaisAnexos.length) {
     blocoEditais = '\n=== EDITAIS / DOCUMENTOS ANEXADOS ===\n' +
