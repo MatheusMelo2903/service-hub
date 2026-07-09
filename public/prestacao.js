@@ -1874,9 +1874,11 @@ async function prestacaoGerarServico() {
       // Nao entrega slide quebrado; sinaliza revisao humana com o motivo.
       var corpo422 = await resp.json().catch(function() { return {}; });
       var det = (corpo422.detail || corpo422);
-      console.error('[prestacao] geracao retida para revisao humana:', det);
+      // Loga so a categoria do motivo (det.erro), nunca det.alertas/det.detalhe, que
+      // podem trazer valores financeiros reais da reconciliacao (ex.: "W011A=12345.67").
+      console.error('[prestacao] geracao retida para revisao humana. motivo=' + (det.erro || 'desconhecido'));
       toast('Geração retida para revisão humana: ' + (det.erro || 'relatório fora do padrão')
-        + '. Detalhe no console. Confira o relatório no Superlógica antes de tentar de novo.', 'err');
+        + '. Confira o relatório no Superlógica antes de tentar de novo.', 'err');
       return;
     }
     if (!resp.ok) {
@@ -1983,7 +1985,9 @@ async function prestacaoGerarServico() {
           ? dados.reconciliacao_resumo
           : 'Atenção: diferença entre fontes detectada. Confira os totais.';
         toast(msgReconc, 'warn');
-        console.warn('[prestacao] reconciliação:', msgReconc, dados.avisos_reconciliacao);
+        // Loga só a CONTAGEM de divergências, nunca os valores financeiros do
+        // condomínio (avisos_reconciliacao traz totais reais tipo "W011A=12345.67").
+        console.warn('[prestacao] reconciliação: ' + ((dados.avisos_reconciliacao && dados.avisos_reconciliacao.length) || 0) + ' aviso(s) de divergência');
       }
 
       var msgStatus = partesStatus.length > 0 ? ' ' + partesStatus.join('. ') + '.' : '';
@@ -2015,9 +2019,9 @@ async function prestacaoGerarServico() {
 }
 
 // ── Fallback offline (PptxGenJS no browser) ──
-// /api/claude/messages. Em sucesso salva em prestacaoState.dadosExtraidos, loga
-// no console e troca o botao para acionar prestacaoGerarPptx (B5). Em erro,
-// restaura o botao original e mostra toast com a mensagem.
+// /api/claude/messages. Em sucesso salva em prestacaoState.dadosExtraidos e
+// troca o botao para acionar prestacaoGerarPptx (B5). Em erro, restaura o botao
+// original e mostra toast com a mensagem.
 async function prestacaoGerar() {
   var btn = document.getElementById('prest-btn-gerar');
   if (!btn) return;
@@ -2117,16 +2121,18 @@ async function prestacaoGerar() {
     try {
       dados = JSON.parse(jsonStr);
     } catch (e) {
-      console.error('[prestacao] resposta bruta nao parseavel:', textoResposta);
+      // Diagnostico SEM dado financeiro: so o length e os ~100 primeiros chars
+      // (pra ver se veio vazio/truncado/malformado), NUNCA o corpo com valores.
+      var amostra = String(textoResposta || '').slice(0, 100);
+      console.error('[prestacao] falha ao parsear JSON da IA. length=' + String(textoResposta || '').length + ' inicio=' + JSON.stringify(amostra));
       throw new Error('JSON invalido na resposta da IA.');
     }
     prestacaoState.dadosExtraidos = dados;
-    console.log('[prestacao] dados extraidos:', dados);
 
     btn.disabled = false;
     btn.textContent = 'Dados extraídos. Gerar PPTX';
     btn.onclick = prestacaoGerarPptx;
-    toast('Extração concluída. Veja prestacaoState.dadosExtraidos no console.', 'ok');
+    toast('Extração concluída. Gere o PPTX.', 'ok');
   } catch (err) {
     console.error('[prestacao] erro ao gerar:', err);
     btn.disabled = false;

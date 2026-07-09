@@ -14,22 +14,22 @@ condomínios diferentes.
 - [x] **Gap A** — regex de leitura da linha de TAXA passou a reconhecer todos os
   rótulos usados pelos condomínios: `TAXA DE CONDOMÍNIO {ano}`,
   `TAXA DE CONDOMÍNIO POR FRAÇÃO IDEAL {ano}`, `VALOR RATEADO EM {ano}` e
-  `PREVISÃO ORÇAMENTÁRIA ANO {ano}`. Antes só reconhecia 3 formatos e o Reserva
-  Verde (rótulo `TAXA DE CONDOMÍNIO {ano}` sem "POR FRAÇÃO IDEAL") caía em
-  reajuste 0,00% falso. Guarda adicional: separa "falha de parse" (taxa base
-  não encontrada → bloqueia o deck) de "taxa mantida" legítima (0% correto,
-  caso Reserva dos Camarás).
+  `PREVISÃO ORÇAMENTÁRIA ANO {ano}`. Antes só reconhecia 3 formatos e um dos
+  condomínios (rótulo `TAXA DE CONDOMÍNIO {ano}` sem "POR FRAÇÃO IDEAL") caía em
+  reajuste zerado falso. Guarda adicional: separa "falha de parse" (taxa base
+  não encontrada → bloqueia o deck) de "taxa mantida" legítima (reajuste zero
+  correto, caso do Condomínio 4).
 - [x] **Gap B (camada 1)** — o total a ratear passou a ser ancorado na linha de
   TAXA da própria planilha, em vez de somado a partir das categorias de
-  despesa. No Reserva Verde a mensal correta é R$ 138.224 (antes vinha
-  R$ 188.083 por somar também o bloco de consumo, que é rateado à parte).
+  despesa. Num condomínio real a mensal correta saía inflada por somar também o
+  bloco de consumo, que é rateado à parte; a camada 1 ancorou no total certo.
 - [x] **Gap B (camada 2)** — o consumo passou a ser excluído do panorama de
   categorias (`cats`) por comparação determinística de VALOR, não por nome de
   condomínio ou rótulo: localiza os dois totais candidatos ("TOTAL GERAL
   DESPESAS ORDINÁRIAS" = A, "...ORDINÁRIAS E CONSUMO A RATEAR" = B) e decide
   comparando a taxa declarada com A e B — taxa ≈ A (só ordinárias) exclui o
-  bloco de consumo do panorama (caso Reserva Verde); taxa ≈ B (combinado) ou
-  nenhum dos dois mantém o comportamento anterior (caso Reserva da Serra). Só
+  bloco de consumo do panorama (caso do Condomínio 2); taxa ≈ B (combinado) ou
+  nenhum dos dois mantém o comportamento anterior (caso do Condomínio 3). Só
   age quando A e B existem e são diferentes entre si. Também exclui sempre a
   linha "Estimativa Boleto C/Variáveis (Média)" do panorama (não é categoria)
   e tira o prefixo "CONTRATOS:" do nome da categoria. Mexe só na lista de
@@ -59,13 +59,17 @@ Revisor e auditor de segurança aprovaram as mudanças.
 
 ## Tabela de aceitação do harness (5/5 batendo, inclusive `cats`)
 
-| Condomínio | Reajuste | Mensal a ratear | `cats` | Observação |
-|---|---|---|---|---|
-| Via Mar | −7,19% | R$ 87.636,00 | ok | — |
-| Reserva Verde | +10,25% | R$ 138.224,00 | ok | Tipo A 689,71 → 760,44; era o caso que quebrava (Gap A/B) e o único que ainda falhava em `cats` antes da camada 2 (consumo excluído do panorama) |
-| Reserva da Serra | +14,78% | R$ 111.324,00 | ok | taxa combinada (ordinárias + consumo) mantém o consumo no panorama |
-| Reserva dos Camarás | 0% | R$ 115.726,80 | ok | taxa mantida legítima (não é falha de parse) |
-| Caminho do Mar | +11,15% | R$ 91.996,00 | ok | — |
+5/5 condomínios validados: reajuste, mensal a ratear e o campo `cats` conferidos
+contra a planilha do cliente, sem divergência. Os números reais não ficam
+registrados aqui (dado de cliente).
+
+| Condomínio | Status | Observação |
+|---|---|---|
+| Condomínio 1 | ok | — |
+| Condomínio 2 | ok | era o caso que quebrava (Gap A/B) e o único que ainda falhava em `cats` antes da camada 2 (consumo excluído do panorama) |
+| Condomínio 3 | ok | taxa combinada (ordinárias + consumo) mantém o consumo no panorama |
+| Condomínio 4 | ok | taxa mantida legítima (não é falha de parse) |
+| Condomínio 5 | ok | — |
 
 ## Arquivos modificados
 

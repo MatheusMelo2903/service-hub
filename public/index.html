@@ -6447,16 +6447,21 @@ async function gerarAtaIA() {
     const jobId = inicio.jobId;
     if (!jobId) throw new Error('servidor não retornou o identificador da geração');
 
-    // Polling curto até concluir. Teto de 10min como salvaguarda. Cada consulta usa
-    // cache: 'no-store' (o navegador não guarda nem revalida com If-None-Match, então
-    // nunca recebe 304 — que antes travava a leitura do resultado). AbortController
-    // de 15s por consulta pra um request pendurado não travar o laço.
+    // Polling curto até concluir. Teto de 25min como salvaguarda (uma ata de reunião
+    // de 3h leva ~9-15 min de geração no motor fracionado; 10 min não dava margem e o
+    // front desistia enquanto o job do servidor ainda completava — a ata era gerada mas
+    // não resgatada, "gastava token sem entregar"). O job é assíncrono e limitado pelo
+    // teto de 7 chamadas (MAX_CHAMADAS_ANTHROPIC_POR_ATA), então o custo já está travado
+    // no servidor; este teto só existe pra não pendurar o front se o servidor morrer.
+    // Cada consulta usa cache: 'no-store' (o navegador não guarda nem revalida com
+    // If-None-Match, então nunca recebe 304 — que antes travava a leitura do resultado).
+    // AbortController de 15s por consulta pra um request pendurado não travar o laço.
     let payload = null;
     let errosSeguidos = 0;
-    const prazoMax = Date.now() + 10 * 60 * 1000;
+    const prazoMax = Date.now() + 25 * 60 * 1000;
     for (;;) {
       await new Promise((r) => setTimeout(r, 4000));
-      if (Date.now() > prazoMax) throw new Error('tempo esgotado (10 min) — tente novamente');
+      if (Date.now() > prazoMax) throw new Error('tempo esgotado (25 min) — tente novamente');
       let st;
       try {
         const ac = new AbortController();

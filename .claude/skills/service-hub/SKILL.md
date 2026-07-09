@@ -250,6 +250,31 @@ Para o fluxo real de POST + PUT na API Superlógica que esta planilha alimenta, 
 **Cross-reference:** See `ata-condominial` skill for the exact tone, structure, and legal
 formatting required for Brazilian condominium meeting minutes.
 
+### RÉGUA REALISTA — critério OFICIAL de qualidade do motor de ata (aprovado 2026-07-08)
+
+Substitui o critério antigo "Enseada 14/14 idêntico sempre". A ata é documento formal
+apoiado em fala humana, então a barra é realista, não mecânica:
+
+1. **Valor CLARO na fala** → consertado/inserido DETERMINISTICAMENTE por código
+   (`corrigirPlaceholdersDeliberacao` no `server.js`), sempre presente. Nunca perder valor
+   claro. Fecha o bug de garbling.
+2. **Valor GENUINAMENTE ambíguo** (pessoa fala e se corrige, inaudível, conflito real) →
+   marcado `[a confirmar]` para revisão humana, NUNCA chutado. Marcar `[a confirmar]` num
+   valor que o próprio áudio deixou confuso é comportamento CORRETO, não bug.
+3. **Ruído** (hipotéticos, exemplos, propostas rejeitadas, arredondamentos de fala) → fora
+   da ata, como o gabarito humano faz.
+
+**Critério de "pronto":** valores-alvo consertados de forma CONSISTENTE entre rodadas +
+conflitos reais marcados `[a confirmar]` de forma PREVISÍVEL (não viram valor inventado).
+Percentual e medida seguem fora da contagem. Detalhe completo em
+`tarefas/em-andamento/roadmap-velocidade-ata.md` (seção RÉGUA REALISTA + REGRA DE FERRO).
+
+**Nota de config (2026-07-08):** a chamada Anthropic da ata NÃO usa `temperature` explícito
+(usa o default da API), para manter o estilo de ata já validado pela interface. O reteste
+mostrou que `temperature: 0` NÃO trouxe determinismo de valor (Enseada variou 14/13/12
+mesmo assim); a consistência vem da correção cirúrgica + auditoria fracionada, não da
+temperatura.
+
 ---
 
 ## 5. Design System — Quick Reference

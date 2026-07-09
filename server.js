@@ -699,6 +699,178 @@ function mencoesMonetarias(txt) {
   return extrairMencoesMonetarias(txt);
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// CORREÇÃO CIRÚRGICA DETERMINÍSTICA de valor de deliberação.
+//
+// O motor não PERDE valor às cegas: quando o Sonnet fica em dúvida sobre um valor
+// de deliberação falado, ele escreve "[valor a confirmar]" (ou quebra o formato, ex.
+// "R$ 3.519, R$ 159", e ainda marca o total como [valor a confirmar]). Isso é
+// não-determinístico (um run preenche, outro não). AQUI o código preenche esses
+// placeholders SEM depender do LLM. Para um valor da fala virar candidato de um
+// placeholder ele precisa: (1) estar em CONTEXTO DE DELIBERAÇÃO REAL na fala
+// (voto/aprovação/contratação), descartando ocorrência logo após condicional como
+// "caso aprovem" (hipotético) — ver _temDeliberacaoReal; (2) não estar já escrito de
+// forma FIRME na ata (mas valor que só aparece em HEDGE, "mencionado como R$ X",
+// volta a ser candidato — ver _valoresHedgeOnly). A força da âncora depende do sinal:
+//   - com GATILHO FORTE (voto contado + aprovação efetivada agregados em TODAS as
+//     ocorrências do valor na fala), QUALQUER palavra de conteúdo em comum serve,
+//     mesmo entidade recorrente tipo "Gilvânia" (df alto) — ver FIX 1/FIX 2;
+//   - sem gatilho forte, ainda exige âncora RARA (palavra em <=2 frases da ata).
+// Se EXATAMENTE UM valor casa → preenche (e apaga "R$ X" errado colado antes do
+// placeholder, ver _VALOR_COLADO_ANTES/FIX 3); se zero ou vários → mantém
+// [a confirmar] (NUNCA chuta) e reporta como ambíguo.
+// Refinamento futuro: cruzar com itens de pauta do edital nos casos ambíguos.
+// ─────────────────────────────────────────────────────────────────────────
+// Contexto de deliberação: voto/aprovação/ratificação/contratação. NÃO inclui
+// "orçamento"/"valor de"/"proposta" (largos demais: pegam opção só apresentada).
+const _CTX_DELIBERACAO = /(a favor\b|levanta.{0,8}plaquinha|plaquinha|aprova|aprovem|aprovad|vot(o|os|ar|ei|ou|amos|a[çc][aã]o|ada|ado)|delibera|delibere|decis[aã]o|decidi|decidiu|ratifica|contrata[çc]|homologa|escolh(er|eu|ido)|venc(eu|edor))/i;
+const _PLACEHOLDER_VALOR = /\[valor(?:\s+total)?\s+a\s+(?:confirmar|definir)\]/gi;
+// Gatilho forte (FIX 2): contagem de voto explícita ("17 votos", "maioria", "unanimidade").
+// Isolado de _CTX_DELIBERACAO porque aqui queremos algo BEM mais específico que "a favor".
+const _CTX_VOTO_FORTE = /\d+\s*votos?\b|\bmaioria\b|\bunanimidade\b/i;
+// Gatilho forte (FIX 2): palavra de aprovação/ratificação/homologação já EFETIVADA (global,
+// pra varrer todas as ocorrências no trecho e checar cada uma contra o marcador condicional).
+const _APROVACAO_FORTE = /aprovad[oa]s?|aprovaram|ratificad[oa]s?|homologad[oa]s?/gi;
+// Marcador condicional que, logo ANTES de uma palavra de aprovação, indica proposta ainda
+// hipotética ("caso vocês aprovem", "se aprovado", "seria aprovado") — não é votação de fato.
+const _COND_ANTES_APROVACAO = /\b(caso|se|quando|desde\s+que|seria)\b/i;
+function _normLoose(s) { return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+const _STOP_ANC = new Set('para pela pelo pelos como esse essa esta este isso aqui onde quem porque entao tambem tem uma uns umas dos das com sem por que nos nas ate vai ser foi sao mais mas ele ela isso esse valor valores reais real mil total conta contas sobre aos vao seria fica ficar deve pode todo toda todos todas cada qual quando muito pouco entre depois antes assim custo somente incluindo opcao opcoes confirmar razao social completa nome numero sobrenome mesmo mesma'.split(' '));
+// Âncoras de um trecho: palavras de conteúdo (>=5 letras), descartando o 1º e o último
+// token (o trecho corta a ±70 chars no meio de palavra, gerando fragmentos).
+function _ancorasCtx(trecho) {
+  const toks = _normLoose(trecho).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  return [...new Set(toks.slice(1, -1).filter((w) => w.length >= 5 && !_STOP_ANC.has(w) && !/^\d+$/.test(w)))];
+}
+// Valor "R$ X" colado (ignorando espaço) imediatamente ANTES do placeholder (FIX 3): quando o
+// LLM escreveu um número errado seguido do placeholder ("R$ 3.519,00 [valor a confirmar]"),
+// tem que apagar os dois juntos — senão o preenchimento gruda dois valores diferentes.
+const _VALOR_COLADO_ANTES = /R\$\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?\s*$/;
+// Verifica se HÁ, no trecho, alguma aprovação/ratificação/homologação que NÃO esteja logo
+// após um marcador condicional (~25 chars antes). Precisa varrer TODAS as ocorrências da
+// palavra no trecho porque pode haver uma hipotética ("caso aprovem") e outra real depois.
+function _temAprovacaoForte(trecho) {
+  _APROVACAO_FORTE.lastIndex = 0;
+  let m;
+  while ((m = _APROVACAO_FORTE.exec(trecho))) {
+    const antes = trecho.slice(Math.max(0, m.index - 25), m.index);
+    if (!_COND_ANTES_APROVACAO.test(antes)) return true;
+  }
+  return false;
+}
+// FIX 4 (questao a): versao GLOBAL de _CTX_DELIBERACAO, pra varrer TODAS as ocorrencias de
+// palavra de deliberacao num trecho (nao so a primeira que o regex sem 'g' acha).
+const _CTX_DELIBERACAO_G = /(a favor\b|levanta.{0,8}plaquinha|plaquinha|aprova|aprovem|aprovad|vot(o|os|ar|ei|ou|amos|a[çc][aã]o|ada|ado)|delibera|delibere|decis[aã]o|decidi|decidiu|ratifica|contrata[çc]|homologa|escolh(er|eu|ido)|venc(eu|edor))/gi;
+// Generaliza _temAprovacaoForte pra TODO o vocabulario de _CTX_DELIBERACAO (nao so
+// aprovacao): verifica se HA, no trecho, alguma palavra de deliberacao que NAO esteja logo
+// apos um marcador condicional (~25 chars antes). Fecha o vazamento onde "aprovem" dentro de
+// "caso voces aprovem" (hipotetico) casava _CTX_DELIBERACAO.test(trecho) puro e virava
+// candidato so por casar o regex, mesmo sendo so uma proposta ainda nao votada.
+// Se a ocorrencia estiver perto demais do INICIO do trecho (m.index < 25), a janela de ±70
+// chars do extrairMencoesMonetarias pode ja ter cortado fora o marcador condicional (ex.:
+// "Caso voces aprovem..." vira so "oces aprovem..." quando o valor falado esta loge na
+// frase) — nesse caso NAO da pra garantir que nao e condicional, entao trata como incerto e
+// NAO conta essa ocorrencia como deliberacao real (nunca chuta, por seguranca).
+function _temDeliberacaoReal(trecho) {
+  _CTX_DELIBERACAO_G.lastIndex = 0;
+  let m;
+  while ((m = _CTX_DELIBERACAO_G.exec(trecho))) {
+    if (m.index < 25) continue; // contexto insuficiente pra descartar condicional -> nao conta
+    const antes = trecho.slice(m.index - 25, m.index);
+    if (!_COND_ANTES_APROVACAO.test(antes)) return true;
+  }
+  return false;
+}
+// FIX 4 (questao a): verbo de HEDGE (mencionado/indicado/citado/referido/falado/dito) seguido
+// de "como" em ate ~15 chars: sinaliza que o valor foi so ANOTADO como alternativa/duvida na
+// ata, nunca AFIRMADO de forma firme. Funciona com ou sem parenteses ao redor (o sinal e o par
+// verbo+"como", nao a pontuacao) — cobre tanto "(mencionado como R$ X em determinado momento)"
+// quanto "indicado como R$ X e mencionado tambem como R$ Y" sem parenteses.
+const _HEDGE_COMO = /(?:mencionad[oa]s?|indicad[oa]s?|citad[oa]s?|referid[oa]s?|fal(?:ou|ado)|dit[oa])[^.]{0,15}?\bcomo\b/i;
+// Monta o conjunto de valores canonicos que aparecem na ata SOMENTE em anotacoes de HEDGE, e
+// NUNCA de forma firme. Precisa TODAS as ocorrencias do valor na ata serem hedge: uma unica
+// ocorrencia firme em qualquer ponto mantem o valor bloqueado (guarda de regressao — valor
+// firme na ata jamais pode ser reaberto pra preenchimento).
+function _valoresHedgeOnly(ataTxt) {
+  const todasHedgePorCanon = new Map();
+  for (const m of extrairMencoesMonetarias(ataTxt)) {
+    const hedge = _HEDGE_COMO.test(m.trecho);
+    const atual = todasHedgePorCanon.has(m.canon) ? todasHedgePorCanon.get(m.canon) : true;
+    todasHedgePorCanon.set(m.canon, atual && hedge);
+  }
+  const out = new Set();
+  for (const [canon, todasHedge] of todasHedgePorCanon) if (todasHedge) out.add(canon);
+  return out;
+}
+// Preenche [valor a confirmar] com o valor de deliberação falado (1-para-1). Retorna
+// { ata, preenchidos:[{canon}], ambiguos:[{candidatos}] }.
+function corrigirPlaceholdersDeliberacao(ataTxt, transcricao) {
+  const canonAta = valoresCanonicos(ataTxt);
+  // FIX 4 (questao a): valores que so aparecem em anotacao de HEDGE na ata (nunca de forma
+  // firme) voltam a ser candidatos — o bloqueio original ("ja esta na ata, nao mexe") era
+  // largo demais e travava a linha de DELIBERACAO quando o LLM so anotou o valor como duvida
+  // (ex. "(mencionado como R$ 4.100,00 em determinado momento)"). Valor FIRME continua
+  // bloqueado (guarda de regressao obrigatoria).
+  const hedgeOnlyAta = _valoresHedgeOnly(ataTxt);
+  // FIX 1: agrupa por valor CANÔNICO juntando TODAS as ocorrências na fala (não só a
+  // primeira) — a confirmação de votação forte de um valor às vezes está numa ocorrência
+  // diferente da primeira menção (ex.: 1ª ocorrência só apresenta o valor, a 3ª confirma o
+  // voto). Sem isso a âncora e o gatilho forte ficavam presos ao trecho mais fraco.
+  const porCanon = new Map();
+  for (const m of mencoesMonetarias(transcricao)) {
+    if (canonAta.has(m.canon) && !hedgeOnlyAta.has(m.canon)) continue; // firme na ata -> bloqueado; so-hedge -> libera candidatura
+    if (!porCanon.has(m.canon)) porCanon.set(m.canon, { anc: new Set(), entrouDeliberacao: false, votoForte: false, aprovacaoForte: false });
+    const g = porCanon.get(m.canon);
+    // FIX 4 (questao b): usa _temDeliberacaoReal (varre TODAS as ocorrencias e descarta as
+    // que vem logo apos condicional) em vez do _CTX_DELIBERACAO.test puro, que casava
+    // "aprovem" dentro de "caso voces aprovem" (hipotetico) e deixava vazar candidato ruido.
+    if (_temDeliberacaoReal(m.trecho)) g.entrouDeliberacao = true;
+    for (const a of _ancorasCtx(m.trecho)) g.anc.add(a);
+    if (_CTX_VOTO_FORTE.test(m.trecho)) g.votoForte = true;
+    if (_temAprovacaoForte(m.trecho)) g.aprovacaoForte = true;
+  }
+  const candidatos = [];
+  for (const [canon, g] of porCanon) {
+    if (!g.entrouDeliberacao) continue; // só deliberação, nunca ruído (em NENHUMA ocorrência)
+    // Gatilho forte: voto contado E aprovação de fato, juntos no contexto agregado do valor.
+    candidatos.push({ canon, anc: [...g.anc], gatilhoForte: g.votoForte && g.aprovacaoForte });
+  }
+  // docFreq por frase: quantas frases da ata contêm cada palavra (mede raridade).
+  const dfFrases = new Map();
+  for (const fr of ataTxt.split(/[.\n]/)) {
+    for (const w of new Set(_normLoose(fr).replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter((x) => x.length >= 5))) {
+      dfFrases.set(w, (dfFrases.get(w) || 0) + 1);
+    }
+  }
+  const preenchidos = [], ambiguos = [];
+  let out = '', last = 0;
+  for (const pm of ataTxt.matchAll(_PLACEHOLDER_VALOR)) {
+    const idx = pm.index;
+    const ctxNorm = _normLoose(ataTxt.slice(Math.max(0, idx - 190), idx + 45));
+    // valores cujo trecho compartilha âncora com o contexto do placeholder. Se o valor tem
+    // GATILHO FORTE (voto + aprovação reais, agregados), dispensa a raridade da âncora
+    // (FIX 2); senão, exige âncora rara (<=2 frases na ata) como hoje.
+    const casaram = candidatos.filter((c) => c.anc.some((a) => ctxNorm.includes(a) && (c.gatilhoForte || (dfFrases.get(a) || 9) <= 2)));
+    if (casaram.length === 1) {
+      // FIX 3: se o texto imediatamente antes do placeholder já for um "R$ X" (valor errado
+      // colado pelo LLM), apaga os dois juntos pra não grudar dois valores diferentes.
+      const inicioJanela = Math.max(0, idx - 40);
+      const mColado = _VALOR_COLADO_ANTES.exec(ataTxt.slice(inicioJanela, idx));
+      const inicioCorte = mColado ? inicioJanela + mColado.index : idx;
+      out += ataTxt.slice(last, inicioCorte);
+      out += 'R$ ' + casaram[0].canon.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      preenchidos.push({ canon: casaram[0].canon });
+    } else {
+      out += ataTxt.slice(last, idx);
+      out += pm[0];
+      if (casaram.length > 1) ambiguos.push({ candidatos: casaram.map((c) => c.canon) });
+    }
+    last = idx + pm[0].length;
+  }
+  out += ataTxt.slice(last);
+  return { ata: out, preenchidos, ambiguos };
+}
+
 // Auditoria de completude de UM bloco: devolve a lista de lacunas (texto) ou '' se nada.
 async function auditarBlocoCompletude(ata, bloco, i, n, chamar) {
   const sys = PROMPT_AUDITORIA_BLOCO + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
@@ -774,6 +946,12 @@ function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
     const body = JSON.stringify({
       model: modelo,
       max_tokens: maxTokens,
+      // SEM temperature explicito: usa o default da API. Manter o estilo da ata que o
+      // Matheus ja validou pela interface. A consistencia de VALOR nao vem de temperature
+      // baixa (o reteste mostrou Enseada variando 14/13/12 mesmo com temperature 0), e sim
+      // da correcao cirurgica deterministica (corrigirPlaceholdersDeliberacao) + auditoria
+      // fracionada. Ver RÉGUA REALISTA no roadmap: alvo consertado por codigo, conflito real
+      // marcado [a confirmar], ruido fora. Reversao do temperature 0 autorizada em 2026-07-08.
       system,
       messages: [{ role: 'user', content: userMessage }]
     });
@@ -925,12 +1103,21 @@ async function gerarAtaJob(jobId, userMessage) {
       else { throw e; }
     }
 
+    // CORREÇÃO CIRÚRGICA DETERMINÍSTICA (por código, NÃO pelo LLM): preenche
+    // [valor a confirmar] com o valor de deliberação falado quando o casamento é
+    // 1-para-1. Fecha a variância do Sonnet (que ora preenche, ora deixa placeholder)
+    // sem forçar valor de ruído. Roda sobre a MELHOR ata que temos (mesmo se cortou por teto).
+    const cir = corrigirPlaceholdersDeliberacao(ataFinal, transcricao);
+    ataFinal = cir.ata;
+
     const vFinal = validarAta(ataFinal);
     const canonFinal = valoresCanonicos(ataFinal);
     // diagnóstico determinístico: valores da fala fora da ata final.
     const falaFaltandoFinal = [...new Set(mencoesMonetarias(transcricao).map((m) => m.canon))].filter((c) => !canonFinal.has(c));
     tentativas[tentativaIdx].auditoria_fracionada = {
       blocos: numBlocos, etapa, usouOpus, cortadoPorTeto, chamadas: _chamadas, gaps_deterministicos: numGapsDet,
+      placeholders_preenchidos: cir.preenchidos.map((p) => fmtBRL(p.canon)),
+      placeholders_ambiguos: cir.ambiguos.length,
       valores_fala_faltando_final: falaFaltandoFinal.map(fmtBRL)
     };
     return concluir({
@@ -1794,4 +1981,14 @@ app.get('/hub', (req, res) => { semCacheHtml(res); res.sendFile(path.join(__dirn
 
 // Qualquer rota desconhecida cai na landing, não no sistema
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
-app.listen(PORT, () => console.log('Service Hub porta ' + PORT));
+
+// Só sobe o listener quando executado direto (node server.js). Quando o arquivo é
+// requerido por um teste (require), NÃO abre porta — deixa as funções determinísticas
+// testáveis isoladas. Em produção o Railway roda `node server.js` direto, então
+// require.main === module é verdadeiro e o servidor sobe normal.
+if (require.main === module) {
+  app.listen(PORT, () => console.log('Service Hub porta ' + PORT));
+}
+
+// Export só para teste determinístico da correção cirúrgica (inerte em produção).
+module.exports = { corrigirPlaceholdersDeliberacao, valoresCanonicos, mencoesMonetarias };
