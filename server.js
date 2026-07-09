@@ -871,6 +871,425 @@ function corrigirPlaceholdersDeliberacao(ataTxt, transcricao) {
   return { ata: out, preenchidos, ambiguos };
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// PASSE DE CONSOLIDAÇÃO DE NOME PRÓPRIO (2026-07-09). Etapas 1, 2 e 4 são código puro; a
+// etapa 3 é uma chamada de LLM de insumo mínimo, disparada SÓ quando sobra mais de uma forma
+// grounded.
+//
+// O motor FRACIONADO degrada nome próprio no corpo da ata (regressão registrada em
+// tarefas/em-andamento/fast-follow-fidelidade-nome-motor-fracionado.md): às vezes marca
+// "[nome a confirmar: Bit Engenharia / MIT Engenharia / Adite Engenharia]" quando a fala
+// tem só UM nome correto, ou pior, inventa alternativa que nunca foi dita (fabricação).
+//
+// Este passe roda em 4 etapas, TODAS implementadas e wiradas em entregarAta (o passe roda
+// depois de inserirLacunasNaAta e antes de corrigirPlaceholdersDeliberacao):
+//   ETAPA 1 (extrairNomesCandidatos): acha candidato a nome próprio na ata (marcador
+//     "[nome a confirmar: ...]" ou nome firme escrito com gatilho de pessoa/empresa).
+//   ETAPA 2 (reunirEvidencia): GROUNDING por PALAVRA INTEIRA. Só sobrevive alternativa que
+//     existe como palavra na transcrição normalizada (via existeLiteral). Também busca ÂNCORA
+//     POR VALOR: nomes próprios ditos perto do MESMO valor em R$ do candidato, mesmo que a ata
+//     não tenha listado essa forma.
+//   decidirPorCodigo: se sobrar EXATAMENTE uma forma grounded, resolve por CÓDIGO
+//     (confianca='alta_codigo'), sem LLM. Se sobrar mais de uma, marca precisaLLM=true e a
+//     ETAPA 3 (consolidarNomesProprios, chamada claude-sonnet-4-6) decide. Se sobrar zero,
+//     nunca piora.
+//   ETAPA 4 (aplicarConsolidacao): find and replace determinístico, só com confiança ALTA,
+//     com DUPLA checagem de grounding (forma_canonica fabricada nunca sobrevive) e guarda de
+//     tamanho (nunca reescreve a ata pra menos de 95% do tamanho de entrada).
+//
+// REGRA DE OURO: grounding é item de primeira classe e exige PALAVRA INTEIRA. Nenhuma forma
+// sobrevive se não existir como palavra na fala. Foi assim que "Habit"/"ABM Montas"/"ADM Manta"
+// (fabricações) morrem, e é assim que "Cato" (substring de "Cator") e "Cerval" (substring de
+// "Cervalp") passaram a morrer depois do conserto de 2026-07-09 no existeLiteral.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Escapa caractere especial de regex antes de montar um padrão a partir de texto livre
+// (nome vindo da ata/transcrição). Extraída porque a mesma expressão vivia duplicada em 3
+// pontos do passe (_expandirNomeCompleto, existeLiteral, aplicarConsolidacao) — desduplicação
+// pura, sem mudança de comportamento.
+function _escapeRegex(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+// Conectores minúsculos aceitos NO MEIO de um nome próprio composto (ex.: "João da Silva").
+// Nunca no início nem no fim da captura — só entre dois tokens capitalizados.
+const _CONECTORES_NOME = new Set(['da', 'de', 'do', 'das', 'dos', 'e']);
+
+// Gatilhos de PESSOA ou EMPRESA que antecedem um nome próprio candidato. "empresa" sozinho
+// já cobre "a empresa"/"aprovada a empresa" (todos terminam na palavra "empresa").
+const _GATILHOS_NOME = /(Sr\.|Sra\.|Dr\.|Dra\.|síndic[oa]|conselheiro|presidente da mesa|empresa)/gi;
+
+// Captura o(s) token(s) capitalizado(s) logo após uma posição do texto (usada depois de um
+// gatilho de pessoa/empresa). Aceita conector minúsculo NO MEIO (da/de/do/das/dos/e), nunca
+// isolado. Para no primeiro token que não é capitalizado nem conector válido — isso também
+// exclui pontuação e "R$ 13.000" (o "R" sozinho falha por não vir seguido de espaço/fim).
+function _capturarNomeApos(txt, pos) {
+  const resto = txt.slice(pos);
+  const inicioEspaco = resto.match(/^\s+/);
+  let i = inicioEspaco ? inicioEspaco[0].length : 0;
+  const tokens = [];
+  while (tokens.length < 6) {
+    const rem = resto.slice(i);
+    // [a-zà-ÿA-ZÀ-Ý]* (nao só minúscula) pra aceitar token CamelCase sem espaço interno
+    // (ex.: "TesteCorp"), que senão quebrava no meio por achar a 2ª maiúscula.
+    const capM = rem.match(/^([A-ZÀ-Ý][a-zà-ÿA-ZÀ-Ý]*)(\s+|$)/);
+    if (capM) { tokens.push(capM[1]); i += capM[0].length; continue; }
+    const conM = rem.match(/^([a-zà-ÿ]+)(\s+)/);
+    if (conM && tokens.length > 0 && _CONECTORES_NOME.has(conM[1])) {
+      const proximo = rem.slice(conM[0].length).match(/^[A-ZÀ-Ý][a-zà-ÿA-ZÀ-Ý]*(\s+|$)/);
+      if (proximo) { tokens.push(conM[1]); i += conM[0].length; continue; }
+    }
+    break;
+  }
+  return tokens.length ? tokens.join(' ') : null;
+}
+
+// Palavra de aprovação/ratificação/homologação EFETIVADA, usada aqui só pra marcar um
+// candidato como "confirmado" quando aparece bem colada no gatilho (ver _candidatosGatilho).
+const _APROVACAO_PERTO_GATILHO = /aprovad[oa]s?|aprovaram|ratificad[oa]s?|homologad[oa]s?/i;
+
+// Varre um texto por gatilhos de pessoa/empresa e devolve os nomes capturados logo depois,
+// com a posição (idx) do início do nome e um sinal `confirmado`: TRUE quando uma palavra de
+// aprovação efetivada aparece colada bem antes do próprio gatilho (~30 chars), como em
+// "Ok, então aprovada a empresa Bit" — isso distingue o VENCEDOR de uma proposta que só foi
+// apresentada/votada sem confirmação (ex.: "A favor da empresa Adite Engenharia, R$13 mil"
+// não tem aprovação colada no gatilho, mesmo que a palavra "aprovado" apareça mais adiante
+// na mesma frase perguntando sobre unanimidade). Reaproveitada tanto no canal FIRME da ata
+// (etapa 1, onde o sinal não é usado) quanto na busca de âncora por valor (etapa 2, onde é
+// o que resolve empate entre propostas concorrentes pelo MESMO valor).
+function _candidatosGatilho(txt) {
+  const out = [];
+  _GATILHOS_NOME.lastIndex = 0;
+  let g;
+  while ((g = _GATILHOS_NOME.exec(txt))) {
+    const posNome = g.index + g[0].length;
+    const nome = _capturarNomeApos(txt, posNome);
+    if (!nome) continue;
+    const idxNome = txt.indexOf(nome, posNome);
+    const antesGatilho = txt.slice(Math.max(0, g.index - 30), g.index);
+    const confirmado = _APROVACAO_PERTO_GATILHO.test(antesGatilho);
+    out.push({ nome, idx: idxNome >= 0 ? idxNome : posNome, confirmado });
+  }
+  return out;
+}
+
+// Expande um nome CURTO (1 palavra, ex. "Bit") pra sua forma mais completa (ex. "Bit
+// Engenharia"), SE essa forma maior existir LITERALMENTE em outro ponto da transcrição
+// inteira. Nunca inventa: só expande se a forma maior existir de fato no texto. Cobre o
+// caso em que a fala confirma o vencedor só pelo apelido curto ("aprovada a empresa Bit")
+// mas o nome completo foi dito por extenso em outro momento da mesma reunião.
+function _expandirNomeCompleto(nome, transcricaoTxt) {
+  if (!nome || nome.trim().includes(' ')) return nome;
+  const re = new RegExp('\\b' + _escapeRegex(nome) + '\\s+([A-ZÀ-Ý][a-zà-ÿ]*)');
+  const m = re.exec(transcricaoTxt);
+  return m ? (nome + ' ' + m[1]) : nome;
+}
+
+// Acha o valor monetário MAIS PRÓXIMO de uma posição, numa janela ao redor (usado tanto pro
+// marcador "[nome a confirmar]" quanto pro nome firme, pra guardar a âncora de valor de cada
+// candidato). Só serve pra ORIENTAR a busca de âncora na transcrição depois (reunirEvidencia)
+// — nunca decide nome sozinho.
+function _valorProximo(txt, idx, raio) {
+  const ini = Math.max(0, idx - raio);
+  const fim = Math.min(txt.length, idx + raio);
+  const janela = txt.slice(ini, fim);
+  const centro = idx - ini;
+  const janelaColapsada = janela.replace(/\s+/g, ' ');
+  const mencoes = extrairMencoesMonetarias(janela);
+  if (!mencoes.length) return null;
+  let melhor = mencoes[0].canon, melhorDist = Infinity;
+  for (const m of mencoes) {
+    const pos = janelaColapsada.indexOf(m.trecho);
+    const dist = pos < 0 ? Infinity : Math.abs(pos - centro);
+    if (dist < melhorDist) { melhorDist = dist; melhor = m.canon; }
+  }
+  return melhor;
+}
+
+// ETAPA 1 (código puro): extrai candidatos a nome próprio da ata, por dois canais.
+//   MARCADOR: "[nome a confirmar: A / B / C]" (ou vazio). "[sobrenome a confirmar]" é OUTRO
+//     marcador e nunca conta aqui (não é candidato de consolidação de nome).
+//   FIRME: nome escrito sem marcador, logo após um gatilho de pessoa ("Sr.", "síndico"...)
+//     ou de empresa ("empresa"). Exclusões obrigatórias: (a) bate com termo do glossário
+//     (comparação por _normLoose); (b) sequência inteiramente em CAIXA ALTA (título de
+//     cabeçalho, nunca nome de gente); (c) só entra se repetir pelo menos DUAS vezes no
+//     corpo (mesma grafia, via _normLoose) — decisão do Matheus: candidato único nunca entra
+//     sozinho no canal firme.
+function extrairNomesCandidatos(ataTxt, glossarioTxt) {
+  const ata = String(ataTxt);
+  const glossarioNorm = _normLoose(String(glossarioTxt || ''));
+  const candidatos = [];
+
+  // --- canal MARCADOR ---
+  const reMarcador = /\[(nome|sobrenome)\s+a\s+confirmar(?:\s*:\s*([^\]]*))?\]/gi;
+  let m;
+  while ((m = reMarcador.exec(ata))) {
+    if (m[1].toLowerCase() !== 'nome') continue; // "[sobrenome a confirmar]" é outro marcador
+    const conteudo = (m[2] || '').trim();
+    const alternativas = conteudo ? conteudo.split(/\s*\/\s*|\s*,\s*/).map((s) => s.trim()).filter(Boolean) : [];
+    candidatos.push({
+      tipo: 'marcador',
+      textoOriginal: m[0],
+      alternativas,
+      valorAncora: _valorProximo(ata, m.index, 200),
+      idx: m.index
+    });
+  }
+
+  // --- canal FIRME ---
+  const brutos = _candidatosGatilho(ata);
+  const vistos = new Map(); // dedupe por _normLoose, guarda a 1ª grafia encontrada
+  for (const b of brutos) {
+    const chave = _normLoose(b.nome);
+    if (glossarioNorm.includes(chave)) continue;        // (a) termo do glossário
+    if (!/[a-zà-ÿ]/.test(b.nome)) continue;              // (b) tudo em CAIXA ALTA, sem minúscula nenhuma
+    if (!vistos.has(chave)) vistos.set(chave, { nome: b.nome, idx: b.idx, count: 0 });
+    vistos.get(chave).count++;
+  }
+  for (const v of vistos.values()) {
+    if (v.count < 2) continue; // (c) repetição mínima = 2
+    candidatos.push({
+      tipo: 'firme',
+      textoOriginal: v.nome,
+      alternativas: [v.nome],
+      valorAncora: _valorProximo(ata, v.idx, 120),
+      idx: v.idx
+    });
+  }
+
+  return candidatos;
+}
+
+// Busca âncora por VALOR na transcrição: acha TODOS os trechos onde o MESMO valor canônico
+// foi falado e extrai nome próprio próximo de cada um (via _candidatosGatilho). Numa disputa
+// entre propostas concorrentes pelo MESMO valor (ex.: Bit x MIT x Adite, todas ~R$13.000),
+// prioriza SÓ os candidatos marcados `confirmado` (aprovação colada no gatilho, ex. "aprovada
+// a empresa Bit") — descarta as propostas que só foram apresentadas/votadas sem confirmação
+// colada. Sem nenhum candidato confirmado, usa todos (nunca fica pior que antes).
+// RESSALVA (2026-07-09): esse desempate por "aprovação colada no gatilho" é uma HEURÍSTICA,
+// não verdade objetiva. Funcionou no Casablanca (Bit), mas em outra ata pode escolher errado.
+// A rede de segurança é a confiança alta + o grounding (a forma escolhida tem que existir na
+// fala), que seguram o pior caso. É o ponto do desenho que mais merece olho em produção.
+function _buscarAncoraPorValor(valorAncora, transcricaoTxt) {
+  if (valorAncora == null) return [];
+  const trechos = extrairMencoesMonetarias(transcricaoTxt).filter((mn) => mn.canon === valorAncora);
+  if (!trechos.length) return [];
+  const todos = [];
+  for (const t of trechos) {
+    for (const cand of _candidatosGatilho(t.trecho)) {
+      todos.push({ nome: _expandirNomeCompleto(cand.nome, transcricaoTxt), confirmado: cand.confirmado });
+    }
+  }
+  const confirmados = todos.filter((c) => c.confirmado);
+  const alvo = confirmados.length ? confirmados : todos;
+  const nomes = new Map();
+  for (const c of alvo) {
+    const chave = _normLoose(c.nome);
+    if (!nomes.has(chave)) nomes.set(chave, c.nome);
+  }
+  return [...nomes.values()];
+}
+
+// ETAPA 2 (código puro): reúne evidência de cada candidato contra a transcrição.
+//   groundedAlternativas = alternativas do candidato que existem LITERALMENTE na fala
+//     (normalizado por _normLoose, sem depender de acento/caixa/espaço duplo). O que não
+//     existe é DESCARTADO aqui — é onde fabricação (Habit, ABM Montas, ADM Manta) morre.
+//   ancoraNomes = nomes que a transcrição associa ao MESMO valor em R$ do candidato, mesmo
+//     que a ata não tenha listado essa forma (ex.: "Cervalp Manutenção" quando a ata só
+//     tinha "Ceval").
+//   formasGrounded = união das duas, sem duplicar (por _normLoose).
+// existeLiteral: um alvo está "grounded" se aparece como PALAVRA INTEIRA na transcrição
+// normalizada. CORREÇÃO 2026-07-09: a checagem antiga era transcricaoNorm.includes(alvo), que
+// casava SUBSTRING e aprovava forma degradada como grounded — "Cato" passava por existir dentro
+// de "Cator", "Cerval" dentro de "Cervalp", "Marcel" dentro de "Marcelo". O passe então aplicava
+// a forma degradada como forma_canonica. Agora exige fronteira de palavra, com o MESMO lookaround
+// de letra (inclusive acento) do replace da etapa 4 (server.js, aplicarConsolidacao). Nome
+// composto ("Marcelo Soares") casa o espaço interno literal; a fronteira vai só nas pontas, então
+// não quebra. A transcrição é normalizada por _normLoose (acento removido, minúscula), então o
+// alvo também é — a comparação é acento-insensível como antes, só que por palavra. CORREÇÃO
+// 2026-07-09 (2): a fronteira bloqueava só letra, então "Bit" ainda casava como substring dentro
+// de "Bit2024" ou "Bit-Tech" (dígito e hífen colados não contavam como parte da palavra). Agora a
+// classe negada também bloqueia dígito (0-9), hífen (-) e apóstrofo (') nas duas pontas.
+function existeLiteral(alvoRaw, transcricaoTxt) {
+  const transcricaoNorm = _normLoose(String(transcricaoTxt || '')).replace(/\s+/g, ' ');
+  const alvo = _normLoose(String(alvoRaw || '')).replace(/\s+/g, ' ').trim();
+  if (!alvo) return false;
+  const esc = _escapeRegex(alvo);
+  const re = new RegExp('(?<![A-Za-zÀ-ÿ0-9\'-])' + esc + '(?![A-Za-zÀ-ÿ0-9\'-])');
+  return re.test(transcricaoNorm);
+}
+
+function reunirEvidencia(candidatos, transcricaoTxt) {
+  const transcricao = String(transcricaoTxt || '');
+  return (candidatos || []).map((c) => {
+    const groundedAlternativas = (c.alternativas || []).filter((alt) => existeLiteral(alt, transcricao));
+    const ancoraNomes = _buscarAncoraPorValor(c.valorAncora, transcricao);
+    const unificado = new Map();
+    for (const f of [...groundedAlternativas, ...ancoraNomes]) {
+      const chave = _normLoose(f);
+      if (!unificado.has(chave)) unificado.set(chave, f);
+    }
+    return { ...c, groundedAlternativas, ancoraNomes, formasGrounded: [...unificado.values()] };
+  });
+}
+
+// Decisão POR CÓDIGO (sem LLM): olha formasGrounded de cada candidato já enriquecido pela
+// etapa 2. EXATAMENTE uma forma grounded -> resolve aqui mesmo (confianca='alta_codigo'),
+// sem precisar da etapa 3 (LLM, fora de escopo deste passe). Mais de uma -> marca
+// precisaLLM=true (fica pendente, a etapa 3 decide). Zero -> não entra em lista nenhuma,
+// nunca piora o que já está na ata.
+function decidirPorCodigo(candidatosEnriquecidos) {
+  const decisoesCodigo = [];
+  const pendentesLLM = [];
+  for (const c of (candidatosEnriquecidos || [])) {
+    const formas = c.formasGrounded || [];
+    if (formas.length === 1) {
+      const formaCanonica = formas[0];
+      const variantes = (c.alternativas || []).filter((a) => _normLoose(a) !== _normLoose(formaCanonica));
+      decisoesCodigo.push({ textoOriginal: c.textoOriginal, forma_canonica: formaCanonica, variantes, confianca: 'alta_codigo' });
+    } else if (formas.length >= 2) {
+      pendentesLLM.push({ ...c, precisaLLM: true });
+    }
+    // formas.length === 0: nunca piora, não entra em decisão nem em pendência.
+  }
+  return { decisoesCodigo, pendentesLLM };
+}
+
+// Dupla checagem de grounding usada na ETAPA 4: mesmo que a decisão já tenha passado pela
+// etapa 2 (ou venha mockada/da etapa 3, fora de escopo aqui), uma forma_canonica fabricada
+// nunca pode ser aplicada. Se `transcricaoTxt` não for informado, confia que quem chamou já
+// validou (uso interno/teste); quando informado, reconfere a existência literal.
+function _formaGrounded(forma, transcricaoTxt) {
+  if (!transcricaoTxt) return true;
+  return existeLiteral(forma, transcricaoTxt);
+}
+
+// ETAPA 4 (código puro): aplica find and replace DETERMINÍSTICO das decisões de
+// consolidação de nome próprio. Só aceita confiança ALTA ('alta' ou 'alta_codigo' — decisão
+// do Matheus: a etapa 3/LLM nunca decide sozinha com 'media'/'baixa'). DUPLA checagem de
+// grounding (forma_canonica fabricada é rejeitada mesmo vindo de decisão mockada). GUARDA DE
+// TAMANHO: rejeita a decisão inteira se o resultado ficar abaixo de 95% do tamanho de
+// entrada (nunca reescreve a ata fora dos nomes). Sem log de nome nem valor (telemetria sem
+// conteúdo, exigência do Matheus).
+function aplicarConsolidacao(ataTxt, decisoes, transcricaoTxt) {
+  const entrada = String(ataTxt);
+  let ata = entrada;
+  const aplicados = [];
+  const pulados = [];
+  for (const d of (decisoes || [])) {
+    if (d.confianca !== 'alta' && d.confianca !== 'alta_codigo') {
+      pulados.push({ motivo: 'confianca_insuficiente' });
+      continue;
+    }
+    if (!_formaGrounded(d.forma_canonica, transcricaoTxt)) {
+      pulados.push({ motivo: 'forma_nao_grounded' });
+      continue;
+    }
+    const alvos = [d.textoOriginal, ...(d.variantes || [])].filter((a) => a && a !== d.forma_canonica);
+    let tentativa = ata;
+    let trocou = false;
+    for (const alvo of alvos) {
+      const antes = tentativa;
+      if (alvo.includes('[')) {
+        // marcador "[nome a confirmar: ...]": string única e literal, substituição direta segura.
+        tentativa = tentativa.split(alvo).join(d.forma_canonica);
+      } else {
+        // nome: substitui SÓ como palavra inteira, com a MESMA fronteira do grounding em
+        // existeLiteral (letra com acento, dígito, hífen e apóstrofo bloqueados nas pontas), pra
+        // não corromper um nome maior que o contenha (ex.: "Marcel" dentro de "Marcelo Soares")
+        // nem casar "Bit" dentro de "Bit2024"/"Bit-Tech". Coerência entre grounding e replace.
+        const re = new RegExp('(?<![A-Za-zÀ-ÿ0-9\'-])' + _escapeRegex(alvo) + '(?![A-Za-zÀ-ÿ0-9\'-])', 'g');
+        tentativa = tentativa.replace(re, d.forma_canonica);
+      }
+      if (tentativa !== antes) trocou = true;
+    }
+    if (!trocou) { pulados.push({ motivo: 'alvo_nao_encontrado' }); continue; }
+    if (tentativa.length < entrada.length * 0.95) { pulados.push({ motivo: 'guarda_tamanho' }); continue; }
+    ata = tentativa;
+    aplicados.push({ forma_canonica: d.forma_canonica });
+  }
+  return { ata, aplicados, pulados };
+}
+
+// Monta as evidências MÍNIMAS dos candidatos pendentes para a ETAPA 3 (LLM): só a lista de
+// nomes com trechos curtos da transcrição onde cada forma grounded aparece. NUNCA manda a ata
+// nem a transcrição inteira. Cada evidência é uma janela de ~110 chars ao redor da ocorrência.
+function _evidenciasParaLLM(pendentes, transcricaoTxt) {
+  const t = String(transcricaoTxt || '');
+  const tn = _normLoose(t);
+  return pendentes.map((p, i) => {
+    const evidencias = [];
+    for (const forma of (p.formasGrounded || [])) {
+      const alvo = _normLoose(forma);
+      let from = 0, achados = 0;
+      while (achados < 2 && alvo) {
+        const pos = tn.indexOf(alvo, from);
+        if (pos < 0) break;
+        evidencias.push(t.slice(Math.max(0, pos - 55), pos + alvo.length + 55).replace(/\s+/g, ' ').trim());
+        from = pos + alvo.length;
+        achados++;
+      }
+    }
+    return { id: i, formas: p.formasGrounded, evidencias };
+  });
+}
+
+// ETAPA 3: prompt MÍNIMO pra decidir a forma canônica entre formas já grounded. Recebe só a
+// lista de nomes + evidências, nunca a ata nem a transcrição inteira.
+const PROMPT_CONSOLIDACAO_NOME = `Você recebe uma lista de nomes próprios (pessoas ou empresas) que apareceram de forma DIVERGENTE numa ata condominial. Para cada item vêm as FORMAS que existem na transcrição da assembleia e TRECHOS de evidência.
+Sua tarefa: para cada item, decidir a FORMA CANÔNICA única (a grafia correta e mais completa da MESMA entidade) e listar as formas que devem ser substituídas por ela.
+REGRAS:
+- A forma_canonica TEM que ser uma das formas apresentadas. NUNCA invente grafia nova nem corrija ortografia por conta própria.
+- Se as formas são claramente a MESMA entidade (ex.: um apelido e o nome completo dito na sequência), unifique na mais completa.
+- Se a evidência não deixa claro que são a mesma entidade, ou se há qualquer dúvida, use confianca "baixa".
+- confianca "alta" só quando a evidência sustenta com clareza.
+Devolva SOMENTE um array JSON, sem nenhum texto fora dele:
+[{"id": <numero>, "forma_canonica": "...", "variantes": ["..."], "confianca": "alta"|"media"|"baixa"}]`;
+
+// ORQUESTRADOR do passe de consolidação de nome próprio. Etapa 1 (extrair) + etapa 2 (grounding
+// e âncora) + decisão por código + etapa 3 (LLM, SÓ quando sobra mais de uma forma grounded) +
+// etapa 4 (aplicar). FALHA ABERTO: qualquer erro (teto de chamadas, rede, JSON malformado, bug
+// interno) entrega a ata COMO ESTÁ, sem retry, sem quebrar a geração. Só aplica confiança ALTA.
+// Telemetria só com CONTAGEM (nunca nome, nunca valor).
+async function consolidarNomesProprios(ataTxt, transcricao, chamar) {
+  const base = { ata: String(ataTxt), telemetria: { candidatos: 0, decididos_codigo: 0, decididos_llm: 0, pendentes_llm: 0, aplicados: 0, pulados: 0, etapa3: 'sem_pendentes' }, avisoSkip: null };
+  try {
+    const candidatos = extrairNomesCandidatos(ataTxt, GLOSSARIO_MD);
+    base.telemetria.candidatos = candidatos.length;
+    if (!candidatos.length) return base;
+    const enriquecidos = reunirEvidencia(candidatos, transcricao);
+    const { decisoesCodigo, pendentesLLM } = decidirPorCodigo(enriquecidos);
+    base.telemetria.decididos_codigo = decisoesCodigo.length;
+    base.telemetria.pendentes_llm = pendentesLLM.length;
+
+    const decisoesLLM = [];
+    if (pendentesLLM.length) {
+      try {
+        const payload = _evidenciasParaLLM(pendentesLLM, transcricao);
+        const r = await chamar('claude-sonnet-4-6', 1500, PROMPT_CONSOLIDACAO_NOME, JSON.stringify(payload));
+        const arr = JSON.parse(String((r && r.texto) || '').replace(/```(?:json)?\s*|\s*```/g, '').trim());
+        for (const dec of (Array.isArray(arr) ? arr : [])) {
+          const p = pendentesLLM[dec.id];
+          if (!p || dec.confianca !== 'alta') continue; // ALTA APENAS (decisão do Matheus)
+          decisoesLLM.push({ textoOriginal: p.textoOriginal, forma_canonica: dec.forma_canonica, variantes: (p.formasGrounded || []).concat(dec.variantes || []), confianca: 'alta' });
+        }
+        base.telemetria.etapa3 = 'rodou';
+      } catch (eLLM) {
+        base.telemetria.etapa3 = /TETO_CHAMADAS/.test(String(eLLM && eLLM.message)) ? 'pulada_teto' : 'pulada_erro';
+        base.avisoSkip = 'A consolidação automática de nomes próprios não rodou completa nesta geração. Confira os nomes de pessoas e empresas com atenção extra.';
+      }
+    }
+    base.telemetria.decididos_llm = decisoesLLM.length;
+
+    const res = aplicarConsolidacao(ataTxt, [...decisoesCodigo, ...decisoesLLM], transcricao);
+    base.ata = res.ata;
+    base.telemetria.aplicados = res.aplicados.length;
+    base.telemetria.pulados = res.pulados.length;
+    return base;
+  } catch (e) {
+    base.ata = String(ataTxt); // falha aberto total: ata intacta
+    return base;
+  }
+}
+
 // Auditoria de completude de UM bloco: devolve a lista de lacunas (texto) ou '' se nada.
 async function auditarBlocoCompletude(ata, bloco, i, n, chamar) {
   const sys = PROMPT_AUDITORIA_BLOCO + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
@@ -1015,6 +1434,11 @@ function agendarLimpezaJob(jobId) {
 // legítimo = 7 com a auditoria fracionada: 1 geração + 1 retry(falha de API) +
 // até 3 auditorias de bloco + 1 inserção Sonnet + 1 inserção Opus (último recurso).
 // Típico: 2 a 5 (sem Opus). Qualquer chamada além do teto é abortada (ver 'chamar').
+// ATUALIZAÇÃO (2026-07-09): a etapa 3 do passe de consolidação de nome próprio
+// (consolidarNomesProprios) pode somar mais 1 chamada quando sobra candidato ambíguo, então
+// o pior caso real pode chegar a 8. O teto abaixo continua sendo o corte HARD de verdade —
+// se a 8ª chamada estourar o teto, a etapa 3 falha ABERTA (try/catch próprio, telemetria
+// 'pulada_teto') e a ata segue sem a consolidação daquele passe, nunca aborta a geração inteira.
 const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 7;
 
 // Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
@@ -1034,7 +1458,9 @@ async function gerarAtaJob(jobId, userMessage) {
   // que aborta ao tentar a (MAX+1)-ésima. Cobre as tentativas E a auditoria. Se um bug
   // futuro introduzir qualquer loop ou nova cascata, isto barra antes de gastar mais.
   // MAX = 7 = pior caso legítimo (1 geração + 1 retry + até 3 auditorias de bloco +
-  // 1 inserção Sonnet + 1 inserção Opus). Típico: 2 a 5, sem Opus.
+  // 1 inserção Sonnet + 1 inserção Opus). Típico: 2 a 5, sem Opus. A etapa 3 do passe de
+  // consolidação de nome próprio pode somar mais 1 (pior caso real = 8); se estourar o teto
+  // aqui, ela falha ABERTA sozinha (ver consolidarNomesProprios), não aborta a geração.
   let _chamadas = 0;
   const chamar = (modelo, maxTokens, sys, msg) => {
     if (++_chamadas > MAX_CHAMADAS_ANTHROPIC_POR_ATA) {
@@ -1103,6 +1529,11 @@ async function gerarAtaJob(jobId, userMessage) {
       else { throw e; }
     }
 
+    // PASSE DE CONSOLIDAÇÃO DE NOME PRÓPRIO (aditivo): depois da auditoria/inserção, ANTES da
+    // cirúrgica. Falha aberto (nunca quebra a entrega). Ver consolidarNomesProprios.
+    const consol = await consolidarNomesProprios(ataFinal, transcricao, chamar);
+    ataFinal = consol.ata;
+
     // CORREÇÃO CIRÚRGICA DETERMINÍSTICA (por código, NÃO pelo LLM): preenche
     // [valor a confirmar] com o valor de deliberação falado quando o casamento é
     // 1-para-1. Fecha a variância do Sonnet (que ora preenche, ora deixa placeholder)
@@ -1118,12 +1549,13 @@ async function gerarAtaJob(jobId, userMessage) {
       blocos: numBlocos, etapa, usouOpus, cortadoPorTeto, chamadas: _chamadas, gaps_deterministicos: numGapsDet,
       placeholders_preenchidos: cir.preenchidos.map((p) => fmtBRL(p.canon)),
       placeholders_ambiguos: cir.ambiguos.length,
-      valores_fala_faltando_final: falaFaltandoFinal.map(fmtBRL)
+      valores_fala_faltando_final: falaFaltandoFinal.map(fmtBRL),
+      consolidacao_nome: consol.telemetria
     };
     return concluir({
       ata: ataFinal,
       modelo_usado: usouOpus ? modelo_usado + ' + opus (inserção)' : modelo_usado,
-      tentativas, auditoria: etapa, avisos: vFinal.avisos
+      tentativas, auditoria: etapa, avisos: consol.avisoSkip ? vFinal.avisos.concat([consol.avisoSkip]) : vFinal.avisos
     });
   }
 
@@ -1990,5 +2422,9 @@ if (require.main === module) {
   app.listen(PORT, () => console.log('Service Hub porta ' + PORT));
 }
 
-// Export só para teste determinístico da correção cirúrgica (inerte em produção).
-module.exports = { corrigirPlaceholdersDeliberacao, valoresCanonicos, mencoesMonetarias };
+// Export só para teste determinístico da correção cirúrgica e do passe de consolidação de
+// nome próprio (inerte em produção — nenhuma das funções abaixo está no wiring de entregarAta).
+module.exports = {
+  corrigirPlaceholdersDeliberacao, valoresCanonicos, mencoesMonetarias,
+  extrairNomesCandidatos, reunirEvidencia, decidirPorCodigo, aplicarConsolidacao, existeLiteral
+};
