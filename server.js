@@ -872,31 +872,35 @@ function corrigirPlaceholdersDeliberacao(ataTxt, transcricao) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// PASSE DE CONSOLIDAÇÃO DE NOME PRÓPRIO (2026-07-09) — CÓDIGO PURO, SEM LLM.
+// PASSE DE CONSOLIDAÇÃO DE NOME PRÓPRIO (2026-07-09). Etapas 1, 2 e 4 são código puro; a
+// etapa 3 é uma chamada de LLM de insumo mínimo, disparada SÓ quando sobra mais de uma forma
+// grounded.
 //
 // O motor FRACIONADO degrada nome próprio no corpo da ata (regressão registrada em
 // tarefas/em-andamento/fast-follow-fidelidade-nome-motor-fracionado.md): às vezes marca
 // "[nome a confirmar: Bit Engenharia / MIT Engenharia / Adite Engenharia]" quando a fala
 // tem só UM nome correto, ou pior, inventa alternativa que nunca foi dita (fabricação).
 //
-// Este passe roda em 3 etapas (aqui só as 2 primeiras + a aplicação; a 3ª, que chama LLM
-// quando sobra mais de uma forma grounded, NÃO está implementada ainda — nem o wiring em
-// entregarAta):
-//   ETAPA 1 (extrairNomesCandidatos) — acha candidato a nome próprio na ata (marcador
+// Este passe roda em 4 etapas, TODAS implementadas e wiradas em entregarAta (o passe roda
+// depois de inserirLacunasNaAta e antes de corrigirPlaceholdersDeliberacao):
+//   ETAPA 1 (extrairNomesCandidatos): acha candidato a nome próprio na ata (marcador
 //     "[nome a confirmar: ...]" ou nome firme escrito com gatilho de pessoa/empresa).
-//   ETAPA 2 (reunirEvidencia) — GROUNDING: só sobrevive alternativa que existe LITERALMENTE
-//     na transcrição (normalizada). Também busca ÂNCORA POR VALOR: nomes próprios ditos
-//     perto do MESMO valor em R$ do candidato, mesmo que a ata não tenha listado essa forma.
-//   decidirPorCodigo — se sobrar EXATAMENTE uma forma grounded, resolve por CÓDIGO
-//     (confianca='alta_codigo'), sem precisar de LLM. Se sobrar mais de uma, marca
-//     precisaLLM=true (etapa 3, fora de escopo agora). Se sobrar zero, nunca piora.
-//   ETAPA 4 (aplicarConsolidacao) — find and replace determinístico, só com confiança ALTA,
+//   ETAPA 2 (reunirEvidencia): GROUNDING por PALAVRA INTEIRA. Só sobrevive alternativa que
+//     existe como palavra na transcrição normalizada (via existeLiteral). Também busca ÂNCORA
+//     POR VALOR: nomes próprios ditos perto do MESMO valor em R$ do candidato, mesmo que a ata
+//     não tenha listado essa forma.
+//   decidirPorCodigo: se sobrar EXATAMENTE uma forma grounded, resolve por CÓDIGO
+//     (confianca='alta_codigo'), sem LLM. Se sobrar mais de uma, marca precisaLLM=true e a
+//     ETAPA 3 (consolidarNomesProprios, chamada claude-sonnet-4-6) decide. Se sobrar zero,
+//     nunca piora.
+//   ETAPA 4 (aplicarConsolidacao): find and replace determinístico, só com confiança ALTA,
 //     com DUPLA checagem de grounding (forma_canonica fabricada nunca sobrevive) e guarda de
 //     tamanho (nunca reescreve a ata pra menos de 95% do tamanho de entrada).
 //
-// REGRA DE OURO: grounding é item de primeira classe. Nenhuma forma sobrevive se não existir
-// de fato na fala. É assim que "Habit"/"ABM Montas"/"ADM Manta" (fabricações) morrem sem
-// precisar de LLM nenhum.
+// REGRA DE OURO: grounding é item de primeira classe e exige PALAVRA INTEIRA. Nenhuma forma
+// sobrevive se não existir como palavra na fala. Foi assim que "Habit"/"ABM Montas"/"ADM Manta"
+// (fabricações) morrem, e é assim que "Cato" (substring de "Cator") e "Cerval" (substring de
+// "Cervalp") passaram a morrer depois do conserto de 2026-07-09 no existeLiteral.
 // ─────────────────────────────────────────────────────────────────────────
 
 // Conectores minúsculos aceitos NO MEIO de um nome próprio composto (ex.: "João da Silva").
@@ -1086,15 +1090,28 @@ function _buscarAncoraPorValor(valorAncora, transcricaoTxt) {
 //     que a ata não tenha listado essa forma (ex.: "Cervalp Manutenção" quando a ata só
 //     tinha "Ceval").
 //   formasGrounded = união das duas, sem duplicar (por _normLoose).
+// existeLiteral: um alvo está "grounded" se aparece como PALAVRA INTEIRA na transcrição
+// normalizada. CORREÇÃO 2026-07-09: a checagem antiga era transcricaoNorm.includes(alvo), que
+// casava SUBSTRING e aprovava forma degradada como grounded — "Cato" passava por existir dentro
+// de "Cator", "Cerval" dentro de "Cervalp", "Marcel" dentro de "Marcelo". O passe então aplicava
+// a forma degradada como forma_canonica. Agora exige fronteira de palavra, com o MESMO lookaround
+// de letra (inclusive acento) do replace da etapa 4 (server.js, aplicarConsolidacao). Nome
+// composto ("Marcelo Soares") casa o espaço interno literal; a fronteira vai só nas pontas, então
+// não quebra. A transcrição é normalizada por _normLoose (acento removido, minúscula), então o
+// alvo também é — a comparação é acento-insensível como antes, só que por palavra.
+function existeLiteral(alvoRaw, transcricaoTxt) {
+  const transcricaoNorm = _normLoose(String(transcricaoTxt || '')).replace(/\s+/g, ' ');
+  const alvo = _normLoose(String(alvoRaw || '')).replace(/\s+/g, ' ').trim();
+  if (!alvo) return false;
+  const esc = alvo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('(?<![A-Za-zÀ-ÿ])' + esc + '(?![A-Za-zÀ-ÿ])');
+  return re.test(transcricaoNorm);
+}
+
 function reunirEvidencia(candidatos, transcricaoTxt) {
   const transcricao = String(transcricaoTxt || '');
-  const transcricaoNorm = _normLoose(transcricao).replace(/\s+/g, ' ');
-  const existeLiteral = (alt) => {
-    const alvo = _normLoose(alt).replace(/\s+/g, ' ').trim();
-    return alvo.length > 0 && transcricaoNorm.includes(alvo);
-  };
   return (candidatos || []).map((c) => {
-    const groundedAlternativas = (c.alternativas || []).filter(existeLiteral);
+    const groundedAlternativas = (c.alternativas || []).filter((alt) => existeLiteral(alt, transcricao));
     const ancoraNomes = _buscarAncoraPorValor(c.valorAncora, transcricao);
     const unificado = new Map();
     for (const f of [...groundedAlternativas, ...ancoraNomes]) {
@@ -1133,9 +1150,7 @@ function decidirPorCodigo(candidatosEnriquecidos) {
 // validou (uso interno/teste); quando informado, reconfere a existência literal.
 function _formaGrounded(forma, transcricaoTxt) {
   if (!transcricaoTxt) return true;
-  const alvo = _normLoose(forma).replace(/\s+/g, ' ').trim();
-  const transcricaoNorm = _normLoose(transcricaoTxt).replace(/\s+/g, ' ');
-  return alvo.length > 0 && transcricaoNorm.includes(alvo);
+  return existeLiteral(forma, transcricaoTxt);
 }
 
 // ETAPA 4 (código puro): aplica find and replace DETERMINÍSTICO das decisões de
@@ -2394,5 +2409,5 @@ if (require.main === module) {
 // nome próprio (inerte em produção — nenhuma das funções abaixo está no wiring de entregarAta).
 module.exports = {
   corrigirPlaceholdersDeliberacao, valoresCanonicos, mencoesMonetarias,
-  extrairNomesCandidatos, reunirEvidencia, decidirPorCodigo, aplicarConsolidacao
+  extrairNomesCandidatos, reunirEvidencia, decidirPorCodigo, aplicarConsolidacao, existeLiteral
 };
