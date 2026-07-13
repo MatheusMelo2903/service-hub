@@ -69,13 +69,18 @@ async def gerar(
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail={"erro": "arquivo_nao_pdf", "arquivo": up.filename,
+                            "mensagem": (f"O arquivo {up.filename} não é um PDF. "
+                                         "Envie os relatórios do Superlógica em PDF "
+                                         "(W011A, W015A, W016A ou W015P)."),
                             "acao": "revisao_humana"})
             conteudo = await up.read()
             total_bytes += len(conteudo)
             if total_bytes > LIMITE_TOTAL:
                 raise HTTPException(
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail={"erro": "upload_muito_grande", "limite_mb": 50})
+                    detail={"erro": "upload_muito_grande", "limite_mb": 50,
+                            "mensagem": ("Os arquivos somam mais de 50 MB. "
+                                         "Envie menos relatórios por vez.")})
             destino = os.path.join(tmpdir, f"relatorio_{i:02d}.pdf")
             with open(destino, "wb") as f:
                 f.write(conteudo)
@@ -93,6 +98,11 @@ async def gerar(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail={"erro": "tipo_desconhecido",
                             "arquivo": os.path.basename(cam),
+                            "mensagem": (
+                                f"O arquivo {os.path.basename(cam)} não foi "
+                                "reconhecido como um relatório do Superlógica "
+                                "(W011A, W015A, W016A ou W015P). Confira o arquivo "
+                                "antes de gerar."),
                             "acao": "revisao_humana"})
             caminhos_e_tipos.append((cam, tipo))
             fontes_detectadas[tipo] = True
@@ -112,18 +122,23 @@ async def gerar(
                     orquestrar_multi_fonte(caminhos_e_tipos, prosa=ProsaDeterministica())
         except ValueError as e:
             motivo = str(e)
-            # Distingue bloqueio de reconciliação de erro genérico de relatório
+            # A mensagem carrega valores financeiros do condomínio e vai SÓ na
+            # resposta HTTP, exibida ao operador (dado dele, que ele subiu). O log
+            # recebe apenas a categoria, nunca o número (regra 2026-07-09).
             if motivo.startswith("reconciliacao_bloqueante"):
-                _log("reconciliacao_bloqueante", motivo=motivo[:300])
+                _log("reconciliacao_bloqueante")
+                mensagem = motivo[len("reconciliacao_bloqueante: "):]
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail={"erro": "reconciliacao_bloqueante",
-                            "alertas": motivo.replace("reconciliacao_bloqueante: ", "").split("; "),
+                            "mensagem": mensagem,
                             "acao": "revisao_humana"})
-            _log("relatorio_invalido", motivo=motivo[:300])
+            _log("relatorio_invalido")
+            # Mensagem integral (sem truncar): os parsers já a compõem em
+            # português, nomeando arquivo e números.
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"erro": "relatorio_invalido", "detalhe": motivo[:300],
+                detail={"erro": "relatorio_invalido", "mensagem": motivo,
                         "acao": "revisao_humana"})
 
         # 2) Deck + auditoria visual obrigatoria. Reprovou -> nao entrega.
@@ -131,10 +146,15 @@ async def gerar(
         try:
             gerar_deck(configs, pptx_path, capa=capa)
         except RuntimeError as e:
-            _log("auditoria_reprovou", motivo=str(e)[:500])
+            # Detalhe da auditoria pode nomear a categoria que estourou o slide;
+            # não loga (defesa de cifra), mensagem genérica ao operador.
+            _log("auditoria_reprovou")
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={"erro": "auditoria_reprovou", "detalhe": str(e)[:500],
+                detail={"erro": "auditoria_reprovou",
+                        "mensagem": ("A conferência final do deck não passou "
+                                     "(uma tabela pode ter estourado o slide). "
+                                     "Tente novamente; se persistir, avise o suporte."),
                         "acao": "revisao_humana"})
 
         # 3) PDF via LibreOffice headless.
@@ -170,6 +190,9 @@ async def gerar(
         traceback.print_exc()  # stderr -> log interno Railway
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"erro": "geracao_falhou", "acao": "revisao_humana"})
+            detail={"erro": "geracao_falhou",
+                    "mensagem": ("Falha inesperada ao gerar a prestação. "
+                                 "Tente novamente; se persistir, avise o suporte."),
+                    "acao": "revisao_humana"})
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

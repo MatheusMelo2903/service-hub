@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 
 import pdfplumber
 
+from . import mensagens as M
+
 # Mesmo regex monetário do w016a para consistência
 RE_DINHEIRO = re.compile(r"^-?\(?\d{1,3}(?:\.\d{3})*,\d{2}\)?$")
 RE_PERIODO = re.compile(
@@ -327,29 +329,25 @@ def parsear(caminho_pdf: str) -> EstruturaW015A:
 
 def _validar(est: EstruturaW015A):
     """Valida a estrutura do W015A contra os próprios totais do relatório."""
-    erros = []
+    # Mensagens em português para o operador; a lógica de validação é idêntica.
+    problemas = []
     TOL = 0.02
 
     # Conservação de caixa
     caixa = est.saldo_anterior + est.receita_total - est.despesa_total
     if abs(caixa - est.saldo_final) > TOL:
-        erros.append(
-            f"conservação de caixa: {caixa:.2f} != saldo_final {est.saldo_final:.2f}"
-        )
+        problemas.append(M.msg_caixa("W015A", caixa, est.saldo_final))
 
     # Soma das receitas
     soma_rec = round(sum(l.total for l in est.receitas), 2)
     if abs(soma_rec - est.receita_total) > TOL:
-        erros.append(
-            f"soma receitas {soma_rec:.2f} != total {est.receita_total:.2f}"
-        )
+        problemas.append(M.msg_soma("W015A", "as receitas", soma_rec, est.receita_total))
 
     # Soma dos grupos
     soma_desp = round(sum(g.total for g in est.grupos), 2)
     if abs(soma_desp - est.despesa_total) > TOL:
-        erros.append(
-            f"soma grupos {soma_desp:.2f} != total despesas {est.despesa_total:.2f}"
-        )
+        problemas.append(
+            M.msg_soma("W015A", "as categorias de despesa", soma_desp, est.despesa_total))
 
-    if erros:
-        raise ValueError("W015A inconsistente: " + "; ".join(erros))
+    if problemas:
+        raise ValueError(M.juntar_problemas(problemas))

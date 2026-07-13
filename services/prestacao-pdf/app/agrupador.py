@@ -235,6 +235,9 @@ def agrupar(lancamentos, total: float, categoria: str, max_linhas: int = 0,
         + [l for l in linhas if l.residuo]
 
     soma = round(sum(l.valor for l in linhas), 2)
+    # Invariante interna. Mensagem SEM cifra (regra 2026-07-09): se disparar,
+    # vira 500 e o traceback vai ao log; o número não pode vazar ali. Reproduza
+    # com a fixture do condomínio para ver os valores.
     assert abs(soma - total) < 0.011, \
-        f"{categoria}: linhas somam {soma:.2f}, total e {total:.2f}"
+        f"{categoria}: soma das linhas diverge do total da categoria"
     return linhas

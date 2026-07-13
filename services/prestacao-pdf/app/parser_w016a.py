@@ -30,6 +30,8 @@ from dataclasses import dataclass, field
 
 import pdfplumber
 
+from . import mensagens as M
+
 RE_DINHEIRO = re.compile(r"^-?\(?\d{1,3}(?:\.\d{3})*,\d{2}\)?$")
 RE_PERIODO = re.compile(r"De (\d{2}/\d{2}/\d{4}) até (\d{2}/\d{2}/\d{4})")
 RE_SALDO = re.compile(r"^Saldo em (\d{2}/\d{2}/\d{4})$")
@@ -316,21 +318,25 @@ def parsear(caminho_pdf: str) -> EstruturaW016A:
 
     # Valores monetários são decimais exatos: as somas fecham ao centavo.
     # Tolerância fixa de R$ 0,01 só para ruído de float.
-    erros = []
-    if abs(est.saldo_anterior + est.receita_total - est.despesa_total - est.saldo_final) > 0.011:
-        erros.append("conservacao de caixa nao fecha")
-    soma_rec = sum(l.valor for l in est.receitas)
+    # Mensagens em português para o operador; a lógica de validação é idêntica.
+    problemas = []
+    caixa = round(est.saldo_anterior + est.receita_total - est.despesa_total, 2)
+    if abs(caixa - est.saldo_final) > 0.011:
+        problemas.append(M.msg_caixa("W016A", caixa, est.saldo_final))
+    soma_rec = round(sum(l.valor for l in est.receitas), 2)
     if abs(soma_rec - est.receita_total) > 0.011:
-        erros.append(f"soma receitas {soma_rec:.2f} != total {est.receita_total:.2f}")
-    soma_desp = sum(g.total for g in est.grupos)
+        problemas.append(M.msg_soma("W016A", "as receitas", soma_rec, est.receita_total))
+    soma_desp = round(sum(g.total for g in est.grupos), 2)
     if abs(soma_desp - est.despesa_total) > 0.011:
-        erros.append(f"soma grupos {soma_desp:.2f} != total despesas {est.despesa_total:.2f}")
+        problemas.append(
+            M.msg_soma("W016A", "as categorias de despesa", soma_desp, est.despesa_total))
     for g in est.grupos:
-        soma_g = sum(l.valor for l in g.lancamentos)
+        soma_g = round(sum(l.valor for l in g.lancamentos), 2)
         if abs(soma_g - g.total) > 0.011:
-            erros.append(f"grupo {g.nome_relatorio}: itens {soma_g:.2f} != total {g.total:.2f}")
-    if erros:
-        raise ValueError("W016A inconsistente: " + "; ".join(erros))
+            problemas.append(
+                M.msg_soma("W016A", f"os lançamentos de {g.categoria}", soma_g, g.total))
+    if problemas:
+        raise ValueError(M.juntar_problemas(problemas))
     return est
 
 

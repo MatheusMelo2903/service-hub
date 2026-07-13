@@ -1033,7 +1033,10 @@ def montar(configs, saida, capa=None):
 
     prs.save(saida)
     print("OK", saida, "slides:", len(prs.slides))
-    print(f"cobertura={COBERTURA:.1f} margem={MARGEM:.1f} cresc={CRESC:.1f} superavit={SUPERAVIT:.2f} saldofim={SALDO_FIM:.2f}")
+    # Divergencia local sobre o upstream (regra 2026-07-09): a linha de
+    # diagnostico com superavit={:.2f} e saldofim={:.2f} imprimia cifra real do
+    # condominio em stdout a cada geracao. Removida: valor financeiro nunca vai
+    # para log. Sincronizar de volta na skill do Matheus.
     return saida
 
 if __name__ == "__main__":

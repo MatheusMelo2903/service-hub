@@ -26,6 +26,7 @@ from . import parser_w016a as P
 from . import parser_w011a as P11
 from . import parser_w015a as P15
 from . import parser_w015p as P15P
+from . import mensagens as M
 from .agrupador import agrupar, MAX_LINHAS_RECEITA
 from collections import namedtuple
 
@@ -345,13 +346,13 @@ def _reconciliar(fontes: dict, avisos: list) -> list:
             # aviso e o teto, âmbar. Log de auditoria detalhado em stderr.
             bloqueia = (diff_pct >= TOLER_SANIDADE_PCT) and not envolve_w16
             if diff_pct >= TOLER_AVISO_PCT:
+                # Log SEM cifra (regra 2026-07-09): só campo, fontes, o limiar e o
+                # percentual (razão, não valor financeiro). Os valores em reais vão
+                # apenas na resposta HTTP, nunca no log.
                 limiar = ("SANIDADE(bloqueio)" if bloqueia
                           else "AVISO(nao bloqueia)")
-                print(f"[reconciliacao] {campo} {fa} vs {fb}: "
-                      f"{fa}={va:.2f} {fb}={vb:.2f} | "
-                      f"delta_abs=R${diff_abs:.2f} delta_pct={diff_pct:.2f}% | "
-                      f"limiar aviso={TOLER_AVISO_PCT}% sanidade={TOLER_SANIDADE_PCT}% "
-                      f"| {limiar}"
+                print(f"[reconciliacao] {campo} {fa} vs {fb}: {limiar} "
+                      f"(delta {diff_pct:.1f}%)"
                       + (" | W016A: nunca bloqueia" if envolve_w16 and diff_pct >= TOLER_SANIDADE_PCT else ""),
                       file=sys.stderr)
             if bloqueia:
@@ -809,9 +810,27 @@ def orquestrar_multi_fonte(
 
     bloqueios = _reconciliar(fontes, avisos)
     if bloqueios:
-        raise ValueError(
-            "reconciliacao_bloqueante: " + "; ".join(bloqueios)
-        )
+        # Compõe a mensagem para o operador a partir dos metadados de janela que
+        # os parsers já retornam (data_inicial/data_final). Diferença de janela é
+        # explicada e sugere reexportar na mesma janela; mesmo período com totais
+        # diferentes nomeia os valores. Número só na resposta, nunca no log.
+        # NOTA (Entrega 1): a DECISÃO de bloquear ainda é a de _reconciliar (teto
+        # de sanidade cego a janela). A comparação consciente de janela, que troca
+        # o bloqueio por confirmação, é a Entrega 2, fora deste commit.
+        presentes = list(fontes.items())
+        janelas = [(nome, est.data_inicial, est.data_final) for nome, est in presentes]
+        janelas_distintas = {(di, df) for _, di, df in janelas}
+        if len(janelas_distintas) > 1:
+            saldos = [est.saldo_final for nome, est in presentes if nome != "W015P"]
+            saldo_dif = (round(max(saldos) - min(saldos), 2)
+                         if len(saldos) >= 2 else None)
+            mensagem = M.msg_janela_diferente(janelas, saldo_dif)
+        else:
+            di, df = next(iter(janelas_distintas))
+            totais = [(nome, est.receita_total, est.despesa_total)
+                      for nome, est in presentes]
+            mensagem = M.msg_mesma_janela_divergencia(di, df, totais)
+        raise ValueError("reconciliacao_bloqueante: " + mensagem)
 
     cfg = montar_config_multi_fonte(est11, est15, est16, avisos, est15p=est15p)
     if prosa is not None:
