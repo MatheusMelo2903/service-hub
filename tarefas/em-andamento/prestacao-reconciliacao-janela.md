@@ -133,14 +133,14 @@ de instrumentação de dez segundos desmentiu as duas: Buritis tem `saldo_anteri
 zerados no início**. Confirmar no dado, nunca na leitura, por mais convergente que a
 leitura pareça.
 
-### Convenção de fixtures de teste (dado de cliente real, FORA do repo)
-Os PDFs de prestação são dado financeiro de cliente real e **não entram no repo**, nem em
-`tests/fixtures_local/`. Motivo: pasta gitignored dentro do repo é um convite a alguém
-commitar dado de cliente por engano um dia; variável de ambiente apontando para fora do
-repo não tem esse caminho. Os testes de parser leem a pasta de `PRESTACAO_FIXTURES_DIR`;
-sem a variável, `skip`. Nomes esperados: `gardenia-w011a.pdf`, `gardenia-w015a.pdf`,
-`gardenia-w016a.pdf`, `buritis-w011a.pdf`. `tests/fixtures_local/` segue no `.gitignore`
-(linha 47) como defesa em profundidade. Documentado também no README do serviço.
+### Convenção de fixtures de teste (dado de cliente real, gitignored)
+Os PDFs de prestação são dado financeiro de cliente real e nunca entram no repositório
+nem no código dos testes. Há dois mecanismos, ambos gitignored. O grosso dos testes de
+parser varre `tests/fixtures_local/` por tipo de PDF e lê os números de referência de
+JSONs ali (`w011a_referencia.json`, `w015p_referencia.json`). Os três testes da Frente 1
+leem `gardenia-w011a.pdf` e `buritis-w011a.pdf` de `PRESTACAO_FIXTURES_DIR`, pasta fora
+do repo. Sem o artefato correspondente, o teste dá `skip`. `tests/fixtures_local/` está
+no `.gitignore` (linha 47). Documentado também no README do serviço.
 
 ### Nota para o doc de CONCLUSÃO da Frente 1 (escrever quando concluir)
 Depois do conserto da Frente 1, o Gardenia deixa de dar `relatorio_invalido` e passa a
