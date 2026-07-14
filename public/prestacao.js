@@ -557,13 +557,18 @@ function prestacaoRenderizarValidacao(checks) {
   const resumo = prestacaoResumirValidacao(checks);
   const btnUrg = document.getElementById('prestacao-btn-urgencia');
   const btnGer = document.getElementById('prestacao-btn-gerar');
-  if (resumo.bloqueantes > 0) {
-    btnUrg.style.display = '';
-    btnGer.style.display = 'none';
-  } else {
-    btnUrg.style.display = 'none';
-    btnGer.style.display = '';
-    btnGer.disabled = false;
+  // Nenhum caminho gera deck com numero que nao fecha: o botao "gerar mesmo
+  // assim" foi aposentado. Fica SEMPRE escondido. Com bloqueante, esconde tambem
+  // o botao normal; os blocos de validacao acima ja nomeiam a divergencia e os
+  // dois valores. Sem bloqueante, so o botao normal aparece.
+  if (btnUrg) btnUrg.style.display = 'none';
+  if (btnGer) {
+    if (resumo.bloqueantes > 0) {
+      btnGer.style.display = 'none';
+    } else {
+      btnGer.style.display = '';
+      btnGer.disabled = false;
+    }
   }
 }
 
@@ -765,24 +770,33 @@ async function prestacaoConfirmarGeracao() {
   }
 }
 
-// Caminho de excecao para o sindico forcar geracao mesmo com inconsistencias
-// acima de R$ 1,00. Exige duas confirmacoes antes de prosseguir.
-async function prestacaoGerarMesmoAssim() {
-  const conf1 = window.confirm('Existem diferenças maiores que R$ 1,00 entre os valores. Gerar a apresentação mesmo assim pode levar a erros na assembleia. Tem certeza?');
-  if (!conf1) return;
-  const conf2 = window.confirm('Confirma definitivamente que quer gerar com inconsistencias acima de R$ 1,00?');
-  if (!conf2) return;
+// APOSENTADO. Um deck de prestação de contas apresentado em assembleia não pode
+// sair com número que o próprio sistema sabe que não fecha, aprovado por um
+// clique. O princípio vale para o produto inteiro, não só para o microserviço.
+// A função permanece porque o onclick vive no index.html (que não editamos);
+// agora ela BLOQUEIA e nomeia a divergência com os dois valores, nunca gera.
+// O botão que a aciona já fica sempre escondido (ver prestacaoRenderizarValidacao).
+function prestacaoGerarMesmoAssim() {
   prestacaoAtualizarDadosEdicao();
   const dados = prestacaoState.dadosEditaveis;
-  try {
-    toast('Gerando pptx (modo urgencia)...', 'info');
-    await prestacaoMontarPptx(dados);
-    toast('Pptx gerado em modo urgencia.', 'ok');
-    prestacaoFecharModal();
-  } catch (err) {
-    console.error('[prestacao] erro ao gerar pptx em urgencia:', err);
-    toast('Erro ao gerar pptx. Verifique o console.', 'err');
+  const checks = prestacaoValidarConsistencia(dados);
+  const bloqueantes = checks.filter(function(c) { return c.bloqueante; });
+  if (bloqueantes.length === 0) {
+    // Sem bloqueante: segue o caminho normal de geração.
+    prestacaoConfirmarGeracao();
+    return;
   }
+  const linhas = bloqueantes.map(function(c) {
+    const partes = [c.titulo + ' não fecha'];
+    if (c.recebido) partes.push('recebido ' + c.recebido);
+    if (c.esperado) partes.push('esperado ' + c.esperado);
+    if (c.diferenca !== null && c.diferenca !== undefined) {
+      partes.push('diferença ' + prestacaoFmtBRL(c.diferenca));
+    }
+    return partes.join(', ');
+  });
+  toast('Geração bloqueada: número não fecha. ' + linhas.join('. ')
+    + '. Corrija no relatório antes de gerar.', 'err');
 }
 
 // Tema visual unico do pptx. Cores em hex sem cardinal (formato PptxGenJS).
@@ -1853,9 +1867,35 @@ function prestacaoDispararDownload(url, nomeArquivo) {
   setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
 }
 
+// Painel PERSISTENTE de motivo de revisao, ancorado acima do botao de gerar.
+// Criado em runtime (nao editamos o index.html). Mostra a mensagem integral do
+// servico, que nomeia o arquivo e os numeros do proprio condominio; fica na tela
+// ate a proxima tentativa, porque um toast de 4s some antes de o operador ler.
+function prestacaoMostrarRevisao(mensagem) {
+  var btn = document.getElementById('prest-btn-gerar');
+  if (!btn || !btn.parentElement) return;
+  var box = document.getElementById('prest-msg-revisao');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'prest-msg-revisao';
+    box.style.cssText = 'margin-top:12px;padding:12px 14px;border-radius:8px;'
+      + 'background:rgba(192,59,59,.10);border:1px solid var(--danger,#C03B3B);'
+      + 'color:var(--text,#e8e8e8);font-size:14px;line-height:1.55;white-space:pre-wrap';
+    var linhaBotoes = btn.parentElement;   // div flex dos botoes
+    linhaBotoes.parentElement.insertBefore(box, linhaBotoes.nextSibling);
+  }
+  box.textContent = mensagem;
+}
+
+function prestacaoLimparRevisao() {
+  var box = document.getElementById('prest-msg-revisao');
+  if (box && box.parentElement) box.parentElement.removeChild(box);
+}
+
 async function prestacaoGerarServico() {
   var btn = document.getElementById('prest-btn-gerar');
   if (!btn) return;
+  prestacaoLimparRevisao();   // limpa motivo da tentativa anterior
   var textoOriginal = btn.textContent;
   btn.disabled = true;
   btn.textContent = 'Gerando no servidor (pode levar até 2 minutos)...';
@@ -1870,15 +1910,18 @@ async function prestacaoGerarServico() {
     var resp = await apiAuthFetch('/api/prestacao/gerar-deck', { method: 'POST', body: form });
 
     if (resp.status === 422) {
-      // Degradacao graciosa: relatorio invalido ou auditoria reprovada.
-      // Nao entrega slide quebrado; sinaliza revisao humana com o motivo.
+      // Degradacao graciosa: relatorio invalido, reconciliacao ou auditoria.
+      // A resposta traz `mensagem` em portugues que NOMEIA o arquivo e os numeros
+      // do proprio condominio: e exibida ao operador (dado dele, que ele subiu ha
+      // segundos). Isso NAO e vazamento. O log recebe SO a categoria (det.erro),
+      // nunca o numero.
       var corpo422 = await resp.json().catch(function() { return {}; });
       var det = (corpo422.detail || corpo422);
-      // Loga so a categoria do motivo (det.erro), nunca det.alertas/det.detalhe, que
-      // podem trazer valores financeiros reais da reconciliacao (ex.: "W011A=12345.67").
-      console.error('[prestacao] geracao retida para revisao humana. motivo=' + (det.erro || 'desconhecido'));
-      toast('Geração retida para revisão humana: ' + (det.erro || 'relatório fora do padrão')
-        + '. Confira o relatório no Superlógica antes de tentar de novo.', 'err');
+      console.error('[prestacao] geracao retida para revisao humana. categoria=' + (det.erro || 'desconhecido'));
+      var mensagem = det.mensagem
+        || 'O relatório precisa de revisão. Confira no Superlógica antes de gerar.';
+      prestacaoMostrarRevisao(mensagem);
+      toast('Geração retida. Veja o motivo acima do botão.', 'err');
       return;
     }
     if (!resp.ok) {

@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 
 import pdfplumber
 
+from . import mensagens as M
+
 # Regex monetário BR: aceita negativo e parênteses. Idêntico em intenção ao
 # dos outros parsers; redefinido localmente para não acoplar módulos (mesma
 # convenção que parser_w015a já adota em relação ao parser_w016a).
@@ -367,20 +369,16 @@ def _validar(est: EstruturaW015P) -> None:
     tol = 1.00
     soma_rec = round(sum(l.total for l in est.receitas), 2)
     if abs(soma_rec - est.receita_total) > tol:
-        raise ValueError(
-            f"w015p: soma das receitas por item ({soma_rec}) nao fecha com o "
-            f"Total de RECEITAS ({est.receita_total}); possivel coluna/linha "
-            f"nao lida no PDF"
-        )
+        raise ValueError(M.juntar_problemas(
+            [M.msg_soma("W015P", "as receitas", soma_rec, est.receita_total)]))
     soma_desp = round(sum(g.total for g in est.grupos), 2)
     if abs(soma_desp - est.despesa_total) > tol:
-        raise ValueError(
-            f"w015p: soma dos grupos de despesa ({soma_desp}) nao fecha com o "
-            f"Total de DESPESAS ({est.despesa_total}); possivel coluna/linha "
-            f"nao lida no PDF"
-        )
+        raise ValueError(M.juntar_problemas(
+            [M.msg_soma("W015P", "as categorias de despesa", soma_desp, est.despesa_total)]))
     resultado = round(est.receita_total - est.despesa_total, 2)
     soma_super = round(sum(est.superavit_mes), 2)
     if abs(soma_super - resultado) > tol:
-        print(f"[w015p] AVISO: superávit acumulado ({soma_super}) difere de "
-              f"receita menos despesa ({resultado})", file=sys.stderr)
+        # Cross-check não bloqueante. Sem cifra no log (regra 2026-07-09):
+        # a divergência de superávit acumulado fica registrada só como aviso.
+        print("[w015p] AVISO: superavit acumulado diverge do resultado do periodo",
+              file=sys.stderr)

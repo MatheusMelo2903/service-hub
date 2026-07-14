@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 
 import pdfplumber
 
+from . import mensagens as M
+
 # Regex monetário completo: "1.293.772,27" ou "-1.842,00" ou "0,00"
 RE_MONEY = re.compile(r"^-?\d{1,3}(\.\d{3})*,\d{2}$")
 # Token quebrado parte 1: "1.293.772," (vírgula no final, sem centavos)
@@ -1001,8 +1003,15 @@ def parsear(caminho_pdf: str) -> EstruturaW011A:
                 # Saldo anterior
                 if label.startswith("Saldo anterior"):
                     col0 = cells[0]
-                    if col0 is not None:
-                        est.saldo_anterior = col0
+                    # Escalar da abertura da janela = PRIMEIRO valor nao nulo das colunas
+                    # mensais, simetrico ao Saldo Final que le o ULTIMO. Meses zerados no
+                    # inicio do exercicio (ex: Jul/Ago/Set sem movimento) deixam as
+                    # primeiras colunas None e empurram a abertura real para a primeira
+                    # coluna preenchida; ler cells[0] fixo zerava saldo_anterior nesses
+                    # casos. col0 permanece cells[0] para a serie mensal abaixo (intacta).
+                    abertura = next((v for v in cells[:idx_total] if v is not None), None)
+                    if abertura is not None:
+                        est.saldo_anterior = abertura
                     # Guarda cells brutas para detecção do platô (sinal 2 do cut_date)
                     _saldo_ant_cells = cells
                     if deriva_primeiro:
@@ -1315,39 +1324,33 @@ def _validar(est: EstruturaW011A):
     Verificações: conservação de caixa, soma receitas, soma grupos,
     soma lançamentos por grupo, mov_liquido.
     """
-    erros = []
+    # Mensagens já em português para o operador (nomeiam arquivo e números).
+    # A LÓGICA de validação é idêntica à anterior; só o texto mudou.
+    problemas = []
     TOL = 0.02
 
     caixa = est.saldo_anterior + est.receita_total - est.despesa_total
     if abs(caixa - est.saldo_final) > TOL:
-        erros.append(
-            f"conservação de caixa: {caixa:.2f} != saldo_final {est.saldo_final:.2f}"
-        )
+        problemas.append(M.msg_caixa("W011A", caixa, est.saldo_final))
 
     soma_rec = round(sum(l.total for l in est.receitas), 2)
     if abs(soma_rec - est.receita_total) > TOL:
-        erros.append(
-            f"soma receitas {soma_rec:.2f} != total {est.receita_total:.2f}"
-        )
+        problemas.append(M.msg_soma("W011A", "as receitas", soma_rec, est.receita_total))
 
     soma_desp = round(sum(g.total for g in est.grupos), 2)
     if abs(soma_desp - est.despesa_total) > TOL:
-        erros.append(
-            f"soma grupos {soma_desp:.2f} != total despesas {est.despesa_total:.2f}"
-        )
+        problemas.append(
+            M.msg_soma("W011A", "as categorias de despesa", soma_desp, est.despesa_total))
 
     for g in est.grupos:
         soma_g = round(sum(l.total for l in g.lancamentos), 2)
         if abs(soma_g - g.total) > TOL:
-            erros.append(
-                f"grupo {g.nome_relatorio}: lançamentos {soma_g:.2f} != total {g.total:.2f}"
-            )
+            problemas.append(
+                M.msg_soma("W011A", f"os lançamentos de {g.categoria}", soma_g, g.total))
 
     mov_esperado = round(est.receita_total - est.despesa_total, 2)
     if abs(est.mov_liquido - mov_esperado) > TOL:
-        erros.append(
-            f"mov_liquido {est.mov_liquido:.2f} != receita-despesa {mov_esperado:.2f}"
-        )
+        problemas.append(M.msg_mov("W011A", est.mov_liquido, mov_esperado))
 
-    if erros:
-        raise ValueError("W011A inconsistente: " + "; ".join(erros))
+    if problemas:
+        raise ValueError(M.juntar_problemas(problemas))

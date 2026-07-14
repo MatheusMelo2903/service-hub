@@ -10,7 +10,10 @@ Estratégia de isolamento:
   usam instâncias dataclass com números sintéticos redondos e condomínio fictício.
   Rodam em qualquer ambiente sem dependência de arquivo externo.
 
-NÃO há constantes com valores financeiros reais neste arquivo.
+Nenhuma cifra financeira real vive neste arquivo. Os valores de referencia de
+PDFs reais (Frente 1, Praia Dourada, Buritis) ficam em w011a_referencia.json e
+w015p_referencia.json, ambos em fixtures_local/ (gitignored). Sem esses JSONs os
+testes que os usam dao skip, como os que dependem dos PDFs.
 """
 from __future__ import annotations
 
@@ -100,6 +103,23 @@ SKIP_AMBOS = pytest.mark.skipif(
     reason="PDFs w011a e w015a necessarios nao encontrados em fixtures_local/"
 )
 SKIP_W015P = _skip_sem_pdf("w015p")
+
+
+def _ref_w011a():
+    """Valores de referencia real do W011A (Frente 1 + testes de estrutura) num
+    JSON dev-only em fixtures_local/ (gitignored), mesmo esquema do W015P: nenhuma
+    cifra real vive no codigo-fonte."""
+    caminho = os.path.join(FIXTURES, "w011a_referencia.json")
+    if not os.path.isfile(caminho):
+        return None
+    with open(caminho, encoding="utf-8") as f:
+        return json.load(f)
+
+
+SKIP_W011A_REF = pytest.mark.skipif(
+    _ref_w011a() is None,
+    reason="w011a_referencia.json ausente em fixtures_local/ (gitignored)"
+)
 
 # Tolerância em reais para comparações de float
 TOL = 0.02
@@ -861,19 +881,21 @@ def test_passo1_fragmento_categoria_nao_vira_grupo():
 
 
 @SKIP_W011A_ANO_CHEIO
+@SKIP_W011A_REF
 def test_passo1_praia_dourada_estrutura_preservada():
     """Trava de nao-regressao: o Praia Dourada continua com 10 grupos e 79
     lancamentos. Reconciliacao fechar NAO basta (grupo errado tambem soma certo);
     aqui travamos a estrutura de grupos."""
     from app.parser_w011a import parsear
+    ref = _ref_w011a()["praia_dourada"]
     est = parsear(_encontrar_pdf_ano_cheio_w011a())
     assert len(est.grupos) == 10, f"esperado 10 grupos, veio {len(est.grupos)}"
     total_lanc = sum(len(g.lancamentos) for g in est.grupos)
     assert total_lanc == 79, f"esperado 79 lancamentos, veio {total_lanc}"
     # Snapshot dos numeros-chave: uma refatoracao que mude valor em silencio
     # (mantendo a caixa fechando) tem que ser pega aqui, nao so no deep-compare.
-    assert abs(est.receita_total - 1293772.27) < 0.02, f"receita_total: {est.receita_total}"
-    assert abs(est.despesa_total - 780912.35) < 0.02, f"despesa_total: {est.despesa_total}"
+    assert abs(est.receita_total - ref["receita_total"]) < 0.02, f"receita_total: {est.receita_total}"
+    assert abs(est.despesa_total - ref["despesa_total"]) < 0.02, f"despesa_total: {est.despesa_total}"
     assert est.meses_labels[0] == "Jul/2025" and est.meses_labels[-1] == "Jun/2026"
     assert len(est.meses_labels) == 12
 
@@ -972,11 +994,15 @@ def test_passo5_buritis_cortado_meio_mes_reconcilia():
     if pdf_path is None:
         pytest.skip("w011a_buritis_cortado nao encontrado em fixtures_local/")
     from app.parser_w011a import parsear
+    ref = _ref_w011a()
+    if ref is None:
+        pytest.skip("w011a_referencia.json ausente em fixtures_local/")
+    ref = ref["buritis_cortado"]
     est = parsear(pdf_path)  # nao pode levantar
-    assert abs(est.receita_total - 1822059.57) < 0.02, f"receita janela: {est.receita_total}"
-    assert abs(est.despesa_total - 1478056.50) < 0.02, f"despesa janela: {est.despesa_total}"
-    assert abs(est.saldo_anterior - 736590.09) < 0.02, f"saldo_ant: {est.saldo_anterior}"
-    assert abs(est.saldo_final - 1080593.16) < 0.02, f"saldo_fim: {est.saldo_final}"
+    assert abs(est.receita_total - ref["receita_total"]) < 0.02, f"receita janela: {est.receita_total}"
+    assert abs(est.despesa_total - ref["despesa_total"]) < 0.02, f"despesa janela: {est.despesa_total}"
+    assert abs(est.saldo_anterior - ref["saldo_anterior"]) < 0.02, f"saldo_ant: {est.saldo_anterior}"
+    assert abs(est.saldo_final - ref["saldo_final"]) < 0.02, f"saldo_fim: {est.saldo_final}"
     # Cadeia de saldo fecha ao centavo (teste de aceitacao)
     caixa = est.saldo_anterior + est.receita_total - est.despesa_total
     assert abs(caixa - est.saldo_final) < 0.02, f"caixa nao fecha: {caixa} != {est.saldo_final}"
@@ -1353,3 +1379,72 @@ def test_resumo_reconciliacao_tres_periodos_distintos_meses_corretos():
     assert "entraram apenas para conferência" in txt
     # nao pode dizer 10 meses para o W016A (o bug antigo)
     assert "W016A de 10 meses" not in txt
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Frente 1: saldo_anterior do W011A com meses zerados no inicio do exercicio.
+#
+# Fixtures sao PDF financeiro de cliente real: NAO entram no repo. O teste le a
+# pasta de PRESTACAO_FIXTURES_DIR (aponta para fora do repo). Sem a variavel, o
+# harness pula, como o resto. Nomes de arquivo esperados nessa pasta:
+#   gardenia-w011a.pdf   gardenia-w015a.pdf   gardenia-w016a.pdf   buritis-w011a.pdf
+# ─────────────────────────────────────────────────────────────────────────────
+_FIXT_DIR = os.environ.get("PRESTACAO_FIXTURES_DIR")
+
+
+def _fixture(nome: str) -> str | None:
+    """Caminho de um PDF de fixture fora do repo, via PRESTACAO_FIXTURES_DIR.
+    Retorna None (para skip) se a variavel nao existe ou o arquivo nao esta la."""
+    if not _FIXT_DIR:
+        return None
+    caminho = os.path.join(_FIXT_DIR, nome)
+    return caminho if os.path.isfile(caminho) else None
+
+
+# (a) meses zerados no inicio (Gardenia): popula saldo_anterior e passa em _validar
+@pytest.mark.skipif(_fixture("gardenia-w011a.pdf") is None or _ref_w011a() is None,
+                    reason="gardenia-w011a.pdf ou w011a_referencia.json ausente")
+def test_w011a_meses_zerados_inicio_popula_saldo_anterior():
+    from app.parser_w011a import parsear
+    ref = _ref_w011a()["gardenia"]
+    est = parsear(_fixture("gardenia-w011a.pdf"))  # apos o conserto NAO levanta
+    assert abs(est.saldo_anterior - ref["saldo_anterior"]) < 0.011
+    # conservacao de caixa fecha (mesma identidade de _validar)
+    assert abs(est.saldo_anterior + est.receita_total
+               - est.despesa_total - est.saldo_final) < 0.02
+
+
+# (b) sem meses zerados (Buritis): comportamento inalterado
+@pytest.mark.skipif(_fixture("buritis-w011a.pdf") is None or _ref_w011a() is None,
+                    reason="buritis-w011a.pdf ou w011a_referencia.json ausente")
+def test_w011a_sem_meses_zerados_mantem_saldo_anterior():
+    from app.parser_w011a import parsear
+    ref = _ref_w011a()["buritis"]
+    est = parsear(_fixture("buritis-w011a.pdf"))
+    assert abs(est.saldo_anterior - ref["saldo_anterior"]) < 0.011
+    assert abs(est.saldo_anterior + est.receita_total
+               - est.despesa_total - est.saldo_final) < 0.02
+
+
+# (c) risco inverso, SEM fixture: com o campo populado, _validar pega a abertura
+# perdida no fechamento. Prova que a formula continua sendo a rede nos dois sentidos.
+def test_w011a_validar_pega_abertura_perdida_no_fechamento():
+    from app.parser_w011a import (_validar, EstruturaW011A,
+                                  LancamentoW011A, GrupoW011A)
+    B = 5000.0
+    est = EstruturaW011A()
+    est.saldo_anterior = B          # abertura real, populada pelo conserto
+    est.receitas = [LancamentoW011A("Taxa", 100000.0, [])]
+    est.receita_total = 100000.0
+    g = GrupoW011A(nome_relatorio="PESSOAL", categoria="Pessoal", total=90000.0)
+    g.lancamentos = [LancamentoW011A("Salario", 90000.0, [])]
+    est.grupos = [g]
+    est.despesa_total = 90000.0
+    est.mov_liquido = 10000.0
+    # saldo_final ERRADO: perdeu a abertura (correto seria 15000, veio 10000)
+    est.saldo_final = 10000.0
+    with pytest.raises(ValueError, match="não fecha o caixa"):
+        _validar(est)
+    # Contraprova: saldo_final correto (B + mov) passa sem levantar.
+    est.saldo_final = B + 10000.0
+    _validar(est)
