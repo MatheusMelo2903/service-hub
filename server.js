@@ -1380,6 +1380,363 @@ async function inserirLacunasNaAta(ata, listaLacunas, modelo, chamar) {
 // houver praticamente nenhuma linha de assinatura (sinal de truncamento), nunca por
 // "faltar" pra chegar a um número arbitrário.
 //
+// ─────────────────────────────────────────────────────────────────────────
+// GATE DE SAÍDA DETERMINÍSTICO (anti invenção de fato).
+//
+// Última passada de entregarAta. Função PURA de (ata, transcrição): sem LLM, sem Date,
+// sem random, sem rede. Não repara, JULGA cada afirmação verificável da ata contra o TEXTO
+// FONTE. NÃO é blacklist de palavra suspeita: a decisão é sempre "esse termo existe
+// literalmente na fonte" (existeLiteral / valoresCanonicos). Um nome que EXISTE na transcrição
+// passa; um nome fabricado (zero ocorrências) é sinalizado.
+//
+// Diferença do passe de consolidação: aquele é REPARADOR (precisa de 2+ candidatos pra
+// escolher a forma certa; decidirPorCodigo formas.length>=2). Por isso deixou passar um nome
+// fabricado fundido numa string sem segundo candidato. O gate é JUIZ: testa unidade a unidade
+// a RAIZ DISTINTIVA de cada nome (token que não é sufixo genérico de SUFIXOS_NAO_DISTINTIVOS),
+// então isola a raiz fabricada de "Raiz Engenharia" e a reprova sozinha.
+//
+// TRAVA 1 (Matheus): marcação e flag nascem JUNTAS. Um gate que calcula flag e não marca é
+// pior que não ter gate. As flags derivam da MESMA lista de marcações aplicadas; se qualquer
+// marcação não aparecer no texto final, marcacaoFalhou=true e o veredicto NUNCA é 'limpo'.
+//
+// Saída: { ata: <texto com trechos sem âncora marcados>, gate: { flags, veredicto, marcacaoFalhou } }
+//   veredicto = 'limpo' | 'suspeito' | 'critico'
+
+// Sufixos corporativos NÃO distintivos: palavras comuns do setor que não identificam ninguém.
+// O gate ancora a RAIZ distintiva do nome, nunca o sufixo. Editar SÓ aqui; cresce com o tempo.
+const SUFIXOS_NAO_DISTINTIVOS = [
+  'Engenharia', 'Construtora', 'Manutencao', 'Mantas', 'Ltda', 'ME', 'Servicos',
+  'Administracao', 'Administradora', 'Condominio', 'Reformas', 'Pinturas', 'Serralheria',
+  'Eletrica', 'Hidraulica', 'Jardinagem', 'Limpeza', 'Seguranca', 'Tecnologia', 'Sistemas',
+  'Comercio', 'Materiais', 'EIRELI', 'S/A', 'S.A', 'Incorporadora'
+];
+const _SUFIXOS_NORM = new Set(SUFIXOS_NAO_DISTINTIVOS.map((s) => _normLoose(s)));
+
+// ABERTURAS gramaticais: advérbios, conjunções, verbos e pronomes formais que a ata usa para
+// ABRIR frase/oração (capitalizados por posição, não por serem nome próprio). NÃO é blacklist de
+// nome suspeito (a decisão de âncora continua sendo "existe na fonte"): é a mesma categoria do
+// skip de conectivos abaixo, só que para o começo de frase. Existe porque nem toda abertura formal
+// ("Considerando", "Outrossim") aparece literal no áudio, então sem isto viraria falso positivo em
+// item de lista após ':'. CRESCE com o tempo, editar aqui. Um nome próprio real quase nunca colide.
+const _GATE_ABERTURAS = new Set([
+  'apos', 'antes', 'ademais', 'assim', 'ato', 'aberta', 'aberto', 'aprovada', 'aprovado',
+  'colocada', 'colocado', 'conforme', 'considerada', 'considerado', 'considerando', 'constatada',
+  'constatado', 'contudo', 'debatida', 'debatido', 'deliberada', 'deliberado', 'diante', 'dito',
+  'durante', 'efetuada', 'encerrada', 'encerrado', 'enquanto', 'entretanto', 'feita', 'feitas',
+  'feito', 'feitos', 'finalizada', 'finalmente', 'havendo', 'igualmente', 'inicialmente', 'isto',
+  'mediante', 'nada', 'naquela', 'naquele', 'nesta', 'neste', 'nessa', 'nesse', 'ocorrida',
+  'outrossim', 'passada', 'passado', 'passou', 'portanto', 'posta', 'posteriormente',
+  'primeiramente', 'procedida', 'procedido', 'procedeu', 'prosseguindo', 'prosseguiu', 'quanto',
+  'realizada', 'realizado', 'registrada', 'registrado', 'registrou', 'ressaltada', 'ressaltado',
+  'ressaltou', 'sendo', 'sobre', 'submetida', 'submetido', 'tendo', 'todavia', 'uma', 'verificada',
+  'verificado'
+].map((s) => _normLoose(s)));
+
+// Prefixos dos marcadores que o PRÓPRIO gate cria. Detectados na re-execução (idempotência):
+// são reconhecidos e re-emitidos como flag, sem re-marcar o texto → Gate(Gate(ata)) estável.
+const _GATE_PREFIXOS = {
+  'nome sem âncora na fonte': { tipo: 'nome', severidade: 'suspeito' },
+  'valor sem âncora': { tipo: 'valor', severidade: 'suspeito' },
+  'voto atribuído a nome sem âncora': { tipo: 'placar', severidade: 'critico' }
+};
+
+// Mascara todo [ ... ] com espaços do MESMO tamanho (idx preservado). Serve para dois fins:
+// (a) o gate NUNCA julga conteúdo já entre marcador honesto ([valor a confirmar], [nome a
+// confirmar: '...']) — é incerteza declarada, não afirmação; (b) na re-execução, os próprios
+// marcadores do gate (também [ ... ]) ficam invisíveis à extração, então nada é remarcado.
+function _gateMascararColchetes(txt) {
+  return String(txt).replace(/\[[^\]]*\]/g, (m) => ' '.repeat(m.length));
+}
+
+// Detecta marcadores que o próprio gate já colocou (re-execução). Devolve uma flag por
+// marcador, com a MESMA severidade, para o conjunto de flags ser estável em Gate(Gate(ata)).
+function _gateFlagsProprias(txt) {
+  const s = String(txt);
+  const out = [];
+  const re = /\[(nome sem âncora na fonte|valor sem âncora|voto atribuído a nome sem âncora):\s*([^\]]*)\]/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const meta = _GATE_PREFIXOS[m[1]];
+    out.push({ tipo: meta.tipo, severidade: meta.severidade, trecho: m[2].replace(/^'|'$/g, '').trim(), idx: m.index, motivo: 'ja sinalizado em passada anterior', reemitida: true });
+  }
+  return out;
+}
+
+// Extrai a RAIZ (tokens distintivos) de um run de nome, com idx absoluto de cada token. Token
+// distintivo = tem minúscula (exclui CAIXA ALTA de cabeçalho: ITEM, ATA, CNPJ), >=3 chars, e
+// não é sufixo genérico. Ex.: "Xurupita Engenharia" -> [Xurupita] (Engenharia é sufixo).
+function _gateRaizesDistintivas(run, baseIdx) {
+  const raizes = [];
+  const reTok = /[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.\/]*/g;
+  let t;
+  while ((t = reTok.exec(run))) {
+    const tok = t[0].replace(/[.\/]+$/, '');
+    if (tok.length < 3) continue;
+    if (!/[a-zà-öø-ÿ]/.test(tok)) continue;               // sem minúscula = cabeçalho, ignora
+    if (/^(d[aeo]s?|e|no|na|nos|nas|ao|aos|com|para|por)$/i.test(tok)) continue; // conectivo
+    if (_SUFIXOS_NORM.has(_normLoose(tok))) continue;     // sufixo genérico, não é raiz
+    // ATENÇÃO: o filtro de _GATE_ABERTURAS NÃO fica aqui de propósito. Esta função alimenta OS
+    // DOIS pools (afirmação isolada E objeto de voto). Filtrar abertura aqui tirava um nome
+    // fabricado que colide com palavra gramatical (ex.: empresa "Assim") do pool de VOTO também,
+    // e ele escapava recebendo votos, veredicto 'limpo' (achado do revisor). O filtro de abertura
+    // agora vive em _gateAfirmacoesNome, condicionado a NÃO haver gatilho antes.
+    raizes.push({ raiz: tok, idx: baseIdx + t.index, len: tok.length });
+  }
+  return raizes;
+}
+
+// Âncora de NOME para o gate. Passa se a raiz existe como palavra inteira na fonte
+// (existeLiteral) OU se aparece como COMPONENTE separado por hífen (ex.: uma raiz "Alfa" dentro
+// de um nome composto "Alfa-Beta" que a transcrição traz hifenizado). NÃO relaxa o existeLiteral
+// compartilhado (aquele bloqueia hífen de propósito, pra o passe de consolidação não aplicar
+// forma degradada); aqui a pergunta é outra, "esse nome está na fonte?", e um componente
+// hifenizado ESTÁ. Ainda bloqueia letra/dígito/apóstrofo colados, então não vira substring solto.
+function _gateAncorado(raiz, transcricaoTxt) {
+  if (existeLiteral(raiz, transcricaoTxt)) return true;
+  const norm = _normLoose(String(transcricaoTxt || '')).replace(/\s+/g, ' ');
+  const alvo = _normLoose(String(raiz || '')).replace(/\s+/g, ' ').trim();
+  if (!alvo) return false;
+  const re = new RegExp("(?<![A-Za-zÀ-ÿ0-9'])" + _escapeRegex(alvo) + "(?![A-Za-zÀ-ÿ0-9'])");
+  return re.test(norm);
+}
+
+// Palavras que, imediatamente antes de um nome, forçam sua inclusão mesmo em início de frase.
+const _GATE_GATILHO_NOME = /(empresa|firma|prestador|prestadora|construtora|fornecedor|fornecedora|vencedor|vencedora|loja|companhia|cia\.?|tinta|marca|condom[íi]nio|contrato|s[íi]ndic[oa]|sr\.?|sra\.?|dr\.?)\s*$/i;
+// Gatilho no INÍCIO do próprio run (não só antes dele). Quando a frase abre com o gatilho
+// capitalizado ("Empresa Xurupita apresentou..."), a palavra vira o 1o token do run e some do
+// r.antes; sem isto o run inteiro caía no descarte de início-de-frase e o nome escapava (achado
+// do revisor: nome fabricado com gatilho maiúsculo abrindo frase saía 'limpo').
+const _GATE_GATILHO_INICIO = /^(empresa|firma|prestador|prestadora|construtora|fornecedor|fornecedora|loja|companhia|cia|s[íi]ndic[oa]|contrato|condom[íi]nio)\s+[A-ZÀ-ÖØ-Þ]/i;
+
+// Todos os RUNS de nome próprio (capitalizado com minúscula) da ata, com idx e o texto anterior.
+// Base comum de dois consumidores: o extrator de afirmação (filtra por início de frase) e o pool
+// de candidatos a OBJETO DE VOTO (não filtra). Separar os dois fecha o achado do revisor: um nome
+// que abre frase sem gatilho não é afirmação isolada, mas PODE ser o objeto de um placar.
+function _gateRunsNome(masked) {
+  const s = String(masked);
+  const out = [];
+  const reRun = /[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ]{2,}(?:\s+(?:d[aeo]s?|e)\s+[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ]{2,}|\s+[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ]{2,})*/g;
+  let m;
+  while ((m = reRun.exec(s))) {
+    out.push({ run: m[0], idx: m.index, antes: s.slice(Math.max(0, m.index - 30), m.index) });
+  }
+  return out;
+}
+
+// EXTRATOR NOME (afirmação isolada, pra flag 'suspeito'). Só MEIO de frase (início de frase é
+// gramática, não nome próprio), salvo quando precedido de gatilho ("empresa X"). Início de frase =
+// . ! ? APENAS. ':' NÃO conta como início de frase: abre item de lista ("Fornecedores consultados:
+// Xurupita...") onde um nome fabricado pode aparecer sem gatilho, e isentá-lo deixava a fabricação
+// escapar (achado do revisor). O falso positivo em cabeçalho ("ITEM N) TÍTULO: Após...") é evitado
+// por _GATE_ABERTURAS (abertura gramatical não vira raiz), não por tratar ':' como fim de frase.
+// ';' também NÃO conta. Devolve uma afirmação por RAIZ distintiva.
+function _gateAfirmacoesNome(masked) {
+  const out = [];
+  for (const r of _gateRunsNome(masked)) {
+    const charAntes = (r.antes.match(/(\S)\s*$/) || [])[1] || '';
+    const inicioFrase = charAntes === '' || /[.!?]/.test(charAntes);
+    // Gatilho pode estar ANTES do run ("a empresa X") ou ser o 1o token do run ("Empresa X").
+    const temGatilho = _GATE_GATILHO_NOME.test(r.antes) || _GATE_GATILHO_INICIO.test(r.run);
+    if (inicioFrase && !temGatilho) continue;             // início de frase sem gatilho: gramática
+    for (const raiz of _gateRaizesDistintivas(r.run, r.idx)) {
+      // Abertura gramatical SÓ é descartada quando NÃO há gatilho antes. "Considerando a urgência"
+      // (sem gatilho) é gramática; "empresa Assim" (com gatilho) é nome real e continua checado.
+      if (!temGatilho && _GATE_ABERTURAS.has(_normLoose(raiz.raiz))) continue;
+      out.push({ tipo: 'nome', raiz: raiz.raiz, formaNaAta: r.run.trim(), idx: raiz.idx, len: raiz.len });
+    }
+  }
+  return out;
+}
+
+// POOL de candidatos a OBJETO DE VOTO: TODAS as raízes de nome, SEM o filtro de início de frase.
+// Um nome que recebe votos é afirmação de fato mesmo abrindo frase (achado do revisor: o formato
+// "[Nome], com (N) votos", prescrito no prompt do motor pra eleição de síndico, tem o nome no
+// início da frase e escapava por completo — nem 'nome' nem 'placar', veredicto saía 'limpo').
+function _gateRootsTodos(masked) {
+  const out = [];
+  for (const r of _gateRunsNome(masked)) {
+    for (const raiz of _gateRaizesDistintivas(r.run, r.idx)) out.push(raiz);
+  }
+  return out;
+}
+
+// Limites da FRASE que contém idx (fronteiras . ! ? ou quebra de linha). O objeto de um placar é
+// o nome na MESMA frase do "(N) votos"; ligar por frase, não por distância cega de caractere,
+// impede que um nome ancorado de outra frase "roube" o vínculo (achado 2 do revisor). Um '.' só é
+// fim de frase se vier SEGUIDO DE ESPAÇO ou fim de texto: assim o ponto de milhar de "R$ 10.900,00"
+// (seguido de dígito) NÃO parte a frase e o objeto do voto continua na mesma frase da contagem.
+function _sentencaAoRedor(s, idx) {
+  const ehFim = (i) => {
+    const c = s[i];
+    if (c === '\n') return true;
+    if (c === '.' || c === '!' || c === '?') {
+      const nxt = s[i + 1];
+      if (nxt === undefined) return true;
+      if (!/\s/.test(nxt)) return false;              // "S.A" ou "10.900": sem espaço, não é fim
+      let j = i + 1;
+      while (j < s.length && /\s/.test(s[j])) j++;
+      // Fim de frase REAL começa com maiúscula. "Ltda. obteve" / "S.A. venceu" (minúscula depois)
+      // são abreviação, não ponto final: não partem a frase e o objeto do voto continua junto.
+      return j >= s.length || /[A-ZÀ-ÖØ-Þ]/.test(s[j]);
+    }
+    return false;
+  };
+  let ini = 0;
+  for (let i = idx; i >= 0; i--) { if (ehFim(i)) { ini = i + 1; break; } }
+  let fim = s.length;
+  for (let i = idx; i < s.length; i++) { if (ehFim(i)) { fim = i; break; } }
+  return { ini, fim };
+}
+
+// EXTRATOR VALOR. Scan próprio de "R$ X.XXX,XX" (preciso do idx pra marcar no lugar, o que
+// mencoesMonetarias não dá). Canoniza com _numPtBr (centavos), a MESMA escala de valoresCanonicos.
+function _gateAfirmacoesValor(masked) {
+  const s = String(masked);
+  const out = [];
+  const re = /R\$\s*\d{1,3}(?:\.\d{3})*,\d{2}/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const literal = m[0];
+    const canon = _numPtBr(literal.replace(/^R\$\s*/, ''));
+    if (canon == null) continue;
+    out.push({ tipo: 'valor', canon, formaNaAta: literal, idx: m.index, len: literal.length });
+  }
+  return out;
+}
+
+// EXTRATOR PLACAR. Acha cada "(N) votos" e devolve sua posição. Quem liga o voto ao OBJETO é o
+// juiz, pelo nome MAIS PRÓXIMO na MESMA frase (ver _sentencaAoRedor e gateDeSaida). Não há regex
+// própria de objeto aqui: a versão antiga usava /empresa .../gi, e o flag `i` tornava [A-Z]
+// case-insensitive (casava minúscula), alargando o objeto por palavras comuns depois do nome;
+// além de só reconhecer a palavra literal "empresa", perdendo "prestadora X"/"firma X". Ligar
+// pelo pool completo de nomes na mesma frase fecha esses buracos.
+function _gateAfirmacoesPlacar(masked) {
+  const s = String(masked);
+  const out = [];
+  const re = /\((\d{1,3})\)\s*votos?/gi;
+  let m;
+  while ((m = re.exec(s))) {
+    out.push({ tipo: 'placar', nVotos: Number(m[1]), votosIdx: m.index });
+  }
+  return out;
+}
+
+// O JUIZ. Reúne as afirmações, testa âncora contra a fonte, e para cada sem âncora cria uma
+// MARCAÇÃO (idx, len, substituto). Aplica direita->esquerda (preserva offsets) e deriva as
+// flags da MESMA lista aplicada (TRAVA 1). Verifica que toda marcação entrou no texto; se
+// alguma falhou, veredicto nunca é 'limpo'.
+function gateDeSaida(ataTxt, transcricaoTxt) {
+  const original = String(ataTxt);
+  const transcricao = String(transcricaoTxt || '');
+  const masked = _gateMascararColchetes(original);
+
+  const flagsExistentes = _gateFlagsProprias(original); // idempotência: re-emite sem remarcar
+  const nomes = _gateAfirmacoesNome(masked);            // afirmação isolada (suspeito)
+  const rootsTodos = _gateRootsTodos(masked);           // pool completo, pra objeto de voto
+  const placares = _gateAfirmacoesPlacar(masked);
+  const canonTrans = valoresCanonicos(transcricao);
+
+  // OBJETO DE VOTO: o nome MAIS PRÓXIMO do "(N) votos" DENTRO DA MESMA FRASE. Pool completo, não
+  // só as afirmações filtradas: um objeto de voto que abre frase ("Maria Souza, com (8) votos")
+  // também tem que ser pego. Ligar por frase, não por distância cega, evita nome de outra frase
+  // roubar o vínculo. LIMITAÇÃO REGISTRADA: referência anafórica cruzando frase ("a proposta ...
+  // obteve N votos", proposta = empresa citada 2 frases antes) não é resolvível deterministicamente;
+  // nesse caso o nome, se fabricado, ainda cai como 'suspeito' pelo laço de nome abaixo, só não vira
+  // 'critico'. Marca sempre; a severidade é o que degrada, não a marcação.
+  // Spans dos marcadores que o próprio gate já colocou (2a passada). Contam como "objeto já
+  // sinalizado" no vínculo de placar: sem isto, quando o objeto real vira marcador e some do pool,
+  // o voto re-ligava ao token seguinte (ex.: o verbo que abre a frase) e nascia flag nova — quebra
+  // de idempotência. As posições batem com `masked` porque a máscara preserva o comprimento.
+  const marcadorSpans = [];
+  { const reMk = /\[(?:nome sem âncora na fonte|valor sem âncora|voto atribuído a nome sem âncora):[^\]]*\]/g; let mm; while ((mm = reMk.exec(original))) marcadorSpans.push({ ini: mm.index, fim: mm.index + mm[0].length }); }
+
+  const objetoVotoIdx = new Set();
+  for (const p of placares) {
+    const sent = _sentencaAoRedor(masked, p.votosIdx);
+    // PREFERE o nome imediatamente ANTES da contagem ("empresa X: N votos", "[Nome], com N votos"
+    // — o formato dominante da ata tem o objeto ANTES). Só se não houver nenhum antes na frase é
+    // que cai pro nome DEPOIS ("N votos para a empresa X"). Distância absoluta pegava o objeto do
+    // item SEGUINTE ("(ii) empresa Bit") quando ele ficava mais perto que o objeto real do item.
+    let antesMelhor = null, depoisMelhor = null;
+    for (const c of rootsTodos) {
+      if (c.idx < sent.ini || c.idx >= sent.fim) continue;
+      if (c.idx < p.votosIdx) { if (!antesMelhor || c.idx > antesMelhor.idx) antesMelhor = c; }
+      else if (!depoisMelhor || c.idx < depoisMelhor.idx) depoisMelhor = c;
+    }
+    // Objeto já sinalizado por passada anterior (marcador entre o candidato e a contagem, na frase)?
+    // Então o placar está resolvido; _gateFlagsProprias re-emite a flag. Não re-liga a outro token.
+    const objetoJaMarcado = marcadorSpans.some((sp) => sp.ini >= sent.ini && sp.fim <= p.votosIdx && (!antesMelhor || sp.ini > antesMelhor.idx));
+    if (objetoJaMarcado) continue;
+    const melhor = antesMelhor || depoisMelhor;
+    if (melhor) objetoVotoIdx.add(melhor.idx);
+  }
+  const marcacoes = [];
+  const marcadoIdx = new Set(); // evita marcar o mesmo token duas vezes (objeto de voto + nome)
+
+  // 1) OBJETOS DE VOTO sem âncora -> CRÍTICO. Vêm do pool completo, então pegam também o nome que
+  // abre frase (que o filtro de afirmação isolada descartaria). tipo 'placar' bate com _GATE_PREFIXOS
+  // (idempotência da re-emissão na 2a passada).
+  for (const c of rootsTodos) {
+    if (!objetoVotoIdx.has(c.idx)) continue;
+    if (_gateAncorado(c.raiz, transcricao)) continue;     // objeto de voto ancorado na fonte: ok
+    marcacoes.push({
+      idx: c.idx, len: c.len, tipo: 'placar', severidade: 'critico', trecho: c.raiz,
+      substituto: "[voto atribuído a nome sem âncora: '" + c.raiz + "']",
+      motivo: 'nome recebe votos sem existir na transcrição'
+    });
+    marcadoIdx.add(c.idx);
+  }
+  // 2) NOME (afirmação isolada) sem âncora -> SUSPEITO, se não já marcado como objeto de voto.
+  for (const n of nomes) {
+    if (marcadoIdx.has(n.idx)) continue;
+    if (_gateAncorado(n.raiz, transcricao)) continue;     // tem âncora, passa (nome que existe na fonte)
+    marcacoes.push({
+      idx: n.idx, len: n.len, tipo: 'nome', severidade: 'suspeito', trecho: n.raiz,
+      substituto: "[nome sem âncora na fonte: '" + n.raiz + "']",
+      motivo: 'nome não existe na transcrição'
+    });
+    marcadoIdx.add(n.idx);
+  }
+  // 3) VALOR: canônico ausente da fala.
+  for (const v of _gateAfirmacoesValor(masked)) {
+    if (canonTrans.has(v.canon)) continue;                // valor dito, passa
+    marcacoes.push({
+      idx: v.idx, len: v.len, tipo: 'valor', severidade: 'suspeito', trecho: v.formaNaAta,
+      substituto: '[valor sem âncora: ' + v.formaNaAta + ']',
+      motivo: 'valor não dito na transcrição'
+    });
+  }
+
+  // Aplica direita->esquerda, pulando sobreposição (nunca corrompe span já escrito).
+  marcacoes.sort((a, b) => b.idx - a.idx);
+  let ata = original;
+  const aplicadas = [];
+  let limiteEsq = Infinity;
+  for (const mc of marcacoes) {
+    if (mc.idx + mc.len > limiteEsq) continue;            // sobrepõe marcação já aplicada
+    ata = ata.slice(0, mc.idx) + mc.substituto + ata.slice(mc.idx + mc.len);
+    aplicadas.push(mc);
+    limiteEsq = mc.idx;
+  }
+
+  // TRAVA 1: flags derivam da MESMA lista aplicada, mais as re-emitidas. Verifica aplicação.
+  const marcacaoFalhou = aplicadas.some((mc) => ata.indexOf(mc.substituto) === -1);
+  const flags = flagsExistentes.concat(aplicadas.map((mc) => ({
+    tipo: mc.tipo, severidade: mc.severidade, trecho: mc.trecho, motivo: mc.motivo, idx: mc.idx
+  })));
+  // Ordem de LEITURA do documento (aplicadas vinham de trás pra frente). Pro revisor/UI ver as
+  // flags na ordem em que aparecem na ata.
+  flags.sort((a, b) => a.idx - b.idx);
+
+  let veredicto;
+  if (marcacaoFalhou) veredicto = 'critico';               // nunca 'limpo' com marcação não aplicada
+  else if (flags.some((f) => f.severidade === 'critico')) veredicto = 'critico';
+  else if (flags.length) veredicto = 'suspeito';
+  else veredicto = 'limpo';
+
+  return { ata, gate: { flags, veredicto, marcacaoFalhou } };
+}
+
 // 'pareceAta' distingue texto de ata real de uma recusa/erro do modelo — usado APENAS
 // pra decidir se a saída da auditoria pode substituir o original, nunca pra retry.
 function validarAta(resposta) {
@@ -1599,6 +1956,23 @@ async function gerarAtaJob(jobId, userMessage) {
     const cir = corrigirPlaceholdersDeliberacao(ataFinal, transcricao);
     ataFinal = cir.ata;
 
+    // ►► GATE DE SAÍDA (determinístico). Última passada, sobre a ata já reparada. Código puro,
+    // ZERO chamada Anthropic. Marca o que não tem âncora na fonte e devolve veredicto. A marcação
+    // envelopa o trecho sem apagar o número (o diagnóstico de valor abaixo segue são; provado por
+    // harness). Ver gateDeSaida.
+    // FALHA ABERTO (regra de ouro do projeto): se o gate lançar por bug futuro, NUNCA descartar
+    // a ata já gerada e paga. Entrega a ata sem marca e sinaliza a falha do próprio gate.
+    let g;
+    try {
+      g = gateDeSaida(ataFinal, transcricao);
+      ataFinal = g.ata;
+    } catch (eGate) {
+      // Mensagem crua da exceção fica SÓ no log do servidor (pode conter trecho de ata/transcrição
+      // se um throw futuro interpolar conteúdo). Ao cliente vai só um rótulo fixo.
+      console.error('[engine-ata] gate de saída falhou (entrega sem marca):', eGate && eGate.message);
+      g = { gate: { flags: [], veredicto: 'erro_gate', marcacaoFalhou: false, erro: 'falha_interna_no_gate' } };
+    }
+
     const vFinal = validarAta(ataFinal);
     const canonFinal = valoresCanonicos(ataFinal);
     // diagnóstico determinístico: valores da fala fora da ata final.
@@ -1613,7 +1987,8 @@ async function gerarAtaJob(jobId, userMessage) {
     return concluir({
       ata: ataFinal,
       modelo_usado: usouOpus ? modelo_usado + ' + opus (inserção)' : modelo_usado,
-      tentativas, auditoria: etapa, avisos: consol.avisoSkip ? vFinal.avisos.concat([consol.avisoSkip]) : vFinal.avisos
+      tentativas, auditoria: etapa, avisos: consol.avisoSkip ? vFinal.avisos.concat([consol.avisoSkip]) : vFinal.avisos,
+      gate: g.gate
     });
   }
 
@@ -2711,5 +3086,6 @@ if (require.main === module) {
 // nome próprio (inerte em produção — nenhuma das funções abaixo está no wiring de entregarAta).
 module.exports = {
   corrigirPlaceholdersDeliberacao, valoresCanonicos, mencoesMonetarias,
-  extrairNomesCandidatos, reunirEvidencia, decidirPorCodigo, aplicarConsolidacao, existeLiteral
+  extrairNomesCandidatos, reunirEvidencia, decidirPorCodigo, aplicarConsolidacao, existeLiteral,
+  gateDeSaida
 };
