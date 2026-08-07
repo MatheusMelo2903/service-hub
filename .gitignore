@@ -41,3 +41,6 @@ docs/handoffs/*
 !docs/handoffs/.gitkeep
 *.local
 _handoff/
+
+# dados locais de teste (contem dados pessoais - nunca commitar)
+.test/
