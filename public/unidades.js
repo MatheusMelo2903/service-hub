@@ -2008,3 +2008,22 @@ async function enviarContatoExtra(condId, idUnidade, contato, logDiv, contexto) 
   return { ok: false, msg: msgErr };
 }
 
+// Trocou de condomínio (T02): planilha, revisão e prévia eram do anterior. Descarta tudo.
+// (A troca fica travada enquanto a importação roda: ver condTrocaBloqueada.)
+window.addEventListener('condominioAtivo:trocou', function() {
+  var u = state.unidades;
+  var tinha = (u.raw && u.raw.length) || (u.processed && u.processed.length) || _revisaoContatos
+    || (typeof _normalizarRows !== 'undefined' && _normalizarRows);
+  u.raw = []; u.headers = []; u.processed = []; u.shouldStop = false;
+  _revisaoContatos = null; _revisaoSource = ''; _revisaoFiltro = 'todos';
+  var ids = { 'preview-unidades': 'none', 'revisao-unidades': 'none', 'normalizar-preview': 'none',
+              'uni-log': 'none', 'uni-status-final': 'none', 'uni-progress-wrap': 'none', 'uni-progresso-texto': 'none' };
+  Object.keys(ids).forEach(function(id) { var el = document.getElementById(id); if (el) el.style.display = ids[id]; });
+  ['unidades-table', 'revisao-table', 'normalizar-table', 'uni-log'].forEach(function(id) {
+    var el = document.getElementById(id); if (el) el.innerHTML = '';
+  });
+  if (typeof _normalizarRows !== 'undefined') { _normalizarRows = null; _normalizarSourceName = ''; }
+  var st = document.getElementById('normalizar-status');
+  if (st) { st.textContent = ''; st.style.color = ''; }
+  if (tinha) toast('Unidades carregadas descartadas: o condomínio mudou.', 'info');
+});

@@ -9,12 +9,11 @@
 
 // ============================================================
 // PRESTAÇÃO DE CONTAS
-// Cache de condominios populado via supaFetch ao abrir o painel.
-// Busca filtravel client side. Modo livre permite condominio nao cadastrado.
+// Condomínio: seletor único (condominio-seletor.js), o mesmo do topo e das
+// outras abas. Modo livre permite condomínio fora do Superlógica (com PDFs).
 // ============================================================
 
 let prestacaoState = {
-  condominios: null,
   arquivos: [],
   condId: null,
   condNome: '',
@@ -23,23 +22,20 @@ let prestacaoState = {
   observacoes: ''
 };
 
-// Prepara a aba: meses, lista de condomínios e o condomínio ativo do sistema.
+// Prepara a aba: meses, seletor de condomínio e o condomínio ativo do sistema.
 // Pode ser chamada várias vezes (abrir a aba, recarregar a página nela, voltar do login).
 async function prestacaoInit() {
   var selIni = document.getElementById('prest-mes-inicio');
   if (selIni && !selIni.options.length) prestacaoPreencherMeses();
-  // Sem a sessão pronta (página abrindo) a consulta volta vazia pela RLS: espera o
-  // auth:ready, que chama esta função de novo. Lista vazia também tenta de novo depois.
-  if (prestacaoState.condominios === null && window.AUTH_TOKEN) {
-    prestacaoState.condominios = [];
-    try {
-      const r = await supaFetch('condominios?select=id,nome,id_superlogica&order=nome.asc');
-      prestacaoState.condominios = (Array.isArray(r) && r.length) ? r : null;
-    } catch (e) {
-      prestacaoState.condominios = null;
-    }
+  if (window.CondSeletor) {
+    CondSeletor.montar('prest-cond-seletor', {
+      semInfo: true,
+      extras: [{ rotulo: 'Condomínio fora do Superlógica (usar PDFs)', acao: prestacaoUsarOutro }]
+    });
+    await CondSeletor.carregar();
   }
-  if (!prestacaoState.condId && window.condominioAtivo) prestacaoUsarCondominioAtivo(window.condominioAtivo);
+  var ativo = (typeof getCondominioAtivo === 'function') ? getCondominioAtivo() : window.condominioAtivo;
+  if (ativo) prestacaoUsarCondominioAtivo(ativo);
   prestacaoMostrarInfoCondominio();
   prestacaoAtualizarBotao();
 }
@@ -52,126 +48,12 @@ function prestacaoPainelAberto() {
 document.addEventListener('auth:ready', function() { if (prestacaoPainelAberto()) prestacaoInit(); });
 setTimeout(function() { if (prestacaoPainelAberto()) prestacaoInit(); }, 0);
 
-// Fecha a lista ao clicar fora dela.
-document.addEventListener('click', function(ev) {
-  var dd = document.getElementById('prest-cond-dropdown');
-  if (!dd || !dd.classList.contains('open')) return;
-  if (ev.target.closest('#prest-cond-dropdown') || ev.target.id === 'prest-cond-search') return;
-  dd.classList.remove('open');
-  var inp = document.getElementById('prest-cond-search');
-  if (inp && prestacaoState.condNome) inp.value = prestacaoState.condNome;
-});
-
-function prestacaoSemAcento(s) {
-  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-}
-
-// Lista todos os condomínios (clique) ou os que batem com o texto digitado:
-// primeiro os que têm palavra começando com o texto, depois os que contêm.
-function prestacaoFiltrarCondominios(query) {
-  var dd = document.getElementById('prest-cond-dropdown');
-  if (!dd) return;
-  if (prestacaoState.condominios === null && window.AUTH_TOKEN && !prestacaoState.buscandoLista) {
-    prestacaoState.buscandoLista = true;
-    prestacaoInit().then(function() {
-      prestacaoState.buscandoLista = false;
-      if (Array.isArray(prestacaoState.condominios) && dd.classList.contains('open')) prestacaoFiltrarCondominios(query);
-    });
-  }
-  var lista = Array.isArray(prestacaoState.condominios) ? prestacaoState.condominios : [];
-  var q = prestacaoSemAcento((query || '').trim());
-  var filtrados;
-  if (!q) {
-    filtrados = lista.slice();
-  } else {
-    var comeca = [], contem = [];
-    lista.forEach(function(c) {
-      var n = prestacaoSemAcento(c && c.nome);
-      if (n.indexOf(q) === 0 || n.split(/\s+/).some(function(p) { return p.indexOf(q) === 0; })) comeca.push(c);
-      else if (n.indexOf(q) !== -1 || String(c.id_superlogica || '') === q) contem.push(c);
-    });
-    filtrados = comeca.concat(contem);
-  }
-  prestacaoState.filtrados = filtrados;
-  prestacaoState.marcado = filtrados.length ? 0 : -1;
-  var esc = function(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  };
-  var html = '';
-  if (!lista.length) {
-    html += '<div class="cond-loading">Carregando condomínios...</div>';
-  } else if (!filtrados.length) {
-    html += '<div class="cond-option" style="opacity:.7;cursor:default">Nenhum condomínio com "' + esc(query) + '"</div>';
-  } else {
-    html += filtrados.map(function(c, i) {
-      var atual = String(c.id) === String(prestacaoState.condId);
-      return '<div class="cond-option' + (i === 0 && q ? ' marcado' : '') + (atual ? ' atual' : '') + '" data-idx="' + i + '">'
-        + '<span class="cond-name">' + esc(c.nome) + '</span>'
-        + '<span class="cond-id">' + (c.id_superlogica ? 'código ' + esc(c.id_superlogica) : 'sem código') + '</span>'
-        + '</div>';
-    }).join('');
-  }
-  html += '<div class="cond-option" data-acao="outro" style="border-top:1px dashed var(--border2);font-style:italic">'
-        + '<span class="cond-name">Condomínio fora do Superlógica (usar PDFs)</span></div>';
-  dd.innerHTML = html;
-  dd.classList.add('open');
-  if (!dd._listenerAdded) {
-    dd.addEventListener('click', function(ev) {
-      var opt = ev.target.closest('.cond-option');
-      if (!opt) return;
-      if (opt.dataset.acao === 'outro') { prestacaoUsarOutro(); return; }
-      var c = (prestacaoState.filtrados || [])[parseInt(opt.dataset.idx, 10)];
-      if (c) prestacaoEscolherCondominio(c);
-    });
-    dd._listenerAdded = true;
-  }
-}
-
-// Setas, Enter e Esc na busca.
-function prestacaoTeclaBusca(ev) {
-  var dd = document.getElementById('prest-cond-dropdown');
-  var lista = prestacaoState.filtrados || [];
-  if (ev.key === 'Escape') { if (dd) dd.classList.remove('open'); return; }
-  if (!dd || !dd.classList.contains('open') || !lista.length) return;
-  if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
-    ev.preventDefault();
-    var n = lista.length;
-    prestacaoState.marcado = ((prestacaoState.marcado || 0) + (ev.key === 'ArrowDown' ? 1 : -1) + n) % n;
-    dd.querySelectorAll('.cond-option[data-idx]').forEach(function(el) {
-      var on = parseInt(el.dataset.idx, 10) === prestacaoState.marcado;
-      el.classList.toggle('marcado', on);
-      if (on) el.scrollIntoView({ block: 'nearest' });
-    });
-  } else if (ev.key === 'Enter') {
-    ev.preventDefault();
-    var c = lista[prestacaoState.marcado >= 0 ? prestacaoState.marcado : 0];
-    if (c) prestacaoEscolherCondominio(c);
-  }
-}
-
-// Escolha feita pela pessoa nesta aba: vale para o sistema inteiro (seletor do topo).
-function prestacaoEscolherCondominio(c) {
-  prestacaoSelecionarCondominio(c.id, c.nome);
-  var ativo = window.condominioAtivo;
-  if (typeof setCondominioAtivo === 'function' && (!ativo || String(ativo.id) !== String(c.id))) {
-    setCondominioAtivo({ id: c.id, nome: c.nome, id_superlogica: c.id_superlogica || null });
-  }
-  var inp = document.getElementById('prest-cond-search');
-  if (inp) inp.blur();
-}
-
-// Marca o condomínio na aba (sem mexer no seletor do topo).
-function prestacaoSelecionarCondominio(id, nome) {
-  var inp = document.getElementById('prest-cond-search');
-  if (inp) inp.value = nome;
-  var dd = document.getElementById('prest-cond-dropdown');
-  if (dd) { dd.classList.remove('open'); dd.innerHTML = ''; }
+// Marca o condomínio na aba (a troca do sistema é feita pelo seletor único).
+function prestacaoSelecionarCondominio(id, nome, idSuperlogica) {
   prestacaoState.condId = id;
   prestacaoState.condNome = nome;
-  var achado = (prestacaoState.condominios || []).find(function(c) { return c && String(c.id) === String(id); });
-  prestacaoState.condIdSuperlogica = achado && achado.id_superlogica ? achado.id_superlogica : null;
+  var achado = window.CondSeletor ? CondSeletor.buscarPorId(id) : null;
+  prestacaoState.condIdSuperlogica = (achado && achado.id_superlogica) || idSuperlogica || null;
   prestacaoMostrarInfoCondominio();
   prestacaoAtualizarBotao();
 }
@@ -185,26 +67,26 @@ function prestacaoMostrarInfoCondominio() {
     : 'Selecionado: ' + prestacaoState.condNome + ' · sem código do Superlógica no cadastro';
 }
 
-// Usa o condomínio escolhido no seletor do topo (vale ao abrir a aba e a cada troca).
+// Usa o condomínio ativo do sistema (vale ao abrir a aba e a cada troca).
 function prestacaoUsarCondominioAtivo(cond) {
   if (!cond || !cond.id || !cond.nome || prestacaoState.gerando) return;
   var busca = document.getElementById('prest-modo-busca');
   if (busca && busca.style.display === 'none') return; // modo livre: não mexe
-  prestacaoSelecionarCondominio(cond.id, cond.nome);
-  if (!prestacaoState.condIdSuperlogica && cond.id_superlogica) {
-    prestacaoState.condIdSuperlogica = cond.id_superlogica;
-    prestacaoMostrarInfoCondominio();
-    prestacaoAtualizarBotao();
-  }
+  prestacaoSelecionarCondominio(cond.id, cond.nome, cond.id_superlogica);
 }
 window.addEventListener('condominioAtivo:changed', function(ev) {
   if (ev && ev.detail) prestacaoUsarCondominioAtivo(ev.detail);
 });
+// Trocou de condomínio: os PDFs anexados eram do anterior.
+window.addEventListener('condominioAtivo:trocou', function() {
+  if (prestacaoState.gerando || !prestacaoState.arquivos.length) return;
+  prestacaoState.arquivos = [];
+  prestacaoRenderizarListaArquivos();
+  prestacaoAtualizarBotao();
+});
 
 // Troca a UI do Card 1 para o modo livre (condominio sem cadastro).
 function prestacaoUsarOutro() {
-  var dd = document.getElementById('prest-cond-dropdown');
-  if (dd) { dd.classList.remove('open'); dd.innerHTML = ''; }
   document.getElementById('prest-modo-busca').style.display = 'none';
   document.getElementById('prest-modo-livre').style.display = 'block';
   prestacaoState.condId = null;
@@ -218,14 +100,15 @@ function prestacaoUsarOutro() {
   prestacaoAtualizarBotao();
 }
 
-// Volta do modo livre para a busca normal.
+// Volta do modo livre para o condomínio ativo do sistema.
 function prestacaoVoltarLista() {
   document.getElementById('prest-modo-livre').style.display = 'none';
   document.getElementById('prest-modo-busca').style.display = 'block';
   prestacaoState.condId = null;
   prestacaoState.condNome = '';
-  var inp = document.getElementById('prest-cond-search');
-  if (inp) { inp.value = ''; inp.focus(); }
+  var ativo = (typeof getCondominioAtivo === 'function') ? getCondominioAtivo() : null;
+  if (ativo) prestacaoUsarCondominioAtivo(ativo);
+  prestacaoMostrarInfoCondominio();
   prestacaoAtualizarBotao();
 }
 
@@ -304,7 +187,7 @@ function prestacaoAtualizarBotao() {
   }
 }
 
-// Limpa todos os campos do painel e reseta state (preserva o cache de condominios).
+// Limpa todos os campos do painel e reseta state (o condomínio volta a ser o ativo do sistema).
 function prestacaoLimparTudo() {
   prestacaoState.arquivos = [];
   prestacaoState.condId = null;
@@ -315,8 +198,6 @@ function prestacaoLimparTudo() {
   prestacaoState.observacoes = '';
   document.getElementById('prest-modo-livre').style.display = 'none';
   document.getElementById('prest-modo-busca').style.display = 'block';
-  var inp = document.getElementById('prest-cond-search');
-  if (inp) inp.value = '';
   var nomeLivre = document.getElementById('prest-cond-nome-livre');
   if (nomeLivre) nomeLivre.value = '';
   var per = document.getElementById('prest-periodo');
@@ -2478,13 +2359,4 @@ async function prestacaoGerar() {
   }
 }
 
-// Fecha o dropdown de condominios quando o usuario clica fora do Card 1.
-document.addEventListener('click', function(ev) {
-  var dd = document.getElementById('prest-cond-dropdown');
-  if (!dd || !dd.classList.contains('open')) return;
-  var inp = document.getElementById('prest-cond-search');
-  if (ev.target === inp) return;
-  if (dd.contains(ev.target)) return;
-  dd.classList.remove('open');
-});
 

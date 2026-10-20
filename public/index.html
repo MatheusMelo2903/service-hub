@@ -504,7 +504,7 @@
     margin-bottom: 7px;
   }
 
-  input[type=text], input[type=password], select {
+  input[type=text], input[type=password], select, #prest-observacoes {
     width: 100%;
     background: var(--bg3);
     border: 1px solid var(--border2);
@@ -519,7 +519,7 @@
 
   input[type=text]:focus,
   input[type=password]:focus,
-  select:focus { border-color: var(--gs-blue); }
+  select:focus, #prest-observacoes:focus { border-color: var(--gs-blue); }
 
   select option { background: var(--bg3); }
 
@@ -788,6 +788,36 @@
   .cond-option .cond-id { color: var(--muted); font-size: 10px; }
   .cond-option .cond-name { color: var(--text); }
   .cond-loading { padding: 14px; text-align: center; color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  /* Seletor único de condomínio (condominio-seletor.js) */
+  .cs-host { position: relative; }
+  .cs-wrap { position: relative; }
+  input.cs-input {
+    width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px;
+    padding: 10px 34px 10px 14px; color: var(--text); font-family: var(--mono); font-size: 13px; outline: none;
+    transition: border-color 0.15s; text-overflow: ellipsis;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 17px) 50%, calc(100% - 12px) 50%; background-size: 5px 5px; background-repeat: no-repeat;
+  }
+  input.cs-input:focus { border-color: var(--gs-blue); }
+  .cs-lista { max-height: 360px; min-width: 280px; }
+  .cs-lista .cond-option { gap: 12px; }
+  .cs-lista .cond-option .cond-id { white-space: nowrap; flex-shrink: 0; }
+  .cs-lista .cond-option.marcado { background: var(--gs-blue-light); }
+  .cs-lista .cond-option.atual .cond-name { color: var(--accent2); font-weight: 600; }
+  .cs-lista .cs-nada { opacity: .7; cursor: default; }
+  .cs-lista .cs-extra { border-top: 1px dashed var(--border2); font-style: italic; }
+  .cs-info { margin-top: 6px; font-size: 11px; color: var(--muted); font-family: var(--mono); min-height: 14px; }
+  .cs-compacto input.cs-input { padding: 6px 30px 6px 10px; font-size: 12px; }
+  .cs-compacto .cs-info { display: inline-block; margin: 0 0 0 10px; }
+  .navbar-cond-seletor { width: 300px; }
+  .navbar-cond-seletor .cs-lista { left: auto; right: 0; width: 420px; max-width: 80vw; }
+  .banner-cond-ativo .banner-cond-seletor { flex: 1; display: flex; align-items: center; max-width: 560px; }
+  .banner-cond-ativo .banner-cond-seletor .cs-wrap { flex: 1; }
+  .banner-cond-ativo input.cs-input { font-weight: 600; color: var(--text); }
+  .banner-cond-ativo .cs-lista { font-weight: 400; }
+  .banner-cond-ativo .cs-info { color: inherit; opacity: .8; font-weight: 400; white-space: nowrap; }
+  .banner-cond-rotulo { white-space: nowrap; }
+  @media (max-width: 900px) { .navbar-cond-seletor { width: 200px; } .banner-cond-ativo { flex-wrap: wrap; } }
   .cond-selected-badge {
     display: inline-flex;
     align-items: center;
@@ -1066,11 +1096,7 @@
     <div class="topbar-right">
       <div id="navbar-cond-selector" style="display:flex;align-items:center;gap:8px">
         <span style="font-size:12px;opacity:0.7">Condomínio:</span>
-        <select id="navbar-cond-select"
-          style="background:transparent;border:1px solid rgba(255,255,255,0.3);color:inherit;border-radius:6px;padding:4px 8px;font-size:13px;cursor:pointer;max-width:200px"
-          onchange="navbarCondChange(this.value, this.options[this.selectedIndex].text)">
-          <option value="">Selecionar...</option>
-        </select>
+        <div id="navbar-cond-seletor" class="navbar-cond-seletor"></div>
       </div>
       <div class="status-dot" id="status-dot"></div>
       <span class="status-label" id="status-label">não configurado</span>
@@ -1084,13 +1110,12 @@
 
       <div class="card" style="margin-bottom:20px;background:linear-gradient(135deg,rgba(200,240,96,0.06),rgba(200,240,96,0.02));border-color:rgba(59,154,199,0.12)">
         <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
-          <div style="flex-shrink:0">
+          <div style="flex:1 1 340px;min-width:260px;max-width:520px">
             <div style="font-size:10px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px">Condomínio ativo</div>
-            <div id="dash-cond-nome" style="font-size:18px;font-weight:700;color:var(--gs-blue)">—</div>
-            <div id="dash-cond-id" style="font-size:10px;font-family:var(--mono);color:var(--muted);margin-top:2px"></div>
+            <div id="dash-cond-seletor" class="dash-cond-seletor"></div>
           </div>
           <div style="flex:1"></div>
-          <button class="btn btn-primary" id="btn-gerenciar-cond" onclick="dashAbrirModalGerenciarCond()" style="flex-shrink:0">Selecionar ou cadastrar</button>
+          <button class="btn btn-ghost" id="btn-gerenciar-cond" onclick="dashAbrirModalGerenciarCond('cadastrar')" style="flex-shrink:0">Cadastrar novo condomínio</button>
         </div>
       </div>
 
@@ -1414,12 +1439,7 @@
         <div id="prest-modo-busca">
           <div class="form-group" style="position:relative;margin-bottom:0">
             <label>Condomínio</label>
-            <input type="text" id="prest-cond-search" placeholder="Clique para ver todos ou digite o nome" autocomplete="off"
-                   oninput="prestacaoFiltrarCondominios(this.value)"
-                   onfocus="this.select();prestacaoFiltrarCondominios('')"
-                   onclick="prestacaoFiltrarCondominios(this.value === prestacaoState.condNome ? '' : this.value)"
-                   onkeydown="prestacaoTeclaBusca(event)">
-            <div class="cond-dropdown prest-cond-lista" id="prest-cond-dropdown"></div>
+            <div id="prest-cond-seletor"></div>
           </div>
           <div id="prest-cond-info" class="prest-cond-info"></div>
         </div>
@@ -1455,6 +1475,14 @@
       <div class="card prest-card-principal">
         <div class="card-header">
           <span class="card-title">2 · Gerar a prestação</span>
+        </div>
+        <div class="form-group" style="margin-bottom:16px">
+          <label for="prest-observacoes">Observações (opcional)</label>
+          <textarea id="prest-observacoes" rows="3" maxlength="1000"
+                    placeholder="Exemplo: a conta de água aumentou porque houve um vazamento em março, já consertado."
+                    oninput="prestacaoAtualizarObservacoes(this.value)"
+                    style="width:100%;resize:vertical;min-height:70px"></textarea>
+          <div class="hint">Use para explicar ou dar ênfase aos números. Exemplo: a conta de água aumentou porque houve um vazamento em março, já consertado.</div>
         </div>
         <button id="prest-btn-superlogica" class="prest-btn-hero" onclick="prestacaoGerarSuperlogica()" disabled>
           ⇣ Puxar os dados do Superlógica e gerar
@@ -1693,6 +1721,8 @@
 
     <!-- LEITURA DE CONSUMO -->
     <div class="panel" id="panel-consumo">
+      <!-- Banner populado por renderBannerCondAtivo('consumo') ao abrir o painel -->
+      <div id="banner-cond-consumo"></div>
       <div class="card">
         <div class="card-header">
           <span class="card-title">Importar Fotos de Medidores</span>
@@ -1832,23 +1862,14 @@
 
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Condomínio padrão para importação</span>
+          <span class="card-title">Condomínio ativo</span>
         </div>
-        <div class="form-group">
-          <label>Buscar condomínio</label>
-          <div class="cond-search-wrap">
-            <input type="text" class="cond-search-input" id="cond-search-input"
-              placeholder="Digite o nome do condomínio..."
-              oninput="searchCondominio(this.value)"
-              onfocus="if(this.value.length>=2) document.getElementById('cond-dropdown').classList.add('open')"
-              autocomplete="off">
-            <div class="cond-dropdown" id="cond-dropdown"></div>
-          </div>
-          <div id="cond-selected-wrap"></div>
+        <div class="form-group" style="margin-bottom:0">
+          <label>Condomínio</label>
+          <div id="cfg-cond-seletor"></div>
           <input type="hidden" id="cfg-cond-id">
-          <div class="hint">Digite pelo menos 2 letras para buscar nos seus condomínios</div>
+          <div class="hint">Vale para o sistema todo: trocar aqui troca no topo e em todas as abas.</div>
         </div>
-        <button class="btn btn-primary" onclick="saveConfig()">Salvar</button>
       </div>
 
       <div class="card">
@@ -1890,13 +1911,7 @@
     </div>
 
     <div id="dash-modal-aba-buscar">
-      <div style="position:relative">
-        <input type="text" id="dash-modal-cond-search" class="cond-search-input"
-               placeholder="Digite o nome do condomínio"
-               oninput="searchCondominioDash(this.value)"
-               autocomplete="off">
-        <div id="dash-modal-cond-dropdown" class="cond-dropdown"></div>
-      </div>
+      <div id="dash-modal-cond-seletor"></div>
       <div style="margin-top:12px;font-size:13px;color:var(--muted)" id="dash-modal-cond-ativo-hint"></div>
     </div>
 
@@ -1923,6 +1938,7 @@
 <div class="toast-wrap" id="toast-wrap"></div>
 
 <!-- JS por aba (T02) -->
+<script src="/condominio-seletor.js"></script>
 <script src="/dashboard.js"></script>
 <script>
 // ============================================================
@@ -1995,10 +2011,31 @@ function apiPronta() {
  * sem necessidade de parse. Sincroniza state.config para retrocompatibilidade.
  * Ao final atualiza todos os banners visíveis e o card do Dashboard.
  */
+// Envio em andamento para o Superlógica: trocar o condomínio no meio mandaria dados
+// para o lugar errado. Devolve a mensagem do bloqueio ou '' quando pode trocar.
+function condTrocaBloqueada() {
+  if (typeof state !== 'undefined' && state.unidades && state.unidades.importing) return 'Aguarde a importação de unidades terminar (ou clique em Parar) antes de trocar o condomínio.';
+  if (window._enviandoDespesas) return 'Aguarde o envio das despesas terminar antes de trocar o condomínio.';
+  if (window._enviandoConsumo) return 'Aguarde o envio das leituras terminar antes de trocar o condomínio.';
+  if (typeof prestacaoState !== 'undefined' && prestacaoState.gerando) return 'Aguarde a prestação de contas terminar de gerar antes de trocar o condomínio.';
+  return '';
+}
+
+// Devolve false quando a troca foi recusada (envio em andamento).
 function setCondominioAtivo(obj) {
   // Valida se obj é um condomínio real (tem id e nome)
   // Quando null/inválido: limpa tudo do localStorage em vez de gravar "null"
   const valido = obj && obj.id && obj.nome;
+  const anterior = (typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : window.condominioAtivo) || null;
+  const mudou = String(anterior ? anterior.id : '') !== String(valido ? obj.id : '');
+  if (mudou) {
+    const bloqueio = condTrocaBloqueada();
+    if (bloqueio) {
+      if (typeof toast === 'function') toast(bloqueio, 'warn');
+      try { window.dispatchEvent(new CustomEvent('condominioAtivo:changed', { detail: anterior })); } catch(_) {}
+      return false;
+    }
+  }
   if (valido) {
     window.condominioAtivo = obj;
     try { localStorage.setItem('condominioAtivo', JSON.stringify(obj)); } catch(_) {}
@@ -2009,7 +2046,8 @@ function setCondominioAtivo(obj) {
   // Retrocompatibilidade: state.config ainda é lido por enviarDespesas e afins.
   // condId recebe id_superlogica (numérico) para a API Superlógica nunca receber UUID Supabase.
   // Fallback pro uuid só em migração (id_superlogica ausente).
-  if (window.state && window.state.config) {
+  // state é const do script (não fica em window): checa com typeof.
+  if (typeof state !== 'undefined' && state.config) {
     state.config.condId   = valido ? (obj.id_superlogica || obj.id) : '';
     state.config.condNome = valido ? obj.nome : '';
     // Persiste para que saveConfig não apague a seleção
@@ -2018,21 +2056,29 @@ function setCondominioAtivo(obj) {
   // Atualiza card do Dashboard se já estiver no DOM
   if (typeof atualizarDashCond === 'function') atualizarDashCond();
   // Atualiza banners nos painéis que já foram renderizados
-  ['despesas','unidades','boletos','financeiro','previsao'].forEach(function(p) {
+  BANNERS_COND.forEach(function(p) {
     if (document.getElementById('banner-cond-' + p)) renderBannerCondAtivo(p);
   });
-  // Sincroniza o seletor do topbar quando a troca vem de outro fluxo (dashboard, modal)
-  try {
-    const sel = document.getElementById('navbar-cond-select');
-    if (sel && valido && sel.value !== String(obj.id)) sel.value = obj.id;
-  } catch(_) {}
-  // Evento global para painéis reagirem (Tarefa 1.1)
+  // Evento global para painéis reagirem (Tarefa 1.1). Os seletores (condominio-seletor.js)
+  // se atualizam por ele.
   try {
     window.dispatchEvent(new CustomEvent('condominioAtivo:changed', {
       detail: valido ? obj : null
     }));
   } catch(_) {}
+  // Só quando o condomínio realmente mudou: cada aba limpa o que era do anterior.
+  if (mudou) {
+    try {
+      window.dispatchEvent(new CustomEvent('condominioAtivo:trocou', {
+        detail: { de: anterior, para: valido ? obj : null }
+      }));
+    } catch(_) {}
+  }
+  return true;
 }
+
+// Abas com o banner do condomínio ativo (com o seletor único dentro).
+const BANNERS_COND = ['despesas','unidades','boletos','financeiro','previsao','consumo'];
 
 /**
  * Lê o condomínio ativo na seguinte ordem de prioridade:
@@ -2072,94 +2118,39 @@ function renderBannerCondAtivo(painelId) {
   const el = document.getElementById('banner-cond-' + painelId);
   if (!el) return;
   const cond = getCondominioAtivo();
-  // Limpa conteúdo anterior antes de reconstruir via DOM API
-  el.innerHTML = '';
-
-  if (cond) {
-    // Decide qual ID mostrar: prioriza id_superlogica, senão mostra id interno (migração)
-    const idLabel = cond.id_superlogica
-      ? 'ID Superlógica: ' + cond.id_superlogica
-      : 'ID: ' + cond.id;
-    el.className = 'banner-cond-ativo ativo';
-
-    const span = document.createElement('span');
-    const strong = document.createElement('strong');
-    // textContent evita XSS: nome do condomínio vem de input do usuário
-    strong.textContent = cond.nome;
-    span.append('Condomínio ativo: ', strong, ' ');
-    const idSpan = document.createElement('span');
-    idSpan.style.cssText = 'font-weight:400;opacity:.8';
-    // textContent evita XSS: idLabel é construído internamente, mas defensivo não custa
-    idSpan.textContent = '(' + idLabel + ')';
-    span.append(idSpan);
-    el.append(span);
-
-    const btn = document.createElement('button');
-    btn.textContent = 'Trocar';
-    btn.addEventListener('click', dashAbrirModalGerenciarCond);
-    el.append(btn);
-
-    // Com condomínio ativo: habilita botão de envio de despesas
-    if (painelId === 'despesas') {
-      const btnEnviar = document.getElementById('btn-enviar');
-      if (btnEnviar) { btnEnviar.disabled = false; btnEnviar.removeAttribute('title'); }
-    }
-  } else {
-    el.className = 'banner-cond-ativo vazio';
-
-    const span = document.createElement('span');
-    span.textContent = 'Nenhum condomínio selecionado. Selecione antes de continuar.';
-    el.append(span);
-
-    const btn = document.createElement('button');
-    btn.textContent = 'Selecionar';
-    btn.addEventListener('click', dashAbrirModalGerenciarCond);
-    el.append(btn);
-
-    // Sem condomínio: desabilita botão de envio de despesas para evitar envio ao lugar errado
-    if (painelId === 'despesas') {
-      const btnEnviar = document.getElementById('btn-enviar');
-      if (btnEnviar) { btnEnviar.disabled = true; btnEnviar.title = 'Selecione um condomínio primeiro'; }
+  // Monta uma vez: rótulo + seletor único (condominio-seletor.js). Depois só troca a cor.
+  if (!el._montado && window.CondSeletor) {
+    el.innerHTML = '';
+    const rot = document.createElement('span');
+    rot.className = 'banner-cond-rotulo';
+    rot.textContent = 'Condomínio ativo:';
+    const host = document.createElement('div');
+    host.className = 'banner-cond-seletor';
+    el.append(rot, host);
+    CondSeletor.montar(host, { compacto: true, placeholder: 'Escolha o condomínio' });
+    el._montado = true;
+  }
+  el.className = 'banner-cond-ativo ' + (cond ? 'ativo' : 'vazio');
+  const rot = el.querySelector('.banner-cond-rotulo');
+  if (rot) rot.textContent = cond ? 'Condomínio ativo:' : 'Nenhum condomínio selecionado. Escolha antes de continuar:';
+  // Sem condomínio: desabilita o envio de despesas para evitar envio ao lugar errado
+  if (painelId === 'despesas') {
+    const btnEnviar = document.getElementById('btn-enviar');
+    if (btnEnviar) {
+      btnEnviar.disabled = !cond;
+      if (cond) btnEnviar.removeAttribute('title'); else btnEnviar.title = 'Selecione um condomínio primeiro';
     }
   }
 }
 
 // ============================================================
-// SELETOR DE CONDOMÍNIO NO TOPBAR (Tarefa 1.1)
+// SELETOR DE CONDOMÍNIO NO TOPO (T02: seletor único, condominio-seletor.js)
 // Fonte de verdade única: condominioAtivo no localStorage.
 // ============================================================
-async function navbarCondInit() {
-  const select = document.getElementById('navbar-cond-select');
-  if (!select) return;
-  try {
-    const lista = await supaFetch(
-      'condominios?select=id,nome,id_superlogica&order=nome.asc&limit=200'
-    );
-    if (!Array.isArray(lista)) return;
-    lista.forEach(function(c) {
-      const opt = document.createElement('option');
-      opt.value = c.id;
-      opt.textContent = c.nome;
-      opt.dataset.idSuperlogica = c.id_superlogica || '';
-      select.appendChild(opt);
-    });
-    const atual = getCondominioAtivo();
-    if (atual && atual.id) select.value = atual.id;
-  } catch (e) {
-    console.warn('[navbar-cond] erro ao carregar:', e);
-  }
-}
-
-function navbarCondChange(id, nome) {
-  if (!id) return;
-  const select = document.getElementById('navbar-cond-select');
-  const opt = select ? select.querySelector('option[value="' + id + '"]') : null;
-  const idSuperlogica = opt && opt.dataset.idSuperlogica
-    ? Number(opt.dataset.idSuperlogica) || null
-    : null;
-  // setCondominioAtivo já cuida do localStorage, banners, dashboard e dispatchEvent
-  setCondominioAtivo({ id: id, nome: nome, id_superlogica: idSuperlogica });
-  toast('Condomínio: ' + nome, 'ok');
+function navbarCondInit() {
+  if (!window.CondSeletor) return;
+  CondSeletor.montar('navbar-cond-seletor', { compacto: true, semInfo: true, placeholder: 'Escolha o condomínio' });
+  CondSeletor.carregar();
 }
 
 // ============================================================
@@ -2215,31 +2206,7 @@ const CAMPOS_UNIDADE = [
     if (c.condId) document.getElementById('cfg-cond-id').value = c.condId;
     // Exibe o valor sanitizado no campo para que o usuario ja veja o formato correto
     if (state.config.proxy) document.getElementById('cfg-proxy').value = state.config.proxy;
-    // Restaurar condomínio selecionado no painel Configurações
-    if (c.condId && c.condNome) {
-      const inp = document.getElementById('cond-search-input');
-      if (inp) inp.value = c.condNome;
-      // Badge reconstruído via DOM API para consistência com selecionarCondominio
-      // e para evitar XSS caso condNome/condId do localStorage contenham HTML
-      const wrap = document.getElementById('cond-selected-wrap');
-      if (wrap) {
-        wrap.innerHTML = '';
-        const badge = document.createElement('div');
-        badge.className = 'cond-selected-badge';
-        badge.append('✓ ');
-        badge.append(document.createTextNode(c.condNome));
-        const sep = document.createElement('span');
-        sep.style.color = 'var(--muted)';
-        sep.textContent = ' · ';
-        badge.append(sep);
-        badge.append(document.createTextNode('ID ' + c.condId));
-        const btnL = document.createElement('button');
-        btnL.textContent = '×';
-        btnL.addEventListener('click', limparCondominio);
-        badge.append(btnL);
-        wrap.append(badge);
-      }
-    }
+    // O card de Configurações usa o seletor único (montado em configCondInit).
 
     // Migração one-shot: carrega condominioAtivo do localStorage novo.
     // Se ainda não existir mas sh_config tiver condId/condNome,
@@ -2307,18 +2274,11 @@ const CAMPOS_UNIDADE = [
     }
   } catch(e) {}
 
-  // Carrega o seletor de condomínio do topbar (Tarefa 1.1).
-  // Espera o auth-bootstrap setar window.AUTH_TOKEN antes de consultar o Supabase,
-  // senão supaFetch cai no anon key e a RLS retorna lista vazia (bug original do PR #13).
-  // Se a sessão já estiver pronta no momento desta IIFE, dispara imediato — caso contrário
-  // aguarda o evento auth:ready emitido por auth-bootstrap.js.
-  if (window.AUTH_TOKEN) {
-    if (typeof navbarCondInit === 'function') navbarCondInit();
-  } else {
-    document.addEventListener('auth:ready', function() {
-      if (typeof navbarCondInit === 'function') navbarCondInit();
-    }, { once: true });
-  }
+  // Seletor único no topo e em Configurações (T02). Monta já com o nome salvo; a lista
+  // de condomínios é buscada pelo próprio componente quando a sessão fica pronta
+  // (sem sessão a RLS devolve lista vazia, bug original do PR #13).
+  navbarCondInit();
+  configCondInit();
 })();
 
 function saveConfig() {
@@ -2411,7 +2371,7 @@ function showPanel(name) {
   // Renderiza banner de condomínio ativo nos painéis que enviam ao Superlógica.
   // O hook fica aqui (original) e não no override para sobreviver a qualquer
   // reordenação de scripts — o override chama _origShowPanel que executa este código.
-  if (['despesas','unidades','boletos','financeiro'].includes(name)) {
+  if (BANNERS_COND.includes(name)) {
     renderBannerCondAtivo(name);
   }
   if (name === 'prestacao') {
@@ -3320,112 +3280,14 @@ function importarTranscricao(event) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ============================================================
-// SELETOR DE CONDOMÍNIO POR NOME
+// CONDOMÍNIO ATIVO NAS CONFIGURAÇÕES (T02: seletor único)
+// Antes buscava direto na API do Superlógica e gravava o código no lugar do id
+// do Hub; agora usa a mesma lista e o mesmo componente do resto do sistema.
 // ============================================================
-let condSearchTimer = null;
-let todosCondominios = [];
-
-async function searchCondominio(query) {
-  const dropdown = document.getElementById('cond-dropdown');
-  if (query.length < 2) { dropdown.classList.remove('open'); return; }
-  dropdown.classList.add('open');
-  dropdown.innerHTML = '<div class="cond-loading">Buscando...</div>';
-  clearTimeout(condSearchTimer);
-  condSearchTimer = setTimeout(async () => {
-    try {
-      if (!apiPronta()) {
-        dropdown.innerHTML = '<div class="cond-loading" style="color:var(--danger)">Configure os tokens primeiro</div>';
-        return;
-      }
-      const url = buildUrl('/condominios', { somenteAtivos: 1, pesquisa: query, pagina: 0, itensPorPagina: 15 });
-      // Proxy não configurado: orienta o usuário sem tentar fetch(null)
-      if (!url) {
-        dropdown.innerHTML = '<div class="cond-loading" style="color:var(--danger)">Configure o proxy nas Configuracoes antes de buscar.</div>';
-        return;
-      }
-      const r = await apiGet(url);
-      const data = await r.json();
-      const lista = Array.isArray(data) ? data : (data.data || []);
-      if (!lista.length) { dropdown.innerHTML = '<div class="cond-loading">Nenhum resultado</div>'; return; }
-      // Constrói cada item via DOM API para evitar XSS: nome e id vêm diretamente
-      // da API Superlógica e não podem ser interpolados em innerHTML.
-      dropdown.innerHTML = '';
-      lista.forEach(c => {
-        const id   = c.ID_CONDOMINIO_COND || c.id_condominio_cond;
-        const nome = c.ST_CONDOMINIO_COND || c.st_condominio_cond || 'Sem nome';
-        const item = document.createElement('div');
-        item.className = 'cond-option';
-        // dataset é seguro: o browser não interpreta HTML em atributos data-*
-        item.dataset.id   = id;
-        item.dataset.nome = nome;
-        const spanNome = document.createElement('span');
-        spanNome.className = 'cond-name';
-        spanNome.textContent = nome;  // textContent neutraliza qualquer HTML
-        const spanId = document.createElement('span');
-        spanId.className = 'cond-id';
-        spanId.textContent = 'ID ' + id;
-        item.append(spanNome, spanId);
-        item.addEventListener('click', () => selecionarCondominio(item.dataset.id, item.dataset.nome));
-        dropdown.append(item);
-      });
-    } catch(e) {
-      dropdown.innerHTML = `<div class="cond-loading" style="color:var(--danger)">Erro: ${escHtml(e.message)}</div>`;
-    }
-  }, 350);
+function configCondInit() {
+  if (!window.CondSeletor) return;
+  CondSeletor.montar('cfg-cond-seletor', { placeholder: 'Clique para ver todos ou digite o nome' });
 }
-
-// O id aqui vem da API Superlógica, portanto é o ID numérico do Superlógica.
-// Gravamos o mesmo valor em id e id_superlogica para manter consistência
-// com o formato { id, nome, id_superlogica } usado globalmente.
-function selecionarCondominio(id, nome) {
-  document.getElementById('cfg-cond-id').value = id;
-  document.getElementById('cond-search-input').value = nome;
-  document.getElementById('cond-dropdown').classList.remove('open');
-
-  // Badge construído via DOM API para evitar XSS: nome e id vêm da API Superlógica,
-  // mas usamos textContent como defesa em profundidade.
-  const wrap = document.getElementById('cond-selected-wrap');
-  wrap.innerHTML = '';
-  const badge = document.createElement('div');
-  badge.className = 'cond-selected-badge';
-  badge.append('✓ ');
-  const nomeNode = document.createTextNode(nome);
-  badge.append(nomeNode);
-  const sep = document.createElement('span');
-  sep.style.color = 'var(--muted)';
-  sep.textContent = ' · ';
-  badge.append(sep);
-  const idNode = document.createTextNode('ID ' + id);
-  badge.append(idNode);
-  const btnLimpar = document.createElement('button');
-  btnLimpar.textContent = '×';
-  btnLimpar.addEventListener('click', limparCondominio);
-  badge.append(btnLimpar);
-  wrap.append(badge);
-
-  // setCondominioAtivo sincroniza state.config, localStorage e banners
-  setCondominioAtivo({ id: id, nome: nome, id_superlogica: id });
-  toast('Condomínio: ' + nome, 'ok');
-}
-
-function limparCondominio() {
-  // setCondominioAtivo(null) é chamado primeiro para garantir que window.condominioAtivo,
-  // localStorage.condominioAtivo, state.config e banners sejam zerados de forma sincronizada.
-  // Sem isso, o banner continuaria mostrando o cond antigo mesmo após o usuário clicar em "×".
-  setCondominioAtivo(null);
-  document.getElementById('cfg-cond-id').value = '';
-  document.getElementById('cond-search-input').value = '';
-  document.getElementById('cond-selected-wrap').innerHTML = '';
-}
-
-// Fechar dropdown ao clicar fora
-document.addEventListener('click', e => {
-  const wrap = document.querySelector('.cond-search-wrap');
-  if (wrap && !wrap.contains(e.target)) {
-    const dd = document.getElementById('cond-dropdown');
-    if (dd) dd.classList.remove('open');
-  }
-});
 
 // ============================================================
 // ATAS CONDOMINIAIS
@@ -4722,12 +4584,23 @@ function limparConsumo() {
   document.getElementById('consumo-log-card').style.display = 'none';
 }
 
+// Trocou de condomínio (T02): as fotos e leituras eram do anterior.
+window.addEventListener('condominioAtivo:trocou', function() {
+  if (!consumoItems.length) return;
+  limparConsumo();
+  toast('Leituras de consumo descartadas: o condomínio mudou.', 'info');
+});
+
 async function enviarConsumo() {
   if (!apiPronta()) { toast('Configure os tokens da API primeiro', 'err'); return; }
   // Proxy obrigatório — usa getProxy() para checar valor já sanitizado e com https://
   if (!getProxy()) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
   const validos = consumoItems.filter(c => c.unidade && c.leitura && c.leitura !== 'ilegível' && c.leitura !== 'erro');
   if (!validos.length) { toast('Preencha unidade e leitura para todos os medidores', 'err'); return; }
+  // Condomínio do envio: o ativo do sistema, pelo código do Superlógica (nunca o id interno).
+  const condAtivo = getCondominioAtivo();
+  const condIdSL = condAtivo && condAtivo.id_superlogica;
+  if (!condIdSL) { toast('Selecione um condomínio com código do Superlógica antes de enviar', 'err'); return; }
 
   const logCard = document.getElementById('consumo-log-card');
   const logDiv = document.getElementById('consumo-log');
@@ -4737,6 +4610,8 @@ async function enviarConsumo() {
   const btn = document.getElementById('btn-enviar-consumo');
   btn.disabled = true;
   btn.textContent = '⏳ Enviando...';
+  // Trava a troca de condomínio durante o envio (condTrocaBloqueada)
+  window._enviandoConsumo = true;
 
   let ok = 0, err = 0;
   for (const item of validos) {
@@ -4744,7 +4619,7 @@ async function enviarConsumo() {
       addLog(logDiv, `Unidade ${item.unidade}: leitura ${item.leitura} — enviando...`, 'info');
       // Endpoint de leitura de consumo do Superlógica
       const body = new URLSearchParams({
-        ID_CONDOMINIO_COND: state.config.condId || '',
+        ID_CONDOMINIO_COND: String(condIdSL),
         ST_UNIDADE_UNI: item.unidade,
         VL_LEITURA: item.leitura,
       });
@@ -4765,6 +4640,7 @@ async function enviarConsumo() {
     await sleep(150);
   }
 
+  window._enviandoConsumo = false;
   btn.disabled = false;
   btn.textContent = '↑ Enviar ao Superlógica';
   addHistorico(`Consumo: ${ok} leituras enviadas${err ? ', ' + err + ' erros' : ' ✓'}`);
@@ -5050,12 +4926,8 @@ async function atualizarCondominiosSuperlogica() {
     if (info) info.textContent = r.total_superlogica + ' no Superlógica, ' + (n ? n + ' novo' + (n > 1 ? 's' : '') + ' no Hub.' : 'nenhum novo.')
       + (sc.length ? ' Sem código no cadastro, preencher: ' + sc.join(', ') + '.' : '');
     toast(n ? (n + ' condomínio' + (n > 1 ? 's' : '') + ' novo' + (n > 1 ? 's' : '') + ' no Hub.') : 'Tudo em dia: nenhum condomínio novo.', 'ok');
-    if (n) {
-      const sel = document.getElementById('navbar-cond-select');
-      if (sel) sel.querySelectorAll('option').forEach((o) => { if (o.value) o.remove(); });
-      if (typeof navbarCondInit === 'function') navbarCondInit();
-      if (typeof prestacaoState !== 'undefined') { prestacaoState.condominios = null; if (typeof prestacaoInit === 'function') prestacaoInit(); }
-    }
+    // Lista única de condomínios (seletor de todas as abas) recarrega com os novos.
+    if (n && window.CondSeletor) CondSeletor.recarregar();
   } catch (e) {
     toast(e.message || String(e), 'err');
   } finally {

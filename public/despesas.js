@@ -183,6 +183,8 @@ async function enviarDespesas() {
   const btn = document.getElementById('btn-enviar');
   btn.disabled = true;
   btn.textContent = '⏳ Enviando...';
+  // Trava a troca de condomínio durante o envio (condTrocaBloqueada)
+  window._enviandoDespesas = true;
 
   const progressWrap = document.getElementById('send-progress-wrap');
   const progressBar = document.getElementById('send-progress');
@@ -229,6 +231,7 @@ async function enviarDespesas() {
     if (i < validos.length - 1) await sleep(200);
   }
 
+  window._enviandoDespesas = false;
   btn.disabled = false;
   btn.textContent = '↑ Enviar para Superlógica';
 
@@ -245,3 +248,25 @@ async function enviarDespesas() {
   else toast(`${ok} enviadas, ${err} com erro — veja o log`, 'warn');
 }
 
+// Trocou de condomínio (T02): a planilha carregada era para o anterior. Descarta e volta ao passo 1.
+window.addEventListener('condominioAtivo:trocou', function() {
+  var d = state.despesas;
+  var tinha = (d.raw && d.raw.length) || (d.validated && d.validated.length);
+  d.raw = []; d.headers = []; d.mapped = []; d.validated = [];
+  var prev = document.getElementById('preview-despesas');
+  if (prev) prev.style.display = 'none';
+  ['validated-table', 'despesas-table', 'mapper-despesas'].forEach(function(id) {
+    var el = document.getElementById(id); if (el) el.innerHTML = '';
+  });
+  var log = document.getElementById('send-log');
+  if (log) { log.innerHTML = ''; log.style.display = 'none'; }
+  var pw = document.getElementById('send-progress-wrap');
+  if (pw) pw.style.display = 'none';
+  ['env-total', 'env-ok', 'env-err'].forEach(function(id) { var el = document.getElementById(id); if (el) el.textContent = '0'; });
+  var painel = document.getElementById('panel-despesas');
+  if (painel) {
+    painel.querySelectorAll('.tabs .tab').forEach(function(t, i) { t.classList.toggle('active', i === 0); });
+    setTabByName('tab-upload');
+  }
+  if (tinha) toast('Planilha de despesas descartada: o condomínio mudou.', 'info');
+});

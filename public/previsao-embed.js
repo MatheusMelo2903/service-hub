@@ -51,4 +51,15 @@ function previsaoInit() {
     }
   }
   window.addEventListener('condominioAtivo:changed', atualizarBanner);
+
+  // T02: trocou de condomínio, o que estava no módulo era do anterior. Recarrega o
+  // módulo com o nome novo (agora, se a aba estiver aberta; senão na próxima abertura).
+  window.addEventListener('condominioAtivo:trocou', function () {
+    var iframe = document.getElementById('prev-iframe');
+    if (!iframe || !previsaoIframeCarregado) return;
+    previsaoIframeCarregado = false;
+    var painel = document.getElementById('panel-previsao');
+    iframe.removeAttribute('src');
+    if (painel && painel.classList.contains('active')) setTimeout(previsaoInit, 0);
+  });
 })();
