@@ -184,7 +184,9 @@ const MINUSCULAS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'd']);
 function nomeAmigavel(c) {
   let s = String(c.st_fantasia_cond || '').trim();
   if (!s || s.length > 45) s = String(c.st_nome_cond || s).trim();
-  s = s.replace(PREFIXOS, '').replace(/\s+/g, ' ').trim() || String(c.st_nome_cond || '').trim();
+  // Empresa (LTDA) mantém o nome inteiro: "Condomínio Service" é razão social, não prefixo.
+  if (!/\bLTDA\b/i.test(s)) s = s.replace(PREFIXOS, '');
+  s = s.replace(/\s+/g, ' ').trim() || String(c.st_nome_cond || '').trim();
   return s.toLowerCase().split(' ').map((p, i) => {
     if (i && MINUSCULAS.has(p)) return p;
     if (/^(i{1,3}|iv|v|vi{0,3})$/i.test(p)) return p.toUpperCase();
@@ -203,11 +205,11 @@ async function listarCondominiosSuperlogica(cliente) {
   return todos;
 }
 
-// O Superlógica não separa condomínio de empresa cliente da contabilidade. Ficam
-// fora: empresas (LTDA), o próprio Grupo Service, lojas e associações maçônicas, e
-// os códigos listados em SYNC_CONDOMINIOS_IGNORAR (ex.: "73,160"). Assim nenhuma
-// empresa (nem a Virtual Service) entra como condomínio no Hub.
-const NAO_CONDOMINIO = /\bLTDA\b|\bGRUPO SERVICE\b|MA[CÇ][OÔ]NICA|LOJA SIMB[OÓ]LICA/i;
+// Entram todos os cadastros ativos do Superlógica (condomínios, associações,
+// lojas maçônicas e empresas clientes), por decisão do Matheus em 20/10/2026.
+// Fica fora só a Virtual Service, que nunca pode aparecer ligada ao Grupo
+// Service, e os códigos listados em SYNC_CONDOMINIOS_IGNORAR (ex.: "73,160").
+const NAO_CONDOMINIO = /\bVIRTUAL SERVICE\b/i;
 function ignorado(c) {
   const extra = String(process.env.SYNC_CONDOMINIOS_IGNORAR || '').split(/[,\s]+/).map(Number).filter((n) => n > 0);
   return extra.includes(Number(c.id_condominio_cond))

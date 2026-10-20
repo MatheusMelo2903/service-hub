@@ -6,7 +6,7 @@ Data: 20/10/2026. Branch: feat/gestao-usuarios (também em dev). Sem deploy aind
 
 1. Botão "Puxar os dados do Superlógica" na aba Prestação de Contas. Com o condomínio cadastrado e o período escolhido, o servidor busca no Superlógica e gera a prestação sem nenhum PDF. Os PDFs continuam como alternativa ("Gerar com os PDFs anexados").
 2. A aba usa o condomínio escolhido no seletor do topo (ao abrir e a cada troca).
-3. Sincronização de condomínios: cria no Hub os condomínios ativos do Superlógica que faltam. Roda 1 minuto depois do servidor subir, todo dia às 6h (Brasília) e pelo botão "Atualizar agora" em Configurações. Nunca altera nem apaga linha existente. Linha do Hub sem código do Superlógica com nome igual não é duplicada: aparece como "sem código, preencher". Empresas (LTDA), Grupo Service e lojas maçônicas ficam fora; outros códigos podem ser excluídos com SYNC_CONDOMINIOS_IGNORAR. SYNC_CONDOMINIOS=off desliga a rotina automática.
+3. Sincronização de condomínios: cria no Hub os condomínios ativos do Superlógica que faltam. Roda 1 minuto depois do servidor subir, todo dia às 6h (Brasília) e pelo botão "Atualizar agora" em Configurações. Nunca altera nem apaga linha existente. Linha do Hub sem código do Superlógica com nome igual não é duplicada: aparece como "sem código, preencher". Entram todos os cadastros ativos (inclusive lojas maçônicas e empresas clientes); só a Virtual Service fica fora. Outros códigos podem ser excluídos com SYNC_CONDOMINIOS_IGNORAR. SYNC_CONDOMINIOS=off desliga a rotina automática.
 
 ## Como funciona a puxada
 

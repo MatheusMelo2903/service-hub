@@ -151,6 +151,26 @@
   .prest-formato-opcao:has(input:checked) { border-color: var(--accent); }
   .prest-formato-opcao input { accent-color: var(--accent); cursor: pointer; }
 
+  /* Prestacao: lista de condominios, botao principal e PDF como ultima opcao */
+  .prest-cond-lista { max-height: 340px; }
+  .prest-cond-lista .cond-option.marcado { background: var(--gs-blue-light); }
+  .prest-cond-lista .cond-option.atual .cond-name { color: var(--accent2); font-weight: 600; }
+  .prest-cond-info { margin-top: 8px; font-size: 11px; color: var(--muted); font-family: var(--mono); min-height: 14px; }
+  .prest-card-principal { border: 1.5px solid var(--accent); box-shadow: var(--shadow-md); }
+  .prest-btn-hero {
+    width: 100%; padding: 18px 20px; border: none; border-radius: 12px; cursor: pointer;
+    background: var(--accent); color: #fff; font-family: var(--sans); font-size: 17px; font-weight: 700;
+    letter-spacing: 0.2px; box-shadow: 0 6px 16px rgba(59,154,199,0.28); transition: background 0.15s, transform 0.05s;
+  }
+  .prest-btn-hero:hover:not(:disabled) { background: var(--accent2); }
+  .prest-btn-hero:active:not(:disabled) { transform: translateY(1px); }
+  .prest-btn-hero:disabled { background: var(--gs-blue-mid); color: #fff; box-shadow: none; cursor: not-allowed; }
+  .prest-sl-dica { margin-top: 8px; font-size: 12px; color: var(--muted); font-family: var(--mono); min-height: 15px; }
+  .prest-pdf-opcional > summary { list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 0; }
+  .prest-pdf-opcional > summary::-webkit-details-marker { display: none; }
+  .prest-pdf-opcional > summary .card-title::before { content: '▸ '; }
+  .prest-pdf-opcional[open] > summary .card-title::before { content: '▾ '; }
+
   .nav-badge {
     margin-left: auto;
     background: rgba(59,154,199,0.12);
@@ -1384,29 +1404,34 @@
     <!-- ATAS CONDOMINIAIS -->
     <div class="panel" id="panel-prestacao">
 
+      <!-- Passo 1: condomínio e período. A troca de condomínio aqui troca o condomínio
+           ativo do sistema inteiro (seletor do topo), e vice versa. -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Identificação do condomínio</span>
+          <span class="card-title">1 · Condomínio e período</span>
         </div>
 
         <div id="prest-modo-busca">
-          <div class="form-group" style="position:relative">
+          <div class="form-group" style="position:relative;margin-bottom:0">
             <label>Condomínio</label>
-            <input type="text" id="prest-cond-search" placeholder="Comece a digitar para buscar..." autocomplete="off"
+            <input type="text" id="prest-cond-search" placeholder="Clique para ver todos ou digite o nome" autocomplete="off"
                    oninput="prestacaoFiltrarCondominios(this.value)"
-                   onfocus="prestacaoFiltrarCondominios(this.value)">
-            <div class="cond-dropdown" id="prest-cond-dropdown"></div>
+                   onfocus="this.select();prestacaoFiltrarCondominios('')"
+                   onclick="prestacaoFiltrarCondominios(this.value === prestacaoState.condNome ? '' : this.value)"
+                   onkeydown="prestacaoTeclaBusca(event)">
+            <div class="cond-dropdown prest-cond-lista" id="prest-cond-dropdown"></div>
           </div>
+          <div id="prest-cond-info" class="prest-cond-info"></div>
         </div>
 
         <div id="prest-modo-livre" style="display:none">
           <div class="form-group" style="margin:0">
-            <label>Nome do condomínio</label>
+            <label>Nome do condomínio (fora do Superlógica)</label>
             <input type="text" id="prest-cond-nome-livre" placeholder="Nome completo"
                    oninput="prestacaoState.condNome=this.value;prestacaoAtualizarBotao()">
           </div>
           <div style="margin-top:8px">
-            <button class="btn btn-ghost" onclick="prestacaoVoltarLista()" style="font-size:12px;padding:6px 12px">Voltar à busca</button>
+            <button class="btn btn-ghost" onclick="prestacaoVoltarLista()" style="font-size:12px;padding:6px 12px">Voltar à lista</button>
           </div>
         </div>
 
@@ -1426,12 +1451,35 @@
         <input type="hidden" id="prest-data-apresentacao">
       </div>
 
-      <div class="card">
+      <!-- Passo 2: gerar puxando do Superlógica (o caminho normal). -->
+      <div class="card prest-card-principal">
         <div class="card-header">
-          <span class="card-title">Relatórios em PDF (opcional)</span>
+          <span class="card-title">2 · Gerar a prestação</span>
         </div>
+        <button id="prest-btn-superlogica" class="prest-btn-hero" onclick="prestacaoGerarSuperlogica()" disabled>
+          ⇣ Puxar os dados do Superlógica e gerar
+        </button>
+        <div id="prest-sl-dica" class="prest-sl-dica"></div>
 
-        <div class="dropzone" id="prest-dropzone"
+        <label style="display:block;margin:18px 0 6px;font-size:13px;color:var(--muted)">Formato de saída</label>
+        <div class="prest-formato" role="radiogroup" aria-label="Formato de saída">
+          <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="ambos" checked> Ambos (PDF + PowerPoint)</label>
+          <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="pdf"> Somente PDF</label>
+          <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="pptx"> Somente PowerPoint</label>
+        </div>
+        <div style="margin-top:14px">
+          <button class="btn btn-ghost" onclick="prestacaoLimparTudo()" style="font-size:12px;padding:6px 12px">Limpar tudo</button>
+        </div>
+      </div>
+
+      <!-- Última opção: relatórios em PDF (condomínio fora do Superlógica). -->
+      <details class="card prest-pdf-opcional" id="prest-pdf-opcional">
+        <summary class="card-header" style="cursor:pointer">
+          <span class="card-title">Outra opção: gerar com relatórios em PDF</span>
+          <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">só se o condomínio não estiver no Superlógica</span>
+        </summary>
+
+        <div class="dropzone" id="prest-dropzone" style="margin-top:12px"
              ondragover="handleDrag(event, this)"
              ondragleave="handleDragLeave(this)"
              ondrop="prestacaoAdicionarArquivosDrop(event)">
@@ -1446,44 +1494,14 @@
         <div id="prest-files-list" style="margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
 
         <div style="margin-top:8px;font-size:11px;color:var(--muted);font-family:var(--mono)">
-          Só para condomínio fora do Superlógica ou quando quiser usar relatórios próprios. Com o condomínio cadastrado, use "Puxar os dados do Superlógica".<br>
-          W011A obrigatório (é dele que sai o mês a mês). Com o W015A do período exato ou o W011A detalhado, cada despesa sai aberta item a item.
+          W011A obrigatório (é dele que sai o mês a mês). Com o W015A do período exato ou o W011A detalhado, cada despesa sai aberta item a item. Usa o formato de saída escolhido acima.
         </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">Geração</span>
-        </div>
-
-        <div class="form-group">
-          <label>Observações adicionais (opcional)</label>
-          <textarea id="prest-observacoes" rows="4"
-                    placeholder="ex: ressaltar economia em energia, destacar obras concluídas em 2024"
-                    style="width:100%;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;color:var(--text);font-family:var(--mono);font-size:13px;resize:vertical;outline:none"
-                    oninput="prestacaoAtualizarObservacoes(this.value)"></textarea>
-        </div>
-
         <div style="margin-top:12px">
-          <label style="display:block;margin-bottom:6px;font-size:13px;color:var(--muted)">Formato de saída</label>
-          <div class="prest-formato" role="radiogroup" aria-label="Formato de saída">
-            <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="ambos" checked> Ambos (PDF + PowerPoint)</label>
-            <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="pdf"> Somente PDF</label>
-            <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="pptx"> Somente PowerPoint</label>
-          </div>
-        </div>
-
-        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-          <button id="prest-btn-superlogica" class="btn btn-primary" onclick="prestacaoGerarSuperlogica()" disabled>
-            ⇣ Puxar os dados do Superlógica
-          </button>
           <button id="prest-btn-gerar" class="btn btn-ghost" onclick="prestacaoGerarV13()" disabled>
             📊 Gerar com os PDFs anexados
           </button>
-          <button class="btn btn-ghost" onclick="prestacaoLimparTudo()">Limpar tudo</button>
         </div>
-        <div id="prest-sl-dica" style="margin-top:8px;font-size:11px;color:var(--muted);font-family:var(--mono)"></div>
-      </div>
+      </details>
 
     </div>
 
@@ -2395,7 +2413,9 @@ function showPanel(name) {
     renderBannerCondAtivo(name);
   }
   if (name === 'prestacao') {
-    prestacaoInit();
+    // Ao recarregar a página já nesta aba, o prestacao.js pode ainda não ter
+    // carregado; ele mesmo chama prestacaoInit quando a aba estiver aberta.
+    if (typeof prestacaoInit === 'function') prestacaoInit();
   }
   if (name === 'previsao') {
     if (typeof previsaoInit === 'function') previsaoInit();
