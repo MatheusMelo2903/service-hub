@@ -28,13 +28,14 @@ let prestacaoState = {
 async function prestacaoInit() {
   var selIni = document.getElementById('prest-mes-inicio');
   if (selIni && !selIni.options.length) prestacaoPreencherMeses();
-  if (prestacaoState.condominios === null) {
+  // Sem a sessão pronta (página abrindo) a consulta volta vazia pela RLS: espera o
+  // auth:ready, que chama esta função de novo. Lista vazia também tenta de novo depois.
+  if (prestacaoState.condominios === null && window.AUTH_TOKEN) {
     prestacaoState.condominios = [];
     try {
       const r = await supaFetch('condominios?select=id,nome,id_superlogica&order=nome.asc');
-      if (Array.isArray(r)) prestacaoState.condominios = r;
+      prestacaoState.condominios = (Array.isArray(r) && r.length) ? r : null;
     } catch (e) {
-      // Sem sessão ainda (página abrindo): tenta de novo no próximo init.
       prestacaoState.condominios = null;
     }
   }
@@ -70,8 +71,12 @@ function prestacaoSemAcento(s) {
 function prestacaoFiltrarCondominios(query) {
   var dd = document.getElementById('prest-cond-dropdown');
   if (!dd) return;
-  if (prestacaoState.condominios === null) {
-    prestacaoInit().then(function() { if (dd.classList.contains('open')) prestacaoFiltrarCondominios(query); });
+  if (prestacaoState.condominios === null && window.AUTH_TOKEN && !prestacaoState.buscandoLista) {
+    prestacaoState.buscandoLista = true;
+    prestacaoInit().then(function() {
+      prestacaoState.buscandoLista = false;
+      if (Array.isArray(prestacaoState.condominios) && dd.classList.contains('open')) prestacaoFiltrarCondominios(query);
+    });
   }
   var lista = Array.isArray(prestacaoState.condominios) ? prestacaoState.condominios : [];
   var q = prestacaoSemAcento((query || '').trim());
