@@ -2270,6 +2270,36 @@ app.get('/api/condominios/sincronizar-superlogica', requireAuth, (req, res) => {
   res.set('Cache-Control', 'no-store').json({ ultima: _syncCond.ultima, rodando: _syncCond.rodando });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// GET /api/condominio/:idSuperlogica/cadastro — nome, CNPJ, endereço, síndico
+// atual e conselho, lidos do Superlógica (só leitura, cache de 10 min por
+// condomínio). Devolve só campos escolhidos; nada de chaves internas. Detalhes
+// em superlogica/cadastro.js.
+// ─────────────────────────────────────────────────────────────────────────
+const slModulo = require('./superlogica');
+app.get('/api/condominio/:idSuperlogica/cadastro', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
+  if (req.authMode !== 'internal') {
+    if (!SUPABASE_SERVICE_ROLE_KEY) return res.status(503).json({ erro: 'service_role_nao_configurada' });
+    let ok = false;
+    try { ok = await podeUsarSuperlogica(req.user && req.user.sub); } catch (e) { ok = false; }
+    if (!ok) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso aos dados do Superlógica.' });
+  }
+  try {
+    const cli = slModulo.cliente({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN });
+    const dados = await slModulo.buscarCadastro(cli, id);
+    return res.json(dados);
+  } catch (e) {
+    if (e && e.status === 404) return res.status(404).json({ erro: 'condominio_nao_encontrado', detalhe: 'Esse código não existe no Superlógica.' });
+    console.warn('[cadastro-condominio] ' + id + ' falhou: ' + (e && e.message));
+    // Código inexistente também cai aqui: o Superlógica responde erro 500 nesse caso.
+    return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler o cadastro desse código no Superlógica. Confira o código ou tente de novo em alguns minutos.' });
+  }
+});
+
 // Agenda: 1 minuto depois de subir e depois todo dia às 6h de Brasília (9h UTC).
 function _agendarSyncDiario() {
   const agora = new Date();
