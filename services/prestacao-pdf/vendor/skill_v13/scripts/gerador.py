@@ -184,7 +184,10 @@ def s_capa():
     rect(s, 0, 0, 13.333, 0.083, GS_AZUL)                       # barra azul de 8px do modo Impacto
     s.shapes.add_picture(LOGO_GS, Inches(0.94), Inches(0.75), height=Inches(0.95))
     text(s, 0.94, 2.35, 8, 0.45, "PRESTAÇÃO DE CONTAS", 18, GS_AZUL_CLA, True)
-    runs(s, 0.94, 2.8, 7.6, 1.0, [(CFG['cliente_linha1'] + " ", 54, True, TXT), (CFG['cliente_linha2'], 54, True, GS_AZUL_CLA)])
+    # Nome longo: a letra diminui até caber numa linha (mínimo 32, que em duas linhas
+    # ainda cabe antes do traço azul). Antes quebrava e encavalava no "Exercício".
+    tam = ajusta(CFG['cliente_linha1'] + " " + CFG['cliente_linha2'], 7.6, 54, True, 32)
+    runs(s, 0.94, 2.8, 7.6, 1.0, [(CFG['cliente_linha1'] + " ", tam, True, TXT), (CFG['cliente_linha2'], tam, True, GS_AZUL_CLA)])
     hline(s, 0.94, 4.05, 1.9, GS_AZUL, 4)
     text(s, 0.94, 4.3, 7.6, 0.6, CFG['exercicio_titulo'], 28, TXT, True)
     text(s, 0.94, 4.95, 7.6, 0.5, CFG['periodo_extenso'] + "\nApresentação em Assembleia", 19, TXT2)
@@ -520,7 +523,9 @@ def s_encerramento(D):
     text(s, x+0.35, 3.08, w-0.5, 0.35, "receita acima da despesa" if D['res'] >= 0 else "despesa acima da receita", 16, TXT2)
     rect(s, x, 3.7, w, 1.55, AMBER, True, 0.08)
     text(s, x+0.35, 3.82, w-0.5, 0.3, "O CAIXA CRESCEU" if D['cresc'] >= 0 else "O CAIXA ENCERROU EM", 13, DARKTXT, True)
-    text(s, x+0.35, 4.15, w-0.5, 0.9, pct_sig(D['cresc']) if D['cresc'] >= 0 else brl(D['fim']), 46, DARKTXT, True)
+    # Valor em reais (caixa que caiu) não cabe a 46: ajusta à largura do cartão.
+    v_cx = pct_sig(D['cresc']) if D['cresc'] >= 0 else brl(D['fim'])
+    text(s, x+0.35, 4.15, w-0.5, 0.9, v_cx, ajusta(v_cx, w-0.5, 46), DARKTXT, True)
     rect(s, x, 5.4, w, 1.5, CARD, True, 0.08); rect(s, x, 5.4, 0.12, 1.5, BLUE)
     text(s, x+0.35, 5.52, w-0.5, 0.3, f"RECEITA COBRIU {pct(D['cob'])} DA DESPESA", 13, TXT3, True)
     runs(s, x+0.35, 5.88, w-0.5, 0.7, [(f"{D['pos']} de {CFG['n_meses']} meses", 26, True, BLUE), ("  positivos", 17, False, TXT2)])
