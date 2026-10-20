@@ -1647,19 +1647,62 @@ app.get('/api/atas/gerar/status/:jobId', requireAuth, (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// /api/admin/usuarios/* — gestão de usuários (GESTOR only)
+// /api/admin/usuarios/* — gestão de usuários (GESTOR, ou GERENTE com pode_convidar só sobre OPERACIONAL)
 //
 // Usa SUPABASE_SERVICE_ROLE_KEY pra falar com GoTrue admin (criar/deletar/listar
 // usuários em auth.users) e PostgREST (CRUD em public.profiles). Sem essa env,
 // devolve 503.
 //
-// Sempre: requireAuth → requireGestor (cadeia obrigatória).
+// Cadeia: requireAuth → requireServiceRoleKey → requireGestaoUsuarios (trocar cargo segue só GESTOR).
 // ─────────────────────────────────────────────────────────────────────────
 function requireServiceRoleKey(req, res, next) {
   if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) {
     return res.status(503).json({ erro: 'service_role_nao_configurada', detalhe: 'SUPABASE_SERVICE_ROLE_KEY ausente' });
   }
   next();
+}
+
+// Le um profile direto do banco (fonte de verdade de role, pode_convidar e permissoes).
+// Nao confia no JWT pra isso: o role do JWT so atualiza no proximo refresh de sessao.
+async function lerPerfil(id) {
+  if (!id) return null;
+  const r = await supabaseAdminRequest('GET',
+    `/rest/v1/profiles?id=eq.${encodeURIComponent(id)}&select=id,email,role,pode_convidar,permissoes`);
+  return (r.status === 200 && Array.isArray(r.body) && r.body[0]) ? r.body[0] : null;
+}
+
+// Middleware: libera a gestao de usuarios pra GESTOR e pra GERENTE com pode_convidar.
+// Aplicar depois de requireAuth e requireServiceRoleKey. Fail closed: sem perfil, nega.
+// Deixa em req.gestor o perfil de quem chama, usado pelas travas de cada rota.
+function requireGestaoUsuarios(req, res, next) {
+  if (req.authMode === 'internal') { req.gestor = { role: 'GESTOR', interno: true }; return next(); }
+  lerPerfil(req.user && req.user.sub).then((perfil) => {
+    const pode = perfil && (perfil.role === 'GESTOR' || (perfil.role === 'GERENTE' && perfil.pode_convidar === true));
+    if (!pode) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuario nao tem permissao para gerenciar usuarios.' });
+    req.gestor = perfil;
+    next();
+  }).catch(() => res.status(500).json({ erro: 'falha_validar_permissao' }));
+}
+
+// Um GERENTE so pode conceder o que ele mesmo tem (modulo visivel e cada acao).
+function permissoesDentroDoLimite(novas, minhas) {
+  for (const [modulo, p] of Object.entries(novas || {})) {
+    if (!p || typeof p !== 'object') continue;
+    const meu = (minhas || {})[modulo];
+    const tenho = !!(meu && meu.visivel);
+    if (p.visivel && !tenho) return false;
+    for (const a of (Array.isArray(p.acoes) ? p.acoes : [])) {
+      if (!tenho || !(meu.acoes || []).includes(a)) return false;
+    }
+  }
+  return true;
+}
+
+// Origem confiavel pro link do convite (so https ou localhost), senao usa o Site URL do Supabase.
+function urlRetornoAuth(req) {
+  const o = String(req.headers.origin || '');
+  if (/^https:\/\/[a-z0-9.-]+$/i.test(o) || /^http:\/\/localhost(:\d+)?$/i.test(o)) return o + '/hub';
+  return '';
 }
 
 // Helper: chamada HTTP ao Supabase (GoTrue admin ou REST PostgREST) com service_role
@@ -1757,16 +1800,22 @@ async function supabaseStorageSignedUrl(bucket, objectPath, expiresIn = 600) {
 // trigger handle_new_user com role default OPERACIONAL — depois ajustamos via PATCH
 // se role pedido for diferente.
 app.post('/api/admin/usuarios/convidar',
-  requireAuth, requireGestor, requireServiceRoleKey, express.json(),
+  requireAuth, requireServiceRoleKey, requireGestaoUsuarios, express.json(),
   async (req, res) => {
     const { email, role, nome } = req.body || {};
     if (!email || !role) return res.status(400).json({ erro: 'email_e_role_obrigatorios' });
     if (!['GERENTE', 'OPERACIONAL'].includes(role)) {
       return res.status(400).json({ erro: 'role_invalido', detalhe: 'Convite só permite GERENTE ou OPERACIONAL. GESTOR é imutável.' });
     }
+    if (req.gestor.role === 'GERENTE' && role !== 'OPERACIONAL') {
+      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Gerente só pode convidar OPERACIONAL.' });
+    }
     // GoTrue invite — POST /auth/v1/invite envia magic link e cria user em auth.users
     // (status: invited). NÃO usar /auth/v1/admin/invite (404 em GoTrue moderno).
-    const inv = await supabaseAdminRequest('POST', '/auth/v1/invite', {
+    // redirect_to leva o link pra tela de criar senha do Hub (se a URL estiver na lista
+    // de Redirect URLs do Supabase; senão o GoTrue usa o Site URL e a landing encaminha).
+    const retorno = urlRetornoAuth(req);
+    const inv = await supabaseAdminRequest('POST', '/auth/v1/invite' + (retorno ? '?redirect_to=' + encodeURIComponent(retorno) : ''), {
       email,
       data: { nome: nome || email } // vai pra raw_user_meta_data
     });
@@ -1782,10 +1831,14 @@ app.post('/api/admin/usuarios/convidar',
 // Lê direto da tabela profiles via PostgREST. RLS é bypassada pelo service_role,
 // mas a rota só está acessível pra GESTOR via requireGestor.
 app.get('/api/admin/usuarios',
-  requireAuth, requireGestor, requireServiceRoleKey,
+  requireAuth, requireServiceRoleKey, requireGestaoUsuarios,
   async (req, res) => {
     const r = await supabaseAdminRequest('GET',
       '/rest/v1/profiles?select=id,email,nome,role,pode_convidar,permissoes,criado_em,atualizado_em&order=criado_em.asc');
+    // GERENTE so enxerga (e administra) os OPERACIONAIS.
+    if (r.status === 200 && Array.isArray(r.body) && req.gestor.role === 'GERENTE') {
+      return res.status(200).json(r.body.filter((u) => u.role === 'OPERACIONAL'));
+    }
     res.status(r.status).json(r.body);
   });
 
@@ -1798,9 +1851,17 @@ app.put('/api/admin/usuarios/:id/role',
     if (!['GERENTE', 'OPERACIONAL'].includes(role)) {
       return res.status(400).json({ erro: 'role_invalido', detalhe: 'Use GERENTE ou OPERACIONAL. GESTOR só via banco.' });
     }
+    if (req.user && req.user.sub === req.params.id) {
+      return res.status(400).json({ erro: 'auto_alteracao_proibida', detalhe: 'Você não pode mudar o próprio cargo.' });
+    }
+    const alvo = await lerPerfil(req.params.id);
+    if (!alvo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
+    if (alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_imutavel', detalhe: 'O cargo do GESTOR não muda pelo sistema.' });
+    // Rebaixar pra OPERACIONAL tira junto o direito de convidar.
+    const patch = role === 'OPERACIONAL' ? { role, pode_convidar: false } : { role };
     const r = await supabaseAdminRequest('PATCH',
       `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`,
-      { role });
+      patch);
     res.status(r.status).json(r.body);
   });
 
@@ -1808,14 +1869,26 @@ app.put('/api/admin/usuarios/:id/role',
 // Body: { permissoes: {...}, pode_convidar?: bool }
 // Trigger de banco ignora updates em GESTOR (sempre força permissões totais).
 app.put('/api/admin/usuarios/:id/permissoes',
-  requireAuth, requireGestor, requireServiceRoleKey, express.json(),
+  requireAuth, requireServiceRoleKey, requireGestaoUsuarios, express.json(),
   async (req, res) => {
     const { permissoes, pode_convidar } = req.body || {};
     if (!permissoes || typeof permissoes !== 'object') {
       return res.status(400).json({ erro: 'permissoes_obrigatorias' });
     }
+    if (req.user && req.user.sub === req.params.id) {
+      return res.status(400).json({ erro: 'auto_alteracao_proibida', detalhe: 'Você não pode editar as próprias permissões.' });
+    }
+    const alvo = await lerPerfil(req.params.id);
+    if (!alvo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
     const patch = { permissoes };
-    if (typeof pode_convidar === 'boolean') patch.pode_convidar = pode_convidar;
+    if (req.gestor.role === 'GERENTE') {
+      if (alvo.role !== 'OPERACIONAL') return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Gerente só edita OPERACIONAL.' });
+      if (!permissoesDentroDoLimite(permissoes, req.gestor.permissoes)) {
+        return res.status(403).json({ erro: 'acima_do_limite', detalhe: 'Você não pode liberar um acesso que você mesmo não tem.' });
+      }
+    } else if (typeof pode_convidar === 'boolean' && alvo.role === 'GERENTE') {
+      patch.pode_convidar = pode_convidar;
+    }
     const r = await supabaseAdminRequest('PATCH',
       `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`,
       patch);
@@ -1825,12 +1898,17 @@ app.put('/api/admin/usuarios/:id/permissoes',
 // DELETE /api/admin/usuarios/:id
 // Remove de auth.users — cascateia via FK pro profiles (ON DELETE CASCADE).
 app.delete('/api/admin/usuarios/:id',
-  requireAuth, requireGestor, requireServiceRoleKey,
+  requireAuth, requireServiceRoleKey, requireGestaoUsuarios,
   async (req, res) => {
     const id = req.params.id;
-    // Safety: bloqueia auto-delete do GESTOR que está fazendo a chamada
+    // Safety: bloqueia auto-delete de quem está fazendo a chamada
     if (req.user?.sub === id) {
       return res.status(400).json({ erro: 'auto_delete_proibido' });
+    }
+    const alvo = await lerPerfil(id);
+    if (alvo && alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_imutavel', detalhe: 'O GESTOR não pode ser removido pelo sistema.' });
+    if (req.gestor.role === 'GERENTE' && (!alvo || alvo.role !== 'OPERACIONAL')) {
+      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Gerente só remove OPERACIONAL.' });
     }
     const r = await supabaseAdminRequest('DELETE', `/auth/v1/admin/users/${encodeURIComponent(id)}`);
     res.status(r.status).json(r.body || { ok: true });

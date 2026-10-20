@@ -1027,6 +1027,9 @@
     <button class="config-btn" onclick="showPanel('configuracoes')">
       <span>⚙</span> Configurações
     </button>
+    <button class="config-btn" id="btn-trocar-senha" onclick="window.authTrocarSenha && window.authTrocarSenha()" style="margin-top:6px;">
+      <span>🔑</span> <span>Trocar senha</span>
+    </button>
     <button class="config-btn" id="btn-logout" onclick="if(confirm('Sair?')) window.authLogout && window.authLogout()" style="margin-top:6px;">
       <span>⎋</span> <span id="logout-label">Sair</span>
     </button>
@@ -7363,7 +7366,9 @@ async function carregarPermissoesUser() {
     }
     window.USER_PERMS = data.permissoes || {};
     window.USER_ROLE = data.role; // sobrescreve fallback do JWT
+    window.USER_PODE_CONVIDAR = data.pode_convidar === true;
     aplicarPermissoesSidebar();
+    atualizarCardUsuariosAdmin();
   } catch (e) {
     console.warn('[perms] erro carregar permissoes', e);
   }
@@ -7427,10 +7432,16 @@ const ROLE_COR = { GESTOR: '#00D2FF', GERENTE: '#A78BFA', OPERACIONAL: '#8B95A8'
 let _perfilEditando = null;
 let _usuariosCache = [];
 
+// Quem pode gerenciar usuarios: GESTOR, ou GERENTE com convite liberado (so sobre OPERACIONAL).
+// O backend aplica a mesma regra; aqui e so pra mostrar ou esconder a tela.
+function podeGerirUsuarios() {
+  return window.USER_ROLE === 'GESTOR' || (window.USER_ROLE === 'GERENTE' && window.USER_PODE_CONVIDAR === true);
+}
+
 function atualizarCardUsuariosAdmin() {
   const card = document.getElementById('card-usuarios-admin');
   if (!card) return;
-  const visivel = window.USER_ROLE === 'GESTOR';
+  const visivel = podeGerirUsuarios();
   card.style.display = visivel ? 'block' : 'none';
   if (visivel && document.getElementById('panel-configuracoes')?.classList.contains('active')) {
     carregarUsuarios();
@@ -7486,6 +7497,8 @@ function abrirModalConvidar() {
   document.getElementById('conv-email').value = '';
   document.getElementById('conv-nome').value = '';
   document.getElementById('conv-role').value = 'OPERACIONAL';
+  const optGerente = document.querySelector('#conv-role option[value="GERENTE"]');
+  if (optGerente) { optGerente.disabled = optGerente.hidden = window.USER_ROLE !== 'GESTOR'; }
   document.getElementById('conv-erro').textContent = '';
   document.getElementById('modal-convidar').style.display = 'flex';
 }
@@ -7523,6 +7536,7 @@ function abrirModalPermissoes(userId) {
   const u = _usuariosCache.find(x => x.id === userId);
   if (!u) return;
   _perfilEditando = JSON.parse(JSON.stringify(u)); // clone deep
+  _perfilEditando._roleOriginal = u.role;
   if (!_perfilEditando.permissoes) _perfilEditando.permissoes = {};
   document.getElementById('perms-titulo').textContent = `Permissões de ${u.email} (${u.role})`;
   document.getElementById('perms-erro').textContent = '';
@@ -7536,32 +7550,49 @@ function fecharModalPermissoes() {
 
 function renderPermissoesForm(u) {
   const esc = (s) => String(s || '').replace(/</g,'&lt;');
-  const podeConvidar = u.role === 'GERENTE'
+  const souGestor = window.USER_ROLE === 'GESTOR';
+  // GERENTE so libera o que ele mesmo tem (o backend confere de novo ao salvar)
+  const limite = souGestor ? null : (window.USER_PERMS || {});
+  const tenhoModulo = (m) => !limite || !!(limite[m] && limite[m].visivel);
+  const tenhoAcao = (m, a) => !limite || (tenhoModulo(m) && (limite[m].acoes || []).includes(a));
+  const cargo = (souGestor && u._roleOriginal !== 'GESTOR')
+    ? `<div style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:10px">
+         <label style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text)">
+           Cargo
+           <select id="perm-role" style="padding:6px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px">
+             <option value="OPERACIONAL" ${u.role === 'OPERACIONAL' ? 'selected' : ''}>OPERACIONAL</option>
+             <option value="GERENTE" ${u.role === 'GERENTE' ? 'selected' : ''}>GERENTE</option>
+           </select>
+         </label>
+       </div>` : '';
+  const podeConvidar = (souGestor && u.role === 'GERENTE')
     ? `<div style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:14px">
          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text)">
            <input type="checkbox" id="perm-pode-convidar" ${u.pode_convidar ? 'checked' : ''}>
-           Permitir que este GERENTE convide novos usuários (somente OPERACIONAL)
+           Pode gerenciar usuários: convidar, liberar acessos e remover OPERACIONAIS (só com os acessos que ele mesmo tem)
          </label>
        </div>` : '';
   const linhas = Object.entries(MODULOS_CATALOGO).map(([modulo, def]) => {
     const atual = u.permissoes[modulo] || { visivel: false, acoes: [] };
     const checks = def.acoes.map(a => {
       const c = (atual.acoes || []).includes(a);
+      const travada = !atual.visivel || (!c && !tenhoAcao(modulo, a));
       return `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;font-size:11px;font-family:var(--mono);color:var(--text);cursor:pointer">
-        <input type="checkbox" data-modulo="${modulo}" data-acao="${a}" ${c ? 'checked' : ''} ${atual.visivel ? '' : 'disabled'}> ${esc(a)}
+        <input type="checkbox" data-modulo="${modulo}" data-acao="${a}" ${c ? 'checked' : ''} ${travada ? 'disabled' : ''}> ${esc(a)}
       </label>`;
     }).join('');
+    const visTravada = !atual.visivel && !tenhoModulo(modulo);
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 10px;font-size:12px;color:var(--text);width:42%">${esc(def.label)}</td>
       <td style="padding:8px 10px;text-align:center;width:18%">
         <label style="cursor:pointer">
-          <input type="checkbox" data-modulo-visivel="${modulo}" ${atual.visivel ? 'checked' : ''}>
+          <input type="checkbox" data-modulo-visivel="${modulo}" ${atual.visivel ? 'checked' : ''} ${visTravada ? 'disabled title="Você não tem esse módulo"' : ''}>
         </label>
       </td>
       <td style="padding:8px 10px">${checks || '<span style="font-size:10px;color:var(--muted);font-family:var(--mono)">—</span>'}</td>
     </tr>`;
   }).join('');
-  return podeConvidar + `<table style="width:100%;border-collapse:collapse">
+  return cargo + podeConvidar + `<table style="width:100%;border-collapse:collapse">
     <thead><tr style="background:var(--bg3)">
       <th style="padding:9px 10px;text-align:left;font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Módulo</th>
       <th style="padding:9px 10px;text-align:center;font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Visível</th>
@@ -7574,7 +7605,7 @@ function renderPermissoesForm(u) {
 
 // Listener delegado pra reagir ao toggle "visível" (re-renderiza pra habilitar/desabilitar checkboxes de ação)
 document.addEventListener('change', (ev) => {
-  if (!ev.target.dataset?.moduloVisivel) return;
+  if (!ev.target.dataset?.moduloVisivel && ev.target.id !== 'perm-role') return;
   const corpo = document.getElementById('perms-corpo');
   if (!corpo || !_perfilEditando) return;
   // Coleta estado atual e re-renderiza
@@ -7601,6 +7632,8 @@ function coletarPermissoesDoForm() {
   _perfilEditando.permissoes = novas;
   const pc = document.getElementById('perm-pode-convidar');
   if (pc) _perfilEditando.pode_convidar = pc.checked;
+  const sel = document.getElementById('perm-role');
+  if (sel) _perfilEditando.role = sel.value;
 }
 
 async function salvarPermissoes() {
@@ -7611,6 +7644,16 @@ async function salvarPermissoes() {
   erro.textContent = '';
   btn.disabled = true; btn.textContent = 'Salvando...';
   try {
+    if (window.USER_ROLE === 'GESTOR' && _perfilEditando.role !== _perfilEditando._roleOriginal) {
+      const rr = await apiAuthFetch(`/api/admin/usuarios/${encodeURIComponent(_perfilEditando.id)}/role`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role: _perfilEditando.role })
+      });
+      const dr = await rr.json().catch(() => ({}));
+      if (!rr.ok) throw new Error(dr.detalhe?.message || dr.detalhe || dr.erro || ('HTTP ' + rr.status));
+      _perfilEditando._roleOriginal = _perfilEditando.role;
+    }
     const body = { permissoes: _perfilEditando.permissoes };
     if (_perfilEditando.role === 'GERENTE') body.pode_convidar = !!_perfilEditando.pode_convidar;
     const resp = await apiAuthFetch(`/api/admin/usuarios/${encodeURIComponent(_perfilEditando.id)}/permissoes`, {
@@ -7619,7 +7662,7 @@ async function salvarPermissoes() {
       body: JSON.stringify(body)
     });
     const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) throw new Error(data.detalhe?.message || data.erro || ('HTTP ' + resp.status));
+    if (!resp.ok) throw new Error(data.detalhe?.message || (typeof data.detalhe === 'string' ? data.detalhe : '') || data.erro || ('HTTP ' + resp.status));
     fecharModalPermissoes();
     toast('✓ Permissões atualizadas', 'ok');
     carregarUsuarios();

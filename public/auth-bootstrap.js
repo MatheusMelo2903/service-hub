@@ -43,6 +43,10 @@
             Entrar
           </button>
           <div id="auth-error" style="font-size:12px;color:#E03A3A;text-align:center;min-height:16px;"></div>
+          <button id="auth-esqueci" type="button"
+            style="background:none !important;border:none;color:#3B9AC7;font-size:12px;cursor:pointer;font-family:inherit;padding:0;">
+            Esqueci minha senha
+          </button>
         </form>
       </div>
     </div>
@@ -50,7 +54,7 @@
       #auth-gate input:focus { border-color: #3B9AC7; }
       #auth-gate button:hover { background: #2D7FA8; }
       #auth-gate button:disabled { opacity: .5; cursor: not-allowed; }
-      body.auth-pending > *:not(#auth-gate) { display: none !important; }
+      body.auth-pending > *:not(#auth-gate):not(#auth-senha) { display: none !important; }
     </style>
   `;
 
@@ -77,6 +81,113 @@
       }
       hideGate(data.session, data.user);
     });
+    document.getElementById('auth-esqueci').addEventListener('click', async () => {
+      const email = document.getElementById('auth-email').value.trim();
+      errEl.style.color = '#E03A3A';
+      if (!email) { errEl.textContent = 'Digite seu email acima e clique de novo em Esqueci minha senha.'; return; }
+      const { error } = await window.__SUPABASE__.auth.resetPasswordForEmail(email, { redirectTo: location.origin + '/hub' });
+      if (error) { errEl.textContent = error.message || 'Falha ao enviar o email.'; return; }
+      errEl.style.color = '#2E9E6A';
+      errEl.textContent = 'Se esse email estiver cadastrado, chega um link para criar uma nova senha.';
+    });
+  }
+
+  // Tela de criar ou trocar senha. Usada no link do convite, no link de recuperacao
+  // e no botao Trocar senha (logado). Grava via auth.updateUser na sessao atual.
+  function mostrarCriarSenha(opts) {
+    if (document.getElementById('auth-senha')) return;
+    const esc = (v) => String(v || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const html = `
+      <div id="auth-senha" style="position:fixed;inset:0;z-index:100000;background:rgba(244,246,249,0.98);display:flex;align-items:center;justify-content:center;font-family:'Plus Jakarta Sans',-apple-system,sans-serif;">
+        <div style="background:#fff;border:1px solid rgba(58,58,58,0.08);border-radius:16px;padding:36px 32px;width:100%;max-width:380px;box-shadow:0 8px 32px rgba(0,0,0,0.06);">
+          <div style="text-align:center;margin-bottom:20px;">
+            <div style="font-size:20px;font-weight:800;color:#1E2533;">${esc(opts.titulo)}</div>
+            <div style="font-size:13px;color:#8892A4;margin-top:4px;">${esc(opts.sub)}</div>
+          </div>
+          <form id="auth-senha-form" style="display:flex;flex-direction:column;gap:12px;">
+            <input id="auth-senha-1" type="password" placeholder="nova senha (mínimo 8 caracteres)" required autocomplete="new-password"
+              style="padding:11px 14px;border:1px solid rgba(58,58,58,0.14);border-radius:10px;font-size:14px;font-family:inherit;outline:none;">
+            <input id="auth-senha-2" type="password" placeholder="repita a nova senha" required autocomplete="new-password"
+              style="padding:11px 14px;border:1px solid rgba(58,58,58,0.14);border-radius:10px;font-size:14px;font-family:inherit;outline:none;">
+            <button id="auth-senha-ok" type="submit"
+              style="padding:11px;background:#3B9AC7;color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;margin-top:4px;">
+              Salvar senha
+            </button>
+            ${opts.cancelavel ? '<button id="auth-senha-cancelar" type="button" style="background:none;border:none;color:#8892A4;font-size:12px;cursor:pointer;font-family:inherit;">Cancelar</button>' : ''}
+            <div id="auth-senha-erro" style="font-size:12px;color:#E03A3A;text-align:center;min-height:16px;"></div>
+          </form>
+        </div>
+      </div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+    const box = document.getElementById('auth-senha');
+    const err = document.getElementById('auth-senha-erro');
+    const ok = document.getElementById('auth-senha-ok');
+    const cancelar = document.getElementById('auth-senha-cancelar');
+    if (cancelar) cancelar.addEventListener('click', () => box.remove());
+    document.getElementById('auth-senha-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      err.textContent = '';
+      const s1 = document.getElementById('auth-senha-1').value;
+      const s2 = document.getElementById('auth-senha-2').value;
+      if (s1.length < 8) { err.textContent = 'A senha precisa ter pelo menos 8 caracteres.'; return; }
+      if (s1 !== s2) { err.textContent = 'As duas senhas não estão iguais.'; return; }
+      ok.disabled = true; ok.textContent = 'Salvando...';
+      const { error } = await window.__SUPABASE__.auth.updateUser({ password: s1 });
+      if (error) {
+        err.textContent = error.message || 'Falha ao salvar a senha.';
+        ok.disabled = false; ok.textContent = 'Salvar senha';
+        return;
+      }
+      box.remove();
+      if (typeof opts.aoConcluir === 'function') opts.aoConcluir();
+    });
+  }
+
+  // Botao Trocar senha (usuario logado)
+  window.authTrocarSenha = function () {
+    if (!window.__SUPABASE__ || !window.AUTH_USER) return;
+    mostrarCriarSenha({
+      titulo: 'Trocar senha',
+      sub: window.AUTH_USER.email,
+      cancelavel: true,
+      aoConcluir: () => { if (typeof window.toast === 'function') window.toast('✓ Senha alterada', 'ok'); else alert('Senha alterada.'); }
+    });
+  };
+
+  // Link do email (convite ou recuperacao) chega com os tokens no hash da URL:
+  // #access_token=...&refresh_token=...&type=invite|recovery, ou #error=...&error_code=...
+  // Abre a sessao e, se for convite ou recuperacao, pede a nova senha antes de entrar.
+  // Devolve true quando tratou a URL (o bootstrap nao segue o fluxo normal).
+  async function tratarLinkDoEmail() {
+    const h = new URLSearchParams(location.hash.replace(/^#/, ''));
+    if (!h.get('access_token') && !h.get('error_code') && !h.get('error')) return false;
+    history.replaceState(null, '', location.pathname + location.search);
+    if (h.get('error_code') || h.get('error')) {
+      showGate();
+      const errEl = document.getElementById('auth-error');
+      if (errEl) errEl.textContent = 'Esse link expirou ou já foi usado. Digite seu email e clique em Esqueci minha senha para receber outro.';
+      return true;
+    }
+    const { data, error } = await window.__SUPABASE__.auth.setSession({
+      access_token: h.get('access_token'), refresh_token: h.get('refresh_token') || ''
+    });
+    if (error || !data || !data.session) {
+      showGate();
+      const errEl = document.getElementById('auth-error');
+      if (errEl) errEl.textContent = 'Não foi possível validar o link. Peça um novo em Esqueci minha senha.';
+      return true;
+    }
+    const tipo = h.get('type');
+    if (tipo === 'invite' || tipo === 'recovery') {
+      mostrarCriarSenha({
+        titulo: tipo === 'invite' ? 'Crie sua senha' : 'Criar nova senha',
+        sub: data.session.user.email,
+        aoConcluir: () => hideGate(data.session, data.session.user)
+      });
+    } else {
+      hideGate(data.session, data.session.user);
+    }
+    return true;
   }
 
   function hideGate(session, user) {
@@ -135,11 +246,14 @@
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false }
     });
 
-    const { data: { session } } = await window.__SUPABASE__.auth.getSession();
-    if (session && session.user) {
-      hideGate(session, session.user);
-    } else {
-      showGate();
+    const tratouLink = await tratarLinkDoEmail();
+    if (!tratouLink) {
+      const { data: { session } } = await window.__SUPABASE__.auth.getSession();
+      if (session && session.user) {
+        hideGate(session, session.user);
+      } else {
+        showGate();
+      }
     }
 
     // Reagir a logout/refresh em outras abas
