@@ -2217,6 +2217,10 @@ app.post('/api/prestacao/gerar-deck', requireAuth, (req, res) => {
   req.pipe(upstream);
 });
 
+// Prestação v13 (mesmo motor da skill, curadoria de texto pelo Claude, job + polling).
+// Rotas e explicação completa em prestacao-v13.js.
+require('./prestacao-v13')(app, { requireAuth, ANTHROPIC_KEY, INTERNAL_API_SECRET, PRESTACAO_PDF_API_URL });
+
 // ─────────────────────────────────────────────────────────────────────────
 // Módulo: Previsão Orçamentária — Persistência Supabase (Fase 3)
 //

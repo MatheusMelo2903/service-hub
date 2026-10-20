@@ -1412,16 +1412,18 @@
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
           <div class="form-group" style="margin:0">
-            <label>Período de referência</label>
-            <input type="text" id="prest-periodo" placeholder="ex: Janeiro a Dezembro 2025 ou 2024"
-                   oninput="prestacaoState.periodo=this.value">
+            <label>Mês inicial</label>
+            <select id="prest-mes-inicio" onchange="prestacaoAtualizarPeriodo()"></select>
           </div>
           <div class="form-group" style="margin:0">
-            <label>Data da apresentação</label>
-            <input type="date" id="prest-data-apresentacao"
-                   oninput="prestacaoState.dataApresentacao=this.value">
+            <label>Mês final</label>
+            <select id="prest-mes-fim" onchange="prestacaoAtualizarPeriodo()"></select>
           </div>
         </div>
+        <div id="prest-periodo-info" style="margin-top:8px;font-size:11px;color:var(--muted);font-family:var(--mono)"></div>
+        <!-- Usados só pelo gerador local (modo offline). -->
+        <input type="hidden" id="prest-periodo">
+        <input type="hidden" id="prest-data-apresentacao">
       </div>
 
       <div class="card">
@@ -1434,18 +1436,18 @@
              ondragleave="handleDragLeave(this)"
              ondrop="prestacaoAdicionarArquivosDrop(event)">
           <input type="file" id="prest-file-input" multiple
-                 accept=".pdf,.xlsx,.xls,.csv,.docx,.doc,.txt,.png,.jpg,.jpeg,.tiff,.tif,.webp"
+                 accept=".pdf"
                  onchange="prestacaoAdicionarArquivos(event)">
           <div class="drop-icon">⊡</div>
-          <div class="drop-title">Arraste os arquivos aqui</div>
-          <div class="drop-sub">ou clique para selecionar · pdf, xlsx, xls, csv, docx, doc, txt, png, jpg, jpeg, tiff, tif, webp</div>
+          <div class="drop-title">Arraste os relatórios aqui</div>
+          <div class="drop-sub">ou clique para selecionar · PDFs do Superlógica</div>
         </div>
 
         <div id="prest-files-list" style="margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
 
         <div style="margin-top:8px;font-size:11px;color:var(--muted);font-family:var(--mono)">
-          W011A e W015A (recomendados). W016A opcional, apenas conferência.<br>
-          Com o W011A sai a Evolução mensal e o Superávit mensal.
+          W011A obrigatório (é dele que sai o mês a mês). Período maior que 12 meses: envie mais de um W011A.<br>
+          Com o W015A do período exato ou o W011A detalhado, cada despesa sai aberta item a item.
         </div>
       </div>
 
@@ -1472,7 +1474,7 @@
         </div>
 
         <div style="display:flex;gap:8px;margin-top:8px">
-          <button id="prest-btn-gerar" class="btn btn-primary" onclick="prestacaoGerarServico()" disabled>
+          <button id="prest-btn-gerar" class="btn btn-primary" onclick="prestacaoGerarV13()" disabled>
             📊 Gerar prestação de contas
           </button>
           <button class="btn btn-ghost" onclick="prestacaoLimparTudo()">Limpar tudo</button>

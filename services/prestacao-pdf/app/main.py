@@ -27,12 +27,14 @@ import tempfile
 import time
 import traceback
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+from starlette.concurrency import run_in_threadpool
 
 from .auth import verificar_secret
 from .detector import detectar_tipo
 from .pipeline import converter_pdf, gerar_deck, orquestrar, orquestrar_multi_fonte
 from .prosa import ProsaDeterministica
+from . import v13
 
 _VERSAO = "1.0.0"
 
@@ -171,5 +173,120 @@ async def gerar(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"erro": "geracao_falhou", "acao": "revisao_humana"})
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# MOTOR v13: o mesmo codigo da skill powerpoint-prestacao-contas (vendor/skill_v13).
+# Fluxo em duas etapas, orquestrado pelo server.js:
+#   /v13/extrair  PDFs + periodo -> dados e rascunho (para quando algo nao fecha)
+#   /v13/montar   dados + composicao (da IA ou automatica) -> PPTX e PDF auditados
+# Entre as duas o server.js pode pedir ao Claude a curadoria da composicao.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _422(msg: str, erro: str = "relatorio"):
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                         detail={"erro": erro, "detalhe": msg, "acao": "revisao_humana"})
+
+
+@app.post("/v13/extrair")
+async def v13_extrair(
+    arquivos: list[UploadFile] = File(...),
+    inicio: str = Form(...),
+    fim: str = Form(...),
+    _: None = Depends(verificar_secret),
+):
+    inicio_t = time.perf_counter()
+    tmpdir = tempfile.mkdtemp(prefix="prest13_")
+    try:
+        caminhos, total = [], 0
+        for i, up in enumerate(arquivos):
+            if not (up.filename or "").lower().endswith(".pdf"):
+                raise _422(f"O arquivo {up.filename} não é PDF. Envie os relatórios do Superlógica em PDF.", "arquivo_nao_pdf")
+            conteudo = await up.read()
+            total += len(conteudo)
+            if total > 50 * 1024 * 1024:
+                raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                                    detail={"erro": "upload_muito_grande", "limite_mb": 50})
+            destino = os.path.join(tmpdir, f"relatorio_{i:02d}.pdf")
+            with open(destino, "wb") as f:
+                f.write(conteudo)
+            caminhos.append(destino)
+        try:
+            r = await run_in_threadpool(v13.extrair, caminhos, inicio, fim, tmpdir)
+        except v13.ErroPrestacao as e:
+            _log("v13_extrair_recusou", motivo=str(e)[:200])
+            raise _422(str(e))
+        _log("v13_extraido", arquivos=len(caminhos), modo=r["dados"].get("modo"),
+             duracao_ms=int((time.perf_counter() - inicio_t) * 1000))
+        return r
+    except HTTPException:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail={"erro": "extracao_falhou", "acao": "revisao_humana"})
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@app.post("/v13/montar")
+async def v13_montar(
+    payload: dict = Body(...),
+    _: None = Depends(verificar_secret),
+):
+    inicio_t = time.perf_counter()
+    dados = payload.get("dados")
+    if not isinstance(dados, dict) or not dados.get("periodo"):
+        raise _422("Dados da extração ausentes.", "payload_invalido")
+    rascunho = payload.get("rascunho") or {}
+    nome_hub = payload.get("nome") if isinstance(payload.get("nome"), str) else None
+    comp_ia = payload.get("composicao_ia")
+    tmpdir = tempfile.mkdtemp(prefix="prest13m_")
+    aviso = None
+    try:
+        origem = "automatica"
+        if isinstance(comp_ia, dict):
+            comp = v13.completar_composicao(comp_ia, dados, rascunho, nome_hub)
+            try:
+                res = await run_in_threadpool(v13.montar, dados, comp, tmpdir)
+                origem = "ia"
+            except v13.ErroPrestacao as e:
+                # A curadoria da IA nao passou na conferencia (ex.: soma citada nao bate).
+                # Refaz com a composicao automatica, que sempre fecha com o total.
+                _log("v13_ia_reprovada", motivo=str(e)[:200])
+                aviso = "A composição revisada não passou na conferência; usei a composição automática."
+                comp = None
+        else:
+            comp = None
+        if origem == "automatica":
+            comp = v13.composicao_automatica(dados, rascunho, nome_hub)
+            try:
+                res = await run_in_threadpool(v13.montar, dados, comp, tmpdir)
+            except v13.ErroPrestacao as e:
+                _log("v13_montar_recusou", motivo=str(e)[:200])
+                raise _422(str(e), "montagem")
+        _log("v13_gerado", origem=origem, pdf_kb=len(res["pdf"]) // 1024,
+             duracao_ms=int((time.perf_counter() - inicio_t) * 1000))
+        return {
+            "pptx_b64": base64.b64encode(res["pptx"]).decode("ascii"),
+            "pdf_b64": base64.b64encode(res["pdf"]).decode("ascii"),
+            "nome_arquivo": res["nome"],
+            "composicao": origem,
+            "aviso": aviso,
+            "modo": dados.get("modo"),
+            "resumo": {
+                "saldo_anterior": dados.get("saldo_anterior"),
+                "receitas": round(sum(dados.get("receitas_mes") or []), 2),
+                "despesas": round(sum(dados.get("despesas_mes") or []), 2),
+                "saldo_final": dados.get("saldo_final"),
+                "meses": dados.get("meses_label"),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail={"erro": "geracao_falhou", "acao": "revisao_humana"})
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

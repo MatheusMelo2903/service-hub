@@ -26,6 +26,8 @@ let prestacaoState = {
 // Roda na primeira vez que o painel Prestacao de Contas e mostrado.
 // Puxa lista de condominios do Supabase e seta data de hoje no campo de apresentacao.
 async function prestacaoInit() {
+  var selIni = document.getElementById('prest-mes-inicio');
+  if (selIni && !selIni.options.length) prestacaoPreencherMeses();
   if (prestacaoState.condominios !== null) return;
   prestacaoState.condominios = [];
   try {
@@ -191,7 +193,10 @@ function prestacaoAtualizarBotao() {
   if (!btn) return;
   var temCond = !!(prestacaoState.condId || (prestacaoState.condNome && prestacaoState.condNome.trim().length > 0));
   var temArquivo = prestacaoState.arquivos.length > 0;
-  btn.disabled = !(temCond && temArquivo);
+  // Sem os seletores de mês (página antiga em cache) não bloqueia por período.
+  var temSeletor = !!document.getElementById('prest-mes-inicio');
+  var periodoOk = !temSeletor || !!(prestacaoState.mesInicio && prestacaoState.mesFim && prestacaoState.mesInicio <= prestacaoState.mesFim);
+  btn.disabled = !!prestacaoState.gerando || !(temCond && temArquivo && periodoOk);
 }
 
 // Limpa todos os campos do painel e reseta state (preserva o cache de condominios).
@@ -215,6 +220,7 @@ function prestacaoLimparTudo() {
   var obs = document.getElementById('prest-observacoes');
   if (obs) obs.value = '';
   prestacaoRenderizarListaArquivos();
+  prestacaoPreencherMeses();
   prestacaoAtualizarBotao();
   prestacaoInit();
 }
@@ -1851,6 +1857,175 @@ function prestacaoDispararDownload(url, nomeArquivo) {
   document.body.appendChild(a); a.click();
   document.body.removeChild(a);
   setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+}
+
+// ── Motor v13 (mesmo da skill powerpoint-prestacao-contas) ──
+// Período por mês inicial e final (AAAA-MM), geração em segundo plano no servidor
+// com acompanhamento (job + polling), arquivos com o nome padrão da skill.
+var PREST_MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+
+function prestacaoMesValor(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
+function prestacaoMesRotulo(v) {
+  var p = String(v || '').split('-');
+  return p.length === 2 ? PREST_MESES[parseInt(p[1], 10) - 1] + '/' + p[0] : '';
+}
+
+function prestacaoPreencherMeses() {
+  var ini = document.getElementById('prest-mes-inicio');
+  var fim = document.getElementById('prest-mes-fim');
+  if (!ini || !fim) return;
+  var hoje = new Date();
+  var html = '';
+  for (var k = 0; k < 48; k++) {
+    var v = prestacaoMesValor(new Date(hoje.getFullYear(), hoje.getMonth() - k, 1));
+    html += '<option value="' + v + '">' + prestacaoMesRotulo(v) + '</option>';
+  }
+  ini.innerHTML = html;
+  fim.innerHTML = html;
+  // Padrão: os 12 meses fechados até o mês passado.
+  fim.value = prestacaoMesValor(new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1));
+  ini.value = prestacaoMesValor(new Date(hoje.getFullYear(), hoje.getMonth() - 12, 1));
+  prestacaoAtualizarPeriodo();
+}
+
+function prestacaoAtualizarPeriodo() {
+  var ini = document.getElementById('prest-mes-inicio');
+  var fim = document.getElementById('prest-mes-fim');
+  var info = document.getElementById('prest-periodo-info');
+  var a = ini ? ini.value : '';
+  var b = fim ? fim.value : '';
+  prestacaoState.mesInicio = a;
+  prestacaoState.mesFim = b;
+  var ok = !!(a && b && a <= b);
+  if (ok) {
+    var pa = a.split('-'), pb = b.split('-');
+    var n = (parseInt(pb[0], 10) - parseInt(pa[0], 10)) * 12 + (parseInt(pb[1], 10) - parseInt(pa[1], 10)) + 1;
+    prestacaoState.periodo = prestacaoMesRotulo(a) + ' a ' + prestacaoMesRotulo(b);
+    if (info) {
+      info.style.color = 'var(--muted)';
+      info.textContent = n + (n === 1 ? ' mês' : ' meses') + ': ' + prestacaoState.periodo
+        + (n > 12 ? '. Acima de 12 meses: envie um W011A para cada trecho de até 12 meses.' : '');
+    }
+  } else if (info) {
+    info.style.color = 'var(--danger, #e5484d)';
+    info.textContent = 'O mês inicial está depois do mês final.';
+  }
+  var per = document.getElementById('prest-periodo');
+  if (per) per.value = ok ? prestacaoState.periodo : '';
+  prestacaoAtualizarBotao();
+}
+
+function prestacaoBaixarResultado(r) {
+  var fmtSel = document.querySelector('input[name="prest-formato"]:checked');
+  var formato = fmtSel ? fmtSel.value : 'ambos';
+  var base = r.nome_arquivo || ('Prestação de Contas ' + (prestacaoState.condNome || ''));
+  var pendentes = [];
+  if ((formato === 'ambos' || formato === 'pdf') && r.pdf_b64) {
+    pendentes.push({ b64: r.pdf_b64, mime: 'application/pdf', nome: base + '.pdf', rotulo: 'PDF' });
+  }
+  if ((formato === 'ambos' || formato === 'pptx') && r.pptx_b64) {
+    pendentes.push({ b64: r.pptx_b64, mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+                     nome: base + '.pptx', rotulo: 'PowerPoint' });
+  }
+  var prontos = [];
+  pendentes.forEach(function(p) {
+    try { p.url = prestacaoPrepararDownload(p.b64, p.mime); prontos.push(p); }
+    catch (err) { toast(p.rotulo + ' não pôde ser preparado para download. Tente novamente.', 'warn'); }
+  });
+  // Escalonado: dois downloads no mesmo tique viram um só no navegador.
+  prontos.forEach(function(p, i) {
+    setTimeout(function() { prestacaoDispararDownload(p.url, p.nome); }, i * 600);
+  });
+  return prontos.map(function(p) { return p.rotulo; });
+}
+
+async function prestacaoGerarV13() {
+  var btn = document.getElementById('prest-btn-gerar');
+  if (!btn || prestacaoState.gerando) return;
+  var textoOriginal = btn.textContent;
+  var resultado = 'fim';
+  prestacaoState.gerando = true;
+  btn.disabled = true;
+  btn.textContent = 'Enviando os relatórios...';
+  try {
+    resultado = await prestacaoExecutarV13(btn);
+  } catch (err) {
+    console.error('[prestacao v13]', err && err.message);
+    toast(err && err.message ? err.message : String(err), 'err');
+  } finally {
+    prestacaoState.gerando = false;
+    btn.textContent = textoOriginal || '📊 Gerar prestação de contas';
+    prestacaoAtualizarBotao();
+  }
+  // Servidor deste ambiente ainda sem o motor novo: segue pelo caminho anterior.
+  if (resultado === 'caminho_antigo') return prestacaoGerarServico();
+}
+
+// Faz o envio e o acompanhamento. Devolve 'caminho_antigo' quando o servidor ainda
+// não tem o motor v13; erros sobem como exceção com mensagem pronta para a tela.
+async function prestacaoExecutarV13(btn) {
+  var arquivos = (prestacaoState.arquivos || []).slice();
+  if (!arquivos.length) throw new Error('Nenhum relatório anexado.');
+  var naoPdf = arquivos.filter(function(f) { return !/\.pdf$/i.test(f.name || ''); });
+  if (naoPdf.length) {
+    throw new Error('Envie só os relatórios do Superlógica em PDF. Fora do padrão: '
+      + naoPdf.map(function(f) { return f.name; }).join(', '));
+  }
+  var ini = prestacaoState.mesInicio, fim = prestacaoState.mesFim;
+  if (!ini || !fim || ini > fim) throw new Error('Confira o mês inicial e o mês final.');
+
+  var form = new FormData();
+  arquivos.forEach(function(f) { form.append('arquivos', f); });
+  form.append('inicio', ini);
+  form.append('fim', fim);
+  var obs = (prestacaoState.observacoes || '').trim().slice(0, 1000);
+  var q = '?nome=' + encodeURIComponent((prestacaoState.condNome || '').trim()) + (obs ? '&obs=' + encodeURIComponent(obs) : '');
+
+  var resp = await apiAuthFetch('/api/prestacao/v13/iniciar' + q, { method: 'POST', body: form });
+  if (resp.status === 404 || resp.status === 503) return 'caminho_antigo';
+  if (!resp.ok) {
+    var c = await resp.json().catch(function() { return {}; });
+    throw new Error(c.detalhe || ('Não foi possível iniciar a geração (' + resp.status + ').'));
+  }
+  var jobId = (await resp.json()).jobId;
+  var t0 = Date.now(), falhasSeguidas = 0, r = null;
+  while (true) {
+    await new Promise(function(ok) { setTimeout(ok, 4000); });
+    if (Date.now() - t0 > 25 * 60 * 1000) throw new Error('A geração passou de 25 minutos. Tente de novo.');
+    var st;
+    try { st = await apiAuthFetch('/api/prestacao/v13/status/' + encodeURIComponent(jobId), { cache: 'no-store' }); }
+    catch (e) { st = null; }
+    if (st && st.status === 404) throw new Error('A geração foi interrompida (o servidor reiniciou). Tente de novo.');
+    if (st && st.status === 429) continue; // limite de requisições: só espera e consulta de novo
+    if (!st || !st.ok) {
+      if (++falhasSeguidas > 10) throw new Error('Perdi o contato com o servidor durante a geração. Tente de novo.');
+      continue;
+    }
+    falhasSeguidas = 0;
+    r = await st.json();
+    if (r.status !== 'processing') break;
+    var s = r.esperando_s || 0;
+    btn.textContent = 'Gerando: ' + (r.etapa || 'processando') + ' (' + Math.floor(s / 60) + 'min ' + String(s % 60).padStart(2, '0') + 's)';
+  }
+
+  if (r.status === 'error') {
+    if (r.erro === 'servico_desatualizado') return 'caminho_antigo';
+    throw new Error(r.detalhe || 'Não foi possível gerar a prestação.');
+  }
+  var baixados = prestacaoBaixarResultado(r);
+  (r.avisos || []).forEach(function(a) { toast(a, 'warn'); });
+  if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
+  // Tira só os relatórios usados nesta geração (algum anexado durante a espera fica).
+  prestacaoState.arquivos = (prestacaoState.arquivos || []).filter(function(f) { return arquivos.indexOf(f) < 0; });
+  prestacaoRenderizarListaArquivos();
+  var fileInput = document.getElementById('prest-file-input');
+  if (fileInput) fileInput.value = '';
+  toast('Prestação gerada (' + (r.modo === 'detalhado' ? 'detalhada item a item' : 'modo simples, sem relatório detalhado')
+    + '): ' + baixados.join(' e ') + ' baixado' + (baixados.length > 1 ? 's' : '') + '.', 'ok');
+  return 'fim';
 }
 
 async function prestacaoGerarServico() {

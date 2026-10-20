@@ -1,0 +1,460 @@
+{
+ "cliente": {
+  "linha1": "Condomínio",
+  "linha2": "Buritis",
+  "rodape": "CONDOMÍNIO BURITIS"
+ },
+ "categorias": {
+  "DESPESA COM PESSOAL": {
+   "curto": "Pessoal",
+   "t1": "Despesas com",
+   "t2": "pessoal",
+   "desc": "Equipe terceirizada que opera o condomínio, estágio e benefícios da equipe."
+  },
+  "DESPESAS COM CONSUMO": {
+   "curto": "Consumo",
+   "t1": "Despesas com",
+   "t2": "consumo",
+   "desc": "Água, gás, energia das áreas comuns e telefone.",
+   "nota": "Água e gás são rateados e voltam na receita: Água Comum R$ 843.490,91 e Gás R$ 161.634,25."
+  },
+  "MANUTENÇÃO": {
+   "curto": "Manutenção",
+   "t1": "Contratos de",
+   "t2": "manutenção",
+   "desc": "Contratos fixos de manutenção e das atividades esportivas.",
+   "nota": "As atividades esportivas são custeadas pela receita própria delas, R$ 142.212,00 no período."
+  },
+  "RETENÇÕES -NOTAS FISCAIS": {
+   "curto": "Retenções de Notas Fiscais",
+   "t1": "Retenções",
+   "t2": "de notas fiscais",
+   "desc": "Impostos retidos nas notas fiscais de serviço e recolhidos pelo condomínio."
+  },
+  "DESPESA COM ADMINISTRATIVO": {
+   "curto": "Administrativo",
+   "t1": "Despesas",
+   "t2": "administrativas",
+   "desc": "Síndico, administradora, assessoria jurídica e despesas de escritório."
+  },
+  "AQUISIÇÃO DE MATERIAIS": {
+   "curto": "Aquisição de Materiais",
+   "t1": "Aquisição de",
+   "t2": "materiais",
+   "desc": "Compras de materiais para limpeza, manutenção e melhorias.",
+   "nota": "Placa e inversor do elevador (R$ 36.660,00), redes do teto da quadra (R$ 24.378,00) e kit play brinquedão (R$ 23.000,00) são as maiores compras."
+  },
+  "SERVIÇOS": {
+   "curto": "Serviços",
+   "t1": "Serviços",
+   "t2": "contratados",
+   "desc": "Serviços avulsos de manutenção, obras e melhorias.",
+   "nota": "R$ 19.519,20 em serviços foram pagos com a verba do seguro (indenização de R$ 20.305,00 recebida em jul/26)."
+  },
+  "INVESTIMENTO-IMOBILIZADO": {
+   "curto": "Investimento Imobilizado",
+   "t1": "Investimento",
+   "t2": "imobilizado",
+   "desc": "Bens que passam a fazer parte do patrimônio do condomínio."
+  },
+  "DESPESAS FINANCEIRAS": {
+   "curto": "Despesas Financeiras",
+   "t1": "Despesas",
+   "t2": "financeiras",
+   "desc": "Tarifas bancárias, imposto sobre rendimentos e taxas de cartão."
+  },
+  "TAXAS E RECOLHIMENTOS": {
+   "curto": "Taxas e Recolhimentos",
+   "t1": "Taxas e",
+   "t2": "recolhimentos",
+   "desc": "Taxas obrigatórias de regularização do condomínio."
+  }
+ },
+ "rubricas": {
+  "IRRF Poupança": {
+   "texto": "Imposto de renda retido sobre o rendimento das poupanças ({n} meses)",
+   "fecha": false
+  },
+  "Reembolso": {
+   "texto": "Estorno de boleto pago no cartão, unidade 306 E",
+   "fecha": false
+  },
+  "Fluxo Cartão Crédito": {
+   "texto": "Taxas sobre recebimentos por cartão de crédito ({n} meses)",
+   "fecha": false
+  },
+  "Devolução de Valor": {
+   "texto": "Devolução de multa anulada (infração cancelada)",
+   "fecha": false
+  },
+  "Tarifas Bancárias": {
+   "texto": "Tarifa mensal da conta bancária ({n} meses)",
+   "fecha": false
+  },
+  "Devolução Pagamento Reserva": {
+   "texto": "Devolução de pagamento de reserva de espaço",
+   "fecha": false
+  },
+  "Contrato Mão de Obra Terceirizada": {
+   "texto": "Equipe terceirizada, {n} competências, mais retroativo de R$ 14.708,71 pago em dez/25",
+   "fecha": false
+  },
+  "Bolsa Estágio": {
+   "texto": "Bolsa do estagiário ({n} meses)",
+   "fecha": false
+  },
+  "Salários Contratados": {
+   "texto": "Fiscal de piscina na temporada: referente a dez/25 R$ 4.077,77 · referente a jan/26 R$ 4.077,77",
+   "fecha": true
+  },
+  "Cesta de Natal": {
+   "texto": "Cestas de Natal da equipe",
+   "fecha": false
+  },
+  "Vale Transporte": {
+   "texto": "Vale transporte da equipe ({n} meses), inclui o de admissão de funcionário",
+   "fecha": false
+  },
+  "Demissão - Rescisão": {
+   "texto": "Verbas rescisórias pagas em mar/26, abr/26 e jul/26",
+   "fecha": false
+  },
+  "Convênio Instituto Formar": {
+   "texto": "Mensalidade do convênio de estágio ({n} meses)",
+   "fecha": false
+  },
+  "Uniformes": {
+   "texto": "Uniformes R$ 256,00 · 2 camisas R$ 128,00 · complemento R$ 1,80",
+   "fecha": true
+  },
+  "Seguro Funcionário": {
+   "texto": "Seguro dos funcionários, vigência abr/26 a mar/27",
+   "fecha": false
+  },
+  "Exames Ocupacionais": {
+   "texto": "Exames médicos ocupacionais",
+   "fecha": false
+  },
+  "Cartão GVBUS": {
+   "texto": "Cartão de transporte GVBUS R$ 51,00 · segunda via R$ 51,00",
+   "fecha": true
+  },
+  "DARF INSS- CRF": {
+   "texto": "INSS e contribuições federais retidos nas notas de serviço ({n} competências)",
+   "fecha": false
+  },
+  "ISS": {
+   "texto": "ISS retido nas notas fiscais de serviço ({n} competências), inclui complemento de R$ 108,51",
+   "fecha": false
+  },
+  "DAS - Simples Nacional": {
+   "texto": "Guias do Simples Nacional ({n} competências)",
+   "fecha": false
+  },
+  "Honorários Síndico": {
+   "texto": "{n} meses de R$ 6.700,00 mais o 13º honorário pago em dez/25",
+   "fecha": false
+  },
+  "Honorários Administrativos": {
+   "texto": "Taxa mensal da administradora ({n} meses)",
+   "fecha": false
+  },
+  "Honorários Advocatícios": {
+   "texto": "Assessoria jurídica mensal, inclui lançamento de honorários de R$ 5.992,17 em dez/25",
+   "fecha": false
+  },
+  "Despesas Com Material de Expediente": {
+   "texto": "Livros de protocolo, fitas, papel A4, canetas e grampeador R$ 1.612,96 · barbante, cola e TNT R$ 989,42 · papel A4, extrator e fita adesiva R$ 192,50 · agenda para a sala de estudos R$ 29,99",
+   "fecha": true
+  },
+  "Custas Processuais": {
+   "texto": "Custas de processos judiciais ({n} pagamentos)",
+   "fecha": false
+  },
+  "Despesas Com Cartório": {
+   "texto": "Registro de ata em cartório",
+   "fecha": false
+  },
+  "Despesas Com Correios": {
+   "texto": "Envio de correspondência",
+   "fecha": false
+  },
+  "Água-Esgoto": {
+   "texto": "Conta de água e esgoto do condomínio ({n} meses)",
+   "fecha": false
+  },
+  "Gás": {
+   "texto": "Conta de gás ({n} meses), inclui válvula adaptadora R$ 49,99",
+   "fecha": false
+  },
+  "Energia": {
+   "texto": "Contas de luz das áreas comuns: clube, torres A a E, garagem, playground, administração, churrasqueira, estética e bar ({n} meses)",
+   "fecha": false
+  },
+  "Telefone": {
+   "texto": "Linha telefônica ({n} meses)",
+   "fecha": false
+  },
+  "Contrato de Atividades Esportivas": {
+   "texto": "Contrato das atividades esportivas oferecidas aos moradores ({n} meses)",
+   "fecha": false
+  },
+  "Contrato Manutenção Piscina": {
+   "texto": "Locação dos equipamentos geradores de cloro da piscina ({n} pagamentos)",
+   "fecha": false
+  },
+  "Contrato Manutenção Elevador": {
+   "texto": "Manutenção preventiva mensal dos elevadores ({n} meses)",
+   "fecha": false
+  },
+  "Contrato Manutenção Segurança Eletrônica": {
+   "texto": "Manutenção mensal do sistema de segurança eletrônica ({n} meses)",
+   "fecha": false
+  },
+  "Contrato Cx. de Gordura - Fossa e Esgoto": {
+   "texto": "Limpeza de caixas de gordura, fossa e esgoto ({n} parcelas)",
+   "fecha": false
+  },
+  "Contrato Manutenção Jardinagem": {
+   "texto": "Jardinagem mensal ({n} meses), inclui areia São João R$ 840,00 em dez/25",
+   "fecha": false
+  },
+  "Contrato Manutenção Bomba de Água": {
+   "texto": "Manutenção das bombas d'água ({n} parcelas)",
+   "fecha": false
+  },
+  "Contrato Manutenção Elétrica": {
+   "texto": "Manutenção elétrica mensal, paga de ago/25 a jan/26 ({n} meses)",
+   "fecha": false
+  },
+  "Contrato Manutenção Academia": {
+   "texto": "Manutenção dos aparelhos da academia ({n} meses)",
+   "fecha": false
+  },
+  "Material de Limpeza": {
+   "texto": "42 compras no período: detergente, saco de lixo, cloro, alvejante, álcool, multiuso, desinfetantes (Altex e Detex), sabonete, papel toalha, papel higiênico, panos de limpeza e microfibra, palha de aço, esponja, rodo, luvas, aromatizante, dispenser de papel e lixeira com pedal",
+   "fecha": false
+  },
+  "Material para Elevador": {
+   "texto": "Placa e inversor do elevador (abr/26)",
+   "fecha": false
+  },
+  "Material de Segurança Eletrônica": {
+   "texto": "Baterias estacionárias e acionadores R$ 5.555,44 · câmeras de TV, cabos ópticos e conectores R$ 4.678,23 · fechaduras, acionadores e fontes R$ 3.434,68 · central de portão R$ 1.613,10 · câmera, controle de acesso e extensor R$ 1.484,22 · cabo Landutti R$ 1.099,00 · botoeira e fechadura R$ 795,80 · câmera, suporte e leitor R$ 603,09 · HD para os DVRs R$ 473,46 · sensor infravermelho R$ 326,80",
+   "fecha": true
+  },
+  "Material de Construção-Ferramentas": {
+   "texto": "24 compras: porta de vidro e ferragem R$ 2.490,00 · mola com eixo R$ 1.700,00 · parafusadeira · placa e motor da churrasqueira · torneiras, sifões, kits de reparo de caixa acoplada e válvula de lavatório · assento sanitário, disjuntor e tomadas · canaletas, cabos e cordão paralelo · mangueira e adaptadores de gás · cadeados, parafusos, rejunte e veda rosca · trena, disco de corte, lixa, serrote e serra copo · sonda passa fio, sensor de presença, roda de carrinho e colher de pedreiro",
+   "fecha": false
+  },
+  "Material Área de Lazer": {
+   "texto": "TV para o salão de festas R$ 2.390,00 · bancos R$ 2.022,00 · cadeiras e mesas da piscina R$ 2.016,98 · cadeiras R$ 1.438,70 · tênis de mesa para o salão de jogos e rede de futebol da quadra R$ 859,80",
+   "fecha": true
+  },
+  "Material Elétrico": {
+   "texto": "Retirada das luminárias e instalação de nova iluminação R$ 9.574,00 · refletores R$ 2.922,98 · refletores e sensores de presença R$ 2.024,00 · lâmpadas, fita isolante e abraçadeiras R$ 1.357,07 · material elétrico diverso R$ 823,55 · lâmpadas R$ 572,50 · painel LED R$ 239,90 · fio paralelo, plugue e conector R$ 232,00 · cabos R$ 188,08 · painel plafon R$ 155,94",
+   "fecha": true
+  },
+  "Material de Pintura": {
+   "texto": "10 compras: tintas, corantes, massa acrílica, massa e resina",
+   "fecha": false
+  },
+  "Materiais Natalinos": {
+   "texto": "Decoração de Natal: cascatas e cordões de LED, pisca-pisca, mangueira de LED e pilhas",
+   "fecha": false
+  },
+  "Materiais Obras-Melhorias": {
+   "texto": "Redes para o teto da quadra R$ 24.378,00 · kit play brinquedão R$ 23.000,00 · toldos R$ 7.430,00 · adesivo para piso, primer e outro R$ 7.000,00",
+   "fecha": true
+  },
+  "Material de Uso e Consumo Condomínio": {
+   "texto": "Trava do sistema de chaves R$ 1.407,90 · motor da churrasqueira R$ 714,00 · material de uso e consumo diverso R$ 695,48 · rodízios giratórios R$ 581,40 · filtro e refil R$ 450,00 · 2 rodas de 4 polegadas R$ 391,82 · livro de protocolo, fita e tinta R$ 363,90 · bico de lavadora Karcher R$ 120,00 · fita de empacotamento e caneta R$ 113,80 · tripé e banner R$ 85,23",
+   "fecha": true
+  },
+  "Material de Academia": {
+   "texto": "Inversor R$ 1.750,00 · par de travas para barra R$ 48,99",
+   "fecha": true
+  },
+  "Material de Extintor": {
+   "texto": "Válvulas, travas, sifões e manômetros para extintores",
+   "fecha": false
+  },
+  "Material Eletroeletrônico": {
+   "texto": "Aparelho celular",
+   "fecha": false
+  },
+  "Material Sistema de Incêndio": {
+   "texto": "Miolo de válvula, mangueira PVC e outros (3 parcelas)",
+   "fecha": false
+  },
+  "Material de Bomba de Água": {
+   "texto": "Boia R$ 671,00 · anel e cesto pré filtro R$ 363,85 · chave boia e gancho R$ 270,00",
+   "fecha": true
+  },
+  "Material de Piscina": {
+   "texto": "Hastes da cerca da piscina (2 compras de R$ 580,00)",
+   "fecha": false
+  },
+  "Material para Portão": {
+   "texto": "Ferragem para porta",
+   "fecha": false
+  },
+  "Material Comunicação Visual": {
+   "texto": "Pulseiras de identificação",
+   "fecha": false
+  },
+  "Material de Informática": {
+   "texto": "Memória para desktop R$ 469,90 · placa fonte R$ 350,00 · cartucho de toner R$ 225,00",
+   "fecha": true
+  },
+  "Material de Jardinagem": {
+   "texto": "Areia São João",
+   "fecha": false
+  },
+  "Obras-Melhorias": {
+   "texto": "Reforma das cestas de basquete, refletores, portas de alumínio e outros R$ 42.237,55 · quadra de esportes R$ 7.960,78 · brinquedoteca R$ 5.361,44",
+   "fecha": true
+  },
+  "Serviço Manutenção": {
+   "texto": "Serviços pagos com a verba do seguro R$ 19.519,20 · manutenção em 8 portas e troca de perfis R$ 3.469,77 · reforma de banco e troca de madeiras R$ 2.489,24 · 2 fogões industriais e 1 doméstico R$ 1.480,00 · retirada de grade avariada e ajuste da cremalheira do portão D R$ 931,00 · serralheria na grelha de água pluvial R$ 651,24 · troca de fechadura e chapa inox no fechamento da facial R$ 558,60 · troca de motor de ventilador R$ 285,00 · suporte do contentor de lixo R$ 284,20",
+   "fecha": true
+  },
+  "Serviço de Pintura": {
+   "texto": "Paredes, corrimãos e bicicletário R$ 5.942,70 · parquinho e pinturas da Copa do Mundo R$ 3.700,00 · pintura artística no piso R$ 3.500,00 · faixa de pedestre R$ 500,00",
+   "fecha": true
+  },
+  "Serviço no Sistema de Incêndio": {
+   "texto": "Manutenção do CO2 e teste de mangueiras R$ 8.574,35 · inspeção e teste dos sistemas R$ 6.707,51 · reparo da tubulação da Torre D R$ 2.663,37 · reparos nas bombas de incêndio R$ 2.243,71",
+   "fecha": true
+  },
+  "Serviço de Piscina": {
+   "texto": "Higienização das piscinas R$ 4.056,28 · bombas das piscinas infantil e adulto R$ 2.391,71 · reparos nas bombas e materiais R$ 1.367,26 · bomba danificada e vazamento R$ 748,37 · reparos hidráulicos R$ 714,05 · solda nos corrimãos R$ 313,60",
+   "fecha": true
+  },
+  "Seguro Condominial": {
+   "texto": "6 parcelas da apólice de 17/09/25 a 17/09/26 R$ 8.160,96 · parcela 1 de 6 lançada em set/26 R$ 1.360,81",
+   "fecha": true
+  },
+  "Serviço Elétrico": {
+   "texto": "Troca de 16 refletores das quadras R$ 3.500,00 · serviço elétrico R$ 1.173,38 · sensores de presença e lâmpadas R$ 800,00 · refletores da quadra e da entrada R$ 585,00 · troca de todos os potenciômetros R$ 192,96",
+   "fecha": true
+  },
+  "Elaboração de Projeto": {
+   "texto": "Projeto arquitetônico (parcela 1 de 3)",
+   "fecha": false
+  },
+  "Serviço em Portão": {
+   "texto": "Manutenção do motor R$ 1.681,88 · desempeno e suportes de roldanas R$ 656,60 · troca de 4 roldanas do portão de veículos R$ 568,40 · desempeno, solda e ajuste do portão de veículos R$ 372,40",
+   "fecha": true
+  },
+  "Serviço Manutenção de Caixa d água": {
+   "texto": "Limpeza das caixas d'água",
+   "fecha": false
+  },
+  "Serviço de Decoração Natalina": {
+   "texto": "Instalação, manutenção e retirada dos enfeites de Natal",
+   "fecha": false
+  },
+  "Serviço de Reparo de Elevador": {
+   "texto": "Reparo T 1942 em 2 parcelas",
+   "fecha": false
+  },
+  "Serviço Técnico": {
+   "texto": "Laudo da estrutura metálica do alambrado da quadra",
+   "fecha": false
+  },
+  "Serviço de Ar Condicionado": {
+   "texto": "Limpeza e troca de borrachas dos freezers R$ 1.475,00 · instalação de ar condicionado R$ 850,00 · higienização R$ 300,00",
+   "fecha": true
+  },
+  "Serviço de Reparo na bomba": {
+   "texto": "Reparos hidráulicos no sistema de bombas e materiais, 2 parcelas R$ 5.780,78 · bomba de drenagem e bombas das piscinas R$ 1.248,37 · troca do tê na saída das bombas de recalque R$ 726,22",
+   "fecha": true
+  },
+  "Serviço em Aparelho de Academia": {
+   "texto": "Serviço em aparelhos R$ 1.120,00 · cabo de aço da remada R$ 600,00 · soldas e reforços R$ 597,80 · prancha e sensor da esteira R$ 515,00 · torno e chaveta extensora R$ 150,00 · chaveta da cadeira R$ 140,00",
+   "fecha": true
+  },
+  "Serviço na Área de Lazer": {
+   "texto": "Melhorias na quadra R$ 1.004,85 · vidro mini boreal R$ 190,00",
+   "fecha": true
+  },
+  "Serviço de Desentupimento-Desobstrução": {
+   "texto": "Desentupimento R$ 745,52 · limpeza de dreno R$ 250,00",
+   "fecha": true
+  },
+  "Serviço de Chaveiro": {
+   "texto": "Cópias de chaves e trocas de miolo (7 serviços)",
+   "fecha": false
+  },
+  "Serviço de Segurança e Vigilância": {
+   "texto": "Central de comando",
+   "fecha": false
+  },
+  "Serviço de Informática- Internet": {
+   "texto": "Impressora R$ 294,00 · serviço de informática R$ 220,00 · manutenção do computador da portaria R$ 190,00 · upgrade de memória do PC servidor do leitor de placas R$ 180,00 · limpeza de 2 computadores R$ 100,00 · visita técnica ao computador do síndico R$ 100,00",
+   "fecha": true
+  },
+  "Serviço Rede de Gás": {
+   "texto": "Serviço na rede de gás R$ 218,83 · válvulas adaptadoras R$ 99,98 · vazamento no regulador de pressão R$ 69,23",
+   "fecha": true
+  },
+  "Serviço Estanqueidade": {
+   "texto": "Serviço de estanqueidade",
+   "fecha": false
+  },
+  "Serviço de Reparo": {
+   "texto": "Base de rodízio e solda no contentor de lixo",
+   "fecha": false
+  },
+  "Serviço Locação de Equipamentos": {
+   "texto": "Painel, piso metálico e outros",
+   "fecha": false
+  },
+  "Serviço Transportadora": {
+   "texto": "Frete",
+   "fecha": false
+  },
+  "Serviço de Frete": {
+   "texto": "Frete",
+   "fecha": false
+  },
+  "Serviço de Limpeza": {
+   "texto": "Serviço de limpeza",
+   "fecha": false
+  },
+  "Serviços Prestados": {
+   "texto": "Cadastro de receptoras",
+   "fecha": false
+  },
+  "Serviço Gráficos": {
+   "texto": "Impressões coloridas",
+   "fecha": false
+  },
+  "Energia Solar": {
+   "texto": "Financiamento do sistema de energia solar, NF 1471 Solar Livre ({n} meses, R$ 4.605,12 por parcela)",
+   "fecha": false
+  },
+  "Eletrodoméstico-Eletroeletrônico": {
+   "texto": "Freezer horizontal em 4 parcelas R$ 2.637,29 · split R$ 1.840,00 · 2 ventiladores R$ 796,00 · ventilador de parede R$ 609,23 · ventilador de parede e outro R$ 559,20",
+   "fecha": true
+  },
+  "Material de Decoração e Tapeçaria": {
+   "texto": "Tapetes capacho",
+   "fecha": false
+  },
+  "Alvará": {
+   "texto": "Alvará do Corpo de Bombeiros",
+   "fecha": false
+  },
+  "ART - Taxa Conselho Regional Engenharia": {
+   "texto": "Anotações de responsabilidade técnica no CREA, inclui elevadores R$ 285,59",
+   "fecha": false
+  }
+ },
+ "receitas_nomes": {
+  "Subscrição de Capital - Integralização de juros": "Integralização de juros (capital)",
+  "Multa por Descumprimento de Acordo": "Multa por descumprimento de acordo"
+ },
+ "receita_insight": "Taxa de condomínio responde por 48,3% da arrecadação. Água e gás rateados somam R$ 1.005.125,16."
+}

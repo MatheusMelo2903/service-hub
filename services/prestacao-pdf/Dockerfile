@@ -5,6 +5,8 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-impress \
     fonts-crosextra-carlito \
+    poppler-utils \
+    fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -14,6 +16,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 COPY vendor/ ./vendor/
+
+# Motor v13 (skill powerpoint-prestacao-contas): Poppins e Inter instaladas no
+# sistema para o PDF sair com as fontes do padrao aprovado.
+RUN mkdir -p /usr/share/fonts/truetype/prestacao \
+ && cp /app/vendor/skill_v13/assets/fonts/* /usr/share/fonts/truetype/prestacao/ \
+ && fc-cache -f
 
 ENV PORT=8000
 EXPOSE 8000
