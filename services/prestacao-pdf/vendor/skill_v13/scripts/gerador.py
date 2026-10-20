@@ -67,6 +67,14 @@ def brl_acc(v): return "(" + brl(abs(v)) + ")" if v < 0 else brl(v)
 def pct(v):  return f"{v:.1f}".replace(".", ",") + "%"
 def pct_sig(v): return ("+" if v >= 0 else "-") + f"{abs(v):.1f}".replace(".", ",") + "%"
 
+def var_caixa(D):
+    """Variação do caixa: em % quando o saldo inicial é positivo e o número faz
+    sentido; em reais quando o saldo inicial é zero, negativo ou muito pequeno
+    (condomínio novo), porque aí a porcentagem fica absurda ou divide por zero."""
+    if D['cresc_pct']:
+        return pct_sig(D['cresc'])
+    return ("+" if D['fim'] - D['ini'] >= 0 else "-") + brl(abs(D['fim'] - D['ini']))
+
 # ---------------- PRIMITIVAS ----------------
 prs = None; BLANK = None; CFG = None; PAG = [0]
 
@@ -160,7 +168,9 @@ def derivar(c):
     d['rec'] = c['receita_total']; d['desp'] = c['despesa_total']
     d['res'] = d['rec'] - d['desp']; d['ini'] = c['saldo_anterior']; d['fim'] = c['saldo_final']
     d['cob'] = d['rec']/d['desp']*100; d['marg'] = d['res']/d['rec']*100
-    d['cresc'] = (d['fim']-d['ini'])/d['ini']*100
+    # Sinal sempre o da variação (abs no divisor); sem saldo inicial, só o sinal.
+    d['cresc'] = (d['fim']-d['ini'])/abs(d['ini'])*100 if d['ini'] else (1.0 if d['fim'] >= d['ini'] else -1.0)
+    d['cresc_pct'] = d['ini'] > 0 and abs(d['cresc']) < 1000
     d['sup'] = [r-x for r, x in zip(c['receitas_mes'], c['despesas_mes'])]
     d['pos'] = sum(1 for v in d['sup'] if v > 0)
     T = 0.02
@@ -201,7 +211,7 @@ def s_capa():
     v = brl(D['fim'])
     text(s, x+0.38, y+0.6, w-0.55, 0.6, v, ajusta(v, w-0.55, 28), GS_AZUL_CLA, True)
     text(s, x+0.38, y+1.3, w-0.55, 0.3, "CRESCIMENTO NO PERÍODO", 12, TXT3, True)
-    text(s, x+0.38, y+1.62, w-0.55, 0.7, pct_sig(D['cresc']), 40, AMBER, True)
+    text(s, x+0.38, y+1.62, w-0.55, 0.7, var_caixa(D), ajusta(var_caixa(D), w-0.55, 40), AMBER, True)
     text(s, x+0.38, y+2.35, w-0.55, 0.35, f"de {brl0(D['ini'])} para {brl0(D['fim'])}", 13, TXT2)
 
 def s_visao(D):
@@ -222,12 +232,12 @@ def s_visao(D):
     rect(s, 0.5, y3, 12.33, hb, AMBER, True, 0.08)
     pw = 12.33/3
     pil = [("RECEITA COBRIU", pct(D['cob']), "da despesa"),
-           ("O CAIXA CRESCEU" if D['cresc'] >= 0 else "O CAIXA VARIOU", pct_sig(D['cresc']), "no período"),
+           ("O CAIXA CRESCEU" if D['cresc'] >= 0 else "O CAIXA VARIOU", var_caixa(D), "no período"),
            ("MESES POSITIVOS", f"{D['pos']} de {CFG['n_meses']}", "com superávit")]
     for i, (a, b, c) in enumerate(pil):
         x = 0.5 + i*pw
         text(s, x, y3+0.14, pw, 0.35, a, 14, DARKTXT, True, PP_ALIGN.CENTER)
-        text(s, x, y3+0.42, pw, 0.7, b, 36, DARKTXT, True, PP_ALIGN.CENTER)
+        text(s, x, y3+0.42, pw, 0.7, b, ajusta(b, pw - 0.3, 36), DARKTXT, True, PP_ALIGN.CENTER)
         if i < 2:
             ln = s.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x+pw), Inches(y3+0.2), Inches(x+pw), Inches(y3+hb-0.2))
             ln.line.color.rgb = DARKTXT; ln.line.width = Pt(1)
@@ -275,7 +285,7 @@ def s_patrimonio(D):
     x = 9.1; w = 3.73
     rect(s, x, 2.05, w, 1.85, AMBER, True, 0.08)
     text(s, x+0.3, 2.2, w-0.5, 0.35, "CRESCIMENTO NO PERÍODO" if D['cresc'] >= 0 else "VARIAÇÃO NO PERÍODO", 14, DARKTXT, True)
-    text(s, x+0.3, 2.6, w-0.5, 1.0, pct_sig(D['cresc']), 46, DARKTXT, True)
+    text(s, x+0.3, 2.6, w-0.5, 1.0, var_caixa(D), ajusta(var_caixa(D), w-0.5, 46), DARKTXT, True)
     for i, (l, v, c) in enumerate([(f"SALDO INICIAL ({CFG['meses_label'][0].upper()})", brl(D['ini']), BLUE),
                                    (f"SALDO FINAL ({CFG['meses_label'][-1].upper()})", brl(D['fim']), AMBER),
                                    ("SUPERÁVIT DO PERÍODO" if D['res'] >= 0 else "DÉFICIT DO PERÍODO", brl(abs(D['res'])), GREEN if D['res'] >= 0 else RED)]):
@@ -524,7 +534,7 @@ def s_encerramento(D):
     rect(s, x, 3.7, w, 1.55, AMBER, True, 0.08)
     text(s, x+0.35, 3.82, w-0.5, 0.3, "O CAIXA CRESCEU" if D['cresc'] >= 0 else "O CAIXA ENCERROU EM", 13, DARKTXT, True)
     # Valor em reais (caixa que caiu) não cabe a 46: ajusta à largura do cartão.
-    v_cx = pct_sig(D['cresc']) if D['cresc'] >= 0 else brl(D['fim'])
+    v_cx = var_caixa(D) if D['cresc'] >= 0 else brl(D['fim'])
     text(s, x+0.35, 4.15, w-0.5, 0.9, v_cx, ajusta(v_cx, w-0.5, 46), DARKTXT, True)
     rect(s, x, 5.4, w, 1.5, CARD, True, 0.08); rect(s, x, 5.4, 0.12, 1.5, BLUE)
     text(s, x+0.35, 5.52, w-0.5, 0.3, f"RECEITA COBRIU {pct(D['cob'])} DA DESPESA", 13, TXT3, True)
