@@ -2285,12 +2285,14 @@ function saveConfig() {
   // Preserva condId existente se o campo hidden estiver vazio.
   // O usuário pode ter selecionado o cond pelo Dashboard (que não atualiza
   // o hidden cfg-cond-id), e clicar em Salvar não deve apagar essa seleção.
-  const cfgCondIdRaw = (document.getElementById('cfg-cond-id').value || '').trim();
+  // T02: o condomínio vem do ativo do sistema (seletor único), não do campo escondido.
+  const condAtivoCfg = getCondominioAtivo();
+  const cfgCondIdRaw = condAtivoCfg ? String(condAtivoCfg.id_superlogica || condAtivoCfg.id || '') : '';
   state.config = {
     appToken: document.getElementById('cfg-app-token').value.trim(),
     accessToken: document.getElementById('cfg-access-token').value.trim(),
     condId: cfgCondIdRaw || state.config.condId || '',
-    condNome: state.config.condNome || '',
+    condNome: (condAtivoCfg && condAtivoCfg.nome) || state.config.condNome || '',
     // sanitizeProxyUrl garante https://, remove espaços e barra final antes de gravar
     proxy: sanitizeProxyUrl(document.getElementById('cfg-proxy').value),
   };

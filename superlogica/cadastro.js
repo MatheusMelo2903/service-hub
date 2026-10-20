@@ -93,7 +93,7 @@ async function buscarCadastro(cliente, idSuperlogica, { semCache = false } = {})
   if (!semCache && c && c.ate > Date.now()) return Object.assign({ cache: true }, c.dados);
   const [condResp, resp] = await Promise.all([
     cliente.get('condominios/get', { id, somenteCondominiosAtivos: 0 }),
-    cliente.get('sindicos/index', { idCondominio: id }).catch(() => []),
+    cliente.get('sindicos/index', { idCondominio: id }).catch(() => null),
   ]);
   const cond = Array.isArray(condResp) ? condResp[0] : condResp;
   if (!cond || String(cond.id_condominio_cond || '') !== id) {
@@ -101,7 +101,9 @@ async function buscarCadastro(cliente, idSuperlogica, { semCache = false } = {})
     e.status = 404;
     throw e;
   }
-  const dados = montarCadastro(id, cond, resp);
+  const dados = montarCadastro(id, cond, resp || []);
+  // Falha só na lista de síndicos: devolve sem guardar em cache e avisa no campo.
+  if (resp === null) return Object.assign({ cache: false, sindico_indisponivel: true }, dados);
   _cache.set(id, { ate: Date.now() + TTL_MS, dados });
   if (_cache.size > 500) _cache.delete(_cache.keys().next().value);
   return Object.assign({ cache: false }, dados);

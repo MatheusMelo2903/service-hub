@@ -42,7 +42,7 @@ function previsaoInit() {
 }
 
 /* Mantem o banner do painel sincronizado quando o usuario troca de condominio.
-   Nao recarrega o iframe de proposito, para nao perder trabalho em andamento. */
+   Troca de condominio (T02) recarrega o modulo, com aviso: o que estava nele era do anterior. */
 (function () {
   function atualizarBanner() {
     var painel = document.getElementById('panel-previsao');
@@ -58,6 +58,7 @@ function previsaoInit() {
     var iframe = document.getElementById('prev-iframe');
     if (!iframe || !previsaoIframeCarregado) return;
     previsaoIframeCarregado = false;
+    if (typeof toast === 'function') toast('Previsão orçamentária reiniciada: o condomínio mudou.', 'info');
     var painel = document.getElementById('panel-previsao');
     iframe.removeAttribute('src');
     if (painel && painel.classList.contains('active')) setTimeout(previsaoInit, 0);

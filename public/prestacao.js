@@ -80,6 +80,8 @@ window.addEventListener('condominioAtivo:changed', function(ev) {
 // Trocou de condomínio: os PDFs anexados eram do anterior.
 window.addEventListener('condominioAtivo:trocou', function() {
   if (prestacaoState.gerando || !prestacaoState.arquivos.length) return;
+  var livre = document.getElementById('prest-modo-livre');
+  if (livre && livre.style.display !== 'none') return; // fora do Superlógica: PDFs não dependem do ativo
   prestacaoState.arquivos = [];
   prestacaoRenderizarListaArquivos();
   prestacaoAtualizarBotao();
