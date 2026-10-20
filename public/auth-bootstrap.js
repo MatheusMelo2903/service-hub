@@ -138,6 +138,7 @@
         ok.disabled = false; ok.textContent = 'Salvar senha';
         return;
       }
+      try { sessionStorage.removeItem('authPrecisaSenha'); } catch (e) {}
       box.remove();
       if (typeof opts.aoConcluir === 'function') opts.aoConcluir();
     });
@@ -162,6 +163,10 @@
     const h = new URLSearchParams(location.hash.replace(/^#/, ''));
     if (!h.get('access_token') && !h.get('error_code') && !h.get('error')) return false;
     history.replaceState(null, '', location.pathname + location.search);
+    const tipo = h.get('type');
+    // So abre sessao vinda de link de email do proprio fluxo (convite ou recuperacao).
+    // Qualquer outro hash com token e ignorado e segue o login normal.
+    if (h.get('access_token') && tipo !== 'invite' && tipo !== 'recovery') return false;
     if (h.get('error_code') || h.get('error')) {
       showGate();
       const errEl = document.getElementById('auth-error');
@@ -177,15 +182,13 @@
       if (errEl) errEl.textContent = 'Não foi possível validar o link. Peça um novo em Esqueci minha senha.';
       return true;
     }
-    const tipo = h.get('type');
-    if (tipo === 'invite' || tipo === 'recovery') {
+    try { sessionStorage.setItem('authPrecisaSenha', tipo); } catch (e) {}
+    {
       mostrarCriarSenha({
         titulo: tipo === 'invite' ? 'Crie sua senha' : 'Criar nova senha',
         sub: data.session.user.email,
         aoConcluir: () => hideGate(data.session, data.session.user)
       });
-    } else {
-      hideGate(data.session, data.session.user);
     }
     return true;
   }
@@ -249,7 +252,16 @@
     const tratouLink = await tratarLinkDoEmail();
     if (!tratouLink) {
       const { data: { session } } = await window.__SUPABASE__.auth.getSession();
-      if (session && session.user) {
+      let pendente = null;
+      try { pendente = sessionStorage.getItem('authPrecisaSenha'); } catch (e) {}
+      if (session && session.user && pendente) {
+        // Recarregou no meio do convite ou da recuperacao: pede a senha de novo antes de entrar.
+        mostrarCriarSenha({
+          titulo: pendente === 'invite' ? 'Crie sua senha' : 'Criar nova senha',
+          sub: session.user.email,
+          aoConcluir: () => hideGate(session, session.user)
+        });
+      } else if (session && session.user) {
         hideGate(session, session.user);
       } else {
         showGate();

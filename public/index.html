@@ -7656,6 +7656,9 @@ async function salvarPermissoes() {
     }
     const body = { permissoes: _perfilEditando.permissoes };
     if (_perfilEditando.role === 'GERENTE') body.pode_convidar = !!_perfilEditando.pode_convidar;
+    if (body.pode_convidar && body.permissoes.configuracoes && !body.permissoes.configuracoes.visivel) {
+      body.permissoes.configuracoes = { visivel: true, acoes: ['ver'] };
+    }
     const resp = await apiAuthFetch(`/api/admin/usuarios/${encodeURIComponent(_perfilEditando.id)}/permissoes`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

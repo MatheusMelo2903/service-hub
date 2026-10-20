@@ -1684,25 +1684,60 @@ function requireGestaoUsuarios(req, res, next) {
   }).catch(() => res.status(500).json({ erro: 'falha_validar_permissao' }));
 }
 
-// Um GERENTE so pode conceder o que ele mesmo tem (modulo visivel e cada acao).
-function permissoesDentroDoLimite(novas, minhas) {
+// Um GERENTE so pode conceder o que ele mesmo tem (modulo visivel e cada acao). O que o
+// alvo ja tinha (liberado antes pelo GESTOR) pode ser mantido, so nao pode ser ampliado.
+function permissoesDentroDoLimite(novas, minhas, atuaisDoAlvo) {
+  const own = (o, k) => (o && Object.prototype.hasOwnProperty.call(o, k)) ? o[k] : null;
   for (const [modulo, p] of Object.entries(novas || {})) {
-    if (!p || typeof p !== 'object') continue;
-    const meu = (minhas || {})[modulo];
-    const tenho = !!(meu && meu.visivel);
-    if (p.visivel && !tenho) return false;
-    for (const a of (Array.isArray(p.acoes) ? p.acoes : [])) {
-      if (!tenho || !(meu.acoes || []).includes(a)) return false;
+    const meu = own(minhas, modulo);
+    const dele = own(atuaisDoAlvo, modulo);
+    const tenho = !!(meu && meu.visivel === true);
+    const eleTinha = !!(dele && dele.visivel === true);
+    if (p.visivel && !tenho && !eleTinha) return false;
+    for (const a of p.acoes) {
+      const euTenho = tenho && Array.isArray(meu.acoes) && meu.acoes.includes(a);
+      const eleTinhaAcao = eleTinha && Array.isArray(dele.acoes) && dele.acoes.includes(a);
+      if (!euTenho && !eleTinhaAcao) return false;
     }
   }
   return true;
 }
 
-// Origem confiavel pro link do convite (so https ou localhost), senao usa o Site URL do Supabase.
+// Origens fixas onde o Hub roda. O link do convite so aponta pra uma delas (nunca pra
+// uma origem qualquer vinda do header, que o cliente controla). Fora da lista, usa o
+// Site URL do Supabase e a landing encaminha pro /hub.
+const ORIGENS_HUB = [
+  'https://servicezone.com.br',
+  'https://www.servicezone.com.br',
+  'https://service-hub-production.up.railway.app',
+  'https://service-hub-dev.up.railway.app',
+  'http://localhost:3000'
+].concat(CORS_ORIGINS);
 function urlRetornoAuth(req) {
   const o = String(req.headers.origin || '');
-  if (/^https:\/\/[a-z0-9.-]+$/i.test(o) || /^http:\/\/localhost(:\d+)?$/i.test(o)) return o + '/hub';
-  return '';
+  return ORIGENS_HUB.includes(o) ? o + '/hub' : '';
+}
+
+// Id de usuario: UUID estrito, normalizado em minusculo (evita driblar a checagem de
+// "e voce mesmo" com maiuscula ou formato alternativo aceito pelo GoTrue).
+const RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function validarIdUsuario(req, res, next) {
+  const id = String(req.params.id || '').toLowerCase();
+  if (!RE_UUID.test(id)) return res.status(400).json({ erro: 'id_invalido' });
+  req.params.id = id;
+  next();
+}
+
+// Formato do blob de permissoes: objeto simples { modulo: { visivel: bool, acoes: [string] } }.
+function permissoesBemFormadas(p) {
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return false;
+  for (const [modulo, v] of Object.entries(p)) {
+    if (!/^[a-z_]{1,40}$/.test(modulo)) return false;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+    if (typeof v.visivel !== 'boolean') return false;
+    if (!Array.isArray(v.acoes) || !v.acoes.every((a) => typeof a === 'string' && /^[a-z_]{1,40}$/.test(a))) return false;
+  }
+  return true;
 }
 
 // Helper: chamada HTTP ao Supabase (GoTrue admin ou REST PostgREST) com service_role
@@ -1845,13 +1880,13 @@ app.get('/api/admin/usuarios',
 // PUT /api/admin/usuarios/:id/role
 // Body: { role: 'GERENTE'|'OPERACIONAL' }  (GESTOR não pode ser atribuído via API)
 app.put('/api/admin/usuarios/:id/role',
-  requireAuth, requireGestor, requireServiceRoleKey, express.json(),
+  requireAuth, requireGestor, requireServiceRoleKey, validarIdUsuario, express.json(),
   async (req, res) => {
     const { role } = req.body || {};
     if (!['GERENTE', 'OPERACIONAL'].includes(role)) {
       return res.status(400).json({ erro: 'role_invalido', detalhe: 'Use GERENTE ou OPERACIONAL. GESTOR só via banco.' });
     }
-    if (req.user && req.user.sub === req.params.id) {
+    if (req.user && String(req.user.sub).toLowerCase() === req.params.id) {
       return res.status(400).json({ erro: 'auto_alteracao_proibida', detalhe: 'Você não pode mudar o próprio cargo.' });
     }
     const alvo = await lerPerfil(req.params.id);
@@ -1867,47 +1902,64 @@ app.put('/api/admin/usuarios/:id/role',
 
 // PUT /api/admin/usuarios/:id/permissoes
 // Body: { permissoes: {...}, pode_convidar?: bool }
-// Trigger de banco ignora updates em GESTOR (sempre força permissões totais).
+// O GESTOR é recusado aqui (o trigger de banco só reage a mudança de role, não de permissões).
 app.put('/api/admin/usuarios/:id/permissoes',
-  requireAuth, requireServiceRoleKey, requireGestaoUsuarios, express.json(),
+  requireAuth, requireServiceRoleKey, requireGestaoUsuarios, validarIdUsuario, express.json(),
   async (req, res) => {
     const { permissoes, pode_convidar } = req.body || {};
-    if (!permissoes || typeof permissoes !== 'object') {
-      return res.status(400).json({ erro: 'permissoes_obrigatorias' });
+    if (!permissoesBemFormadas(permissoes)) {
+      return res.status(400).json({ erro: 'permissoes_invalidas', detalhe: 'Formato de permissões inválido.' });
     }
-    if (req.user && req.user.sub === req.params.id) {
+    if (req.user && String(req.user.sub).toLowerCase() === req.params.id) {
       return res.status(400).json({ erro: 'auto_alteracao_proibida', detalhe: 'Você não pode editar as próprias permissões.' });
     }
     const alvo = await lerPerfil(req.params.id);
     if (!alvo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
+    if (alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_imutavel', detalhe: 'As permissões do GESTOR não mudam pelo sistema.' });
     const patch = { permissoes };
+    // Filtro extra pro GERENTE: o PATCH so aplica se o alvo ainda for OPERACIONAL na hora
+    // da escrita (fecha a janela entre a leitura e a gravacao).
+    let filtroExtra = '';
     if (req.gestor.role === 'GERENTE') {
       if (alvo.role !== 'OPERACIONAL') return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Gerente só edita OPERACIONAL.' });
-      if (!permissoesDentroDoLimite(permissoes, req.gestor.permissoes)) {
+      if (!permissoesDentroDoLimite(permissoes, req.gestor.permissoes, alvo.permissoes)) {
         return res.status(403).json({ erro: 'acima_do_limite', detalhe: 'Você não pode liberar um acesso que você mesmo não tem.' });
       }
+      filtroExtra = '&role=eq.OPERACIONAL';
     } else if (typeof pode_convidar === 'boolean' && alvo.role === 'GERENTE') {
       patch.pode_convidar = pode_convidar;
+      // Quem gerencia usuarios precisa enxergar Configuracoes, onde fica a tela de usuarios.
+      if (pode_convidar) {
+        const cfg = permissoes.configuracoes || { visivel: false, acoes: [] };
+        patch.permissoes = Object.assign({}, permissoes, {
+          configuracoes: { visivel: true, acoes: Array.from(new Set(['ver'].concat(cfg.acoes || []))) }
+        });
+      }
     }
     const r = await supabaseAdminRequest('PATCH',
-      `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`,
+      `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}${filtroExtra}`,
       patch);
+    if (filtroExtra && r.status === 200 && Array.isArray(r.body) && r.body.length === 0) {
+      return res.status(409).json({ erro: 'cargo_mudou', detalhe: 'O cargo desse usuário mudou. Atualize a lista e tente de novo.' });
+    }
     res.status(r.status).json(r.body);
   });
 
 // DELETE /api/admin/usuarios/:id
 // Remove de auth.users — cascateia via FK pro profiles (ON DELETE CASCADE).
 app.delete('/api/admin/usuarios/:id',
-  requireAuth, requireServiceRoleKey, requireGestaoUsuarios,
+  requireAuth, requireServiceRoleKey, requireGestaoUsuarios, validarIdUsuario,
   async (req, res) => {
     const id = req.params.id;
     // Safety: bloqueia auto-delete de quem está fazendo a chamada
-    if (req.user?.sub === id) {
+    if (String(req.user?.sub || '').toLowerCase() === id) {
       return res.status(400).json({ erro: 'auto_delete_proibido' });
     }
+    // Fail closed: sem conseguir ler o perfil, nao apaga ninguem.
     const alvo = await lerPerfil(id);
-    if (alvo && alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_imutavel', detalhe: 'O GESTOR não pode ser removido pelo sistema.' });
-    if (req.gestor.role === 'GERENTE' && (!alvo || alvo.role !== 'OPERACIONAL')) {
+    if (!alvo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
+    if (alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_imutavel', detalhe: 'O GESTOR não pode ser removido pelo sistema.' });
+    if (req.gestor.role === 'GERENTE' && alvo.role !== 'OPERACIONAL') {
       return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Gerente só remove OPERACIONAL.' });
     }
     const r = await supabaseAdminRequest('DELETE', `/auth/v1/admin/users/${encodeURIComponent(id)}`);
