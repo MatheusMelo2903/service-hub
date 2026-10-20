@@ -1948,7 +1948,20 @@ function sanitizeProxyUrl(raw) {
  * Retorna string vazia se proxy nao estiver configurado.
  */
 function getProxy() {
+  // Conexao nativa: o proprio servidor do Hub fala com o Superlogica
+  if (slNativa()) return location.origin + '/api/superlogica';
   return sanitizeProxyUrl(state.config.proxy);
+}
+
+// true quando o servidor tem as chaves do Superlogica (informado por /api/config).
+// Nesse modo ninguem precisa colar token nem proxy: vale pra todo usuario logado.
+function slNativa() {
+  return !!(window.__APP_CONFIG__ && window.__APP_CONFIG__.superlogicaNativa);
+}
+
+// API pronta pra uso: conexao nativa, ou tokens colados no navegador (modo antigo)
+function apiPronta() {
+  return slNativa() || !!(state.config.appToken);
 }
 
 /**
@@ -2301,7 +2314,7 @@ function saveConfig() {
 }
 
 function updateStatusDot() {
-  const ok = state.config.appToken && state.config.accessToken;
+  const ok = slNativa() || (state.config.appToken && state.config.accessToken);
   const dot = document.getElementById('status-dot');
   const lbl = document.getElementById('status-label');
   const stat = document.getElementById('stat-api');
@@ -2319,7 +2332,7 @@ function updateStatusDot() {
 }
 
 async function testConnection() {
-  if (!state.config.appToken) { toast('Configure os tokens primeiro', 'err'); return; }
+  if (!apiPronta()) { toast('Configure os tokens primeiro', 'err'); return; }
   // Proxy é obrigatório para evitar CORS — usa getProxy() para checar valor já sanitizado
   if (!getProxy()) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
   toast('Testando conexao...', 'info');
@@ -4708,7 +4721,7 @@ function filterRows(el, filter) {
 // ENVIO PARA SUPERLÓGICA
 // ============================================================
 async function enviarDespesas() {
-  if (!state.config.appToken) { toast('Configure os tokens da API primeiro', 'err'); return; }
+  if (!apiPronta()) { toast('Configure os tokens da API primeiro', 'err'); return; }
   // Proxy obrigatório para não tentar chamada CORS direta — usa getProxy() para valor sanitizado
   if (!getProxy()) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
 
@@ -4790,7 +4803,7 @@ async function enviarDespesas() {
 }
 
 async function enviarUnidades() {
-  if (!state.config.appToken) { toast('Configure os tokens da API primeiro', 'err'); return; }
+  if (!apiPronta()) { toast('Configure os tokens da API primeiro', 'err'); return; }
   // Proxy obrigatório para não tentar chamada CORS direta a api.superlogica.net
   if (!getProxy()) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
   // Lê o condomínio ativo via getCondominioAtivo para garantir que id_superlogica (numérico)
@@ -4904,7 +4917,7 @@ async function enviarUnidades() {
   try {
     r2 = await fetch(urlPut, {
       method: 'PUT',
-      headers: { 'Content-Type':'application/x-www-form-urlencoded', 'app_token':state.config.appToken, 'access_token':state.config.accessToken },
+      headers: getHeaders(),
       body: p2.toString()
     });
   } catch (e) {
@@ -5101,6 +5114,10 @@ function buildUrl(path, params) {
 }
 
 function getHeaders(contentType = 'application/x-www-form-urlencoded') {
+  if (slNativa()) {
+    // Modo nativo: so o login do usuario; as chaves sao injetadas no servidor
+    return { 'Content-Type': contentType, 'Authorization': 'Bearer ' + (window.AUTH_TOKEN || '') };
+  }
   return {
     'Content-Type': contentType,
     'app_token': state.config.appToken || '',
@@ -5725,7 +5742,7 @@ async function searchCondominio(query) {
   clearTimeout(condSearchTimer);
   condSearchTimer = setTimeout(async () => {
     try {
-      if (!state.config.appToken) {
+      if (!apiPronta()) {
         dropdown.innerHTML = '<div class="cond-loading" style="color:var(--danger)">Configure os tokens primeiro</div>';
         return;
       }
@@ -7115,7 +7132,7 @@ function limparConsumo() {
 }
 
 async function enviarConsumo() {
-  if (!state.config.appToken) { toast('Configure os tokens da API primeiro', 'err'); return; }
+  if (!apiPronta()) { toast('Configure os tokens da API primeiro', 'err'); return; }
   // Proxy obrigatório — usa getProxy() para checar valor já sanitizado e com https://
   if (!getProxy()) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
   const validos = consumoItems.filter(c => c.unidade && c.leitura && c.leitura !== 'ilegível' && c.leitura !== 'erro');
@@ -7401,7 +7418,26 @@ function aplicarPermissoesSidebar() {
   }
 }
 
+// Conexao nativa com o Superlogica: esconde os campos de token e proxy (nao precisam
+// mais ser preenchidos) e mostra um aviso com o botao de testar a conexao.
+function aplicarModoSuperlogicaNativo() {
+  updateStatusDot();
+  if (!slNativa()) return;
+  const cardTokens = document.getElementById('cfg-app-token')?.closest('.card');
+  const cardProxy = document.getElementById('cfg-proxy')?.closest('.card');
+  if (cardTokens) cardTokens.style.display = 'none';
+  if (cardProxy) cardProxy.style.display = 'none';
+  if (cardTokens && !document.getElementById('card-sl-nativo')) {
+    cardTokens.insertAdjacentHTML('beforebegin', `<div class="card" id="card-sl-nativo">
+      <div class="card-header"><span class="card-title">Conexão com o Superlógica</span></div>
+      <div style="font-size:13px;color:var(--text);margin-bottom:12px">Configurada no servidor para todos os usuários. Não é preciso colar token nem proxy.</div>
+      <button class="btn btn-ghost" onclick="testConnection()">Testar conexão</button>
+    </div>`);
+  }
+}
+
 // Re-avalia visibilidade ao receber sessão e ao abrir o painel Config
+document.addEventListener('auth:ready', aplicarModoSuperlogicaNativo);
 document.addEventListener('auth:ready', carregarPermissoesUser);
 document.addEventListener('auth:ready', atualizarCardSeedDev);
 document.addEventListener('auth:ready', atualizarCardUsuariosAdmin);

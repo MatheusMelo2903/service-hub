@@ -29,6 +29,13 @@ const PRESTACAO_PDF_API_URL = process.env.PRESTACAO_PDF_API_URL || '';
 // Origens permitidas (separadas por vírgula). Se vazio, qualquer origem passa
 // (dev mode). Em prod, setar pra "https://service-hub-production.up.railway.app"
 const CORS_ORIGINS = (process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+// Conexao nativa com o Superlogica: as chaves ficam SO no servidor (ENV do Railway) e todo
+// usuario logado usa a rota /api/superlogica/*, sem colar token nem proxy no navegador.
+// Sem as duas ENVs, o Hub volta ao modo antigo (tokens e proxy por navegador).
+const SUPERLOGICA_APP_TOKEN = process.env.SUPERLOGICA_APP_TOKEN || '';
+const SUPERLOGICA_ACCESS_TOKEN = process.env.SUPERLOGICA_ACCESS_TOKEN || '';
+const SUPERLOGICA_API_BASE = (process.env.SUPERLOGICA_API_BASE || 'https://api.superlogica.net').replace(/\/+$/, '');
+function superlogicaNativa() { return !!(SUPERLOGICA_APP_TOKEN && SUPERLOGICA_ACCESS_TOKEN); }
 
 // ─────────────────────────────────────────────────────────────────────────
 // CORS — restringe quem pode chamar /api/*
@@ -50,7 +57,7 @@ app.use('/api', (req, res, next) => {
 // Implementação minimalista sem dependências externas. Map<ip, {count, resetAt}>.
 // Cleanup a cada 5min remove buckets expirados.
 // ─────────────────────────────────────────────────────────────────────────
-const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX || '60', 10);
+const RATE_LIMIT_MAX_GERAL = parseInt(process.env.RATE_LIMIT_MAX || '60', 10);
 const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10);
 const rateBuckets = new Map();
 
@@ -61,8 +68,12 @@ setInterval(() => {
   }
 }, 5 * 60 * 1000).unref();
 
+const RATE_LIMIT_SUPERLOGICA_MAX = parseInt(process.env.RATE_LIMIT_SUPERLOGICA_MAX || '600', 10);
+
 function rateLimit(req, res, next) {
-  const ip = req.ip || 'unknown';
+  const ehSuperlogica = req.path.startsWith('/superlogica/');
+  const ip = (req.ip || 'unknown') + (ehSuperlogica ? '|sl' : '');
+  const RATE_LIMIT_MAX = ehSuperlogica ? RATE_LIMIT_SUPERLOGICA_MAX : RATE_LIMIT_MAX_GERAL;
   const now = Date.now();
   let bucket = rateBuckets.get(ip);
   if (!bucket || bucket.resetAt < now) {
@@ -249,8 +260,55 @@ app.get('/api/config', (req, res) => {
     supabaseAnonKey: SUPABASE_ANON_KEY,
     // 'dev' habilita botão "Reset dados de teste" no frontend (visível só pra GESTOR).
     // Em prod, fica 'producao' e o botão não é renderizado.
-    ambiente: isSupabaseDev() ? 'dev' : 'producao'
+    ambiente: isSupabaseDev() ? 'dev' : 'producao',
+    // true quando as chaves do Superlogica estao no servidor (o valor nunca sai daqui)
+    superlogicaNativa: superlogicaNativa()
   });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// /api/superlogica/v2/condor/* — ponte autenticada com a API do Superlogica.
+// O navegador chama esta rota com o JWT do usuario; o servidor injeta app_token e
+// access_token das ENVs e repassa pra api.superlogica.net. O token nunca vai pro front.
+// Liberado pra GESTOR e pra quem tem pelo menos um modulo alem do Dashboard (perfil
+// lido do banco, cache curto pra nao pesar em importacao em lote).
+// ─────────────────────────────────────────────────────────────────────────
+const _cachePerfilSL = new Map(); // userId -> { ok, ate }
+async function podeUsarSuperlogica(userId) {
+  const c = _cachePerfilSL.get(userId);
+  if (c && c.ate > Date.now()) return c.ok;
+  const p = await lerPerfil(userId);
+  const ok = !!(p && (p.role === 'GESTOR' || Object.entries(p.permissoes || {}).some(([m, v]) => m !== 'dashboard' && v && v.visivel === true)));
+  _cachePerfilSL.set(userId, { ok, ate: Date.now() + 60 * 1000 });
+  return ok;
+}
+
+app.use('/api/superlogica', requireAuth, async (req, res) => {
+  if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'Chaves do Superlógica não configuradas no servidor.' });
+  if (!SUPABASE_SERVICE_ROLE_KEY) return res.status(503).json({ erro: 'service_role_nao_configurada' });
+  if (req.authMode !== 'internal') {
+    let ok = false;
+    try { ok = await podeUsarSuperlogica(req.user && req.user.sub); } catch (e) { ok = false; }
+    if (!ok) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso aos módulos do Superlógica.' });
+  }
+  // So repassa a API condor (nada de outros caminhos do host)
+  if (!/^\/v2\/condor\/[A-Za-z0-9_\/.-]*(\?.*)?$/.test(req.url) || req.url.includes('..')) {
+    return res.status(400).json({ erro: 'caminho_invalido' });
+  }
+  if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) return res.status(405).json({ erro: 'metodo_nao_permitido' });
+  const alvo = new URL(SUPERLOGICA_API_BASE + req.url);
+  const headers = { app_token: SUPERLOGICA_APP_TOKEN, access_token: SUPERLOGICA_ACCESS_TOKEN };
+  if (req.headers['content-type']) headers['content-type'] = req.headers['content-type'];
+  if (req.headers['content-length']) headers['content-length'] = req.headers['content-length'];
+  const pr = https.request({ hostname: alvo.hostname, path: alvo.pathname + alvo.search, method: req.method, headers, timeout: 120000 }, (r) => {
+    res.status(r.statusCode || 502);
+    if (r.headers['content-type']) res.setHeader('Content-Type', r.headers['content-type']);
+    r.pipe(res);
+  });
+  pr.on('timeout', () => { pr.destroy(); if (!res.headersSent) res.status(504).json({ erro: 'timeout_superlogica' }); });
+  pr.on('error', (e) => { if (!res.headersSent) res.status(502).json({ erro: 'falha_superlogica', detalhe: e.message }); });
+  req.on('aborted', () => pr.destroy());
+  if (req.method === 'GET' || req.method === 'DELETE') pr.end(); else req.pipe(pr);
 });
 
 // ─────────────────────────────────────────────────────────────────────────
