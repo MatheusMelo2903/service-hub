@@ -35,6 +35,7 @@ from .detector import detectar_tipo
 from .pipeline import converter_pdf, gerar_deck, orquestrar, orquestrar_multi_fonte
 from .prosa import ProsaDeterministica
 from . import v13
+from . import v13_superlogica
 
 _VERSAO = "1.0.0"
 
@@ -228,6 +229,27 @@ async def v13_extrair(
         raise HTTPException(status_code=500, detail={"erro": "extracao_falhou", "acao": "revisao_humana"})
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@app.post("/v13/de-superlogica")
+async def v13_de_superlogica(
+    payload: dict = Body(...),
+    _: None = Depends(verificar_secret),
+):
+    """Mesma saida do /v13/extrair, mas a partir dos dados puxados do Superlogica
+    pelo Hub (balancete mes a mes, saldo do caixa e despesas liquidadas)."""
+    inicio_t = time.perf_counter()
+    try:
+        r = await run_in_threadpool(v13_superlogica.de_superlogica, payload)
+    except v13_superlogica.ErroDados as e:
+        _log("v13_superlogica_recusou", motivo=str(e)[:200])
+        raise _422(str(e))
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail={"erro": "extracao_falhou", "acao": "revisao_humana"})
+    _log("v13_superlogica_ok", rubricas=sum(len(c["rubricas"]) for c in r["dados"]["categorias"]),
+         meses=len(r["dados"]["periodo"]), duracao_ms=int((time.perf_counter() - inicio_t) * 1000))
+    return r
 
 
 @app.post("/v13/montar")

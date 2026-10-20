@@ -2219,7 +2219,70 @@ app.post('/api/prestacao/gerar-deck', requireAuth, (req, res) => {
 
 // Prestação v13 (mesmo motor da skill, curadoria de texto pelo Claude, job + polling).
 // Rotas e explicação completa em prestacao-v13.js.
-require('./prestacao-v13')(app, { requireAuth, ANTHROPIC_KEY, INTERNAL_API_SECRET, PRESTACAO_PDF_API_URL });
+require('./prestacao-v13')(app, {
+  requireAuth, ANTHROPIC_KEY, INTERNAL_API_SECRET, PRESTACAO_PDF_API_URL,
+  superlogica: superlogicaNativa()
+    ? { base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }
+    : null,
+  podeUsarSuperlogica: SUPABASE_SERVICE_ROLE_KEY ? podeUsarSuperlogica : null,
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Condomínios do Superlógica no Hub: cria os que faltam (nunca altera nem apaga
+// os que já existem). Roda ao subir o servidor, todo dia às 6h (Brasília) e pelo
+// botão "Atualizar agora" em Configurações. Detalhes em superlogica-dados.js.
+// ─────────────────────────────────────────────────────────────────────────
+const slDados = require('./superlogica-dados');
+const _syncCond = { rodando: false, ultima: null };
+async function sincronizarCondominiosSL(origem) {
+  if (!superlogicaNativa() || !SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) return { ok: false, motivo: 'nao_configurado' };
+  if (_syncCond.rodando) return { ok: false, motivo: 'em_andamento' };
+  _syncCond.rodando = true;
+  try {
+    const cli = slDados.criarCliente({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN });
+    const r = await slDados.sincronizarCondominios(cli, supabaseAdminRequest);
+    _syncCond.ultima = { em: new Date().toISOString(), origem, criados: r.criados.length, total: r.total_superlogica };
+    console.log('[condominios-sync] ' + origem + ' total=' + r.total_superlogica + ' criados=' + r.criados.length
+      + (r.sem_codigo.length ? ' sem_codigo=' + r.sem_codigo.map((x) => x.id_superlogica).join(',') : ''));
+    return Object.assign({ ok: true }, r);
+  } catch (e) {
+    console.warn('[condominios-sync] ' + origem + ' falhou: ' + (e && e.message));
+    return { ok: false, motivo: 'falha' };
+  } finally {
+    _syncCond.rodando = false;
+  }
+}
+
+app.post('/api/condominios/sincronizar-superlogica', requireAuth, async (req, res) => {
+  if (req.authMode !== 'internal') {
+    let ok = false;
+    try { ok = await podeUsarSuperlogica(req.user && req.user.sub); } catch (e) { ok = false; }
+    if (!ok) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso aos dados do Superlógica.' });
+  }
+  const r = await sincronizarCondominiosSL('botao');
+  if (r.ok) return res.json(r);
+  if (r.motivo === 'em_andamento') return res.status(409).json({ erro: 'em_andamento', detalhe: 'A atualização já está rodando. Aguarde alguns segundos.' });
+  if (r.motivo === 'nao_configurado') return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
+  return res.status(502).json({ erro: 'falha_sincronizar', detalhe: 'O Superlógica não respondeu. Tente de novo em alguns minutos.' });
+});
+
+app.get('/api/condominios/sincronizar-superlogica', requireAuth, (req, res) => {
+  res.set('Cache-Control', 'no-store').json({ ultima: _syncCond.ultima, rodando: _syncCond.rodando });
+});
+
+// Agenda: 1 minuto depois de subir e depois todo dia às 6h de Brasília (9h UTC).
+function _agendarSyncDiario() {
+  const agora = new Date();
+  const alvo = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate(), 9, 0, 0));
+  if (alvo <= agora) alvo.setUTCDate(alvo.getUTCDate() + 1);
+  const t = setTimeout(() => { sincronizarCondominiosSL('diaria').finally(_agendarSyncDiario); }, alvo - agora);
+  if (typeof t.unref === 'function') t.unref();
+}
+if (superlogicaNativa() && SUPABASE_SERVICE_ROLE_KEY && process.env.SYNC_CONDOMINIOS !== 'off') {
+  const t0 = setTimeout(() => sincronizarCondominiosSL('inicio'), 60 * 1000);
+  if (typeof t0.unref === 'function') t0.unref();
+  _agendarSyncDiario();
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Módulo: Previsão Orçamentária — Persistência Supabase (Fase 3)

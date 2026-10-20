@@ -39,6 +39,7 @@ async function prestacaoInit() {
     // prestacaoState.condominios já foi inicializado como [] antes do try.
     toast('Não foi possível carregar a lista de condomínios. Tente recarregar a página.', 'err');
   }
+  if (!prestacaoState.condId && window.condominioAtivo) prestacaoUsarCondominioAtivo(window.condominioAtivo);
   var hoje = new Date();
   var iso = hoje.getFullYear() + '-' +
             String(hoje.getMonth() + 1).padStart(2, '0') + '-' +
@@ -106,8 +107,25 @@ function prestacaoSelecionarCondominio(id, nome) {
   if (dd) { dd.classList.remove('open'); dd.innerHTML = ''; }
   prestacaoState.condId = id;
   prestacaoState.condNome = nome;
+  var achado = (prestacaoState.condominios || []).find(function(c) { return c && String(c.id) === String(id); });
+  prestacaoState.condIdSuperlogica = achado && achado.id_superlogica ? achado.id_superlogica : null;
   prestacaoAtualizarBotao();
 }
+
+// Usa o condomínio escolhido no seletor do topo (vale ao abrir a aba e a cada troca).
+function prestacaoUsarCondominioAtivo(cond) {
+  if (!cond || !cond.id || !cond.nome || prestacaoState.gerando) return;
+  var busca = document.getElementById('prest-modo-busca');
+  if (busca && busca.style.display === 'none') return; // modo livre: não mexe
+  prestacaoSelecionarCondominio(cond.id, cond.nome);
+  if (!prestacaoState.condIdSuperlogica && cond.id_superlogica) {
+    prestacaoState.condIdSuperlogica = cond.id_superlogica;
+    prestacaoAtualizarBotao();
+  }
+}
+window.addEventListener('condominioAtivo:changed', function(ev) {
+  if (ev && ev.detail) prestacaoUsarCondominioAtivo(ev.detail);
+});
 
 // Troca a UI do Card 1 para o modo livre (condominio sem cadastro).
 function prestacaoUsarOutro() {
@@ -116,6 +134,7 @@ function prestacaoUsarOutro() {
   document.getElementById('prest-modo-busca').style.display = 'none';
   document.getElementById('prest-modo-livre').style.display = 'block';
   prestacaoState.condId = null;
+  prestacaoState.condIdSuperlogica = null;
   prestacaoState.condNome = '';
   var nomeLivre = document.getElementById('prest-cond-nome-livre');
   if (nomeLivre) { nomeLivre.value = ''; nomeLivre.focus(); }
@@ -197,12 +216,22 @@ function prestacaoAtualizarBotao() {
   var temSeletor = !!document.getElementById('prest-mes-inicio');
   var periodoOk = !temSeletor || !!(prestacaoState.mesInicio && prestacaoState.mesFim && prestacaoState.mesInicio <= prestacaoState.mesFim);
   btn.disabled = !!prestacaoState.gerando || !(temCond && temArquivo && periodoOk);
+  // Puxar do Superlógica: condomínio cadastrado com o código do Superlógica e período válido.
+  var btnSL = document.getElementById('prest-btn-superlogica');
+  if (btnSL) btnSL.disabled = !!prestacaoState.gerando || !(prestacaoState.condIdSuperlogica && periodoOk);
+  var dica = document.getElementById('prest-sl-dica');
+  if (dica) {
+    dica.textContent = prestacaoState.condIdSuperlogica ? ''
+      : (prestacaoState.condId ? 'Esse condomínio está sem o código do Superlógica no cadastro. Use os PDFs abaixo.'
+                               : 'Escolha um condomínio cadastrado para puxar os dados do Superlógica.');
+  }
 }
 
 // Limpa todos os campos do painel e reseta state (preserva o cache de condominios).
 function prestacaoLimparTudo() {
   prestacaoState.arquivos = [];
   prestacaoState.condId = null;
+  prestacaoState.condIdSuperlogica = null;
   prestacaoState.condNome = '';
   prestacaoState.periodo = '';
   prestacaoState.dataApresentacao = '';
@@ -1907,7 +1936,7 @@ function prestacaoAtualizarPeriodo() {
     if (info) {
       info.style.color = 'var(--muted)';
       info.textContent = n + (n === 1 ? ' mês' : ' meses') + ': ' + prestacaoState.periodo
-        + (n > 12 ? '. Acima de 12 meses: envie um W011A para cada trecho de até 12 meses.' : '');
+        + (n > 24 ? '. Puxando do Superlógica, o limite é de 24 meses.' : '');
     }
   } else if (info) {
     info.style.color = 'var(--danger, #e5484d)';
@@ -1991,6 +2020,26 @@ async function prestacaoExecutarV13(btn) {
     throw new Error(c.detalhe || ('Não foi possível iniciar a geração (' + resp.status + ').'));
   }
   var jobId = (await resp.json()).jobId;
+  var r = await prestacaoAcompanharJob(jobId, btn);
+  if (r.status === 'error') {
+    if (r.erro === 'servico_desatualizado') return 'caminho_antigo';
+    throw new Error(r.detalhe || 'Não foi possível gerar a prestação.');
+  }
+  var baixados = prestacaoBaixarResultado(r);
+  (r.avisos || []).forEach(function(a) { toast(a, 'warn'); });
+  if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
+  // Tira só os relatórios usados nesta geração (algum anexado durante a espera fica).
+  prestacaoState.arquivos = (prestacaoState.arquivos || []).filter(function(f) { return arquivos.indexOf(f) < 0; });
+  prestacaoRenderizarListaArquivos();
+  var fileInput = document.getElementById('prest-file-input');
+  if (fileInput) fileInput.value = '';
+  toast('Prestação gerada (' + (r.modo === 'detalhado' ? 'detalhada item a item' : 'modo simples, sem relatório detalhado')
+    + '): ' + baixados.join(' e ') + ' baixado' + (baixados.length > 1 ? 's' : '') + '.', 'ok');
+  return 'fim';
+}
+
+// Acompanha a geração no servidor até terminar. Devolve o status final (done ou error).
+async function prestacaoAcompanharJob(jobId, btn) {
   var t0 = Date.now(), falhasSeguidas = 0, r = null;
   while (true) {
     await new Promise(function(ok) { setTimeout(ok, 4000); });
@@ -2010,22 +2059,57 @@ async function prestacaoExecutarV13(btn) {
     var s = r.esperando_s || 0;
     btn.textContent = 'Gerando: ' + (r.etapa || 'processando') + ' (' + Math.floor(s / 60) + 'min ' + String(s % 60).padStart(2, '0') + 's)';
   }
+  return r;
+}
 
-  if (r.status === 'error') {
-    if (r.erro === 'servico_desatualizado') return 'caminho_antigo';
-    throw new Error(r.detalhe || 'Não foi possível gerar a prestação.');
+// Puxar os dados do Superlógica: gera a prestação do condomínio e do período
+// escolhidos sem anexar nenhum relatório.
+async function prestacaoGerarSuperlogica() {
+  var btn = document.getElementById('prest-btn-superlogica');
+  if (!btn || prestacaoState.gerando) return;
+  var textoOriginal = btn.textContent;
+  prestacaoState.gerando = true;
+  btn.disabled = true;
+  prestacaoAtualizarBotao();
+  btn.textContent = 'Puxando os dados do Superlógica...';
+  try {
+    var ini = prestacaoState.mesInicio, fim = prestacaoState.mesFim;
+    if (!ini || !fim || ini > fim) throw new Error('Confira o mês inicial e o mês final.');
+    if (!prestacaoState.condIdSuperlogica) throw new Error('Escolha um condomínio cadastrado.');
+    var resp = await apiAuthFetch('/api/prestacao/v13/superlogica', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id_superlogica: prestacaoState.condIdSuperlogica,
+        inicio: ini, fim: fim,
+        nome: (prestacaoState.condNome || '').trim(),
+        obs: (prestacaoState.observacoes || '').trim().slice(0, 1000),
+      }),
+    });
+    if (resp.status === 404) throw new Error('Este ambiente ainda não tem essa função. Use os PDFs por enquanto.');
+    if (!resp.ok) {
+      var c = await resp.json().catch(function() { return {}; });
+      throw new Error(c.detalhe || ('Não foi possível iniciar a geração (' + resp.status + ').'));
+    }
+    var jobId = (await resp.json()).jobId;
+    var r = await prestacaoAcompanharJob(jobId, btn);
+    if (r.status === 'error') {
+      if (r.erro === 'servico_desatualizado') throw new Error('O serviço de geração deste ambiente ainda está na versão antiga.');
+      throw new Error(r.detalhe || 'Não foi possível gerar a prestação.');
+    }
+    var baixados = prestacaoBaixarResultado(r);
+    (r.avisos || []).forEach(function(a) { toast(a, 'warn'); });
+    if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
+    toast('Prestação gerada com os dados do Superlógica (' + (r.duracao_s || 0) + 's): '
+      + baixados.join(' e ') + ' baixado' + (baixados.length > 1 ? 's' : '') + '.', 'ok');
+  } catch (err) {
+    console.error('[prestacao superlogica]', err && err.message);
+    toast(err && err.message ? err.message : String(err), 'err');
+  } finally {
+    prestacaoState.gerando = false;
+    btn.textContent = textoOriginal || 'Puxar os dados do Superlógica';
+    prestacaoAtualizarBotao();
   }
-  var baixados = prestacaoBaixarResultado(r);
-  (r.avisos || []).forEach(function(a) { toast(a, 'warn'); });
-  if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
-  // Tira só os relatórios usados nesta geração (algum anexado durante a espera fica).
-  prestacaoState.arquivos = (prestacaoState.arquivos || []).filter(function(f) { return arquivos.indexOf(f) < 0; });
-  prestacaoRenderizarListaArquivos();
-  var fileInput = document.getElementById('prest-file-input');
-  if (fileInput) fileInput.value = '';
-  toast('Prestação gerada (' + (r.modo === 'detalhado' ? 'detalhada item a item' : 'modo simples, sem relatório detalhado')
-    + '): ' + baixados.join(' e ') + ' baixado' + (baixados.length > 1 ? 's' : '') + '.', 'ok');
-  return 'fim';
 }
 
 async function prestacaoGerarServico() {

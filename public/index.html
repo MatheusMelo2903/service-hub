@@ -1428,7 +1428,7 @@
 
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Arquivos de referência</span>
+          <span class="card-title">Relatórios em PDF (opcional)</span>
         </div>
 
         <div class="dropzone" id="prest-dropzone"
@@ -1446,8 +1446,8 @@
         <div id="prest-files-list" style="margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
 
         <div style="margin-top:8px;font-size:11px;color:var(--muted);font-family:var(--mono)">
-          W011A obrigatório (é dele que sai o mês a mês). Período maior que 12 meses: envie mais de um W011A.<br>
-          Com o W015A do período exato ou o W011A detalhado, cada despesa sai aberta item a item.
+          Só para condomínio fora do Superlógica ou quando quiser usar relatórios próprios. Com o condomínio cadastrado, use "Puxar os dados do Superlógica".<br>
+          W011A obrigatório (é dele que sai o mês a mês). Com o W015A do período exato ou o W011A detalhado, cada despesa sai aberta item a item.
         </div>
       </div>
 
@@ -1473,12 +1473,16 @@
           </div>
         </div>
 
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <button id="prest-btn-gerar" class="btn btn-primary" onclick="prestacaoGerarV13()" disabled>
-            📊 Gerar prestação de contas
+        <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <button id="prest-btn-superlogica" class="btn btn-primary" onclick="prestacaoGerarSuperlogica()" disabled>
+            ⇣ Puxar os dados do Superlógica
+          </button>
+          <button id="prest-btn-gerar" class="btn btn-ghost" onclick="prestacaoGerarV13()" disabled>
+            📊 Gerar com os PDFs anexados
           </button>
           <button class="btn btn-ghost" onclick="prestacaoLimparTudo()">Limpar tudo</button>
         </div>
+        <div id="prest-sl-dica" style="margin-top:8px;font-size:11px;color:var(--muted);font-family:var(--mono)"></div>
       </div>
 
     </div>
@@ -7434,7 +7438,44 @@ function aplicarModoSuperlogicaNativo() {
       <div class="card-header"><span class="card-title">Conexão com o Superlógica</span></div>
       <div style="font-size:13px;color:var(--text);margin-bottom:12px">Configurada no servidor para todos os usuários. Não é preciso colar token nem proxy.</div>
       <button class="btn btn-ghost" onclick="testConnection()">Testar conexão</button>
+      <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+        <div style="font-size:13px;color:var(--text);margin-bottom:4px">Condomínios do Superlógica</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Os condomínios novos entram sozinhos todo dia às 6h. Os que já estão no Hub não são alterados.</div>
+        <button class="btn btn-ghost" id="btn-sync-condominios" onclick="atualizarCondominiosSuperlogica()">Atualizar agora</button>
+        <span id="sync-condominios-info" style="margin-left:10px;font-size:12px;color:var(--muted)"></span>
+      </div>
     </div>`);
+  }
+}
+
+// Busca no Superlógica os condomínios que ainda não estão no Hub e cria cada um.
+async function atualizarCondominiosSuperlogica() {
+  const btn = document.getElementById('btn-sync-condominios');
+  const info = document.getElementById('sync-condominios-info');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Atualizando...';
+  try {
+    const resp = await apiAuthFetch('/api/condominios/sincronizar-superlogica', { method: 'POST' });
+    const r = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(r.detalhe || ('Falha ao atualizar (' + resp.status + ').'));
+    const n = (r.criados || []).length;
+    const sc = (r.sem_codigo || []).map((x) => x.nome_hub + ' (código ' + x.id_superlogica + ')');
+    if (info) info.textContent = r.total_superlogica + ' no Superlógica, ' + (n ? n + ' novo' + (n > 1 ? 's' : '') + ' no Hub.' : 'nenhum novo.')
+      + (sc.length ? ' Sem código no cadastro, preencher: ' + sc.join(', ') + '.' : '');
+    toast(n ? (n + ' condomínio' + (n > 1 ? 's' : '') + ' novo' + (n > 1 ? 's' : '') + ' no Hub.') : 'Tudo em dia: nenhum condomínio novo.', 'ok');
+    if (n) {
+      const sel = document.getElementById('navbar-cond-select');
+      if (sel) sel.querySelectorAll('option').forEach((o) => { if (o.value) o.remove(); });
+      if (typeof navbarCondInit === 'function') navbarCondInit();
+      if (typeof prestacaoState !== 'undefined') { prestacaoState.condominios = null; if (typeof prestacaoInit === 'function') prestacaoInit(); }
+    }
+  } catch (e) {
+    toast(e.message || String(e), 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
   }
 }
 

@@ -13,6 +13,8 @@
 //
 // Rotas:
 //   POST /api/prestacao/v13/iniciar?nome=&obs=   multipart (arquivos, inicio, fim) -> 202 { jobId }
+//   POST /api/prestacao/v13/superlogica          JSON { id_superlogica, inicio, fim, nome, obs } -> 202 { jobId }
+//        (sem PDF: o servidor puxa os dados do Superlógica; ver superlogica-dados.js)
 //   GET  /api/prestacao/v13/status/:jobId        processing | done (arquivos) | error (detalhe)
 //
 // Regras de estilo da composição: skills-server/prestacao-v13 (cópia das
@@ -24,6 +26,8 @@ const path = require('path');
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
+const express = require('express');
+const { criarCliente, puxarDadosPrestacao, MAX_MESES } = require('./superlogica-dados');
 
 const MODELO = process.env.PRESTACAO_MODELO || 'claude-sonnet-4-6';
 const TAMANHO_MAX = 50 * 1024 * 1024;
@@ -398,8 +402,13 @@ async function curarComClaude(apiKey, dados, observacoes) {
 }
 
 // ── Registro das rotas ───────────────────────────────────────────────────
-module.exports = function registrarPrestacaoV13(app, { requireAuth, ANTHROPIC_KEY, INTERNAL_API_SECRET, PRESTACAO_PDF_API_URL }) {
+module.exports = function registrarPrestacaoV13(app, {
+  requireAuth, ANTHROPIC_KEY, INTERNAL_API_SECRET, PRESTACAO_PDF_API_URL,
+  superlogica = null,            // { base, appToken, accessToken } quando a conexão nativa está ligada
+  podeUsarSuperlogica = null,    // async (userId) -> bool
+}) {
   const jobs = new Map(); // jobId -> { dono, status, etapa, criadoEm, payload?, erro? }
+  const clienteSL = superlogica && superlogica.appToken && superlogica.accessToken ? criarCliente(superlogica) : null;
 
   const donoDe = (req) => (req.user && req.user.sub) || (req.authMode === 'internal' ? 'internal' : 'anon');
 
@@ -408,7 +417,7 @@ module.exports = function registrarPrestacaoV13(app, { requireAuth, ANTHROPIC_KE
     if (typeof t.unref === 'function') t.unref();
   }
 
-  async function executar(jobId, { corpo, contentType, nome, observacoes }) {
+  async function executar(jobId, { corpo, contentType, nome, observacoes, fonteSL }) {
     const job = jobs.get(jobId);
     const etapa = (e) => { if (job) job.etapa = e; };
     const falhar = (detalhe, erro) => {
@@ -418,13 +427,35 @@ module.exports = function registrarPrestacaoV13(app, { requireAuth, ANTHROPIC_KE
     const t0 = Date.now();
     const base = PRESTACAO_PDF_API_URL.replace(/\/+$/, '');
 
-    // 1. Extrair e cruzar os relatórios (código da skill).
-    etapa('lendo os relatórios');
-    const ext = await requisitar(base + '/v13/extrair', {
-      headers: { 'X-Internal-Secret': INTERNAL_API_SECRET, 'Content-Type': contentType },
-      corpo,
-      timeoutMs: 240000,
-    });
+    // 1. Números do período: dos PDFs anexados ou direto do Superlógica.
+    let ext;
+    if (fonteSL) {
+      etapa('puxando os dados do Superlógica');
+      let bruto;
+      try {
+        bruto = await puxarDadosPrestacao(clienteSL, fonteSL);
+      } catch (e) {
+        console.warn('[prestacao-v13] superlogica falhou: ' + (e && e.message));
+        if (e && e.message === 'saldo_indisponivel') return falhar('O Superlógica não devolveu o saldo do caixa desse condomínio no início do período.', 'superlogica');
+        return falhar('O Superlógica não respondeu. Tente de novo em alguns minutos.', 'superlogica_indisponivel');
+      }
+      console.log('[prestacao-v13] superlogica cond=' + fonteSL.idCondominio + ' meses=' + Object.keys(bruto.balancetes).length
+        + ' despesas=' + bruto.despesas.length + ' s=' + Math.round((Date.now() - t0) / 1000));
+      etapa('conferindo os números');
+      ext = await requisitar(base + '/v13/de-superlogica', {
+        headers: { 'X-Internal-Secret': INTERNAL_API_SECRET, 'Content-Type': 'application/json' },
+        corpo: JSON.stringify(bruto),
+        timeoutMs: 240000,
+      });
+    } else {
+      // Extrair e cruzar os relatórios (código da skill).
+      etapa('lendo os relatórios');
+      ext = await requisitar(base + '/v13/extrair', {
+        headers: { 'X-Internal-Secret': INTERNAL_API_SECRET, 'Content-Type': contentType },
+        corpo,
+        timeoutMs: 240000,
+      });
+    }
     if (ext.status !== 200 || !ext.json || !ext.json.dados) {
       if (ext.status === 422 || ext.status === 413) return falhar(detalheDoErro(ext) || 'Os relatórios não puderam ser lidos.', 'relatorio');
       if (ext.status === 404) return falhar('O serviço de geração deste ambiente ainda está na versão antiga.', 'servico_desatualizado');
@@ -564,6 +595,54 @@ module.exports = function registrarPrestacaoV13(app, { requireAuth, ANTHROPIC_KE
       });
       res.status(202).json({ jobId });
     });
+  });
+
+  // Sem PDF: o servidor puxa os dados do condomínio no Superlógica e segue o mesmo
+  // fluxo (curadoria e montagem). O período vai de 1 a MAX_MESES meses.
+  app.post('/api/prestacao/v13/superlogica', requireAuth, express.json({ limit: '20kb' }), async (req, res) => {
+    if (!INTERNAL_API_SECRET || !PRESTACAO_PDF_API_URL) return res.status(503).json({ erro: 'prestacao_api_nao_configurada' });
+    if (!clienteSL) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
+    const b = req.body || {};
+    const idCond = parseInt(b.id_superlogica, 10);
+    const inicio = String(b.inicio || '');
+    const fim = String(b.fim || '');
+    const RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+    if (!(idCond > 0)) return res.status(400).json({ erro: 'condominio_sem_id', detalhe: 'Esse condomínio não tem o código do Superlógica no cadastro.' });
+    if (!RE.test(inicio) || !RE.test(fim) || inicio > fim) return res.status(400).json({ erro: 'periodo_invalido', detalhe: 'Confira o mês inicial e o mês final.' });
+    const [yi, mi] = inicio.split('-').map(Number);
+    const [yf, mf] = fim.split('-').map(Number);
+    if ((yf - yi) * 12 + (mf - mi) + 1 > MAX_MESES) return res.status(400).json({ erro: 'periodo_longo', detalhe: 'O período pode ter no máximo ' + MAX_MESES + ' meses.' });
+    if (req.authMode !== 'internal' && podeUsarSuperlogica) {
+      let ok = false;
+      try { ok = await podeUsarSuperlogica(req.user && req.user.sub); } catch (e) { ok = false; }
+      if (!ok) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso aos dados do Superlógica.' });
+    }
+    const dono = donoDe(req);
+    const ativos = [...jobs.values()].filter((j) => j.status === 'enviando' || j.status === 'processing');
+    if (ativos.filter((j) => j.dono === dono).length >= MAX_JOBS_ATIVOS_POR_USUARIO) {
+      return res.status(429).json({ erro: 'geracao_em_andamento', detalhe: 'Já existe uma prestação sendo gerada. Aguarde terminar.' });
+    }
+    if (ativos.length >= MAX_JOBS_ATIVOS_GERAL) {
+      return res.status(429).json({ erro: 'servidor_ocupado', detalhe: 'Muitas prestações sendo geradas agora. Tente de novo em alguns minutos.' });
+    }
+    const nome = typeof b.nome === 'string' ? b.nome.trim().slice(0, 120) : '';
+    const observacoes = typeof b.obs === 'string' ? b.obs.trim().slice(0, 1000) : '';
+    const jobId = crypto.randomUUID();
+    jobs.set(jobId, { dono, status: 'processing', etapa: 'puxando os dados do Superlógica', criadoEm: Date.now() });
+    executar(jobId, {
+      nome: nome || null,
+      observacoes,
+      fonteSL: { idCondominio: idCond, inicio, fim, nome, fantasia: nome },
+    }).catch((e) => {
+      const j = jobs.get(jobId);
+      if (j && j.status === 'processing') {
+        j.status = 'error';
+        j.erro = { erro: 'erro_inesperado', detalhe: 'Erro inesperado na geração. Tente de novo.' };
+      }
+      console.error('[prestacao-v13] erro inesperado:', e && e.message);
+      agendarLimpeza(jobId);
+    });
+    res.status(202).json({ jobId });
   });
 
   // Sem cache e sem ETag (mesmo motivo da rota de status da ata: 304 sem corpo
