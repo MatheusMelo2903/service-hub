@@ -30,13 +30,14 @@ const quadro = [
 t('contas sem extrato: limite, pouco movimento, principal sem extrato e falha', () => {
   const r = A.contasSemExtrato(quadro, 2);
   const ids = r.contas.map((c) => c.conta);
-  assert.deepStrictEqual(ids.sort(), ['1', '5', '6', '8']);
-  assert.strictEqual(r.contas.find((c) => c.conta === '6').gravidade, 'baixa', 'não principal sem extrato entra como baixa (T35 conta, mas fica no fim)');
+  assert.deepStrictEqual(ids.sort(), ['1', '2', '5', '6', '8']);
+  assert.strictEqual(r.contas.find((c) => c.conta === '2').gravidade, 'media', 'poupança de pouco movimento atrasada aparece como média (decisão do Matheus 21/10)');
+  assert.strictEqual(r.contas.find((c) => c.conta === '6').gravidade, 'media', 'não principal sem extrato entra como média (decisão do Matheus 21/10: todas as contas na rotina)');
   assert.strictEqual(r.contas[0].conta, '5', 'principal sem extrato vem primeiro');
   assert.strictEqual(r.contas.find((c) => c.conta === '1').gravidade, 'alta'); // 4 >= 2x2
   assert.strictEqual(r.contas.find((c) => c.conta === '8').gravidade, 'media');
   assert.strictEqual(r.falhas.length, 1);
-  assert.deepStrictEqual(A.contasSemExtrato(quadro, 5).contas.map((c) => c.conta), ['5', '6']);
+  assert.deepStrictEqual(A.contasSemExtrato(quadro, 5).contas.map((c) => c.conta).sort(), ['2', '5', '6']);
   // Sem nenhuma conta movimentada no condomínio, a de pouco movimento conta atraso (caminho alternativo da T35).
   const so = [{ id_condominio: '30', condominio: 'C', contas: [{ id: '9', principal: false, situacao: 'ok', quadro: { ultimo_extrato: '2026-09-01', dias_sem_extrato: 30, movimento_baixo: true } }] }];
   assert.deepStrictEqual(A.contasSemExtrato(so, 2).contas.map((c) => c.conta), ['9']);

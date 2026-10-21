@@ -101,14 +101,17 @@ function contasSemExtrato(linhas, limite) {
         descricao: txt(k.descricao, 80), banco: txt(k.banco, 60), principal: !!k.principal };
       if (k.situacao === 'falha' || k.situacao === 'descartada') { falhas.push(base); continue; }
       if (k.situacao === 'ok' && k.quadro) {
-        if (temMovimentada && k.quadro.movimento_baixo && !k.principal) continue;
+        // Decisão do Matheus (21/10 15h43): toda conta entra na rotina de importação e gera alerta quando
+        // o extrato não é importado. Conta de pouco movimento que não é a principal continua aparecendo,
+        // só sem subir para alta.
         const d = k.quadro.dias_sem_extrato;
         if (d == null || d < limite) continue;
-        contas.push(Object.assign(base, { ultimo_extrato: k.quadro.ultimo_extrato, dias_uteis: d, gravidade: d >= 2 * limite ? 'alta' : 'media' }));
+        const poucoMov = temMovimentada && k.quadro.movimento_baixo && !k.principal;
+        contas.push(Object.assign(base, { ultimo_extrato: k.quadro.ultimo_extrato, dias_uteis: d, gravidade: (!poucoMov && d >= 2 * limite) ? 'alta' : 'media' }));
       } else if (k.situacao === 'sem_extrato') {
         // Conta ativa sem nenhum extrato importado nos últimos 75 dias (a T35 conta todas): alta na principal;
-        // nas outras (poupança e fundos que a equipe não importa) fica baixa, no fim da lista (teste real de 21/10).
-        contas.push(Object.assign(base, { ultimo_extrato: null, dias_uteis: null, gravidade: k.principal ? 'alta' : 'baixa' }));
+        // nas outras (poupança e fundos) média: a equipe passa a importar todas (decisão do Matheus 21/10 15h43).
+        contas.push(Object.assign(base, { ultimo_extrato: null, dias_uteis: null, gravidade: k.principal ? 'alta' : 'media' }));
       }
     }
   }
