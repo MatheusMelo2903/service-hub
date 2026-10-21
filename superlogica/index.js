@@ -23,9 +23,12 @@ function idValido(v) {
   return /^[1-9][0-9]{0,8}$/.test(String(v || ''));
 }
 
+const consulta = require('./consulta');
+
 module.exports = {
   cliente,
   idValido,
+  consulta,
   buscarCadastro: (cli, id, opts) => cadastro.buscarCadastro(cli, id, opts),
   montarCadastro: cadastro.montarCadastro,
 };

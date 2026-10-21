@@ -818,6 +818,27 @@
   .banner-cond-ativo .cs-info { color: inherit; opacity: .8; font-weight: 400; white-space: nowrap; }
   .banner-cond-rotulo { white-space: nowrap; }
   @media (max-width: 900px) { .navbar-cond-seletor { width: 200px; } .banner-cond-ativo { flex-wrap: wrap; } }
+  /* Ficha do Condomínio (T04) */
+  .ficha-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .ficha-grid .card { margin-bottom: 0; }
+  #ficha-corpo > .ficha-grid { margin-bottom: 20px; }
+  @media (max-width: 900px) { .ficha-grid { grid-template-columns: 1fr; } }
+  .ficha-kv { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .ficha-kv span { color: var(--muted); flex-shrink: 0; }
+  .ficha-kv strong { font-weight: 500; text-align: right; }
+  .ficha-kv em { color: var(--muted); font-weight: 400; }
+  .ficha-tab { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .ficha-tab th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border2); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+  .ficha-tab td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .ficha-tab .n { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .ficha-tab .neg { color: var(--danger); }
+  .ficha-tab tr.tot td { font-weight: 600; border-bottom: none; }
+  .ficha-tag { font-size: 10px; font-family: var(--mono); color: var(--gs-blue); background: var(--gs-blue-light); border-radius: 4px; padding: 1px 6px; }
+  .ficha-sub { font-size: 11px; color: var(--muted); font-family: var(--mono); }
+  .ficha-subtitulo { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+  .ficha-resumo { font-size: 13px; margin-bottom: 10px; }
+  .ficha-erro { font-size: 12px; color: var(--danger); padding: 6px 0; }
+  .ficha-ok { font-size: 12px; color: var(--success); padding: 6px 0; margin-bottom: 8px; }
   .cond-selected-badge {
     display: inline-flex;
     align-items: center;
@@ -1055,6 +1076,9 @@
     </div>
 
     <div class="nav-section">Gestão</div>
+    <div class="nav-item" onclick="showPanel('condominio')">
+      <span class="nav-icon">⌂</span> Ficha do Condomínio
+    </div>
     <div class="nav-item" onclick="showPanel('prestacao')">
       <span class="nav-icon">▤</span> Prestação de Contas
     </div>
@@ -1732,6 +1756,60 @@
       </div>
     </div>
 
+    <!-- FICHA DO CONDOMÍNIO (T04): consulta só de leitura, JS em public/condominio.js -->
+    <div class="panel" id="panel-condominio">
+      <div id="banner-cond-condominio"></div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Buscar unidade em todos os condomínios</span>
+        </div>
+        <form onsubmit="fichaBuscar(event)" style="display:flex;gap:8px;align-items:center">
+          <input type="text" id="ficha-busca" placeholder="Nome, CPF/CNPJ ou número da unidade" autocomplete="off" maxlength="60" style="flex:1">
+          <button class="btn btn-primary" type="submit" style="flex-shrink:0">Buscar</button>
+        </form>
+        <div id="ficha-busca-res" style="margin-top:12px"></div>
+      </div>
+
+      <div id="ficha-aviso" class="card ficha-sub" style="display:none"></div>
+      <div id="ficha-corpo">
+        <div class="ficha-grid">
+          <div class="card">
+            <div class="card-header"><span class="card-title">Dados cadastrais</span><span id="ficha-atualizado" class="ficha-sub"></span></div>
+            <div id="ficha-cadastro"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title">Saldo por conta</span></div>
+            <div id="ficha-contas"></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Contas a pagar</span>
+          </div>
+          <div id="ficha-pendentes"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Despesas pagas no mês</span>
+            <select id="ficha-mes" onchange="fichaMudarMes(this.value)" style="width:auto;padding:6px 10px;font-size:12px"></select>
+          </div>
+          <div id="ficha-despesas"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Inadimplência hoje</span></div>
+          <div id="ficha-inad"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <span class="card-title">Auditoria do cadastro das unidades</span>
+            <button class="btn btn-ghost" id="ficha-btn-auditoria" onclick="fichaRodarAuditoria()" style="font-size:12px;padding:6px 12px">Conferir agora</button>
+          </div>
+          <div id="ficha-auditoria"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- LEITURA DE CONSUMO -->
     <div class="panel" id="panel-consumo">
       <!-- Banner populado por renderBannerCondAtivo('consumo') ao abrir o painel -->
@@ -2091,7 +2169,7 @@ function setCondominioAtivo(obj) {
 }
 
 // Abas com o banner do condomínio ativo (com o seletor único dentro).
-const BANNERS_COND = ['despesas','unidades','boletos','financeiro','previsao','consumo'];
+const BANNERS_COND = ['despesas','unidades','boletos','financeiro','previsao','consumo','condominio'];
 
 /**
  * Lê o condomínio ativo na seguinte ordem de prioridade:
@@ -2368,6 +2446,7 @@ const PAGE_META = {
   previsao:      { title: 'Previsão Orçamentária', sub: 'PDFs W011A e W045A geram planilha editável' },
   atas:          { title: 'Atas Condominiais', sub: 'geração automática com IA' },
   consumo:       { title: 'Leitura de Consumo', sub: 'fotos de medidores → Superlógica' },
+  condominio:    { title: 'Ficha do Condomínio', sub: 'consulta ao Superlógica, só leitura' },
 };
 
 function showPanel(name) {
@@ -2396,6 +2475,9 @@ function showPanel(name) {
   }
   if (name === 'previsao') {
     if (typeof previsaoInit === 'function') previsaoInit();
+  }
+  if (name === 'condominio') {
+    if (typeof condominioFichaAbrir === 'function') condominioFichaAbrir();
   }
 }
 
@@ -5380,6 +5462,7 @@ async function deletarUsuario(userId, email) {
 </script>
 <script src="/unidades.js"></script>
 <script src="/despesas.js"></script>
+<script src="/condominio.js"></script>
 
 <div id="prestacao-modal" class="prestacao-modal" style="display:none">
   <div class="prestacao-modal-overlay" onclick="prestacaoFecharModal()"></div>

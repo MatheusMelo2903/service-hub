@@ -3040,6 +3040,93 @@ app.get('/api/condominio/:idSuperlogica/cadastro', requireAuth, async (req, res)
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// Aba Condomínio (T04): ficha, auditoria cadastral e busca global de unidades.
+// Só leitura no Superlógica, mesma regra de acesso das rotas acima. Detalhes em
+// superlogica/consulta.js. Cache curto para não repetir chamadas a cada clique.
+// ─────────────────────────────────────────────────────────────────────────
+const _cacheFicha = slModulo.consulta.criarCache(5 * 60 * 1000, 300);
+const _cacheAuditoria = slModulo.consulta.criarCache(10 * 60 * 1000, 100);
+const _cacheBusca = slModulo.consulta.criarCache(2 * 60 * 1000, 200);
+
+async function exigirLeituraSuperlogica(req, res) {
+  if (!superlogicaNativa()) { res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' }); return false; }
+  if (req.authMode === 'internal') return true;
+  if (!SUPABASE_SERVICE_ROLE_KEY) { res.status(503).json({ erro: 'service_role_nao_configurada' }); return false; }
+  let ok = false;
+  try { ok = await podeUsarSuperlogica(req.user && req.user.sub); } catch (e) { ok = false; }
+  if (!ok) res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso aos dados do Superlógica.' });
+  return ok;
+}
+function clienteSL() {
+  return slModulo.cliente({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN });
+}
+// Cada parte da ficha falha sozinha: a tela mostra o que veio e avisa o que não veio.
+async function parteFicha(chave, fn) {
+  try { return { ok: true, dados: await _cacheFicha.pegar(chave, fn) }; } catch (e) {
+    console.warn('[ficha] ' + chave + ' falhou: ' + (e && e.message));
+    return { ok: false, erro: 'Não foi possível ler esta parte no Superlógica agora.' };
+  }
+}
+
+// GET /api/condominio/:id/ficha?mes=AAAA-MM (mes das despesas pagas; padrão: mês atual)
+app.get('/api/condominio/:idSuperlogica/ficha', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  const agora = new Date(Date.now() - 3 * 3600 * 1000); // Brasília
+  let ano = agora.getUTCFullYear(), mes = agora.getUTCMonth() + 1;
+  const m = String(req.query.mes || '').match(/^(\d{4})-(\d{2})$/);
+  if (req.query.mes && !m) return res.status(400).json({ erro: 'mes_invalido', detalhe: 'Use o formato AAAA-MM.' });
+  if (m) {
+    ano = +m[1]; mes = +m[2];
+    if (mes < 1 || mes > 12 || ano < 2000 || ano > agora.getUTCFullYear() + 1) return res.status(400).json({ erro: 'mes_invalido', detalhe: 'Mês fora do intervalo.' });
+  }
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  const cli = clienteSL();
+  const C = slModulo.consulta;
+  const hoje = new Date(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate());
+  const dia = hoje.toISOString().slice(0, 10);
+  const [cadastro, contas, despesas, pendentes, inad] = await Promise.all([
+    (async () => { try { return { ok: true, dados: await slModulo.buscarCadastro(cli, id) }; } catch (e) { return { ok: false, erro: 'Não foi possível ler o cadastro no Superlógica agora.' }; } })(),
+    parteFicha('contas:' + id, () => C.contas(cli, id)),
+    parteFicha('desp:' + id + ':' + ano + '-' + mes, () => C.despesasMes(cli, id, ano, mes)),
+    parteFicha('pend:' + id + ':' + dia, () => C.contasPendentes(cli, id, hoje)),
+    parteFicha('inad:' + id + ':' + dia, () => C.inadimplencia(cli, id, hoje)),
+  ]);
+  res.json({ id_superlogica: Number(id), gerado_em: new Date().toISOString(), cadastro, contas, despesas_mes: despesas, pendentes, inadimplencia: inad });
+});
+
+// GET /api/condominio/:id/auditoria — cadastro das unidades (CPF, email, telefone, fração ideal)
+app.get('/api/condominio/:idSuperlogica/auditoria', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  try {
+    const dados = await _cacheAuditoria.pegar('aud:' + id, () => slModulo.consulta.auditoria(clienteSL(), id));
+    res.json(dados);
+  } catch (e) {
+    console.warn('[auditoria] ' + id + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler as unidades no Superlógica agora. Tente de novo em alguns minutos.' });
+  }
+});
+
+// GET /api/unidades/busca?q=... — em todos os condomínios (nome, CPF/CNPJ ou número da unidade)
+app.get('/api/unidades/busca', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const q = String(req.query.q || '').replace(/\s+/g, ' ').trim();
+  if (q.length < 3 || q.length > 60) return res.status(400).json({ erro: 'termo_invalido', detalhe: 'Digite de 3 a 60 caracteres.' });
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  try {
+    const dados = await _cacheBusca.pegar('busca:' + q.toLowerCase(), () => slModulo.consulta.buscarUnidades(clienteSL(), q));
+    res.json(dados);
+  } catch (e) {
+    console.warn('[busca-unidades] falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'O Superlógica não respondeu à busca. Tente de novo em alguns minutos.' });
+  }
+});
+
 // Agenda: 1 minuto depois de subir e depois todo dia às 6h de Brasília (9h UTC).
 function _agendarSyncDiario() {
   const agora = new Date();
