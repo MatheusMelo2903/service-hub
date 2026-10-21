@@ -50,7 +50,8 @@ async function montarRelatorio(cliente, id, alvo, hoje, cfgAlertas) {
     parte('saldo do início do mês', saldoCaixaEm(cliente, id, ano, mes, 1)),
     fimNoPassado ? parte('saldo do fim do mês', saldoCaixaEm(cliente, id, prox[0], prox[1], 1)) : Promise.resolve(null),
     parte('receitas e despesas do mês', demonstrativo(cliente, id, ano, mes)),
-    parte('saldo por conta', consulta.contas(cliente, id)),
+    // Mês fechado: saldo de cada conta no último dia do mês (soma = saldo do fim do mês); mês corrente: hoje.
+    parte('saldo por conta', consulta.contas(cliente, id, fimNoPassado ? new Date(prox[0], prox[1] - 1, 0) : hoje)),
     parte('inadimplência', consulta.inadimplencia(cliente, id, hoje)),
     parte('contas a pagar', consulta.contasPendentes(cliente, id, hoje)),
     parte('alertas', alertas.calcularAlertas(cliente, id, hoje, cfgAlertas || {})),

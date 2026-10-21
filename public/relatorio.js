@@ -103,8 +103,8 @@ function relMontarPDF(d) {
   if (dem && dem.total_receitas != null && dem.total_despesas != null) linha('Resultado do mês (receitas menos despesas)', relBRL(Math.round((dem.total_receitas - dem.total_despesas) * 100) / 100), { negrito: true });
   linha('Saldo no fim do mês', d.mes_fechado ? relBRL(d.saldo_fim_mes) : 'mês em andamento', { negrito: true });
 
-  // 2. Saldo por conta (hoje)
-  titulo('2. Saldo por conta hoje');
+  // 2. Saldo por conta (mês fechado: último dia do mês; mês em andamento: hoje)
+  titulo(d.mes_fechado ? '2. Saldo por conta no fim do mês' : '2. Saldo por conta hoje');
   if (!d.contas) nd(); else {
     d.contas.contas.forEach(function (c) { linha(c.descricao + (c.banco ? ' · ' + c.banco : '') + (c.principal ? ' (principal)' : ''), relBRL(c.saldo)); });
     linha('Total', relBRL(d.contas.total), { negrito: true });
