@@ -4,6 +4,7 @@
 // o detalhe técnico fica só no log do servidor.
 
 const https = require('https');
+const custo = require('./custo');
 
 const CHAVE = () => process.env.ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY || '';
 
@@ -17,7 +18,10 @@ function usoRecente() { return _uso.slice(); }
 
 // system: string; content: string ou lista de blocos; cache: marca o system para reaproveitar.
 // esforco (opcional): 'low', 'medium' ou 'high' nos modelos que pensam antes de responder.
-function chamarModelo({ modelo, maxTokens, system, content, cache, timeoutMs, rotulo, usuario, esforco }) {
+// T42: rótulo da chamada para a função mostrada no painel de custo.
+const FUNCAO_DO_ROTULO = { edital: 'edital', medidor: 'medidores', medidor_reforco: 'medidores', unidades: 'unidades', entrada_documento: 'entrada_documentos' };
+
+function chamarModelo({ modelo, maxTokens, system, content, cache, timeoutMs, rotulo, usuario, esforco, condominio, funcao }) {
   return new Promise((resolve) => {
     if (!CHAVE()) return resolve({ ok: false, status: 503, erro: 'servico_indisponivel' });
     const corpo = { model: modelo, max_tokens: maxTokens, messages: [{ role: 'user', content }] };
@@ -36,6 +40,7 @@ function chamarModelo({ modelo, maxTokens, system, content, cache, timeoutMs, ro
         try { j = JSON.parse(Buffer.concat(partes).toString('utf8')); } catch (e) { j = null; }
         if (!j) { console.error('[processamento] ' + (rotulo || '') + ' resposta ilegível, status ' + resp.statusCode); return resolve({ ok: false, status: 502, erro: 'resposta_invalida' }); }
         if (j.usage) registrarUso({ rotulo, usuario, entrada: j.usage.input_tokens || 0, saida: j.usage.output_tokens || 0, cache_lido: j.usage.cache_read_input_tokens || 0, cache_criado: j.usage.cache_creation_input_tokens || 0 });
+        if (j.usage) custo.registrar({ funcao: funcao || FUNCAO_DO_ROTULO[rotulo] || 'outros', modelo, usage: j.usage, usuario, condominio, ok: resp.statusCode === 200, status: resp.statusCode });
         if (resp.statusCode !== 200) {
           console.error('[processamento] ' + (rotulo || '') + ' status ' + resp.statusCode + ' ' + (j.error && j.error.type || ''));
           return resolve({ ok: false, status: resp.statusCode, erro: 'falha_processamento' });
