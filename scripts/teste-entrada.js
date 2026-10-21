@@ -110,5 +110,10 @@ t('nome de arquivo seguro', !/["\r\n]/.test(E.nomeArquivoSeguro('a"b\r\nContent-
 t('pdf', E.ehPdf(Buffer.from('%PDF-1.4\n' + 'x'.repeat(200))) && !E.ehPdf(Buffer.from('<html>' + 'x'.repeat(200))));
 t('dinheiro', E.lerDinheiro('R$ 1.234,56') === 1234.56 && E.lerDinheiro('12,3') === null);
 
-console.log('entrada: ' + ok + ' ok, ' + falhou + ' falhou');
-process.exit(falhou ? 1 : 0);
+// 11. Extração em thread separada: PDF quebrado volta null sem derrubar o processo.
+(async () => {
+  const r = await E.extrairTexto(Buffer.from('%PDF-1.4\n' + 'lixo '.repeat(500)));
+  t('pdf quebrado volta null', r === null);
+  console.log('entrada: ' + ok + ' ok, ' + falhou + ' falhou');
+  process.exit(falhou ? 1 : 0);
+})();

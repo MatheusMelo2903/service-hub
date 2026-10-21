@@ -297,44 +297,38 @@ function textoUtil(texto) { return (String(texto || '').match(/[A-Za-zÀ-ú]{3,}
 // ---------- PDF ----------
 function ehPdf(buf) { return Buffer.isBuffer(buf) && buf.length > 100 && buf.slice(0, 1024).toString('latin1').includes('%PDF-'); }
 function hashDe(buf) { return crypto.createHash('sha256').update(buf).digest('hex'); }
-let _pdfjs;
-function pdfjs() {
-  if (_pdfjs === undefined) {
-    try {
-      // Sem canvas no servidor: só o texto interessa (os avisos de desenho são esperados).
-      const avisoOrig = console.warn, logOrig = console.log; console.warn = () => {}; console.log = () => {};
-      try { _pdfjs = require('pdfjs-dist/legacy/build/pdf.js'); } finally { console.warn = avisoOrig; console.log = logOrig; }
-    } catch (e) { _pdfjs = null; }
-  }
-  return _pdfjs;
-}
 // Texto das primeiras páginas, em ordem de leitura (quebra de linha quando muda a altura).
-// Devolve null se não deu para abrir (aí a leitura interna decide).
+// Roda numa thread separada com memória e tempo limitados: PDF malicioso (fluxo que expande
+// para gigabytes, laço sem fim) só derruba a thread. Devolve null se não deu para abrir (aí a
+// leitura interna decide).
+const { Worker } = require('worker_threads');
+const path = require('path');
+const PDF_TEMPO_MS = 15000;
+const PDF_MEMORIA_MB = 256;
+let _pdfEmCurso = 0;
+const PDF_MAX_SIMULTANEOS = 3;
 async function extrairTexto(buf, maxPaginas) {
-  const lib = pdfjs();
-  if (!lib) return null;
-  let doc;
-  try {
-    doc = await lib.getDocument({ data: new Uint8Array(buf), disableFontFace: true, isEvalSupported: false, useSystemFonts: false, verbosity: 0, stopAtErrors: false }).promise;
-  } catch (e) { return null; }
-  try {
-    let txt = '';
-    const n = Math.min(doc.numPages, maxPaginas || 6);
-    for (let i = 1; i <= n; i++) {
-      const p = await doc.getPage(i);
-      const c = await p.getTextContent();
-      let ultY = null;
-      for (const it of c.items) {
-        const y = it.transform ? it.transform[5] : 0;
-        if (ultY !== null) txt += Math.abs(y - ultY) > 2 ? '\n' : ' ';
-        txt += it.str || '';
-        ultY = y;
-      }
-      txt += '\n';
-      if (txt.length > 200000) break;
-    }
-    return { texto: txt, paginas: doc.numPages };
-  } catch (e) { return null; } finally { try { doc.destroy(); } catch (e) { /* nada */ } }
+  // No máximo 3 threads ao mesmo tempo; os outros esperam a vez (até 60 s).
+  for (let t = 0; _pdfEmCurso >= PDF_MAX_SIMULTANEOS; t++) {
+    if (t > 300) return null;
+    await new Promise((ok) => setTimeout(ok, 200));
+  }
+  _pdfEmCurso++;
+  return new Promise((resolve) => {
+    let fim = false;
+    const acabar = (v) => { if (fim) return; fim = true; _pdfEmCurso--; clearTimeout(rel); try { w.terminate(); } catch (e) { /* nada */ } resolve(v); };
+    let w;
+    try {
+      w = new Worker(path.join(__dirname, 'entrada-pdf-worker.js'), {
+        workerData: { buf, maxPaginas: maxPaginas || 6 },
+        resourceLimits: { maxOldGenerationSizeMb: PDF_MEMORIA_MB, maxYoungGenerationSizeMb: 64 },
+      });
+    } catch (e) { fim = true; _pdfEmCurso--; return resolve(null); }
+    const rel = setTimeout(() => acabar(null), PDF_TEMPO_MS);
+    w.on('message', (m) => acabar(m && m.ok ? { texto: String(m.texto || ''), paginas: m.paginas } : null));
+    w.on('error', () => acabar(null));
+    w.on('exit', () => acabar(null));
+  });
 }
 
 // ---------- Superlógica (só GET) ----------
@@ -513,7 +507,7 @@ function contaSugerida(parcelas, idFornecedor) {
 
 // Alertas do rascunho. GRAVES precisam ser vistos e aceitos na tela antes de lançar;
 // IMPEDE não deixa lançar de jeito nenhum.
-const GRAVES = ['duplicidade', 'outro_condominio', 'condominio_diferente_do_documento', 'na_fila'];
+const GRAVES = ['duplicidade', 'outro_condominio', 'condominio_diferente_do_documento', 'na_fila', 'cnpj_repetido'];
 const IMPEDE = ['sem_condominio', 'sem_fornecedor', 'sem_valor', 'sem_vencimento', 'sem_conta', 'conferencia_incompleta', 'fora_da_carteira'];
 // d: { id_superlogica, id_fornecedor, valor, vencimento, documento, linha, barras, conta, tipo, cond_documento }
 // outrosNaFila: rascunhos ou lançados do Hub com a mesma linha ou o mesmo arquivo.
@@ -533,6 +527,13 @@ async function conferir(cliente, d, opts) {
   if (d.valor_linha && d.valor && Math.abs(d.valor_linha - d.valor) >= 0.01) add('valor_diferente_linha', 'O valor informado é diferente do valor da linha digitável (R$ ' + d.valor_linha.toFixed(2).replace('.', ',') + ').');
   if (d.cond_documento && d.id_superlogica && String(d.cond_documento) !== String(d.id_superlogica)) add('condominio_diferente_do_documento', 'O CNPJ do pagador ou tomador no documento é de outro condomínio.');
   if (Array.isArray(o.naFila) && o.naFila.length) add('na_fila', 'O mesmo documento já está na fila do Hub.', { itens: o.naFila.slice(0, 5) });
+  // Condomínio com CNPJ que aparece em outro cadastro (exemplo: o 167 de teste): conferir à mão.
+  if (d.id_superlogica) {
+    try {
+      const cond = await condominioPorId(cliente, d.id_superlogica);
+      if (cond && cond.cnpj && (await cnpjsRepetidos(cliente)).has(cond.cnpj)) add('cnpj_repetido', 'O CNPJ deste condomínio aparece em outro cadastro do Superlógica. Confira se é o condomínio certo.');
+    } catch (e) { /* a conferência de duplicidade abaixo avisa se o Superlógica falhou */ }
+  }
   let sugestao = null, duplicidades = [];
   if (d.id_superlogica && !(o.escopo && !o.escopo.has(String(d.id_superlogica)))) {
     try {
@@ -546,10 +547,10 @@ async function conferir(cliente, d, opts) {
     try {
       const todos = await despesasTodosPerto(cliente, d.vencimento);
       const fora = todos.filter((p) => String(p.id_condominio_cond) !== String(d.id_superlogica) && mesmaLinha(p, d));
-      if (fora.length) add('outro_condominio', 'Este boleto já está lançado em outro condomínio.', { itens: fora.slice(0, 5).map((p) => {
-        const vis = !o.escopo || o.escopo.has(String(p.id_condominio_cond));
-        return Object.assign(resumoParcela(p), { condominio: vis ? limpar(p.st_fantasia_cond) : 'outro condomínio', id_superlogica: vis ? String(p.id_condominio_cond) : null });
-      }) });
+      // Guarda completo; quem mostra (rotas-entrada.js, mascararAlertas) esconde o que é de fora
+      // da carteira de quem está vendo.
+      if (fora.length) add('outro_condominio', 'Este boleto já está lançado em outro condomínio.', { itens: fora.slice(0, 5).map((p) =>
+        Object.assign(resumoParcela(p), { condominio: limpar(p.st_fantasia_cond), id_superlogica: String(p.id_condominio_cond) })) });
     } catch (e) { add('conferencia_incompleta', 'Não deu para conferir se o boleto está em outro condomínio. Tente de novo.'); }
   }
   return { alertas, sugestao_conta: sugestao };
@@ -645,7 +646,12 @@ async function lancar(cred, cliente, d, pdf, nome) {
   const dd = c.item && c.item.data && typeof c.item.data === 'object' ? c.item.data : {};
   const idDespesa = /^\d+$/.test(String(dd.id_despesa_des || '')) ? String(dd.id_despesa_des) : null;
   if (!c.ok || !idDespesa) {
-    const incerto = r.status === 504 || r.status === 0;
+    // Só é recusa clara quando o Superlógica respondeu JSON dizendo que não gravou (status do
+    // corpo diferente de 200) ou HTTP 4xx. Qualquer outra coisa (sem resposta, 5xx, corpo que não
+    // é JSON, "sucesso" sem código da despesa) pode ter gravado: fica incerto, nunca volta a rascunho.
+    const statusCorpo = c.item && c.item.status != null ? String(c.item.status) : null;
+    const recusaClara = (r.status >= 400 && r.status < 500) || (r.status >= 200 && r.status < 300 && statusCorpo && statusCorpo !== '200');
+    const incerto = !recusaClara;
     return { ok: false, incerto, msg: incerto ? 'O Superlógica não respondeu.' : 'O Superlógica recusou a despesa: ' + c.msg, id_arquivo: arq.id };
   }
   // Prova: relê a despesa pelo vencimento e confere valor, fornecedor e arquivo.

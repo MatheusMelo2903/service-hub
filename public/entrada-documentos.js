@@ -222,7 +222,7 @@
       (editavel ? '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' +
         '<button class="btn btn-ghost" onclick="entSalvar()">Salvar e conferir</button>' +
         '<button class="btn btn-ghost" onclick="entDescartar()">Descartar</button>' +
-        (podeLancar() ? '<label style="font-size:12px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="ent-confirmo"> Confirmo lançar esta despesa no Superlógica</label><button class="btn btn-primary" id="ent-lancar" onclick="entLancar()">Lançar</button>' : '') +
+        (podeLancar() ? '<label style="font-size:12px;display:flex;gap:6px;align-items:center"><input type="checkbox" id="ent-confirmo"> Confirmo lançar ' + esc(brl(d.valor) || 'sem valor') + ' no condomínio ' + esc(d.nome_condominio || 'a definir') + ' no Superlógica</label><button class="btn btn-primary" id="ent-lancar" onclick="entLancar()">Lançar</button>' : '') +
         '</div>' : '') +
       '<div id="ent-det-info"></div></div></div>';
   }
@@ -230,11 +230,11 @@
   // 5. Salvar, descartar e lançar.
   function valorCampo(id) { var el = document.getElementById(id); return el ? el.value.trim() : ''; }
   function camposTela() {
+    // O valor vai como foi digitado; o servidor só aceita o formato brasileiro (1.234,56).
     var v = valorCampo('ent-valor').replace(/\s|R\$/g, '');
-    var num = v ? Number(v.replace(/\./g, '').replace(',', '.')) : null;
     return {
       id_superlogica: valorCampo('ent-cond') || null, id_fornecedor: valorCampo('ent-forn') || null, tipo: valorCampo('ent-tipo'),
-      forma_pag: Number(valorCampo('ent-forma')), valor: v ? (isFinite(num) ? num : v) : null, vencimento: valorCampo('ent-venc') || null,
+      forma_pag: Number(valorCampo('ent-forma')), valor: v || null, vencimento: valorCampo('ent-venc') || null,
       documento: valorCampo('ent-doc') || null, emissao: valorCampo('ent-emissao') || null, linha: valorCampo('ent-linha') || null,
       conta: valorCampo('ent-conta') || null, complemento: valorCampo('ent-compl') || null,
     };
@@ -271,8 +271,14 @@
     var aceitos = [].slice.call(document.querySelectorAll('.ent-aceite:checked')).map(function (x) { return x.value; });
     var btn = document.getElementById('ent-lancar');
     if (btn) btn.disabled = true;
-    // Salva o que está na tela antes (a conferência roda de novo no servidor ao lançar).
+    // Salva o que está na tela antes (a conferência roda de novo no servidor ao lançar). Se o
+    // valor ou o condomínio mudou, a confirmação não vale: confere e marca de novo.
+    var confirmado = { valor: (est.atual.dados || {}).valor, cond: (est.atual.dados || {}).id_superlogica };
     if (!(await window.entSalvar(true))) { if (btn) btn.disabled = false; return; }
+    if (String((est.atual.dados || {}).valor) !== String(confirmado.valor) || String((est.atual.dados || {}).id_superlogica) !== String(confirmado.cond)) {
+      msg('ent-det-info', 'O valor ou o condomínio mudou. Confira e marque a confirmação de novo.', true);
+      return;
+    }
     var aceitosAgora = aceitos.filter(function (c) { return (est.atual.alertas || []).some(function (a) { return a.codigo === c; }); });
     msg('ent-det-info', 'Lançando no Superlógica...');
     try {
