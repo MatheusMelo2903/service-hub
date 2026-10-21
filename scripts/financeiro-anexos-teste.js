@@ -30,6 +30,20 @@ t('valores', () => {
 t('datas', () => {
   assert.deepStrictEqual(an.datasNoTexto('Pago em 04/09/2026 vence 05.09.26').sort(), ['2026-09-04', '2026-09-05']);
 });
+t('data em milissegundos no fuso de Brasilia', () => {
+  assert.deepStrictEqual(an.datasNoTexto('efetivação do débito: ' + String(Date.UTC(2026, 8, 24, 3, 0, 0))), ['2026-09-24']);
+});
+t('cnpj mascarado do pagador conta como o do condominio', () => {
+  const r = an.conferirAnexo({ anexo: { st_nomeabreviadoetiqueta_eti: 'Comprovante' },
+    texto: 'Comprovante ' + 'x'.repeat(40) + ' Pagador CPF/CNPJ: **.955.806/0001-** Recebedor CNPJ 11.222.333/0001-81 Valor R$ 1.017,23',
+    meta: {}, parcelas: [{ vl_valor_pdes: '1017.23', dt_liquidacao_pdes: '09/04/2026 00:00:00' }], cnpjCond: '33955806000192', outros: new Map() });
+  assert.strictEqual(r.temCond, true);
+  assert.deepStrictEqual(r.achados, []);
+  const r2 = an.conferirAnexo({ anexo: { st_nomeabreviadoetiqueta_eti: 'Doc. Fiscal' },
+    texto: 'Fatura ' + 'x'.repeat(40) + ' Emitente CNPJ: 11.222.333/0001-81 Usuario CPF/CNPJ: 33.***.***/0001-92',
+    meta: {}, parcelas: [], cnpjCond: '33955806000192', outros: new Map() });
+  assert.strictEqual(r2.temCond, true);
+});
 t('cnpj valido e invalido', () => {
   assert.ok(an.cnpjValido('11.222.333/0001-81'));
   assert.ok(!an.cnpjValido('11.222.333/0001-82'));
@@ -44,19 +58,38 @@ t('comprovante certo nao gera achado', () => {
     parcelas: desp, cnpjCond: '33955806000192', outros });
   assert.deepStrictEqual(r.achados, []);
 });
-t('comprovante com valor, data, cnpj de outro e editor', () => {
+t('comprovante com cnpj de outro, editor e modificado (sinais do anexo)', () => {
   const r = an.conferirAnexo({ anexo: { st_nomeabreviadoetiqueta_eti: 'Comprovante' },
-    texto: 'Comprovante de pagamento ' + 'x'.repeat(40) + ' Valor R$ 1.071,23 Data 05/09/2026 Pagador CNPJ 11.222.333/0001-81',
+    texto: 'Comprovante de pagamento ' + 'x'.repeat(40) + ' Beneficiario CNPJ 05.644.910/0001-20 Valor R$ 1.071,23 Data 05/09/2026 Pagador CNPJ 11.222.333/0001-81',
     meta: { Producer: 'Microsoft® Word para Microsoft 365', CreationDate: '2026-09-04T10:00:00-03', ModDate: '2026-09-06T10:00:00-03' },
     parcelas: desp, cnpjCond: '33955806000192', outros });
-  const tipos = r.achados.map((a) => a.tipo).sort();
-  assert.deepStrictEqual(tipos, ['cnpj_outro_condominio', 'comprovante_data', 'comprovante_valor', 'pdf_editor', 'pdf_modificado']);
+  assert.deepStrictEqual(r.achados.map((a) => a.tipo).sort(), ['cnpj_outro_condominio', 'pdf_editor', 'pdf_modificado']);
+  assert.strictEqual(r.valorBate, false);
 });
-t('boleto com linha diferente', () => {
-  const r = an.conferirAnexo({ anexo: { etiquetas: [{ st_nomeabreviadoetiqueta_eti: 'Doc. Pgto' }] },
+t('ilovepdf vira pdf_compactado e nao pdf_editor', () => {
+  const r = an.conferirAnexo({ anexo: {}, texto: '', meta: { Producer: 'iLovePDF' }, parcelas: desp, cnpjCond: '', outros });
+  assert.deepStrictEqual(r.achados.map((a) => a.tipo), ['pdf_compactado']);
+});
+const comp = (texto) => an.conferirAnexo({ anexo: { st_nomeabreviadoetiqueta_eti: 'Comprovante' }, texto: 'Comprovante ' + 'x'.repeat(40) + texto, meta: {}, parcelas: desp, cnpjCond: '', outros });
+t('despesa parcelada: comprovante de outra parcela nao acusa se um bate', () => {
+  assert.deepStrictEqual(an.conferirDespesa(desp, [comp(' R$ 999,00 em 04/06/2026'), comp(' R$ 1.017,23 em 04/09/2026')]), []);
+});
+t('despesa: nenhum comprovante com o valor', () => {
+  assert.deepStrictEqual(an.conferirDespesa(desp, [comp(' R$ 999,00 em 04/09/2026')]).map((a) => a.tipo), ['comprovante_valor']);
+});
+t('despesa: valor bate e data diferente', () => {
+  assert.deepStrictEqual(an.conferirDespesa(desp, [comp(' R$ 1.017,23 em 10/09/2026')]).map((a) => a.tipo), ['comprovante_data']);
+});
+t('despesa: boleto com linha diferente', () => {
+  const b = an.conferirAnexo({ anexo: { etiquetas: [{ st_nomeabreviadoetiqueta_eti: 'Doc. Pgto' }] },
     texto: 'Beneficiario ' + 'x'.repeat(40) + ` ${partes[0]}.${partes[1]} ${partes[2]}.${partes[3]} ${partes[4]}.${partes[5]} ${partes[6]} ${partes[7]}0000012346`,
     meta: {}, parcelas: desp, cnpjCond: '', outros });
-  assert.deepStrictEqual(r.achados.map((a) => a.tipo), ['boleto_linha']);
+  assert.deepStrictEqual(an.conferirDespesa(desp, [b]).map((a) => a.tipo), ['boleto_linha']);
+});
+t('cnpj de outro condominio como emitente nao acusa', () => {
+  const r = an.conferirAnexo({ anexo: { st_nomeabreviadoetiqueta_eti: 'Doc. Fiscal' }, texto: 'Nota fiscal ' + 'x'.repeat(40) + ' Prestador CNPJ 11.222.333/0001-81',
+    meta: {}, parcelas: desp, cnpjCond: '33955806000192', outros });
+  assert.ok(!r.achados.some((a) => a.tipo === 'cnpj_outro_condominio'));
 });
 t('escaneado nao e legivel', () => {
   const r = an.conferirAnexo({ anexo: {}, texto: '  \f ', meta: {}, parcelas: desp, cnpjCond: '', outros });

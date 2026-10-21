@@ -18,6 +18,9 @@ const SAIDA = arg('saida');
 const IDS = String(arg('condominios', '')).split(',').map(Number).filter((n) => n > 0);
 const INICIO = arg('inicio'); const FIM = arg('fim');
 const EXCLUIDOS = new Set([143, 144, 145, 160, 162]);
+// Fora da comparação de "CNPJ de outro condomínio": cadastros que não são condomínio
+// e o condomínio de teste 167, cujo CNPJ de teste é o de um fornecedor.
+const FORA_COMPARACAO = new Set([...EXCLUIDOS, 167]);
 if (!SAIDA || !IDS.length || !INICIO || !FIM) { console.error('faltam --saida --condominios --inicio --fim'); process.exit(2); }
 const PASTA = path.join(SAIDA, 'anexos');
 fs.mkdirSync(PASTA, { recursive: true });
@@ -72,9 +75,9 @@ async function baixar(a, destino) {
   }
   const cnpjDe = new Map(); const nomeDe = new Map(); const outrosTodos = new Map();
   conds.forEach((c) => {
-    const id = Number(c.id_condominio_cond); const doc = String(c.st_cnpj_cond || '').replace(/\D/g, '');
+    const id = Number(c.id_condominio_cond); const doc = String(c.st_cpf_cond || c.st_cnpj_cond || '').replace(/\D/g, ''); // o CNPJ vem em st_cpf_cond
     nomeDe.set(id, c.st_fantasia_cond || c.st_nome_cond);
-    if (doc.length === 14) { cnpjDe.set(id, doc); if (!EXCLUIDOS.has(id)) outrosTodos.set(doc, c.st_fantasia_cond || c.st_nome_cond); }
+    if (doc.length === 14) { cnpjDe.set(id, doc); if (!FORA_COMPARACAO.has(id)) outrosTodos.set(doc, c.st_fantasia_cond || c.st_nome_cond); }
   });
 
   const itens = []; // um por anexo
@@ -119,6 +122,22 @@ async function baixar(a, destino) {
       cnpjCond: cnpjDe.get(it.idCond) || '', outros: outrosTodos });
   }), 4);
 
+  // Decisão por despesa (valor, data e linha olham todos os anexos da despesa).
+  const porDesp = new Map();
+  itens.forEach((it) => { const k = it.idCond + '_' + it.idDesp; if (!porDesp.has(k)) porDesp.set(k, []); porDesp.get(k).push(it); });
+  const despesasAchados = [];
+  porDesp.forEach((lista) => {
+    const a = an.conferirDespesa(lista[0].parcelas, lista.map((it) => it.resultado));
+    const p0 = lista[0].parcelas[0];
+    const etq = lista.map((it) => it.resultado && it.resultado.tipo);
+    despesasAchados.push({ idCond: lista[0].idCond, condominio: nomeDe.get(lista[0].idCond), idDespesa: lista[0].idDesp,
+      fornecedor: p0.st_nome_con, valor: lista[0].parcelas.map((p) => p.vl_valor_pdes).join(' + '),
+      liquidacao: lista[0].parcelas.map((p) => p.dt_liquidacao_pdes.slice(0, 10)).join(' '), formaPag: p0.id_forma_pag,
+      anexos: lista.length, comprovantesLegiveis: lista.filter((it) => it.resultado && it.resultado.legivel && it.resultado.tipo === 'comprovante').length,
+      tipos: etq, achados: a });
+  });
+  fs.writeFileSync(path.join(SAIDA, 'despesas_achados.json'), JSON.stringify(despesasAchados, null, 1));
+
   const saida = itens.map((it) => ({
     idCond: it.idCond, condominio: nomeDe.get(it.idCond), idDespesa: it.idDesp,
     fornecedor: it.parcelas[0].st_nome_con, valor: it.parcelas.map((p) => p.vl_valor_pdes).join(' + '),
@@ -128,10 +147,11 @@ async function baixar(a, destino) {
     etiqueta: [it.anexo.st_nomeabreviadoetiqueta_eti].concat((it.anexo.etiquetas || []).map((e) => e.st_nomeabreviadoetiqueta_eti)).filter(Boolean)[0] || '',
     envio: it.anexo.dt_envio_arq, download: it.download, produtor: it.meta ? it.meta.Producer || '' : '', criador: it.meta ? it.meta.Creator || '' : '',
     criacao: it.meta ? it.meta.CreationDate || '' : '', modificacao: it.meta ? it.meta.ModDate || '' : '',
-    resultado: it.resultado || null,
+    resultado: it.resultado ? { ...it.resultado, valores: undefined, datas: undefined, linhas: undefined } : null,
   }));
   fs.writeFileSync(path.join(SAIDA, 'anexos.json'), JSON.stringify(saida, null, 1));
   const leg = saida.filter((s) => s.resultado && s.resultado.legivel).length;
   const esc = saida.filter((s) => s.resultado && !s.resultado.legivel && !s.resultado.naoPdf).length;
-  log('FIM anexos', saida.length, 'legiveis', leg, 'escaneados', esc, 'achados', saida.reduce((a, s) => a + ((s.resultado && s.resultado.achados.length) || 0), 0));
+  log('FIM anexos', saida.length, 'legiveis', leg, 'escaneados', esc, 'achados por anexo', saida.reduce((a, s) => a + ((s.resultado && s.resultado.achados.length) || 0), 0),
+    'achados por despesa', despesasAchados.reduce((a, d) => a + d.achados.length, 0));
 })().catch((e) => { console.error('ERRO', e.message, e.status || ''); process.exit(1); });

@@ -9,8 +9,9 @@
 //   2. linha digitável do boleto contra st_codigobarras_pdes;
 //   3. CNPJ do pagador (comprovante) e do tomador (nota) contra o CNPJ do
 //      condomínio; CNPJ de outro condomínio da carteira no documento;
-//   4. metadados: PDF produzido por editor (Word, Photoshop, ilovepdf...) e
-//      data de modificação depois da criação.
+//   4. metadados: PDF produzido por editor (Word, Photoshop, Canva...), PDF que
+//      passou por site de juntar ou compactar (ilovepdf, Smallpdf...) e data de
+//      modificação depois da criação.
 // PDF sem texto (escaneado) só é listado: não há leitura por imagem.
 //
 // Só leitura no Superlógica: todas as chamadas são GET. Sem rota e sem banco.
@@ -20,7 +21,9 @@ const https = require('https');
 const { execFile } = require('child_process');
 
 // Programas de edição ou conversão (sinal de documento montado ou alterado).
-const EDITORES = /(microsoft[\s®:]*(word|excel|powerpoint|office)|\bword\b|photoshop|illustrator|indesign|\bgimp\b|ilovepdf|smallpdf|sejda|canva|pdfescape|pdf-?xchange|foxit\s*(phantom|editor|pdf editor)|nitro|wondershare|pdfelement|libreoffice|openoffice|google docs|pdf24|pdfcandy|soda pdf|acrobat (pro|dc|standard)|inkscape|pixelmator|affinity|pdf editor|camscanner)/i;
+const EDITORES = /(microsoft[\s®:]*(word|excel|powerpoint|office)|\bword\b|photoshop|illustrator|indesign|\bgimp\b|pdfescape|pdf-?xchange|foxit\s*(phantom|editor|pdf editor)|nitro|wondershare|pdfelement|libreoffice|openoffice|google docs|canva|acrobat (pro|dc|standard)|inkscape|pixelmator|affinity|pdf editor|camscanner)/i;
+// Sites de juntar ou compactar PDF: apagam o produtor original (não dá para saber se veio do banco).
+const COMPACTADORES = /(ilovepdf|smallpdf|sejda|pdf24|pdfcandy|soda pdf)/i;
 const MODIFICACAO_TOLERANCIA_S = 60;
 
 // ── Download ───────────────────────────────────────────────────────────────
@@ -99,6 +102,9 @@ function datasNoTexto(texto) {
   }
   const re2 = /(?<!\d)(20\d{2})-(\d{2})-(\d{2})(?!\d)/g;
   while ((m = re2.exec(texto))) out.add(`${m[1]}-${m[2]}-${m[3]}`);
+  // Data em milissegundos (o Sicoob imprime assim no débito automático), no fuso de Brasília.
+  const re3 = /(?<!\d)(1[6-9]\d{11})(?!\d)/g;
+  while ((m = re3.exec(texto))) out.add(new Date(Number(m[1]) - 3 * 3600 * 1000).toISOString().slice(0, 10));
   return [...out];
 }
 
@@ -123,6 +129,19 @@ function cnpjsNoTexto(texto) {
   const re2 = /CNPJ[^0-9]{0,20}(\d{14})(?!\d)/gi;
   while ((m = re2.exec(texto))) if (cnpjValido(m[1])) out.add(m[1]);
   return [...out];
+}
+
+// CNPJ mascarado (**.439.740/0001-** ou 23.***.***/0001-24): confere pelos dígitos visíveis.
+function cnpjMascaradoBate(texto, cnpj) {
+  if (!cnpj || cnpj.length !== 14) return false;
+  const re = /(?<![\d*])([\d*]{2})\.?([\d*]{3})\.?([\d*]{3})\/?([\d*]{4})-?([\d*]{2})(?![\d*])/g;
+  let m;
+  while ((m = re.exec(texto))) {
+    const c = m.slice(1).join('');
+    if (!c.includes('*') || (c.match(/\d/g) || []).length < 6) continue;
+    if ([...c].every((ch, k) => ch === '*' || ch === cnpj[k])) return true;
+  }
+  return false;
 }
 
 // Linha digitável ou código de barras para os 44 dígitos do código de barras.
@@ -191,6 +210,10 @@ function maisProximo(lista, alvo, dist) {
 
 // Confere um anexo já extraído. parcelas: linhas da despesa no período.
 // cnpjCond: CNPJ do condomínio (dígitos). outros: Map cnpj -> nome dos demais.
+// Devolve os sinais do próprio anexo (metadados e CNPJ) e o que ele bate com a
+// despesa; a decisão de valor, data e linha é tomada por despesa em
+// conferirDespesa, porque a despesa parcelada guarda comprovantes e boletos
+// das outras parcelas no mesmo lugar.
 function conferirAnexo({ anexo, texto, meta, parcelas, cnpjCond, outros }) {
   const tipo = tipoDoAnexo(anexo, texto);
   const achados = [];
@@ -199,6 +222,7 @@ function conferirAnexo({ anexo, texto, meta, parcelas, cnpjCond, outros }) {
   if (meta) {
     const prod = [meta.Producer, meta.Creator].filter(Boolean).join(' | ');
     if (prod && EDITORES.test(prod)) achados.push({ tipo: 'pdf_editor', motivo: `PDF gerado por editor: ${prod}` });
+    else if (prod && COMPACTADORES.test(prod)) achados.push({ tipo: 'pdf_compactado', motivo: `PDF passou por ${prod} (produtor original apagado)` });
     const c = dataMeta(meta.CreationDate); const m = dataMeta(meta.ModDate);
     if (c && m && (m - c) / 1000 > MODIFICACAO_TOLERANCIA_S) {
       achados.push({ tipo: 'pdf_modificado', motivo: `modificado depois de criado (criação ${meta.CreationDate}, modificação ${meta.ModDate})` });
@@ -212,42 +236,70 @@ function conferirAnexo({ anexo, texto, meta, parcelas, cnpjCond, outros }) {
   const valores = valoresNoTexto(texto);
   const datas = datasNoTexto(texto);
   const cnpjs = cnpjsNoTexto(texto);
+  const linhas = linhasNoTexto(texto);
+  const vencDesp = [...new Set(parcelas.map((p) => isoDeMDY(p.dt_vencimento_pdes)).filter(Boolean))];
+  const valorBate = valores.some((v) => valoresDesp.some((d) => Math.abs(v - d) < 0.005));
+  const dataBate = datas.some((d) => datasDesp.includes(d));
+  const vencBate = datas.some((d) => vencDesp.includes(d));
+  // O do condomínio também vale sem máscara e sem a palavra CNPJ por perto (tomador em outra linha).
+  const temCond = !!cnpjCond && (cnpjs.includes(cnpjCond) || cnpjMascaradoBate(texto, cnpjCond)
+    || new RegExp('(?<!\\d)' + cnpjCond + '(?!\\d)').test(texto));
+  const linhaBate = linhas.some((l) => codDesp.includes(l));
 
-  // CNPJ de outro condomínio da carteira (vale para qualquer tipo de anexo).
-  const deOutro = cnpjs.filter((c) => c !== cnpjCond && outros.has(c));
-  if (deOutro.length && !cnpjs.includes(cnpjCond)) {
+  // CNPJ de outro condomínio da carteira no lugar do CNPJ do condomínio.
+  // O primeiro CNPJ do documento é o do emitente (prestador, beneficiário): não conta.
+  const deOutro = cnpjs.slice(1).filter((c) => c !== cnpjCond && outros.has(c));
+  if (deOutro.length && !temCond) {
     achados.push({ tipo: 'cnpj_outro_condominio', motivo: `traz o CNPJ de ${deOutro.map((c) => outros.get(c)).join(', ')} e não o do condomínio` });
   }
+  // Comprovante deste pagamento (valor bate) sem o CNPJ do condomínio como pagador.
+  if (tipo === 'comprovante' && valorBate && cnpjCond && cnpjs.length && !temCond && !deOutro.length) {
+    achados.push({ tipo: 'comprovante_cnpj_pagador', motivo: `CNPJ do condomínio não aparece; CNPJs no comprovante: ${cnpjs.join(', ')}` });
+  }
+  if (tipo === 'nota' && cnpjCond && cnpjs.length && !temCond && !deOutro.length) {
+    achados.push({ tipo: 'nota_tomador', motivo: `CNPJ do condomínio não aparece como tomador; CNPJs na nota: ${cnpjs.join(', ')}` });
+  }
+  return { tipo, legivel: true, achados, valorBate, dataBate, vencBate, temCond, linhaBate, valores, datas, linhas,
+    lidos: { valores: valores.length, datas: datas.length, cnpjs: cnpjs.length, linhas: linhas.length } };
+}
 
-  if (tipo === 'comprovante') {
-    if (valoresDesp.length && !valores.some((v) => valoresDesp.some((d) => Math.abs(v - d) < 0.005))) {
-      const prox = maisProximo(valores, valoresDesp[0], (a, b) => Math.abs(a - b));
-      achados.push({ tipo: 'comprovante_valor', motivo: `valor da despesa R$ ${valoresDesp.map(fmtValor).join(' ou ')} não aparece no comprovante${prox != null ? ` (mais próximo R$ ${fmtValor(prox)})` : ' (nenhum valor lido)'}` });
-    }
-    if (datasDesp.length && datas.length && !datas.some((d) => datasDesp.includes(d))) {
-      const alvo = Date.parse(datasDesp[0]);
-      const prox = maisProximo(datas, alvo, (a, b) => Math.abs(Date.parse(a) - b));
-      achados.push({ tipo: 'comprovante_data', motivo: `liquidação ${datasDesp.join(' ou ')} não aparece no comprovante (mais próxima ${prox})` });
-    }
-    if (cnpjCond && cnpjs.length && !cnpjs.includes(cnpjCond) && !deOutro.length) {
-      achados.push({ tipo: 'comprovante_cnpj_pagador', motivo: `CNPJ do condomínio não aparece; CNPJs no comprovante: ${cnpjs.join(', ')}` });
-    }
+// Decide por despesa, olhando todos os anexos legíveis dela.
+// res: resultados de conferirAnexo da mesma despesa. Devolve achados da despesa.
+function conferirDespesa(parcelas, res) {
+  const achados = [];
+  const valoresDesp = [...new Set(parcelas.map((p) => Number(p.vl_valor_pdes)).filter((v) => v > 0))];
+  const datasDesp = [...new Set(parcelas.map((p) => isoDeMDY(p.dt_liquidacao_pdes)).filter(Boolean))];
+  const codDesp = [...new Set(parcelas.map((p) => codigoBarras44(p.st_codigobarras_pdes)).filter(Boolean))];
+  const leg = res.filter((r) => r && r.legivel);
+  const comp = leg.filter((r) => r.tipo === 'comprovante');
+  // Despesa com anexos de várias parcelas (mais de um boleto ou comprovante).
+  const variasParcelas = res.filter((r) => r && (r.tipo === 'boleto' || r.tipo === 'comprovante')).length > 2;
+  if (comp.length && valoresDesp.length && !comp.some((r) => r.valorBate)) {
+    const todos = [].concat(...comp.map((r) => r.valores));
+    const prox = maisProximo(todos, valoresDesp[0], (a, b) => Math.abs(a - b));
+    achados.push({ tipo: 'comprovante_valor', motivo: (variasParcelas
+      ? `só há comprovantes de outras parcelas; nenhum traz o valor pago R$ ${valoresDesp.map(fmtValor).join(' ou ')}`
+      : `nenhum comprovante traz o valor pago R$ ${valoresDesp.map(fmtValor).join(' ou ')}`)
+      + (prox != null ? ` (mais próximo R$ ${fmtValor(prox)})` : ' (nenhum valor lido)') });
   }
-  if (tipo === 'boleto') {
-    const linhas = linhasNoTexto(texto);
-    if (codDesp.length && linhas.length && !linhas.some((l) => codDesp.includes(l))) {
-      achados.push({ tipo: 'boleto_linha', motivo: `linha digitável do boleto (${linhas[0]}) diferente da lançada (${codDesp[0]})` });
-    }
+  const compDoValor = comp.filter((r) => r.valorBate && r.datas.length);
+  if (compDoValor.length && datasDesp.length && !compDoValor.some((r) => r.dataBate)) {
+    const todas = [].concat(...compDoValor.map((r) => r.datas)).filter((d) => d <= '2099');
+    const alvo = Date.parse(datasDesp[0]);
+    const prox = maisProximo(todas, alvo, (a, b) => Math.abs(Date.parse(a) - b));
+    const daParcela = compDoValor.some((r) => r.vencBate) || !variasParcelas;
+    achados.push({ tipo: daParcela ? 'comprovante_data' : 'comprovante_data_parcela_incerta',
+      motivo: `comprovante do valor pago não traz a data da baixa ${datasDesp.join(' ou ')} (mais próxima ${prox})`
+        + (daParcela ? '' : '; despesa parcelada com valores iguais, o comprovante pode ser de outra parcela') });
   }
-  if (tipo === 'nota') {
-    if (cnpjCond && cnpjs.length && !cnpjs.includes(cnpjCond) && !deOutro.length) {
-      achados.push({ tipo: 'nota_tomador', motivo: `CNPJ do condomínio não aparece como tomador; CNPJs na nota: ${cnpjs.join(', ')}` });
-    }
+  const comLinha = leg.filter((r) => r.linhas.length && (r.tipo === 'boleto' || r.tipo === 'comprovante'));
+  if (codDesp.length && comLinha.length && !leg.some((r) => r.linhaBate)) {
+    achados.push({ tipo: 'boleto_linha', motivo: `nenhum anexo traz a linha digitável lançada (${codDesp[0]}); lida no anexo: ${comLinha[0].linhas[0]}` });
   }
-  return { tipo, legivel: true, achados, lidos: { valores: valores.length, datas: datas.length, cnpjs: cnpjs.length } };
+  return achados;
 }
 
 module.exports = {
-  baixarAnexo, corpoValido, extrairPdf, legivel, conferirAnexo,
-  valoresNoTexto, datasNoTexto, cnpjsNoTexto, cnpjValido, codigoBarras44, linhasNoTexto, tipoDoAnexo, EDITORES,
+  baixarAnexo, corpoValido, extrairPdf, legivel, conferirAnexo, conferirDespesa,
+  valoresNoTexto, datasNoTexto, cnpjsNoTexto, cnpjValido, codigoBarras44, linhasNoTexto, tipoDoAnexo, EDITORES, COMPACTADORES,
 };
