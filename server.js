@@ -3526,6 +3526,33 @@ app.post('/api/cobranca/condominio/:idSuperlogica/segunda-via', requireAuth, exp
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// Comparativo entre condomínios (T14). Só leitura; mesma regra de acesso e de carteira
+// da cobrança. Últimos 12 meses fechados. Detalhes em superlogica/comparativo.js.
+// ─────────────────────────────────────────────────────────────────────────
+const slComparativo = require('./superlogica/comparativo');
+const _cacheComparativo = slModulo.consulta.criarCache(6 * 3600 * 1000, 600, 120 * 1000);
+async function _rotaComparativo(req, res, tipo) {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  if (!(await _exigirCarteira(req, res, id))) return;
+  const hoje = _hojeBrasilia();
+  const chave = tipo + ':' + id + ':' + hoje.getFullYear() + '-' + (hoje.getMonth() + 1);
+  try {
+    const fn = tipo === 'custos' ? slComparativo.custosCondominio : slComparativo.fornecedoresCondominio;
+    res.json(await _cacheComparativo.pegar(chave, () => fn(clienteSL(), id, hoje, 12)));
+  } catch (e) {
+    console.warn('[comparativo-' + tipo + '] ' + id + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler esse condomínio no Superlógica agora.' });
+  }
+}
+// GET /api/comparativo/condominio/:id — custos por unidade por mês (total, pessoal, água, energia, gás)
+app.get('/api/comparativo/condominio/:idSuperlogica', requireAuth, (req, res) => _rotaComparativo(req, res, 'custos'));
+// GET /api/comparativo/condominio/:id/fornecedores — total pago por fornecedor no período
+app.get('/api/comparativo/condominio/:idSuperlogica/fornecedores', requireAuth, (req, res) => _rotaComparativo(req, res, 'fornecedores'));
+
 // GET /api/carteiras — todos os grupos (para o GESTOR escolher na tela de usuários).
 app.get('/api/carteiras', requireAuth, requireGestor, async (req, res) => {
   res.set('Cache-Control', 'no-store');

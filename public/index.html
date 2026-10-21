@@ -1098,6 +1098,9 @@
     <div class="nav-item" onclick="showPanel('cobranca')">
       <span class="nav-icon">$</span> Cobrança
     </div>
+    <div class="nav-item" onclick="showPanel('comparativo')">
+      <span class="nav-icon">≋</span> Comparativo
+    </div>
     <div class="nav-item" onclick="showPanel('prestacao')">
       <span class="nav-icon">▤</span> Prestação de Contas
     </div>
@@ -1940,6 +1943,27 @@
       </div>
     </div>
 
+    <!-- COMPARATIVO (T14): JS em public/comparativo.js -->
+    <div class="panel" id="panel-comparativo">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Custo por unidade nos últimos 12 meses</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="cmp-carteira" style="width:auto;min-width:260px"><option value="meus">Meus condomínios</option></select>
+          <button class="btn btn-primary" onclick="comparativoCarregar()">Carregar</button>
+          <button class="btn btn-ghost" onclick="comparativoFornecedores()">Comparar fornecedores</button>
+        </div>
+        <div id="cmp-info" class="ficha-sub" style="margin:10px 0"></div>
+        <div id="cmp-tabela"></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Fornecedores em comum</span></div>
+        <div class="hint" style="margin-bottom:8px">O mesmo fornecedor pago em dois ou mais condomínios carregados acima, com a média por mês e por unidade em cada um.</div>
+        <div id="cmp-forn"></div>
+      </div>
+    </div>
+
     <!-- COBRANÇA (T11): JS em public/cobranca.js -->
     <div class="panel" id="panel-cobranca">
       <div class="card">
@@ -2599,6 +2623,7 @@ const PAGE_META = {
   condominio:    { title: 'Ficha do Condomínio', sub: 'consulta ao Superlógica, só leitura' },
   comunicados:   { title: 'Comunicados e Multas', sub: 'grava no Superlógica só com confirmação' },
   cobranca:      { title: 'Cobrança', sub: 'inadimplência por carteira, acordo e 2ª via' },
+  comparativo:   { title: 'Comparativo', sub: 'custo por unidade e fornecedores entre condomínios' },
 };
 
 function showPanel(name) {
@@ -2627,6 +2652,9 @@ function showPanel(name) {
   }
   if (name === 'previsao') {
     if (typeof previsaoInit === 'function') previsaoInit();
+  }
+  if (name === 'comparativo') {
+    if (typeof comparativoAbrir === 'function') comparativoAbrir();
   }
   if (name === 'cobranca') {
     if (typeof cobrancaAbrir === 'function') cobrancaAbrir();
@@ -4108,6 +4136,7 @@ async function deletarUsuario(userId, email) {
 <script src="/despesas.js"></script>
 <script src="/condominio.js"></script>
 <script src="/cobranca.js"></script>
+<script src="/comparativo.js"></script>
 <script src="/atas.js"></script>
 <script src="/comunicados.js"></script>
 <script src="/relatorio.js"></script>
