@@ -193,6 +193,8 @@ const MINUSCULAS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'd']);
 function nomeAmigavel(c) {
   let s = String(c.st_fantasia_cond || '').trim();
   if (!s || s.length > 45) s = String(c.st_nome_cond || s).trim();
+  // C07: fantasia que é só uma palavra genérica ("Residencial") não identifica; usa o nome.
+  if (/^(residencial|condom[ií]nio|edif[ií]cio|cond\.?)$/i.test(s) && String(c.st_nome_cond || '').trim()) s = String(c.st_nome_cond).trim();
   // Empresa (LTDA) mantém o nome inteiro: "Condomínio Service" é razão social, não prefixo.
   if (!/\bLTDA\b/i.test(s)) s = s.replace(PREFIXOS, '');
   s = s.replace(/\s+/g, ' ').trim() || String(c.st_nome_cond || '').trim();

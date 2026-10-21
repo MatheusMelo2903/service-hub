@@ -186,9 +186,12 @@ async function cobSimular(idSL, k) {
       body: JSON.stringify({ id_unidade: u.id_unidade, parcelas: tr.querySelector('.cob-n').value, entrada: tr.querySelector('.cob-e').value, primeira: tr.querySelector('.cob-p').value }),
     });
     var linhas = s.parcelas.map(function (p, i) { return (i + 1) + ') ' + p.vencimento + ': ' + cobBRL(p.valor); });
-    var texto = 'Proposta de acordo da unidade ' + s.unidade + ' (' + s.cobrancas + ' cobranças em aberto). Total atualizado: ' + cobBRL(s.total)
+    // C06: plural certo e o principal com nome claro (o Superlógica chama a conta do principal de "Acordos").
+    var nCob = Number(s.cobrancas) || 0;
+    var texto = 'Proposta de acordo da unidade ' + s.unidade + ' (' + nCob + (nCob === 1 ? ' cobrança' : ' cobranças') + ' em aberto). Total atualizado: ' + cobBRL(s.total)
       + (s.entrada > 0 ? '. Entrada de ' + cobBRL(s.entrada) + ' hoje' : '') + '. Parcelas: ' + linhas.join('; ') + '. Simulação sujeita a confirmação da administradora.';
-    res.innerHTML = '<div class="ficha-sub" style="margin-top:6px">Composição: ' + s.composicao.map(function (c) { return cobEsc(c.conta) + ' ' + cobBRL(c.valor); }).join(' · ')
+    var nomeConta = function (c) { return /^acordos?$/i.test(String(c || '').trim()) ? 'Valor principal' : c; };
+    res.innerHTML = '<div class="ficha-sub" style="margin-top:6px">Composição: ' + s.composicao.map(function (c) { return cobEsc(nomeConta(c.conta)) + ' ' + cobBRL(c.valor); }).join(' · ')
       + ' · soma das parcelas ' + cobBRL(s.soma_parcelas) + '</div>' + cobTextoArea(texto);
   } catch (e) {
     res.innerHTML = '<div class="ficha-erro">' + cobEsc(e.message) + '</div>';
