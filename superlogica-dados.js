@@ -269,4 +269,4 @@ async function sincronizarCondominios(cliente, supabaseAdminRequest, { dryRun = 
   };
 }
 
-module.exports = { criarCliente, puxarDadosPrestacao, sincronizarCondominios, nomeAmigavel, mesesEntre, MAX_MESES };
+module.exports = { criarCliente, puxarDadosPrestacao, sincronizarCondominios, listarCondominiosSuperlogica, nomeAmigavel, mesesEntre, MAX_MESES };

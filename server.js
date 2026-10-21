@@ -3914,6 +3914,62 @@ app.get('/api/comparativo/condominio/:idSuperlogica', requireAuth, (req, res) =>
 // GET /api/comparativo/condominio/:id/fornecedores — total pago por fornecedor no período
 app.get('/api/comparativo/condominio/:idSuperlogica/fornecedores', requireAuth, (req, res) => _rotaComparativo(req, res, 'fornecedores'));
 
+// ── Financeiro (T24): cópia do Superlógica para as tabelas fin_* ─────────
+// Só GESTOR. Só GET no Superlógica; grava só no Supabase de teste (trava em financeiro/banco.js).
+// A carga longa (meses) roda pelo script scripts/fin-sync.js; a rota aceita até 31 dias.
+const financeiro = require('./financeiro');
+function _credFin() {
+  return { base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN, supabaseUrl: SUPABASE_URL, supabaseChave: SUPABASE_SERVICE_ROLE_KEY };
+}
+const _FIN_ERROS = {
+  supabase_nao_permitido: [403, 'A cópia do financeiro só está liberada no ambiente de teste.'],
+  supabase_nao_configurado: [503, 'Banco não configurado neste ambiente.'],
+  sincronizacao_em_andamento: [409, 'Já existe uma sincronização em andamento. Aguarde terminar.'],
+};
+function _finErro(res, e) {
+  const m = _FIN_ERROS[e && e.message];
+  if (m) return res.status(m[0]).json({ erro: e.message, detalhe: m[1], execucao: e.execucao });
+  console.warn('[financeiro] falhou: ' + (e && e.message));
+  return res.status(500).json({ erro: 'falha_financeiro', detalhe: 'Não foi possível concluir agora.' });
+}
+
+// POST /api/financeiro/sincronizar { inicio?, fim?, tipos?, idCondominio? } -> 202 { execucao }
+app.post('/api/financeiro/sincronizar', requireAuth, requireGestor, express.json({ limit: '5kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
+  const U = financeiro.util;
+  const b = req.body || {};
+  const fim = b.fim === undefined ? U.hojeBR() : b.fim;
+  const inicio = b.inicio === undefined ? U.somaDias(U.hojeBR(), -6) : b.inicio;
+  if (!U.ehISO(inicio) || !U.ehISO(fim) || inicio > fim || fim > U.hojeBR()) return res.status(400).json({ erro: 'periodo_invalido', detalhe: 'Datas no formato AAAA-MM-DD, início antes do fim e fim até hoje.' });
+  if (U.diasEntre(inicio, fim) > 30) return res.status(400).json({ erro: 'periodo_longo', detalhe: 'Pela tela, no máximo 31 dias por vez.' });
+  let tipos = null;
+  if (b.tipos !== undefined) {
+    if (!Array.isArray(b.tipos) || !b.tipos.length || b.tipos.length > 10 || !b.tipos.every((t) => financeiro.TIPOS.includes(t))) return res.status(400).json({ erro: 'tipos_invalidos', permitidos: financeiro.TIPOS });
+    tipos = [...new Set(b.tipos)];
+  }
+  let idCondominio = null;
+  if (b.idCondominio !== undefined && b.idCondominio !== null && b.idCondominio !== '') {
+    if (!/^[1-9][0-9]{0,8}$/.test(String(b.idCondominio))) return res.status(400).json({ erro: 'condominio_invalido' });
+    idCondominio = Number(b.idCondominio);
+    if (U.excluido(idCondominio)) return res.status(400).json({ erro: 'condominio_excluido', detalhe: 'Este cadastro não é condomínio e fica fora do financeiro.' });
+  }
+  try {
+    const usuario = req.authMode === 'internal' ? null : (req.user && req.user.sub) || null;
+    const { execucao, promessa } = await financeiro.sincronizar(_credFin(), { inicio, fim, tipos, idCondominio }, {
+      origem: 'rota', usuario, log: (m) => { if (/^(ERRO|fim|execucao)/.test(m)) console.log('[financeiro] ' + m.slice(0, 500)); },
+    });
+    promessa.catch((e) => console.warn('[financeiro] execução ' + execucao + ' falhou: ' + (e && e.message)));
+    res.status(202).json({ execucao, inicio, fim, tipos: tipos || financeiro.TIPOS, idCondominio });
+  } catch (e) { _finErro(res, e); }
+});
+
+// GET /api/financeiro/sincronizacao — em andamento, últimas execuções e data por condomínio.
+app.get('/api/financeiro/sincronizacao', requireAuth, requireGestor, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try { res.json(await financeiro.painel(_credFin())); } catch (e) { _finErro(res, e); }
+});
+
 // GET /api/carteiras — todos os grupos (para o GESTOR escolher na tela de usuários).
 app.get('/api/carteiras', requireAuth, requireGestor, async (req, res) => {
   res.set('Cache-Control', 'no-store');
