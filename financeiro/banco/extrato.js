@@ -142,6 +142,20 @@ function paraConciliacao(ext, { idCondominio, idConta, origem } = {}) {
   }));
 }
 
+// Formato do OFX lido pela conciliação da T35 (public/conciliacao-casar.js, branch feat/financeiro-conciliacao):
+//   { data, valor (centavos com sinal), fitid, descricao, tipo ('CREDIT'|'DEBIT'), numero }
+// Assim o extrato da API entra no mesmo casamento que o OFX enviado pela tela.
+function paraItensT35(ext) {
+  return ext.itens.map((i) => ({
+    data: i.data,
+    valor: i.tipo === 'D' ? -i.centavos : i.centavos,
+    fitid: i.id,
+    descricao: String(i.descricao || '').slice(0, 120),
+    tipo: i.tipo === 'D' ? 'DEBIT' : 'CREDIT',
+    numero: String(i.documento || '').slice(0, 30),
+  }));
+}
+
 const ascii = (s, n) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x20-\x7E]/g, ' ').replace(/[<>&]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
 const dtOfx = (iso) => iso.replace(/-/g, '') + '120000[-3:BRT]';
 const valOfx = (cent) => (cent < 0 ? '-' : '') + (Math.abs(cent) / 100).toFixed(2);
@@ -198,4 +212,4 @@ function lerOFX(texto) {
   return { banco: tag(s, 'BANKID'), conta_final: C.finalConta(tag(s, 'ACCTID')), saldoAnteriorCentavos: null, saldoAtualCentavos: bal ? C.centavos(bal[1].trim()) : null, itens };
 }
 
-module.exports = { normalizarExtratoSicoob, lerExtratoCnab240, paraConciliacao, paraOFX, lerOFX, conferirSaldos, FORMATO_ITEM };
+module.exports = { normalizarExtratoSicoob, lerExtratoCnab240, paraConciliacao, paraItensT35, paraOFX, lerOFX, conferirSaldos, FORMATO_ITEM };

@@ -250,6 +250,18 @@ const DESPESAS = [
     assert.strictEqual(lido.saldoAtualCentavos, 110050);
     assert.strictEqual(lido.conta_final, '***4075');
     assert.throws(() => E.paraOFX({ itens: [] }), /extrato_vazio/);
+    const t35 = E.paraItensT35(ext);
+    assert.deepStrictEqual(Object.keys(t35[0]), ['data', 'valor', 'fitid', 'descricao', 'tipo', 'numero']);
+    assert.strictEqual(t35[1].valor, -8010);
+    assert.strictEqual(t35[1].tipo, 'DEBIT');
+    assert.strictEqual(t35[0].fitid, lido.itens[0].id, 'mesmo FITID no OFX e no item');
+    // Se a T35 estiver no Mac, o OFX gerado aqui precisa ser lido por ela igual.
+    const casar = path.join(raiz, '..', 'financeiro-conciliacao', 'public', 'conciliacao-casar.js');
+    if (fs.existsSync(casar)) {
+      const T = require(casar);
+      const leitor = T.lerOfx || T.lerOFX;
+      if (leitor) { const l = leitor(ofx); assert.deepStrictEqual(l.itens.map((x) => [x.data, x.valor, x.fitid]), t35.map((x) => [x.data, x.valor, x.fitid])); console.log('   (OFX conferido com o leitor da T35)'); }
+    }
   });
   await ok('extrato CNAB 240 segmento E', () => {
     const L = [
