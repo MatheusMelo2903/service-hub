@@ -13,11 +13,21 @@
 //     JSON (ata, prestação pelo Superlógica, conferência de despesas, comunicado, multa). O corpo
 //     é lido aqui com o mesmo limite da rota; o express.json da rota vê que já foi lido e não lê
 //     de novo. Também confere os módulos ficha_condominio, cobranca e comparativo.
-//  2. guardaProxy: /api/superlogica (proxy da API condor). Só age para quem tem carteira: o
-//     condomínio vem da query (idCondominio, ID_CONDOMINIO_COND, id em condominios/...) ou do
-//     corpo do POST/PUT; condomínio fora recusa; gravação sem condomínio recusa; a resposta JSON
-//     perde os itens de condomínios fora da carteira (listas gerais com id=-1); resposta que não
-//     é JSON só passa quando a chamada citou um condomínio da carteira.
+//     O caminho é comparado sem diferença de maiúscula e já decodificado (%31 = 1), como o
+//     Express casa as rotas. Defesa em profundidade no server.js: app.param('idSuperlogica')
+//     confere a carteira de novo, e as rotas de corpo chamam exigir() depois de validar o id.
+//  2. guardaProxy: /api/superlogica (proxy da API condor). Só age para quem tem carteira:
+//     . caminho só no formato modulo/acao (letras), sem barra dupla, ponto ou código;
+//     . o condomínio vem da query ou do corpo, com os nomes lidos como o PHP lê (ponto, espaço e
+//       colchete aberto sem fechar viram sublinhado; sem diferença de maiúscula); qualquer campo
+//       cujo nome cite "condominio" precisa de inteiro puro da carteira; lista ou array recusa;
+//     . corpo só application/x-www-form-urlencoded (JSON e multipart: 415);
+//     . gravação sem condomínio ou com "todos" (-1, 0) recusa;
+//     . leitura sem condomínio da carteira só em condominios/get e condominios/index, e a
+//       resposta só leva itens que trazem o condomínio e estão na carteira (falha fechada);
+//     . a resposta JSON perde os itens de condomínios fora da carteira, inteiros (sem deixar os
+//       campos irmãos); resposta que não é JSON só passa quando a chamada citou um condomínio
+//       da carteira.
 
 const { condominiosDasCarteiras } = require('./carteiras');
 
@@ -39,53 +49,99 @@ function temModulo(perfil, modulo, acao) {
   return !acao || (Array.isArray(m.acoes) && m.acoes.includes(acao));
 }
 
-// Regras de rota (caminho relativo a /api). A primeira que casa vale.
+// Regras de rota (caminho relativo a /api, já decodificado). A primeira que casa vale.
 //  modulo/acao: módulo exigido; corpo: campo do condomínio no corpo JSON e limite do parser;
 //  semCondominio: rota sem condomínio (só o módulo); filtrarResposta: tira da resposta os
-//  itens de condomínios fora da carteira.
+//  itens de condomínios fora da carteira. Todas sem diferença de maiúscula (flag i), como o Express.
 const REGRAS = [
-  { re: /^\/condominio\/([^/]+)\/(ficha|auditoria|relatorio-mensal)\/?$/, modulo: 'ficha_condominio' },
-  { re: /^\/condominio\/([^/]+)(\/|$)/ },
-  { re: /^\/cobranca\/condominio\/([^/]+)\/segunda-via\/?$/, modulo: 'cobranca', acao: 'segunda_via' },
-  { re: /^\/cobranca\/condominio\/([^/]+)(\/|$)/, modulo: 'cobranca' },
-  { re: /^\/comparativo\/condominio\/([^/]+)(\/|$)/, modulo: 'comparativo' },
-  { re: /^\/unidades\/busca\/?$/, modulo: 'ficha_condominio', semCondominio: true, filtrarResposta: true },
-  { re: /^\/atas\/gerar\/?$/, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '36mb' } },
-  { re: /^\/prestacao\/v13\/superlogica\/?$/, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '20kb' } },
-  { re: /^\/despesas\/verificar\/?$/, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '1mb' } },
-  { re: /^\/comunicados\/publicar\/?$/, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '100kb' } },
-  { re: /^\/multas\/registrar\/?$/, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '100kb' } },
+  { re: /^\/condominio\/([^/]+)\/(ficha|auditoria|relatorio-mensal)\/?$/i, modulo: 'ficha_condominio' },
+  { re: /^\/condominio\/([^/]+)(\/|$)/i },
+  { re: /^\/cobranca\/condominio\/([^/]+)\/segunda-via\/?$/i, modulo: 'cobranca', acao: 'segunda_via' },
+  { re: /^\/cobranca\/condominio\/([^/]+)(\/|$)/i, modulo: 'cobranca' },
+  { re: /^\/comparativo\/condominio\/([^/]+)(\/|$)/i, modulo: 'comparativo' },
+  { re: /^\/unidades\/busca\/?$/i, modulo: 'ficha_condominio', semCondominio: true, filtrarResposta: true },
+  { re: /^\/atas\/gerar\/?$/i, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '36mb' } },
+  { re: /^\/prestacao\/v13\/superlogica\/?$/i, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '20kb' } },
+  { re: /^\/despesas\/verificar\/?$/i, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '1mb' } },
+  { re: /^\/comunicados\/publicar\/?$/i, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '100kb' } },
+  { re: /^\/multas\/registrar\/?$/i, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '100kb' } },
 ];
+// Caminho decodificado pedaço a pedaço. null = codificação inválida ou pedaço com barra
+// codificada (%2F), que não é caminho de rota nenhuma (quem chama responde 400).
+function caminhoDecodificado(p) {
+  const pedacos = String(p || '').split('/');
+  const out = [];
+  for (const x of pedacos) {
+    let d;
+    try { d = decodeURIComponent(x); } catch (e) { return null; }
+    if (d.includes('/') || d.includes('\\') || d.includes('\0')) return null;
+    out.push(d);
+  }
+  return out.join('/');
+}
 function regraDa(metodo, caminho) {
+  const met = String(metodo || '').toUpperCase();
   for (const r of REGRAS) {
-    if (r.metodo && r.metodo !== metodo) continue;
+    if (r.metodo && r.metodo !== met) continue;
     const m = caminho.match(r.re);
     if (m) return { regra: r, id: r.semCondominio || r.corpo ? null : m[1] };
   }
   return null;
 }
 const idValido = (v) => /^[1-9][0-9]{0,8}$/.test(String(v == null ? '' : v));
+// Valor de id vindo de corpo JSON: só texto ou número, e inteiro positivo puro.
+const idDoCorpoValido = (v) => (typeof v === 'string' || typeof v === 'number') && idValido(v);
 
-// Condomínios citados numa chamada ao proxy. Nomes de campo sem diferença de maiúscula,
-// inclusive dentro de colchetes (COBRANCAS[0][ID_CONDOMINIO_COND]). Em condominios/... o
-// parâmetro "id" é o código do condomínio. Valor -1 ou 0 = todos (não é um condomínio).
-const RE_CAMPO_COND = /(^|\[)(idcondominio|id_condominio_cond|id_condominio|condominioatual)\]?$/i;
+// Nome de parâmetro lido como o PHP do Superlógica lê: corta no byte nulo, tira espaços do
+// começo, ponto e espaço do nome base viram sublinhado; "[" sem "]" depois vira sublinhado;
+// com colchetes fechados, o nome base vem antes do primeiro "[" e cada [x] é um pedaço.
+// Devolve os pedaços em minúsculas: ['contatos', '0', 'id_condominio_cond'].
+function partesPhp(nome) {
+  let s = String(nome == null ? '' : nome);
+  const nul = s.indexOf('\0');
+  if (nul >= 0) s = s.slice(0, nul);
+  s = s.replace(/^[ \t\r\n\v\f]+/, '');
+  const ab = s.indexOf('[');
+  let base = s;
+  let resto = '';
+  if (ab >= 0 && s.indexOf(']', ab) >= 0) { base = s.slice(0, ab); resto = s.slice(ab); }
+  base = base.replace(/[ .[]/g, '_').toLowerCase();
+  const partes = [base];
+  let m;
+  while ((m = resto.match(/^\[([^\]]*)\]/))) { partes.push(m[1].toLowerCase()); resto = resto.slice(m[0].length); }
+  return partes;
+}
+// Pedaço de nome que cita condomínio (sem olhar sinais: id_condominio_cond, idCondominio,
+// condominioatual, ID.CONDOMINIO.COND...). Na dúvida conta como condomínio (fechado).
+const citaCondominio = (p) => String(p).replace(/[^a-z0-9]/g, '').includes('condominio');
+
+// Condomínios citados numa chamada ao proxy.
+//  explicitos: ids inteiros puros; todos: -1 ou 0 (lista geral); invalidos: nomes ou valores
+//  que não dá para conferir (lista, array, "136abc", " 136", "0x88"), que recusam com 400.
+// Em condominios/... o parâmetro "id" é o código do condomínio.
 function idsCondominio(rota, pares) {
-  const ehCondominios = /^condominios(\/|$)/i.test(rota);
-  const out = { explicitos: [], todos: false };
+  const ehCondominios = /^condominios(\/|$)/i.test(String(rota || ''));
+  const out = { explicitos: [], todos: false, invalidos: [] };
   for (const [k, v] of pares) {
-    const chave = String(k || '');
-    if (!(RE_CAMPO_COND.test(chave) || (ehCondominios && /^id$/i.test(chave)))) continue;
-    String(v == null ? '' : v).split(',').map((x) => x.trim()).filter(Boolean).forEach((x) => {
-      const n = Number(x);
-      if (Number.isInteger(n) && n > 0) out.explicitos.push(n);
-      else out.todos = true;
-    });
+    const partes = partesPhp(k);
+    const idxCond = [];
+    partes.forEach((p, i) => { if (citaCondominio(p)) idxCond.push(i); });
+    if (ehCondominios && partes[0] === 'id') idxCond.push(0);
+    if (!idxCond.length) continue;
+    const ultimo = partes.length - 1;
+    // condomínio com [] ou [0] depois (lista de condomínios) ou mais de um pedaço citando: recusa
+    if (idxCond.some((i) => i !== ultimo) || idxCond.length > 1) { out.invalidos.push(String(k)); continue; }
+    const valor = typeof v === 'string' ? v : String(v == null ? '' : v);
+    if (idValido(valor)) out.explicitos.push(Number(valor));
+    else if (valor === '-1' || valor === '0') out.todos = true;
+    else if (valor === '' && ultimo > 0) continue; // campo de condomínio vazio dentro de lista (contatos[0][ID_CONDOMINIO_COND]=)
+    else out.invalidos.push(String(k));
   }
   return out;
 }
 
-// Campos do corpo de um POST/PUT do proxy (formulário, JSON ou multipart).
+// Campos de um corpo application/x-www-form-urlencoded (o único que o proxy aceita de quem
+// tem carteira). JSON e multipart ficam aqui só para os testes antigos e para a sonda.
 function camposDoCorpo(buf, contentType) {
   const ct = String(contentType || '').toLowerCase();
   const txt = buf.toString(ct.includes('multipart') ? 'latin1' : 'utf8');
@@ -96,7 +152,7 @@ function camposDoCorpo(buf, contentType) {
         if (v && typeof v === 'object') Object.entries(v).forEach(([k, x]) => andar(x, prefixo ? prefixo + '[' + k + ']' : k));
         else pares.push([prefixo, v]);
       })(JSON.parse(txt), '');
-    } catch (e) { /* corpo inválido: o Superlógica recusa; aqui fica sem condomínio */ }
+    } catch (e) { /* corpo inválido */ }
     return pares;
   }
   if (ct.includes('multipart')) {
@@ -108,38 +164,68 @@ function camposDoCorpo(buf, contentType) {
   }
   return Array.from(new URLSearchParams(txt).entries());
 }
+// Tipo do corpo exato, antes do ";" (application/x-www-form-urlencoded; charset=UTF-8 passa;
+// "application/x-www-form-urlencoded; x=json" também é formulário e é lido como formulário).
+const ehFormulario = (ct) => String(ct || '').split(';')[0].trim().toLowerCase() === 'application/x-www-form-urlencoded';
+
+// Caminho do proxy para quem tem carteira: /v2/condor/modulo ou /v2/condor/modulo/acao, só
+// letras, uma barra final opcional. Devolve a rota em minúsculas ou null.
+function rotaDoProxy(url) {
+  const caminho = String(url || '').split('?')[0];
+  const m = caminho.match(/^\/v2\/condor\/([a-z]+(?:\/[a-z]+)?)\/?$/i);
+  return m ? m[1].toLowerCase() : null;
+}
+// Leituras sem condomínio da carteira (lista geral) que quem tem carteira pode fazer: só
+// estas, que trazem o código do condomínio em cada item.
+const LEITURA_GERAL = new Set(['condominios', 'condominios/get', 'condominios/index']);
 
 // Tira de uma resposta JSON os objetos de condomínios fora da carteira.
-const CAMPOS_COND_RESPOSTA = ['id_condominio_cond', 'ID_CONDOMINIO_COND', 'id_condominio', 'idCondominio', 'id_superlogica'];
-function condDoObjeto(o) {
-  for (const k of CAMPOS_COND_RESPOSTA) {
-    if (o[k] !== undefined && o[k] !== null && o[k] !== '') {
-      const n = Number(o[k]);
-      return Number.isFinite(n) ? n : null;
-    }
+// Campo de condomínio sem diferença de maiúscula; valor que não é inteiro positivo conta como
+// fora (fechado). Objeto que tem, em qualquer nível abaixo, um objeto de condomínio fora sai
+// inteiro (não ficam os campos irmãos). Em modo estrito (lista geral), item de lista que não
+// traz o próprio condomínio também sai.
+const CAMPOS_COND_RESPOSTA = new Set(['id_condominio_cond', 'id_condominio', 'idcondominio', 'id_superlogica']);
+const SAI = Symbol('sai');
+// null = objeto sem campo de condomínio; true = todos os campos de condomínio estão na carteira; false = algum fora.
+function condDoObjeto(o, ids) {
+  let achou = false;
+  for (const [k, v] of Object.entries(o)) {
+    if (!CAMPOS_COND_RESPOSTA.has(k.toLowerCase())) continue;
+    if (v === undefined || v === null || v === '') continue;
+    if (v && typeof v === 'object') return false;
+    achou = true;
+    if (!idValido(typeof v === 'number' ? String(v) : String(v).trim()) || !ids.has(Number(String(v).trim()))) return false;
   }
-  return null;
+  return achou ? true : null;
 }
-function filtrarJson(v, ids) {
+function filtrarJson(v, ids, opcoes) {
+  const estrito = !!(opcoes && opcoes.estrito);
   let removidos = 0;
-  const fora = (o) => { const c = condDoObjeto(o); return c !== null && c > 0 && !ids.has(c); };
-  function andar(x, prof) {
-    if (prof > 20 || x === null || typeof x !== 'object') return x;
+  function andar(x, prof, itemDeLista) {
+    if (x === null || typeof x !== 'object') return x;
+    if (prof > 20) return SAI; // nada da API tem essa profundidade; na dúvida, não repassa
     if (Array.isArray(x)) {
-      return x.filter((i) => {
-        if (i && typeof i === 'object' && !Array.isArray(i) && fora(i)) { removidos++; return false; }
-        return true;
-      }).map((i) => andar(i, prof + 1));
+      const out = [];
+      for (const i of x) {
+        const r = andar(i, prof + 1, true);
+        if (r === SAI) removidos++;
+        else out.push(r);
+      }
+      return out;
     }
+    const c = condDoObjeto(x, ids);
+    if (c === false) return SAI;
+    if (c === null && estrito && itemDeLista) return SAI;
     const o = {};
     for (const [k, i] of Object.entries(x)) {
-      if (i && typeof i === 'object' && !Array.isArray(i) && fora(i)) { removidos++; o[k] = null; }
-      else o[k] = andar(i, prof + 1);
+      const r = andar(i, prof + 1, false);
+      if (r === SAI) return SAI; // filho de outro condomínio: o objeto todo sai
+      o[k] = r;
     }
     return o;
   }
-  if (v && typeof v === 'object' && !Array.isArray(v) && fora(v)) return { bloqueado: true, removidos: 1 };
-  const valor = andar(v, 0);
+  const valor = andar(v, 0, false);
+  if (valor === SAI) return { bloqueado: true, removidos: removidos + 1 };
   // Listas do Hub com contador (busca de unidades): o contador acompanha o que sobrou.
   if (valor && !Array.isArray(valor) && Array.isArray(valor.itens) && typeof valor.quantidade === 'number' && removidos) {
     valor.quantidade = valor.itens.length;
@@ -191,8 +277,16 @@ function negar(res, status, erro, detalhe) {
   res.status(status).json({ erro, detalhe });
 }
 
-function criarCarteira({ lerPerfil, lerCarteirasPerfis, semColuna, gruposCarteiras, ativo, express }) {
+// aoNegar(req, motivo, id): chamado em toda recusa 403 (fora_da_carteira, modulo_sem_acesso,
+// sem_condominio, condominio_invalido, caminho_invalido, tipo_nao_aceito), para a auditoria da
+// segurança registrar como suspeito. Erro dentro dele é ignorado.
+function criarCarteira({ lerPerfil, lerCarteirasPerfis, semColuna, gruposCarteiras, ativo, express, aoNegar }) {
   const cache = new Map(); // userId -> { ate, v }
+  let avisar = typeof aoNegar === 'function' ? aoNegar : null;
+  function recusar(req, res, status, erro, detalhe, id) {
+    if (avisar && status !== 503) { try { avisar(req, erro, id == null ? null : id); } catch (e) { /* auditoria não derruba a recusa */ } }
+    negar(res, status, erro, detalhe);
+  }
 
   async function calcular(userId) {
     const perfil = await lerPerfil(userId);
@@ -221,30 +315,35 @@ function criarCarteira({ lerPerfil, lerCarteirasPerfis, semColuna, gruposCarteir
     if (!ativo()) return { todas: true, motivo: 'nao_configurado' };
     const uid = req.user && req.user.sub;
     if (!uid) throw new Error('sem_usuario');
-    const c = cache.get(uid);
+    const chave = String(uid).toLowerCase();
+    const c = cache.get(chave);
     if (c && c.ate > Date.now()) return c.v;
     const v = await calcular(uid);
-    cache.set(uid, { ate: Date.now() + TTL_MS, v });
+    cache.set(chave, { ate: Date.now() + TTL_MS, v });
     if (cache.size > 500) cache.delete(cache.keys().next().value);
     return v;
   }
-  function esquecer(uid) { if (uid) cache.delete(String(uid).toLowerCase()); cache.delete(uid); }
+  // Chamar ao mudar carteira, permissões, cargo, bloqueio ou concede de um usuário.
+  function esquecer(uid) { if (uid != null) cache.delete(String(uid).toLowerCase()); }
   function esquecerTudo() { cache.clear(); }
-  const dentro = (esc, id) => esc.todas || esc.ids.has(Number(id));
+  // A segurança pode ligar a auditoria depois de criar a carteira.
+  function definirAoNegar(f) { avisar = typeof f === 'function' ? f : null; }
+  const dentro = (esc, id) => esc.todas || (idValido(id) && esc.ids.has(Number(id)));
 
   // Para as rotas que ainda chamam direto (cobrança, comparativo): true/false, sem responder.
   async function dentroDaCarteira(req, id) {
     try { return dentro(await escopo(req), id); } catch (e) { return false; }
   }
-  // Responde 403/503 e devolve false quando não pode.
+  // Responde 400/403/503 e devolve false quando não pode.
   async function exigir(req, res, id) {
+    if (!idValido(id)) { negar(res, 400, 'id_invalido', 'Código do Superlógica inválido.'); return false; }
     let esc;
     try { esc = await escopo(req); } catch (e) {
       negar(res, 503, 'carteira_indisponivel', 'Não foi possível conferir sua carteira agora. Tente de novo em instantes.');
       return false;
     }
     if (dentro(esc, id)) return true;
-    negar(res, 403, 'fora_da_carteira', 'Esse condomínio não está na sua carteira.');
+    recusar(req, res, 403, 'fora_da_carteira', 'Esse condomínio não está na sua carteira.', id);
     return false;
   }
 
@@ -253,31 +352,39 @@ function criarCarteira({ lerPerfil, lerCarteirasPerfis, semColuna, gruposCarteir
     const parsers = new Map();
     const parserDe = (limite) => { if (!parsers.has(limite)) parsers.set(limite, express.json({ limit: limite })); return parsers.get(limite); };
     return function (req, res, next) {
-      const achou = regraDa(req.method, req.path);
+      const caminho = caminhoDecodificado(req.path);
+      if (caminho === null) return negar(res, 400, 'caminho_invalido', 'Endereço inválido.');
+      const achou = regraDa(req.method, caminho);
       if (!achou) return next();
       const { regra } = achou;
-      if (!regra.corpo && !regra.semCondominio && !idValido(achou.id)) return next(); // a rota responde 400
+      if (!regra.corpo && !regra.semCondominio && !idValido(achou.id)) return negar(res, 400, 'id_invalido', 'Código do Superlógica inválido.');
       requireAuth(req, res, () => {
         const conferir = async () => {
           let id = achou.id;
           if (regra.corpo) {
-            const b = req.body || {};
-            id = b[regra.corpo.campo] != null && b[regra.corpo.campo] !== '' ? String(b[regra.corpo.campo]) : null;
-            if (!id || !idValido(id)) return next(); // sem condomínio (ata sem código) ou inválido: a rota decide
+            const b = req.body && typeof req.body === 'object' ? req.body : {};
+            const v = b[regra.corpo.campo];
+            if (v === undefined || v === null || v === '') id = null; // sem condomínio (ata sem código): a rota decide
+            else if (!idDoCorpoValido(v)) return negar(res, 400, 'id_invalido', 'Código do Superlógica inválido.');
+            else id = String(v);
           }
           let esc;
           try { esc = await escopo(req); } catch (e) {
             return negar(res, 503, 'carteira_indisponivel', 'Não foi possível conferir suas permissões agora. Tente de novo em instantes.');
           }
           if (regra.modulo && req.authMode !== 'internal' && !temModulo(esc.perfil, regra.modulo, regra.acao)) {
-            return negar(res, 403, 'modulo_sem_acesso', regra.acao === 'segunda_via' ? 'Seu usuário não pode gerar a 2ª via.' : 'Seu usuário não tem acesso a esta aba.');
+            return recusar(req, res, 403, 'modulo_sem_acesso', regra.acao === 'segunda_via' ? 'Seu usuário não pode gerar a 2ª via.' : 'Seu usuário não tem acesso a esta aba.', id);
           }
-          if (id && !dentro(esc, id)) return negar(res, 403, 'fora_da_carteira', 'Esse condomínio não está na sua carteira.');
+          if (id && !dentro(esc, id)) return recusar(req, res, 403, 'fora_da_carteira', 'Esse condomínio não está na sua carteira.', id);
           if (regra.filtrarResposta && !esc.todas) {
             interceptarResposta(res, (buf, enviar) => {
-              const txt = buf.toString('utf8');
+              if (res.statusCode >= 400) return enviar(buf);
               let j;
-              try { j = JSON.parse(txt); } catch (e) { return enviar(buf); }
+              try { j = JSON.parse(buf.toString('utf8')); } catch (e) {
+                res.statusCode = 403;
+                res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                return enviar(JSON.stringify({ erro: 'fora_da_carteira' }));
+              }
               const f = filtrarJson(j, esc.ids);
               enviar(JSON.stringify(f.bloqueado ? { erro: 'fora_da_carteira' } : f.valor));
             });
@@ -297,40 +404,58 @@ function criarCarteira({ lerPerfil, lerCarteirasPerfis, semColuna, gruposCarteir
       return negar(res, 503, 'carteira_indisponivel', 'Não foi possível conferir sua carteira agora. Tente de novo em instantes.');
     }
     if (esc.todas) return next();
+    const rota = rotaDoProxy(req.url);
+    if (!rota) return recusar(req, res, 400, 'caminho_invalido', 'Endereço do Superlógica não aceito para quem tem carteira.');
     let u;
-    try { u = new URL(req.url, 'http://x'); } catch (e) { return next(); } // o proxy recusa o caminho
-    const rota = u.pathname.replace(/^\/v2\/condor\//i, '').replace(/\/+$/, '');
+    try { u = new URL(req.url, 'http://x'); } catch (e) { return negar(res, 400, 'caminho_invalido', 'Endereço inválido.'); }
     const achados = idsCondominio(rota, Array.from(u.searchParams.entries()));
-    const escrita = req.method === 'POST' || req.method === 'PUT';
-    if (escrita) {
+    const leitura = req.method === 'GET' || req.method === 'HEAD';
+    if (!leitura) {
+      // Corpo: o proxy só repassa POST e PUT; DELETE e outros vão sem corpo, mas qualquer
+      // corpo enviado é lido e conferido do mesmo jeito.
+      const temCorpo = req.headers['content-length'] !== undefined ? Number(req.headers['content-length']) > 0 : req.headers['transfer-encoding'] !== undefined;
+      if (temCorpo && !ehFormulario(req.headers['content-type'])) {
+        return recusar(req, res, 415, 'tipo_nao_aceito', 'Envio ao Superlógica só como formulário.');
+      }
       let buf;
       try { buf = await lerCorpo(req, MAX_CORPO_PROXY); } catch (e) {
         return negar(res, e.status === 413 ? 413 : 400, e.status === 413 ? 'corpo_grande' : 'corpo_invalido', 'Não foi possível ler o envio.');
       }
-      const doCorpo = idsCondominio(rota, camposDoCorpo(buf, req.headers['content-type']));
+      if (buf.length && !ehFormulario(req.headers['content-type'])) {
+        return recusar(req, res, 415, 'tipo_nao_aceito', 'Envio ao Superlógica só como formulário.');
+      }
+      const doCorpo = idsCondominio(rota, camposDoCorpo(buf, 'application/x-www-form-urlencoded'));
       achados.explicitos.push(...doCorpo.explicitos);
+      achados.invalidos.push(...doCorpo.invalidos);
       achados.todos = achados.todos || doCorpo.todos;
       // O proxy repassa o corpo com req.pipe: entrega o que já foi lido.
       req.pipe = (destino) => { destino.end(buf); return destino; };
     }
-    if (achados.explicitos.some((id) => !esc.ids.has(id))) return negar(res, 403, 'fora_da_carteira', 'Esse condomínio não está na sua carteira.');
-    if ((escrita || req.method === 'DELETE') && !achados.explicitos.length) {
-      return negar(res, 403, 'sem_condominio', 'Com carteira definida, gravações no Superlógica precisam indicar o condomínio.');
+    if (achados.invalidos.length) {
+      return recusar(req, res, 400, 'condominio_invalido', 'O código do condomínio precisa ser um número só.');
     }
-    const citouCondominio = achados.explicitos.length > 0;
+    const fora = achados.explicitos.find((id) => !esc.ids.has(id));
+    if (fora !== undefined) return recusar(req, res, 403, 'fora_da_carteira', 'Esse condomínio não está na sua carteira.', fora);
+    if (!leitura && (achados.todos || !achados.explicitos.length)) {
+      return recusar(req, res, 403, 'sem_condominio', 'Com carteira definida, gravações no Superlógica precisam indicar um condomínio da carteira.');
+    }
+    const geral = achados.todos || !achados.explicitos.length;
+    if (geral && !LEITURA_GERAL.has(rota)) {
+      return recusar(req, res, 403, 'sem_condominio', 'Com carteira definida, a consulta precisa indicar um condomínio da carteira.');
+    }
     interceptarResposta(res, (buf, enviar) => {
       if (res.statusCode >= 400) return enviar(buf); // erro do proxy ou do Superlógica: segue igual
       const txt = buf.toString('utf8').replace(/^﻿/, '');
       let j;
-      if (/^\s*[{\[]/.test(txt)) { try { j = JSON.parse(txt); } catch (e) { j = undefined; } }
+      if (/^\s*[{[]/.test(txt)) { try { j = JSON.parse(txt); } catch (e) { j = undefined; } }
       if (j === undefined) {
-        if (citouCondominio) return enviar(buf); // PDF, imagem ou texto de um condomínio da carteira
+        if (!geral) return enviar(buf); // PDF, imagem ou texto de um condomínio da carteira
         res.statusCode = 403;
         res.removeHeader('Content-Disposition');
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return enviar(JSON.stringify({ erro: 'fora_da_carteira', detalhe: 'Esse arquivo não pode ser conferido com a sua carteira.' }));
       }
-      const f = filtrarJson(j, esc.ids);
+      const f = filtrarJson(j, esc.ids, { estrito: geral });
       if (f.bloqueado) {
         res.statusCode = 403;
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -342,7 +467,10 @@ function criarCarteira({ lerPerfil, lerCarteirasPerfis, semColuna, gruposCarteir
     next();
   }
 
-  return { escopo, esquecer, esquecerTudo, dentroDaCarteira, exigir, guardaRotas, guardaProxy, dentro };
+  return { escopo, esquecer, esquecerTudo, definirAoNegar, dentroDaCarteira, exigir, guardaRotas, guardaProxy, dentro };
 }
 
-module.exports = { criarCarteira, temAcao, temModulo, regraDa, idsCondominio, camposDoCorpo, filtrarJson, ACAO_TODAS, REGRAS };
+module.exports = {
+  criarCarteira, temAcao, temModulo, regraDa, idsCondominio, camposDoCorpo, filtrarJson, partesPhp,
+  caminhoDecodificado, rotaDoProxy, ehFormulario, idValido, ACAO_TODAS, REGRAS, LEITURA_GERAL,
+};

@@ -9,6 +9,7 @@ const A = require('../superlogica/alertas-operacionais');
 const P = require('../superlogica/prazos-manutencao');
 
 let ok = 0, falha = 0;
+const pendentes = [];
 function t(nome, cond) { if (cond) ok++; else { falha++; console.log('FALHOU: ' + nome); } }
 
 // ── Perfis de mentira ──
@@ -65,6 +66,7 @@ app.get('/api/comparativo/condominio/:id', (req, res) => res.json({ ok: true }))
 app.get('/api/unidades/busca', (req, res) => res.json({ termo: 'x', itens: [{ id_superlogica: 2 }, { id_superlogica: 136 }], quantidade: 2 }));
 app.post('/api/despesas/verificar', express.json({ limit: '1mb' }), (req, res) => res.json({ ok: true, recebido: req.body }));
 app.post('/api/atas/gerar', express.json({ limit: '36mb' }), (req, res) => res.json({ ok: true, recebido: !!req.body.userMessage }));
+app.post('/api/prestacao/v13/superlogica', express.json({ limit: '20kb' }), (req, res) => res.json({ ok: true, id: req.body.id_superlogica }));
 
 function chamar(porta, metodo, caminho, user, corpo, tipo) {
   return new Promise((ok) => {
@@ -99,7 +101,28 @@ async function testesCarteira() {
     t('falha ao ler carteira: 503 (não libera)', (await c('GET', '/api/condominio/2/cadastro', 'falhaCart')).status === 503);
     t('interno vê tudo', (await c('GET', '/api/condominio/136/ficha', 'internal')).status === 200);
     t('sem login 401', (await c('GET', '/api/condominio/2/ficha', null)).status === 401);
-    t('id inválido segue para a rota', (await c('GET', '/api/condominio/abc/ficha', 'cartA')).status === 200);
+    t('id inválido no caminho 400 na guarda', (await c('GET', '/api/condominio/abc/ficha', 'cartA')).status === 400);
+    // Revisão 1, item 1: maiúscula e caminho codificado
+    for (const cam of ['/api/Condominio/136/ficha', '/api/condominio/%31%33%36/ficha', '/api/condominio/136/FICHA', '/API/condominio/136/cadastro',
+      '/api/%63ondominio/136/ficha', '/api/Cobranca/Condominio/136', '/api/COMPARATIVO/condominio/136']) {
+      const r = await c('GET', cam, 'cartA');
+      t('bypass ' + cam + ' recusado (' + r.status + ')', r.status === 403 || r.status === 400 || r.status === 404);
+    }
+    t('caminho %2F recusado 400', (await c('GET', '/api/condominio/2%2F136/ficha', 'cartA')).status === 400);
+    t('caminho com codificação inválida 400', (await c('GET', '/api/condominio/%E0%A4%A/ficha', 'cartA')).status === 400);
+    for (const cam of ['/api/Atas/gerar', '/api/Despesas/verificar', '/api/PRESTACAO/v13/superlogica']) {
+      t('corpo ' + cam + ' fora 403', (await c('POST', cam, 'cartA', { userMessage: 'x', id_superlogica: 136, linhas: [] })).status === 403);
+    }
+    t('busca com maiúscula exige módulo', (await c('GET', '/api/Unidades/Busca?q=abc', 'todas')).status === 403);
+    const bm = await c('GET', '/api/UNIDADES/busca?q=abc', 'cartA');
+    t('busca com maiúscula filtra', bm.status === 200 && bm.j.itens.length === 1);
+    // Revisão 1, item 2: id presente e inválido no corpo
+    for (const v of ['136abc', ' 136', '136 ', ['136'], { a: 136 }, 136.5, '0x88', -1, true]) {
+      const r = await c('POST', '/api/prestacao/v13/superlogica', 'cartA', { id_superlogica: v });
+      t('prestação id ' + JSON.stringify(v) + ' 400', r.status === 400);
+    }
+    t('prestação id 2 passa', (await c('POST', '/api/prestacao/v13/superlogica', 'cartA', { id_superlogica: 2 })).status === 200);
+    t('prestação id "2" passa', (await c('POST', '/api/prestacao/v13/superlogica', 'cartA', { id_superlogica: '2' })).status === 200);
     // Módulos
     const semMod = await c('GET', '/api/condominio/2/ficha', 'todas');
     t('ficha sem módulo 403 modulo_sem_acesso', semMod.status === 403 && semMod.j.erro === 'modulo_sem_acesso');
@@ -122,7 +145,7 @@ async function testesCarteira() {
     t('busca do GESTOR sem filtro', (await c('GET', '/api/unidades/busca?q=abc', 'gestor')).j.itens.length === 2);
     // Proxy
     const lg = await c('GET', '/api/superlogica/v2/condor/condominios/get?id=-1', 'cartA');
-    t('proxy lista geral filtrada', lg.status === 200 && lg.j.lista.length === 3 && !lg.j.lista.some((x) => x.id_condominio_cond === '136'));
+    t('proxy lista geral filtrada (fechada: sem o 136 e sem item sem condomínio)', lg.status === 200 && lg.j.lista.length === 2 && !lg.j.lista.some((x) => x.id_condominio_cond === '136'));
     t('proxy lista geral GESTOR inteira', (await c('GET', '/api/superlogica/v2/condor/condominios/get?id=-1', 'gestor')).j.lista.length === 4);
     t('proxy condominios/get id fora 403', (await c('GET', '/api/superlogica/v2/condor/condominios/get?id=136', 'cartA')).status === 403);
     t('proxy idCondominio fora 403', (await c('GET', '/api/superlogica/v2/condor/despesas/index?idCondominio=136', 'cartA')).status === 403);
@@ -133,7 +156,35 @@ async function testesCarteira() {
     const pd = await c('POST', '/api/superlogica/v2/condor/despesas/', 'cartA', 'ID_CONDOMINIO_COND=2&X=1', 'application/x-www-form-urlencoded');
     t('proxy POST dentro passa e o corpo chega igual', pd.status === 200 && pd.j.corpo === 'ID_CONDOMINIO_COND=2&X=1');
     t('proxy POST sem condomínio 403', (await c('PUT', '/api/superlogica/v2/condor/despesas/delete', 'cartA', 'ID_PARCELA_PDES=5', 'application/x-www-form-urlencoded')).status === 403);
-    t('proxy POST JSON fora 403', (await c('POST', '/api/superlogica/v2/condor/comunicados/', 'cartA', { ID_CONDOMINIO_COND: 136 })).status === 403);
+    t('proxy POST JSON 415', (await c('POST', '/api/superlogica/v2/condor/comunicados/', 'cartA', { ID_CONDOMINIO_COND: 2 })).status === 415);
+    // Revisão 1, itens 3, 4 e 7: nomes do PHP, tipo do corpo, caminho
+    const form = 'application/x-www-form-urlencoded';
+    for (const q of ['ID.CONDOMINIO.COND=136', 'ID%20CONDOMINIO%20COND=136', 'ID%5BCONDOMINIO_COND=136', 'idCondominio%5B%5D=136', 'idCondominio%5B0%5D=136',
+      'idCondominio=136abc', 'idCondominio=%20136', 'idCondominio=0x88', 'idCondominios=136', 'CONDOMINIOS%5B0%5D=136', 'idCondominio=2,136', '%20idCondominio=136', 'idCondominio%00x=136']) {
+      const r = await c('GET', '/api/superlogica/v2/condor/despesas/index?idCondominio=2&' + q, 'cartA');
+      t('proxy GET ' + q + ' recusado (' + r.status + ')', r.status === 403 || r.status === 400);
+      const w = await c('POST', '/api/superlogica/v2/condor/despesas/?idCondominio=2', 'cartA', q, form);
+      t('proxy POST corpo ' + q + ' recusado (' + w.status + ')', w.status === 403 || w.status === 400);
+    }
+    t('proxy POST com -1 recusado', (await c('POST', '/api/superlogica/v2/condor/despesas/?idCondominio=2', 'cartA', 'ID_CONDOMINIO_COND=-1', form)).status === 403);
+    t('proxy GET -1 fora da lista geral 403', (await c('GET', '/api/superlogica/v2/condor/despesas/index?idCondominio=-1', 'cartA')).status === 403);
+    t('proxy GET sem condomínio fora da lista geral 403', (await c('GET', '/api/superlogica/v2/condor/cobranca/index', 'cartA')).status === 403);
+    t('proxy GET 2 e -1 juntos 403', (await c('GET', '/api/superlogica/v2/condor/despesas/index?idCondominio=2&id_condominio=-1', 'cartA')).status === 403);
+    for (const tipo of ['application/x-www-form-urlencoded; x=json', 'application/x-www-form-urlencoded; charset=UTF-8']) {
+      const r = await c('POST', '/api/superlogica/v2/condor/despesas/?idCondominio=2', 'cartA', 'ID_CONDOMINIO_COND=136', tipo);
+      t('proxy tipo "' + tipo + '" lido como formulário (403)', r.status === 403);
+    }
+    for (const tipo of ['multipart/form-data; boundary=B', 'text/plain', 'application/json', 'application/x-www-form-urlencodedx']) {
+      t('proxy tipo ' + tipo + ' 415', (await c('POST', '/api/superlogica/v2/condor/despesas/?idCondominio=2', 'cartA', 'a=1', tipo)).status === 415);
+    }
+    for (const cam of ['/v2/condor//condominios/get?id=136', '/v2/condor/condominios/get/id/136', '/v2/condor/unidades/index.php?idCondominio=2', '/v2/condor/%75nidades/index?idCondominio=2', '/v2/condor/./unidades/index?idCondominio=2', '/v2/condor/a/b/c?idCondominio=2']) {
+      const r = await c('GET', '/api/superlogica' + cam, 'cartA');
+      t('proxy caminho ' + cam + ' 400', r.status === 400);
+    }
+    t('proxy caminho com maiúscula aceito', (await c('GET', '/api/superlogica/v2/condor/Despesas/Index?idCondominio=8', 'cartA')).status === 200);
+    t('proxy GESTOR caminho livre', (await c('GET', '/api/superlogica/v2/condor/condominios/get/id/136', 'gestor')).status === 200);
+    const cont = await c('POST', '/api/superlogica/v2/condor/unidades/post', 'cartA', 'ID_CONDOMINIO_COND=2&contatos%5B0%5D%5BID_CONDOMINIO_COND%5D=', form);
+    t('proxy contatos[0][ID_CONDOMINIO_COND] vazio aceito', cont.status === 200);
     t('proxy GESTOR POST fora passa', (await c('POST', '/api/superlogica/v2/condor/despesas/', 'gestor', 'ID_CONDOMINIO_COND=136', 'application/x-www-form-urlencoded')).status === 200);
     t('proxy todas_carteiras passa', (await c('GET', '/api/superlogica/v2/condor/despesas/index?idCondominio=136', 'todas')).status === 200);
     t('proxy PDF sem condomínio bloqueado', (await c('GET', '/api/superlogica/v2/condor/arquivos/pdf', 'cartA')).status === 403);
@@ -159,6 +210,27 @@ function testesUnitarios() {
   const f = C.filtrarJson({ a: [{ id_condominio_cond: '1' }, { id_condominio_cond: '2' }] }, new Set([2]));
   t('filtrarJson remove fora', f.valor.a.length === 1 && f.removidos === 1);
   t('filtrarJson objeto único fora bloqueia', C.filtrarJson({ id_condominio_cond: '9' }, new Set([2])).bloqueado === true);
+  // Revisão 1, item 6: falha fechada e sem campos irmãos
+  const an = C.filtrarJson([{ unidade: { id_condominio_cond: 136 }, nome: 'vaza' }, { unidade: { id_condominio_cond: 2 }, nome: 'fica' }], new Set([2]));
+  t('filtrarJson aninhado fora tira o item inteiro', an.valor.length === 1 && an.valor[0].nome === 'fica');
+  t('filtrarJson valor estranho conta como fora', C.filtrarJson([{ ID_CONDOMINIO_COND: '136abc' }, { Id_Condominio_Cond: '2' }], new Set([2])).valor.length === 1);
+  t('filtrarJson estrito tira item sem condomínio', C.filtrarJson([{ x: 1 }, { id_condominio_cond: '2' }], new Set([2]), { estrito: true }).valor.length === 1);
+  t('filtrarJson não estrito mantém item sem condomínio', C.filtrarJson([{ x: 1 }, { id_condominio_cond: '2' }], new Set([2])).valor.length === 2);
+  t('filtrarJson objeto com filho fora bloqueia', C.filtrarJson({ a: { id_condominio_cond: 9 }, b: 1 }, new Set([2])).bloqueado === true);
+  t('partesPhp ponto e espaço', C.partesPhp('ID.CONDOMINIO COND').join('|') === 'id_condominio_cond');
+  t('partesPhp colchete aberto', C.partesPhp('ID[CONDOMINIO_COND').join('|') === 'id_condominio_cond');
+  t('partesPhp colchetes', C.partesPhp('contatos[0][ID_X]').join('|') === 'contatos|0|id_x');
+  t('caminhoDecodificado', C.caminhoDecodificado('/condominio/%31%33%36/ficha') === '/condominio/136/ficha' && C.caminhoDecodificado('/a/%2F') === null);
+  t('rotaDoProxy', C.rotaDoProxy('/v2/condor/despesas/') === 'despesas' && C.rotaDoProxy('/v2/condor//x') === null);
+  // aoNegar e esquecer
+  const negados = [];
+  const cn = C.criarCarteira({ lerPerfil: async (id) => PERFIS[id] || null, lerCarteirasPerfis: async (id) => ({ [id]: CARTEIRAS[id] || [] }),
+    semColuna: () => false, gruposCarteiras: async () => GRUPOS, ativo: () => true, express, aoNegar: (req, motivo, id) => negados.push(motivo + ':' + id) });
+  const resFalso = () => ({ status() { return this; }, json() { return this; } });
+  pendentes.push(cn.exigir({ authMode: 'supabase', user: { sub: 'cartA' } }, resFalso(), '136').then((r) => {
+    t('exigir fora devolve false e chama aoNegar', r === false && negados[0] === 'fora_da_carteira:136');
+    t('esquecer e definirAoNegar existem', typeof cn.esquecer === 'function' && typeof cn.definirAoNegar === 'function');
+  }));
   t('regraDa relatorio = ficha', C.regraDa('GET', '/condominio/5/relatorio-mensal').regra.modulo === 'ficha_condominio');
   t('regraDa alertas sem módulo', !C.regraDa('GET', '/condominio/5/alertas').regra.modulo);
   t('regraDa 2ª via ação', C.regraDa('POST', '/cobranca/condominio/5/segunda-via').regra.acao === 'segunda_via');
@@ -225,6 +297,7 @@ async function testeConsumo() {
 
 (async () => {
   testesUnitarios();
+  await Promise.all(pendentes);
   await testesCarteira();
   await testeConsumo();
   console.log(ok + ' ok, ' + falha + ' falha(s)');

@@ -70,7 +70,15 @@
     var ctrl = (typeof AbortController === 'function') ? new AbortController() : null;
     var t = ctrl ? setTimeout(function () { ctrl.abort(); }, 8000) : null;
     apiAuthFetch('/api/carteiras/minha', ctrl ? { signal: ctrl.signal } : {})
-      .then(function (r) { return r.ok ? r.json() : { todas: true }; })
+      .then(function (r) {
+        if (r.ok) return r.json();
+        // T18: 503 = o servidor não conseguiu conferir a carteira; não mostra todos (ele recusaria um a um).
+        if (r.status === 503) {
+          if (typeof toast === 'function') toast('Carteira indisponível agora. Recarregue a página em instantes.', 'warn');
+          return { todas: false, ids_superlogica: [], carteiras: [], indisponivel: true };
+        }
+        return { todas: true };
+      })
       .catch(function () { return { todas: true }; })
       .then(function (c) {
         if (t) clearTimeout(t);

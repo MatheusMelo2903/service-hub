@@ -3,16 +3,20 @@
 -- Aplicada SÓ no Supabase de teste (ledgyprytkuvgtbunsck). Produção só com autorização do Matheus.
 -- IDEMPOTENTE.
 --
--- 1. Trigger do GESTOR: mantém TODAS as ações de antes (inclusive ajustar_estrutura) e soma os
---    módulos novos e todas_carteiras. ver_chaves (e as ações do dono da T16) NÃO entram: são
---    dadas a uma pessoa, não ao cargo.
+-- 1. Trigger do GESTOR: SOMA às permissões que o perfil já tem as ações do cargo (as de antes,
+--    inclusive ajustar_estrutura, os módulos novos e todas_carteiras). Nunca tira nada: ações
+--    dadas a uma pessoa por outras migrations (ver_chaves, ver_auditoria, auditoria_total,
+--    transcricao_livre) continuam depois de qualquer UPDATE de role (revisão 1 da T18, item 5).
 
 CREATE OR REPLACE FUNCTION public.set_gestor_permissoes_totais()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
+  DECLARE
+    base  jsonb;
+    atual jsonb;
   BEGIN
     IF NEW.role = 'GESTOR' THEN
       NEW.pode_convidar = true;
-      NEW.permissoes = '{
+      base := '{
         "dashboard":          {"visivel": true, "acoes": ["ver"]},
         "importar_despesas":  {"visivel": true, "acoes": ["ver", "importar"]},
         "importar_unidades":  {"visivel": true, "acoes": ["ver", "importar", "normalizar"]},
@@ -28,6 +32,20 @@ RETURNS TRIGGER LANGUAGE plpgsql AS $$
         "cobranca":           {"visivel": true, "acoes": ["ver", "segunda_via"]},
         "comparativo":        {"visivel": true, "acoes": ["ver"]}
       }'::jsonb;
+      atual := CASE WHEN jsonb_typeof(NEW.permissoes) = 'object' THEN NEW.permissoes ELSE '{}'::jsonb END;
+      NEW.permissoes = (
+        SELECT COALESCE(jsonb_object_agg(k,
+          CASE
+            WHEN b IS NULL THEN n
+            WHEN n IS NULL OR jsonb_typeof(n) <> 'object' THEN b
+            ELSE n || jsonb_build_object('visivel', true, 'acoes', (
+              SELECT COALESCE(to_jsonb(array_agg(DISTINCT x ORDER BY x)), '[]'::jsonb)
+              FROM jsonb_array_elements_text(
+                (CASE WHEN jsonb_typeof(b->'acoes') = 'array' THEN b->'acoes' ELSE '[]'::jsonb END) ||
+                (CASE WHEN jsonb_typeof(n->'acoes') = 'array' THEN n->'acoes' ELSE '[]'::jsonb END)) AS t(x)))
+          END), '{}'::jsonb)
+        FROM jsonb_each(base) AS bb(k, b)
+        FULL JOIN jsonb_each(atual) AS nn(k, n) USING (k));
     END IF;
     NEW.atualizado_em = now();
     RETURN NEW;

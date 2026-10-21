@@ -409,6 +409,7 @@ module.exports = function registrarPrestacaoV13(app, {
   superlogica = null,            // { base, appToken, accessToken } quando a conexão nativa está ligada
   podeUsarSuperlogica = null,    // async (userId) -> bool
   podeAjustarEstrutura = null,   // async (userId) -> bool (ação prestacao_contas.ajustar_estrutura)
+  exigirCarteira = null,         // async (req, res, id) -> bool; responde 403 fora da carteira (T18)
 }) {
   const jobs = new Map(); // jobId -> { dono, status, etapa, criadoEm, payload?, erro? }
   const clienteSL = superlogica && superlogica.appToken && superlogica.accessToken ? criarCliente(superlogica) : null;
@@ -629,7 +630,9 @@ module.exports = function registrarPrestacaoV13(app, {
     if (!INTERNAL_API_SECRET || !PRESTACAO_PDF_API_URL) return res.status(503).json({ erro: 'prestacao_api_nao_configurada' });
     if (!clienteSL) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
     const b = req.body || {};
-    const idCond = parseInt(b.id_superlogica, 10);
+    // Validação estrita (T18): "136abc", " 136" e ["136"] recusam; parseInt aceitava como 136.
+    const idTxt = (typeof b.id_superlogica === 'string' || typeof b.id_superlogica === 'number') ? String(b.id_superlogica) : '';
+    const idCond = /^[1-9][0-9]{0,8}$/.test(idTxt) ? Number(idTxt) : 0;
     const inicio = String(b.inicio || '');
     const fim = String(b.fim || '');
     const RE = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -643,6 +646,7 @@ module.exports = function registrarPrestacaoV13(app, {
       try { ok = await podeUsarSuperlogica(req.user && req.user.sub); } catch (e) { ok = false; }
       if (!ok) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso aos dados do Superlógica.' });
     }
+    if (exigirCarteira && !(await exigirCarteira(req, res, String(idCond)))) return;
     const dono = donoDe(req);
     const ativos = [...jobs.values()].filter((j) => j.status === 'enviando' || j.status === 'processing');
     if (ativos.filter((j) => j.dono === dono).length >= MAX_JOBS_ATIVOS_POR_USUARIO) {

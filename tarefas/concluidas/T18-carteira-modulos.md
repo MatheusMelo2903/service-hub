@@ -47,3 +47,14 @@ Branch feat/carteira-modulos (worktree carteira-modulos), feita sobre a dev bc80
 * Configurações, card de prazos: mudar dedetização, salvar e ver o alerta do Dashboard mudar; voltar ao padrão.
 * Conflito esperado com a sessão de segurança (T16, T17, T21): ela mexe em MODULOS_CATALOGO, nas permissões e no proxy. Aqui o index.html só ganhou uma linha (script carteira-modulos.js) e o server.js um bloco antes do proxy. A delegação de permissões da T21 (profiles.concede) precisa conhecer os módulos novos e todas_carteiras.
 * Produção: migrations 008 e 010 precisam subir juntas com o código. Ao subir, quem não é GESTOR (hoje a Raiane) deixa de ver Ficha, Cobrança e Comparativo até o GESTOR liberar; a 2ª via passa a depender da ação segunda_via.
+
+## Correção da revisão 1 (21/10 madrugada, frente H)
+
+* Rotas do Hub: regras sem diferença de maiúscula e casadas com o caminho decodificado pedaço a pedaço (%31 = 1; %2F ou codificação quebrada = 400). Id inválido no caminho recebe 400 na guarda. Defesa em profundidade: app.param('idSuperlogica') confere a carteira de novo em toda rota com o código no caminho; ata, prestação, conferência de despesas, comunicado e multa chamam exigir() depois de validar o id.
+* Corpo JSON: id_superlogica presente e inválido ("136abc", " 136", lista, objeto, número quebrado) recebe 400 na guarda; a prestação valida estrito (sem parseInt).
+* Proxy (quem tem carteira): nomes de parâmetro lidos como o PHP (ponto, espaço e "[" sem fechar viram sublinhado, corte no byte nulo, sem maiúscula); qualquer campo que cite condomínio precisa de inteiro puro da carteira; lista, array e valor estranho = 400; gravação sem condomínio ou com -1/0 = 403; corpo só application/x-www-form-urlencoded exato (JSON, multipart e outros = 415); caminho só modulo/acao em letras (barra dupla, ponto, código e /id/136 = 400); leitura sem condomínio da carteira só em condominios, condominios/get e condominios/index, com filtro fechado (item sem condomínio sai).
+* Filtro da resposta: objeto com filho de condomínio fora sai inteiro (sem campos irmãos); valor de condomínio estranho conta como fora; campo sem diferença de maiúscula.
+* Migration 010: o trigger do GESTOR SOMA as ações do cargo às que o perfil já tem. Aplicada no teste; UPDATE role='GESTOR' do dono manteve ver_chaves, ver_auditoria, auditoria_total e transcricao_livre.
+* Menores: cache da carteira limpo ao mudar cargo, permissões ou excluir usuário; seletor trata 503 como carteira indisponível (lista vazia e aviso), não como todas.
+* Para a segurança encaixar: carteiraT18.esquecer(uid), opção aoNegar(req, motivo, id) em criarCarteira e carteiraT18.definirAoNegar(f) para ligar depois.
+* Testes: scripts/teste-carteira-alertas.js 166 ok, 0 falha (inclui maiúscula, %31, nomes do PHP, todos em gravação, tipo de corpo, caminho, filtro fechado). Sonda da revisão 1: todos os bypass recusados (403, 400 ou 415).

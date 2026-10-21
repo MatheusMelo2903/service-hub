@@ -336,6 +336,14 @@ const carteiraT18 = require('./superlogica/carteira').criarCarteira({
 });
 app.use('/api/superlogica', requireAuth, carteiraT18.guardaProxy);
 app.use('/api', carteiraT18.guardaRotas(requireAuth));
+// Defesa em profundidade (revisão 1 da T18): toda rota com :idSuperlogica confere de novo,
+// já com o parâmetro decodificado pelo Express e sem depender de maiúscula no caminho.
+app.param('idSuperlogica', (req, res, next, valor) => {
+  if (!/^[1-9][0-9]{0,8}$/.test(String(valor))) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  requireAuth(req, res, () => {
+    carteiraT18.exigir(req, res, String(valor)).then((ok) => { if (ok) next(); }, next);
+  });
+});
 
 app.use('/api/superlogica', requireAuth, async (req, res) => {
   if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'Chaves do Superlógica não configuradas no servidor.' });
@@ -2512,7 +2520,7 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia)
 
 // POST dispara a geração em background e responde JÁ com o jobId (request curto).
 // limit 36mb (T01): até 3 PDFs escaneados de 8MB em base64 (~11MB cada) mais a transcrição.
-app.post('/api/atas/gerar', requireAuth, express.json({ limit: '36mb' }), (req, res) => {
+app.post('/api/atas/gerar', requireAuth, express.json({ limit: '36mb' }), async (req, res) => {
   if (!ANTHROPIC_KEY) return res.status(500).json({ erro: 'anthropic_key_ausente' });
   if (!ATA_SKILL_MD) return res.status(500).json({ erro: 'skill_md_nao_carregada', detalhe: 'skills-server/ata-condominial.md não encontrada no servidor' });
 
@@ -2528,6 +2536,7 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '36mb' }), (req, 
   // T07: código do condomínio para conferir os participantes no cadastro (opcional).
   const idSL = req.body && req.body.id_superlogica != null ? String(req.body.id_superlogica) : '';
   if (idSL && !/^[1-9][0-9]{0,8}$/.test(idSL)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (idSL && !(await _exigirCarteira(req, res, idSL))) return;
 
   const jobId = crypto.randomUUID();
   atasJobs.set(jobId, { status: 'processing', criadoEm: Date.now(), dono: req.authMode === 'internal' ? 'internal' : String((req.user && req.user.sub) || '') });
@@ -2824,6 +2833,7 @@ app.put('/api/admin/usuarios/:id/role',
     // Rebaixar pra OPERACIONAL tira junto o direito de convidar.
     const patch = role === 'OPERACIONAL' ? { role, pode_convidar: false } : { role };
     _cachePerfilSL.delete(req.params.id);
+    carteiraT18.esquecer(req.params.id);
     const r = await supabaseAdminRequest('PATCH',
       `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`,
       patch);
@@ -2852,6 +2862,7 @@ app.put('/api/admin/usuarios/:id/permissoes',
       return res.status(403).json({ erro: 'acima_do_limite', detalhe: 'Só quem vê as chaves do Superlógica pode dar ou tirar esse acesso (inclusive escondendo Configurações).' });
     }
     _cachePerfilSL.delete(req.params.id);
+    carteiraT18.esquecer(req.params.id);
     const patch = { permissoes };
     // Filtro extra pro GERENTE: o PATCH so aplica se o alvo ainda for OPERACIONAL na hora
     // da escrita (fecha a janela entre a leitura e a gravacao).
@@ -2899,6 +2910,7 @@ app.delete('/api/admin/usuarios/:id',
       return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Gerente só remove OPERACIONAL.' });
     }
     _cachePerfilSL.delete(id);
+    carteiraT18.esquecer(id);
     const r = await supabaseAdminRequest('DELETE', `/auth/v1/admin/users/${encodeURIComponent(id)}`);
     res.status(r.status).json(r.body || { ok: true });
   });
@@ -3100,6 +3112,7 @@ app.post('/api/prestacao/gerar-deck', requireAuth, (req, res) => {
 // Rotas e explicação completa em prestacao-v13.js.
 require('./prestacao-v13')(app, {
   requireAuth, ANTHROPIC_KEY, INTERNAL_API_SECRET, PRESTACAO_PDF_API_URL,
+  exigirCarteira: (req, res, id) => carteiraT18.exigir(req, res, id),
   superlogica: superlogicaNativa()
     ? { base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }
     : null,
@@ -3340,6 +3353,7 @@ app.post('/api/despesas/verificar', requireAuth, express.json({ limit: '1mb' }),
   res.set('Cache-Control', 'no-store');
   const id = String((req.body && req.body.id_superlogica) || '');
   if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (!(await _exigirCarteira(req, res, id))) return;
   const norm = slAlertas.normalizarLinhas(req.body && req.body.linhas);
   if (norm.erro) return res.status(400).json({ erro: 'linhas_invalidas', detalhe: norm.erro });
   if (!(await exigirLeituraSuperlogica(req, res))) return;
@@ -3804,6 +3818,7 @@ app.post('/api/comunicados/publicar', requireAuth, express.json({ limit: '100kb'
   const b = req.body || {};
   const id = String(b.id_superlogica || '');
   if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (!(await _exigirCarteira(req, res, id))) return;
   if (b.confirmacao !== 'PUBLICAR') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme a publicação na tela.' });
   const c = slComunicados.validarComunicado(b);
   if (c.erro) return res.status(400).json({ erro: 'dados_invalidos', detalhe: c.erro });
@@ -3858,6 +3873,7 @@ app.post('/api/multas/registrar', requireAuth, express.json({ limit: '100kb' }),
   const b = req.body || {};
   const id = String(b.id_superlogica || '');
   if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (!(await _exigirCarteira(req, res, id))) return;
   if (b.confirmacao !== 'REGISTRAR') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme o registro na tela.' });
   const m = slComunicados.validarMulta(b);
   if (m.erro) return res.status(400).json({ erro: 'dados_invalidos', detalhe: m.erro });
