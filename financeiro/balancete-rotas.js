@@ -68,12 +68,14 @@ function criarRotasBalancete(app, h) {
     if (!(await exigirFinanceiro(req, res, 'pre_balancete'))) return;
     if (!(await exigirEscritaSuperlogica(req, res))) return;
     try {
-      const r = await B.pedirGeracao(cred(), t.id, t.comp);
-      if (auditar) auditar(req, 'balancete_gerar', { id_condominio: t.id, competencia: t.comp, http: r.http, impressao: r.id_impressao || '' }, false);
+      const r = await B.pedirGeracao(cred(), t.id, t.comp, { cliente: cliente() });
+      if (auditar) auditar(req, 'balancete_gerar', { id_condominio: t.id, competencia: t.comp, http: r.http, impressao: r.id_impressao || '', selecao_ajustada: r.selecao_ajustada ? r.selecao_ajustada.itens_alterados : 0 }, false);
       console.log('[escrita-superlogica] balancete_gerar cond=' + t.id + ' comp=' + t.comp + ' http=' + r.http + ' impressao=' + (r.id_impressao || '-'));
-      res.status(202).json({ pedido: true, id_impressao: r.id_impressao, detalhe: 'Pedido enviado ao Superlógica sem publicar. O 900A aparece na lista em cerca de 3 minutos; depois confira e, se estiver certo, publique pelo Superlógica.' });
+      res.status(202).json({ pedido: true, id_impressao: r.id_impressao, detalhe: (r.selecao_ajustada && r.selecao_ajustada.mudou ? 'Mês da seleção ajustado para ' + t.comp.slice(5) + '/' + t.comp.slice(0, 4) + '. ' : '') + 'Pedido enviado ao Superlógica sem publicar. O 900A aparece na lista em cerca de 3 minutos; depois confira e, se estiver certo, publique pelo Superlógica.' });
     } catch (e) {
       if (e && e.codigo === 'em_andamento') return res.status(409).json({ erro: 'geracao_em_andamento', detalhe: 'Já foi pedido um 900A deste mês há menos de 15 minutos. Aguarde aparecer na lista.' });
+      if (e && e.codigo === 'outro_mes_gerando') return res.status(409).json({ erro: 'outro_mes_gerando', detalhe: 'Outro mês está sendo gerado agora. Tente de novo em 6 minutos.' });
+      if (e && e.codigo === 'selecao') { console.warn('[balancete] ajuste da seleção falhou: ' + e.message); return res.status(502).json({ erro: 'selecao', detalhe: 'Não foi possível ajustar o mês da seleção no Superlógica. Nada foi gerado.' }); }
       if (e && e.codigo === 'mes_aberto') return res.status(400).json({ erro: 'mes_aberto', detalhe: 'Gere o balancete só depois que o mês terminar.' });
       if (e && e.codigo === 'nao_liberado') return res.status(403).json({ erro: 'geracao_nao_liberada', detalhe: 'A geração pelo Hub ainda não está liberada para este condomínio.' });
       falhaSL(res, e, 'gerar ' + t.id);

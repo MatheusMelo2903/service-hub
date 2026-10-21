@@ -503,19 +503,36 @@ function selecaoGeracao() {
 }
 const pedidosGeracao = new Map(); // "id|AAAA-MM" -> horário do último pedido (trava de 15 minutos)
 const TRAVA_GERACAO_MS = 15 * 60 * 1000;
-function pedirGeracao({ base, appToken, accessToken }, idCondominio, comp) {
+// A seleção pessoal vale para todos os condomínios: enquanto um 900A de um mês está sendo gerado
+// (cerca de 3 minutos), não troca o mês dela para outro mês.
+const TRAVA_MES_MS = 6 * 60 * 1000;
+let ultimaGeracao = null; // { comp, em }
+const selecaoMes = require('./balancete-selecao');
+async function pedirGeracao({ base, appToken, accessToken }, idCondominio, comp, { cliente } = {}) {
   const c = competencia(comp);
-  if (!c) return Promise.reject(Object.assign(new Error('competencia_invalida'), { codigo: 'competencia' }));
+  if (!c) throw Object.assign(new Error('competencia_invalida'), { codigo: 'competencia' });
   // Só mês já fechado: o mês corrente ainda está aberto.
-  if (c.chave >= mesAtualBrasilia()) return Promise.reject(Object.assign(new Error('mes_aberto'), { codigo: 'mes_aberto' }));
+  if (c.chave >= mesAtualBrasilia()) throw Object.assign(new Error('mes_aberto'), { codigo: 'mes_aberto' });
   const id = String(idCondominio);
-  if (!liberadosGeracao().has(id)) return Promise.reject(Object.assign(new Error('geracao_nao_liberada'), { codigo: 'nao_liberado' }));
+  if (!liberadosGeracao().has(id)) throw Object.assign(new Error('geracao_nao_liberada'), { codigo: 'nao_liberado' });
   const agora = Date.now();
   for (const [k, t0] of pedidosGeracao) if (agora - t0 >= TRAVA_GERACAO_MS) pedidosGeracao.delete(k);
   const chave = id + '|' + c.chave;
   const ultimo = pedidosGeracao.get(chave);
-  if (ultimo) return Promise.reject(Object.assign(new Error('geracao_em_andamento'), { codigo: 'em_andamento', desde: new Date(ultimo).toISOString() }));
+  if (ultimo) throw Object.assign(new Error('geracao_em_andamento'), { codigo: 'em_andamento', desde: new Date(ultimo).toISOString() });
+  if (ultimaGeracao && ultimaGeracao.comp !== c.chave && agora - ultimaGeracao.em < TRAVA_MES_MS) throw Object.assign(new Error('outro_mes_gerando'), { codigo: 'outro_mes_gerando' });
   pedidosGeracao.set(chave, agora);
+  // Caminho C: com a seleção pessoal (usuario:N), troca o mês dos itens antes de gerar.
+  const sel = selecaoGeracao();
+  let ajuste = null;
+  if (sel.ID_RELATORIOSELECAO_RLSU) {
+    if (!cliente) { pedidosGeracao.delete(chave); throw Object.assign(new Error('sem_cliente'), { codigo: 'selecao' }); }
+    const dono = /^\d{1,9}$/.test(String(process.env.BALANCETE_SELECAO_DONO || '')) ? String(process.env.BALANCETE_SELECAO_DONO) : '89';
+    try {
+      ajuste = await selecaoMes.ajustarSelecaoParaMes({ cred: { base, appToken, accessToken }, cliente, idUsuario: dono, idSelecao: sel.ID_RELATORIOSELECAO_RLSU, competencia: c.chave });
+    } catch (e) { pedidosGeracao.delete(chave); throw Object.assign(new Error('ajuste_selecao: ' + e.message), { codigo: 'selecao' }); }
+  }
+  ultimaGeracao = { comp: c.chave, em: agora };
   const q = Object.assign({ ID_CONDOMINIO_COND: id }, selecaoGeracao(), {
     DT_PADRAO_REL: String(c.mes).padStart(2, '0') + '/01/' + c.ano, NAO_PULAR_PAGINA_ENTRE_RELATORIOS: '0', NAO_EXIBIR_LINK_ANEXOS: '0', render: 'pdf', getId: '1',
   });
@@ -527,7 +544,7 @@ function pedirGeracao({ base, appToken, accessToken }, idCondominio, comp) {
       resp.on('end', () => {
         let idImp = '';
         try { const j = JSON.parse(Buffer.concat(p).toString('utf8')); const it = Array.isArray(j) ? j[0] : j; idImp = String((it && (it.id_impressao || (it.data && it.data.id_impressao))) || ''); } catch (e) { /* 504 vem em texto */ }
-        ok({ pedido: true, http: resp.statusCode, id_impressao: /^\d+$/.test(idImp) ? idImp : '', aguardar: !/^\d+$/.test(idImp) });
+        ok({ pedido: true, http: resp.statusCode, id_impressao: /^\d+$/.test(idImp) ? idImp : '', aguardar: !/^\d+$/.test(idImp), selecao_ajustada: ajuste });
       });
     });
     // Não fica pendurado: o Superlógica continua gerando mesmo se a ligação cair.

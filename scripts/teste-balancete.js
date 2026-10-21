@@ -56,6 +56,46 @@ const dup = 'x'.repeat(400);
 const rDup = B.conferir([pg(1, [dup, '1 de 2']), pg(2, [dup, '2 de 2'])], { competencia: '2026-09', esperados: [] });
 t('página repetida', rDup.paginas_repetidas.length === 1 && rDup.paginas_repetidas[0].igual_a === 1);
 
+// ── 1b. caminho C: mês da seleção NOVA ──
+const S = require('../financeiro/balancete-selecao');
+const H = 'https://x.superlogica.net/clients/condor/relatorios/id/';
+const U = {
+  f: H + '037F?PERIODO=0&PERIODO_INICIO=&PERIODO_FIM=&ORIENTACAO=0&salvar=Salvar',
+  b: H + '061B?MES=0&MES_INICIO=&MES_FIM=&DOCUMENTOS%5B0%5D%5BETIQUETA%5D=Extrato&COM_CAPA=0',
+  a: H + '061A?PERIODO=0&PERIODO_INICIO=&PERIODO_FIM=&CAPAS%5B0%5D%5BID_MODELO_MOH%5D=90',
+  o: H + '011A?REALIZADO=0&REALIZADO_INICIO=&REALIZADO_FIM=&COMPARAR_COM_OUTROMES=1&COMPARARCOMOUTROMES=diversosmeses&COMPARARCOMOUTROMES_INICIO=&COMPARARCOMOUTROMES_QDT_MESES_ACOMPARAR=11&COM_PORCENTAGEM=1',
+  c: H + '035C?PERIODO=0&TITULO=EXTRATO',
+  p: H + '003A?POSICAOEM=4&POSICAOEM_DATA=&VENCIMENTO=0&VENCIMENTO_INICIO=',
+};
+const dec = (u) => decodeURIComponent(u);
+const m9 = { ano: 2026, mes: 9 }, m1 = { ano: 2027, mes: 1 };
+t('037F vai para o mês', dec(S.urlParaMes(U.f, m9)).includes('PERIODO=selecionar&PERIODO_INICIO=09/01/2026&PERIODO_FIM=&ORIENTACAO=0'));
+t('061B vai para o mês', dec(S.urlParaMes(U.b, m9)).includes('MES=selecionar&MES_INICIO=09/01/2026&MES_FIM=&DOCUMENTOS[0][ETIQUETA]=Extrato'));
+t('061A do dia 1 ao último', dec(S.urlParaMes(U.a, { ano: 2026, mes: 2 })).includes('PERIODO_INICIO=02/01/2026&PERIODO_FIM=02/28/2026'));
+t('011A 11 meses antes', dec(S.urlParaMes(U.o, m9)).includes('REALIZADO=selecionar&REALIZADO_INICIO=10/01/2025') && dec(S.urlParaMes(U.o, m1)).includes('REALIZADO_INICIO=02/01/2026'));
+t('003A posição no último dia', dec(S.urlParaMes(U.p, m9)).includes('POSICAOEM=selecionar&POSICAOEM_DATA=09/30/2026&VENCIMENTO=0'));
+t('capa não muda', S.urlParaMes(U.c, m9) === U.c);
+t('idempotente', S.urlParaMes(S.urlParaMes(U.f, m9), m9) === S.urlParaMes(U.f, m9));
+let semParam = false; try { S.urlParaMes(H + '037F?ORIENTACAO=0', m9); } catch (e) { semParam = e.codigo === 'item_inesperado'; }
+t('item sem o parâmetro recusa', semParam);
+function selFalsa(titulo, urls) { return [{ id_relatorioselecao_rlsu: '1', id_usuario_usu: '89', st_tituloselecao_rlsu: titulo, items: urls.map((u, i) => ({ id_relatoriousuarioselecao_rlsui: String(i + 1), nm_ordenacao_rlsui: String(i), st_url_rlsui: u, st_texto_rlsui: i === 0 ? '<p>carta</p>' : '', st_titulotexto_rlsui: 'T' + i })) }]; }
+function clienteFalso(titulo, gravar) {
+  let atual = selFalsa(titulo, [U.c, U.f, U.b, U.a, U.o]);
+  return { get: async () => atual, gravou: () => atual, postar: async (cred, cam, corpo) => {
+    const p = new URLSearchParams(corpo); const n = atual[0].items.map((it, i) => Object.assign({}, it, { st_url_rlsui: gravar === 'errado' && i === 0 ? it.st_url_rlsui + '&X=1' : p.get('RELATORIO_SELECAO[' + i + '][ST_URL_RLSUI]') }));
+    atual = [Object.assign({}, atual[0], { items: n })]; return { http: 200, json: { status: '200', data: { selecao: '1' } } }; } };
+}
+const cf = clienteFalso('Prestação de contas na Web NOVA teste Hub');
+P(S.ajustarSelecaoParaMes({ cred: {}, cliente: cf, idUsuario: 89, idSelecao: 1, competencia: '2026-09', postarFn: cf.postar }).then((r) => {
+  t('ajuste grava 4 itens', r.mudou && r.itens_alterados === 4);
+  t('ajuste mantém textos e capa', cf.gravou()[0].items[0].st_url_rlsui === U.c && cf.gravou()[0].items[0].st_texto_rlsui === '<p>carta</p>');
+  return S.ajustarSelecaoParaMes({ cred: {}, cliente: cf, idUsuario: 89, idSelecao: 1, competencia: '2026-09', postarFn: async () => { throw new Error('não devia gravar'); } });
+}).then((r) => t('no mesmo mês não grava de novo', r.mudou === false)));
+const cw = clienteFalso('Prestação de contas na Web');
+P(S.ajustarSelecaoParaMes({ cred: {}, cliente: cw, idUsuario: 89, idSelecao: 1, competencia: '2026-09', postarFn: cw.postar }).then(() => t('seleção da equipe recusa', false), (e) => t('seleção da equipe recusa', e.message === 'selecao_nao_permitida')));
+const ce = clienteFalso('NOVA teste Hub', 'errado');
+P(S.ajustarSelecaoParaMes({ cred: {}, cliente: ce, idUsuario: 89, idSelecao: 1, competencia: '2026-09', postarFn: ce.postar }).then(() => t('gravação diferente acusa', false), (e) => t('gravação diferente acusa', e.codigo === 'gravacao_diferente')));
+
 // ── 2. liberação da geração ──
 delete process.env.BALANCETE_GERACAO_LIBERADA;
 t('padrão só 94 e 167', [...B.liberadosGeracao()].sort().join(',') === '167,94');

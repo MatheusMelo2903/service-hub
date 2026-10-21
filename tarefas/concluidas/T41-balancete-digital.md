@@ -22,6 +22,14 @@
 4. public/balancete.js: cartão "Balancete digital (900A)" na aba Financeiro, só GESTOR, sobre o condomínio do topo.
 5. scripts/balancete-conferir.js (linha de comando, mesmo código) e scripts/teste-balancete.js (45 testes; 47 com PDFs reais).
 
+## Caminho C (decisão do Matheus 21/10 15h37)
+financeiro/balancete-selecao.js: antes de cada geração, o Hub lê a seleção NOVA (GET relatorioselecaousuario/index com
+comItems=1), troca só o mês dos itens 037F, 037E, 061B (extrato e simulação), 061A (1º ao último dia) e a primeira coluna
+do 011A (11 meses antes), grava pelo mesmo caminho da tela (relatorioselecaousuario/post) e lê de novo para provar que
+só esses parâmetros mudaram. Recusa qualquer seleção sem "NOVA teste Hub" no título (as seleções do condomínio nunca são
+tocadas). Dono da seleção: BALANCETE_SELECAO_DONO (padrão 89). Enquanto um mês está sendo gerado (6 minutos), outro mês
+não é pedido. Testado com o token do Hub: ajuste para 08/2026 e volta para 09/2026, conferido.
+
 ## Medidas reais (Victoria Bay, setembro de 2026)
 900A de 585 páginas e 231 MB: download em cerca de 8 s, leitura em 47 s com 775 MB de memória no Mac; conferência
 completa em 55 s. Resultado: mês certo em todas as seções, 35 de 35 itens, 90 de 90 parcelas pagas no mês com
