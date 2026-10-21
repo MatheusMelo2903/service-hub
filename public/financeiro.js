@@ -195,11 +195,11 @@
     var ativo = est.aba === chave;
     return '<button class="btn ' + (ativo ? 'btn-primary' : 'btn-ghost') + '" data-fin-aba="' + chave + '" style="font-size:12px;padding:6px 12px">' + rotulo + '</button>';
   }
-  function finAbrirCondominio(id, nome) {
+  function finAbrirCondominio(id, nome, aba) {
     if (!/^\d+$/.test(String(id || ''))) return;
     est.cond = { id: String(id), nome: nome || '' };
     est.alertas = null;
-    est.aba = 'alertas';
+    est.aba = aba === 'conc' && typeof window.finConcAba === 'function' ? 'conc' : 'alertas';
     var card = document.getElementById('fin-detalhe');
     card.style.display = '';
     montarDetalhe();
@@ -212,13 +212,14 @@
     var card = document.getElementById('fin-detalhe');
     var c = est.cond;
     card.innerHTML = '<div class="card-header" style="flex-wrap:wrap;gap:8px"><span class="card-title">' + esc(c.nome || ('Código ' + c.id)) + ' <span style="color:var(--muted);font-family:var(--mono);font-size:12px">' + esc(c.id) + '</span></span>'
-      + '<div style="display:flex;gap:6px;flex-wrap:wrap">' + botaoAba('alertas', 'Alertas') + botaoAba('boletos', 'Boletos do mês') + (podePre() ? botaoAba('pre', 'Pré balancete') : '') + '</div></div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap">' + botaoAba('alertas', 'Alertas') + botaoAba('boletos', 'Boletos do mês') + (podePre() ? botaoAba('pre', 'Pré balancete') : '') + (typeof window.finConcAba === 'function' ? botaoAba('conc', 'Conciliação') : '') + '</div></div>'
       + '<div id="fin-aba-conteudo"></div>';
     card.querySelectorAll('[data-fin-aba]').forEach(function (b) {
       b.addEventListener('click', function () { est.aba = b.getAttribute('data-fin-aba'); montarDetalhe(); });
     });
     if (est.aba === 'alertas') abaAlertas();
     else if (est.aba === 'boletos') abaBoletos();
+    else if (est.aba === 'conc') window.finConcAba(document.getElementById('fin-aba-conteudo'), est.cond);
     else abaPre();
   }
 

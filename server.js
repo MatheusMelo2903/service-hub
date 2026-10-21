@@ -3944,6 +3944,107 @@ app.get('/api/financeiro/condominio/:idSuperlogica/pre-balancete', requireAuth, 
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// Conciliação (T35), aba dentro do Financeiro. Só GET no Superlógica (extrato já importado
+// pela equipe: conciliacao/index por condomínio e conta, e contabancos/index), no máximo
+// 2 chamadas ao mesmo tempo, cache de 10 min. Mesmas travas das rotas do Financeiro:
+// módulo financeiro (ver), acesso ao Superlógica e carteira (falha fechada).
+// O arquivo OFX é lido e comparado na própria tela; o servidor só entrega os itens da conta.
+// ─────────────────────────────────────────────────────────────────────────
+const finConciliacao = require('./financeiro/conciliacao');
+const _conciliacao = finConciliacao.criarConciliacao({ cliente: () => clienteSL() });
+async function _travasConciliacao(req, res, id) {
+  if (!slModulo.idValido(id)) { res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' }); return false; }
+  if (finConciliacao.NAO_CONDOMINIOS.has(id)) { res.status(400).json({ erro: 'nao_condominio', detalhe: 'Esse cadastro não é um condomínio.' }); return false; }
+  if (!(await _exigirFinanceiro(req, res, 'ver'))) return false;
+  if (!(await exigirLeituraSuperlogica(req, res))) return false;
+  if (!(await _exigirCarteira(req, res, id))) return false;
+  if (!(await _exigirEscopoFinanceiro(req, res, id))) return false;
+  return true;
+}
+function _erroConciliacao(res, e, rotulo) {
+  // Só os erros do próprio módulo (e.codigo) viram 400 ou 404; erro do Superlógica (e.status) é 502.
+  if (e && e.codigo === 'competencia') return res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Escolha um mês que já começou.' });
+  if (e && e.codigo === 'muitos_condominios') return res.status(400).json({ erro: 'muitos_condominios', detalhe: 'Escolha uma carteira menor.' });
+  if (e && e.codigo === 'conta_nao_encontrada') return res.status(404).json({ erro: 'conta_nao_encontrada', detalhe: 'Essa conta não é deste condomínio.' });
+  console.warn('[conciliacao] ' + rotulo + ' falhou: ' + (e && e.message));
+  return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler o extrato no Superlógica agora. Tente de novo em alguns minutos.' });
+}
+
+// GET /api/financeiro/conciliacao/quadro?carteira=<id do grupo>[&forcar=1]
+// Por condomínio e conta: último dia com extrato, dias sem extrato, dias não conciliados, mês sem bloqueio.
+app.get('/api/financeiro/conciliacao/quadro', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const carteira = String(req.query.carteira || '');
+  if (carteira && !/^[1-9][0-9]{0,8}$/.test(carteira)) return res.status(400).json({ erro: 'carteira_invalida', detalhe: 'Carteira inválida.' });
+  if (!(await _exigirFinanceiro(req, res, 'ver'))) return;
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  let escopo;
+  try { escopo = await _escopoFinanceiro(req); } catch (e) {
+    return res.status(503).json({ erro: 'carteira_indisponivel', detalhe: 'Não foi possível conferir sua carteira agora.' });
+  }
+  let ids = escopo;
+  if (carteira) {
+    let grupo = null;
+    try { grupo = (await gruposCarteiras()).find((g) => String(g.id) === carteira); } catch (e) {
+      return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler as carteiras agora.' });
+    }
+    if (!grupo) return res.status(404).json({ erro: 'carteira_nao_encontrada', detalhe: 'Essa carteira não existe mais.' });
+    const daCarteira = new Set((grupo.condominios || []).map(String));
+    ids = escopo ? new Set([...daCarteira].filter((x) => escopo.has(x))) : daCarteira;
+  }
+  if (!ids) return res.status(400).json({ erro: 'escolha_carteira', detalhe: 'Escolha uma carteira para ver o quadro de conciliação.' });
+  if (ids.size > finConciliacao.MAX_CONDOMINIOS_QUADRO) return res.status(400).json({ erro: 'muitos_condominios', detalhe: 'Escolha uma carteira menor (até ' + finConciliacao.MAX_CONDOMINIOS_QUADRO + ' condomínios).' });
+  try {
+    const r = await _conciliacao.quadroComEspera([...ids], req.query.forcar === '1');
+    if (!r) return res.status(202).json({ calculando: true, detalhe: 'Lendo os extratos das contas. A tela tenta de novo sozinha.' });
+    res.json(r);
+  } catch (e) { _erroConciliacao(res, e, 'quadro'); }
+});
+
+// GET /api/financeiro/conciliacao/condominio/:id?competencia=AAAA-MM[&forcar=1]
+// Todas as contas do condomínio no mês: quadro, itens do banco sem lançamento, lançamentos sem saída
+// no banco, valor no banco diferente do lançado, data real diferente da baixa e divergências.
+app.get('/api/financeiro/conciliacao/condominio/:idSuperlogica', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  const competencia = String(req.query.competencia || '');
+  if (!finConciliacao.competencia(competencia)) return res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Informe o mês no formato AAAA-MM.' });
+  if (!(await _travasConciliacao(req, res, id))) return;
+  try { res.json(await _conciliacao.condominio(id, competencia, req.query.forcar === '1')); } catch (e) { _erroConciliacao(res, e, 'condominio ' + id); }
+});
+
+// GET /api/financeiro/conciliacao/condominio/:id/conta/:conta/itens?inicio=AAAA-MM-DD&fim=AAAA-MM-DD
+// Extrato importado e lançamentos de uma conta (até 62 dias), para comparar o arquivo OFX na tela.
+app.get('/api/financeiro/conciliacao/condominio/:idSuperlogica/conta/:conta/itens', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  const conta = String(req.params.conta || '');
+  const ini = String(req.query.inicio || ''), fim = String(req.query.fim || '');
+  const C = finConciliacao.C;
+  if (!/^[1-9][0-9]{0,8}$/.test(conta)) return res.status(400).json({ erro: 'conta_invalida', detalhe: 'Conta inválida.' });
+  // Revisão 2, G1: data impossível (mês 13) não pode chegar ao toISOString, que lança erro.
+  const dataReal = (d) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+    const t = Date.parse(d + 'T12:00:00Z');
+    return !isNaN(t) && new Date(t).toISOString().slice(0, 10) === d;
+  };
+  if (!dataReal(ini) || !dataReal(fim) || fim < ini || C.dias(ini, fim) > 62 || ini < '2020-01-01') {
+    return res.status(400).json({ erro: 'periodo_invalido', detalhe: 'O período do arquivo precisa ter até 62 dias.' });
+  }
+  if (!(await _travasConciliacao(req, res, id))) return;
+  try { res.json(await _conciliacao.itensConta(id, conta, ini, fim)); } catch (e) { _erroConciliacao(res, e, 'itens ' + id + ' ' + conta); }
+});
+
+// GET /api/financeiro/conciliacao/condominio/:id/regras[?forcar=1]
+// Regras automáticas sugeridas pelo histórico dos 3 meses fechados anteriores.
+app.get('/api/financeiro/conciliacao/condominio/:idSuperlogica/regras', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!(await _travasConciliacao(req, res, id))) return;
+  try { res.json(await _conciliacao.regras(id, req.query.forcar === '1')); } catch (e) { _erroConciliacao(res, e, 'regras ' + id); }
+});
+
 // GET /api/cobranca/condominio/:id[?forcar=1]
 app.get('/api/cobranca/condominio/:idSuperlogica', requireAuth, async (req, res) => {
   res.set('Cache-Control', 'no-store');

@@ -1997,6 +1997,7 @@
           <select id="fin-carteira" style="width:auto;min-width:260px"><option value="">Meus condomínios</option></select>
           <button class="btn btn-primary" onclick="finCarregar()">Carregar</button>
           <button class="btn btn-ghost" onclick="finCarregar(true)" title="Lê de novo no Superlógica">Atualizar</button>
+          <button class="btn btn-ghost" onclick="finConcQuadro()" title="Extrato importado, dias sem extrato e dias não conciliados por conta">Conciliação</button>
         </div>
         <div id="fin-info" class="ficha-sub" style="margin:10px 0"></div>
         <div id="fin-quadro"></div>
@@ -4099,6 +4100,8 @@ async function deletarUsuario(userId, email) {
 <script src="/comunicados.js"></script>
 <script src="/relatorio.js"></script>
 <script src="/financeiro.js"></script>
+<script src="/conciliacao-casar.js"></script>
+<script src="/financeiro-conciliacao.js"></script>
 <script src="/consumo.js"></script>
 
 <div id="prestacao-modal" class="prestacao-modal" style="display:none">
