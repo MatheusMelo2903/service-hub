@@ -37,13 +37,63 @@ function audioDrop(e) {
 }
 
 // ============================================================
-// TRANSCRIÇÃO VIA ASSEMBLYAI: qualquer tamanho, qualquer formato
-// Upload direto → poll até concluir → retorna texto completo
+// TRANSCRIÇÃO DO ÁUDIO (T16, T17): tudo passa pelo servidor. O navegador manda o áudio,
+// recebe um código e acompanha. O texto só aparece para quem tem transcrição livre;
+// para os outros, a transcrição fica guardada e a ata é gerada pelo código.
 // ============================================================
-// URLs do proxy AssemblyAI servido pelo backend (a chave fica no env ASSEMBLYAI_KEY no Railway)
-const AAI_UPLOAD_URL = '/api/assemblyai/upload';
-const AAI_TRANSCRIPT_URL = '/api/assemblyai/transcript';
-const AAI_POLL_BASE = '/api/assemblyai/transcript/';
+const AUDIO_ENVIAR_URL = '/api/audio/enviar';
+const AUDIO_TRANSCREVER_URL = '/api/audio/transcrever';
+const AUDIO_STATUS_URL = '/api/audio/status/';
+let _ataTranscricaoId = null;        // código da transcrição guardada no servidor
+let _ataTranscricaoOriginal = '';    // texto como veio do servidor (para saber se foi corrigido)
+
+function ataTranscricaoLivre() {
+  const a = (window.USER_PERMS && window.USER_PERMS.atas && window.USER_PERMS.atas.acoes) || [];
+  return a.includes('transcricao_livre');
+}
+// Se a leitura do cadastro falhar, usa o condomínio ativo (o servidor confere se é da base).
+function ataCondominioEscolhido() {
+  if (typeof _ataCadastro !== 'undefined' && _ataCadastro && _ataCadastro.ok && _ataCadastro.id) return String(_ataCadastro.id);
+  try {
+    const c = (typeof getCondominioAtivo === 'function') ? getCondominioAtivo() : null;
+    const id = c && (c.id_superlogica || c.idSuperlogica);
+    return id ? String(id) : '';
+  } catch (e) { return ''; }
+}
+// Sem transcrição livre o texto não aparece: a caixa vira um aviso de "transcrição pronta".
+function ataMostrarTranscricaoGuardada(caracteres, nome) {
+  const ta = document.getElementById('ata-transcricao');
+  const info = document.getElementById('ata-file-info');
+  if (ataTranscricaoLivre()) return;
+  if (ta) { ta.value = ''; ta.style.display = 'none'; }
+  if (info) info.textContent = '✓ Transcrição pronta' + (nome ? ' (' + nome + ')' : '') + ': ' + Number(caracteres || 0).toLocaleString('pt-BR') + ' caracteres, guardada no sistema.';
+}
+function ataPrepararCaixaTranscricao() {
+  const ta = document.getElementById('ata-transcricao');
+  if (!ta) return;
+  const livre = ataTranscricaoLivre();
+  ta.style.display = livre ? '' : 'none';
+  ta.readOnly = !livre;
+  const btnPasta = document.getElementById('btn-importar-txt');
+  if (btnPasta) btnPasta.style.display = '';
+  const btnTxt = document.getElementById('ata-btn-baixar-txt');
+  if (btnTxt) btnTxt.style.display = livre ? '' : 'none';
+}
+// Transcrição livre: baixa o texto sem precisar gerar ata nem escolher condomínio.
+function ataBaixarTranscricaoTxt() {
+  if (!ataTranscricaoLivre()) return;
+  const ta = document.getElementById('ata-transcricao');
+  const texto = ta ? ta.value.trim() : '';
+  if (!texto) { toast('Ainda não há transcrição para baixar', 'warn'); return; }
+  const nomeAudio = (document.getElementById('audio-file-nome') || {}).textContent || '';
+  const base = (nomeAudio.replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[^\wÀ-ſ ]+/g, ' ').trim() || 'transcricao').slice(0, 60);
+  const blob = new Blob([texto], { type: 'text/plain;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = base + '.txt';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
 
 let audioAbortController = null;
 let pollTimer = null;
@@ -185,67 +235,61 @@ async function processarArquivoAudio(file) {
     const arquivo = comp.file;
     const tamMB = (arquivo.size / 1048576).toFixed(1);
 
-    // PASSO 1: upload (retry só em falha rápida; timeout de etapa de 6 min)
-    setAudioProgress(comp.comprimido ? 18 : 5, 'Enviando arquivo (' + tamMB + 'MB)...', comp.comprimido ? 'Enviando versão otimizada...' : 'Conectando ao AssemblyAI...');
-    const upload_url = await comRetry(async () => {
-      const r = await fetchComTimeout(AAI_UPLOAD_URL, { method: 'POST', headers: authH(), body: arquivo }, 6 * 60 * 1000, sig);
-      if (!r.ok) throw new Error('Falha no upload: HTTP ' + r.status);
-      const j = await r.json();
-      if (!j.upload_url) throw new Error('upload não retornou URL');
-      return j.upload_url;
-    }, 'Upload');
-    setAudioProgress(30, 'Arquivo enviado! Iniciando transcrição...', 'Upload concluído ✓');
+    // Sem transcrição livre, o condomínio da ata tem de estar escolhido antes.
+    const idCond = ataCondominioEscolhido();
+    if (!idCond && !ataTranscricaoLivre()) throw new Error('Escolha o condomínio da ata antes de enviar o áudio.');
 
-    // PASSO 2: inicia transcrição (retry só em falha rápida; timeout 30s)
+    // PASSO 1: envio (retry só em falha rápida; timeout de etapa de 6 min)
+    setAudioProgress(comp.comprimido ? 18 : 5, 'Enviando arquivo (' + tamMB + 'MB)...', comp.comprimido ? 'Enviando versão otimizada...' : 'Enviando...');
+    const arquivoId = await comRetry(async () => {
+      const r = await fetchComTimeout(AUDIO_ENVIAR_URL, { method: 'POST', headers: Object.assign({ 'x-nome-arquivo': encodeURIComponent(file.name || '').slice(0, 180) }, authH()), body: arquivo }, 6 * 60 * 1000, sig);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.arquivo_id) throw new Error(j.detalhe || 'Falha no envio');
+      return j.arquivo_id;
+    }, 'Envio');
+    setAudioProgress(30, 'Arquivo enviado! Iniciando transcrição...', 'Envio concluído ✓');
+
+    // PASSO 2: inicia a transcrição (retry só em falha rápida; timeout 30s)
     const id = await comRetry(async () => {
-      const r = await fetchComTimeout(AAI_TRANSCRIPT_URL, {
+      const r = await fetchComTimeout(AUDIO_TRANSCREVER_URL, {
         method: 'POST',
         headers: Object.assign({ 'content-type': 'application/json' }, authH()),
-        body: JSON.stringify({
-          audio_url: upload_url,
-          // universal-3-5-pro com fallback universal-2. keyterms_prompt e prompt são
-          // mutuamente exclusivos; language_detection é exclusivo com language_code.
-          speech_models: ['universal-3-5-pro', 'universal-2'],
-          language_detection: true,
-          speaker_labels: true,
-          keyterms_prompt: [
-            'síndico', 'subsíndico', 'conselho fiscal', 'quórum', 'fundo de reserva',
-            'convenção', 'regimento interno', 'taxa condominial', 'rateio',
-            'prestação de contas', 'inadimplência', 'assembleia geral ordinária',
-            'assembleia geral extraordinária', 'previsão orçamentária', 'ata'
-          ],
-          punctuate: true, format_text: true, disfluencies: false
-        })
+        body: JSON.stringify({ arquivo_id: arquivoId, id_superlogica: idCond || null })
       }, 30 * 1000, sig);
-      if (!r.ok) throw new Error('Falha ao iniciar transcrição: HTTP ' + r.status);
-      const j = await r.json();
-      if (!j.id) throw new Error('transcrição não retornou ID');
-      return j.id;
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 403 || r.status === 400 || r.status === 404) { const e = new Error(j.detalhe || 'Não foi possível começar a transcrição'); e.__timeout = true; throw e; }
+      if (!r.ok || !j.transcricao_id) throw new Error(j.detalhe || 'Falha ao iniciar transcrição');
+      return j.transcricao_id;
     }, 'Início da transcrição');
-    setAudioProgress(35, 'Transcrevendo... (pode levar alguns minutos)', 'ID: ' + id);
+    setAudioProgress(35, 'Transcrevendo... (pode levar alguns minutos)', '');
 
-    // PASSO 3: poll até concluir. Timeout global de 25 min; erros transitórios de poll
+    // PASSO 3: acompanha até concluir. Timeout global de 25 min; erros transitórios
     // só re-consultam (não derrubam). Ao concluir/errar/estourar, para o intervalo.
     const prazo = Date.now() + 25 * 60 * 1000;
     let progresso = 35;
-    const texto = await new Promise((resolve, reject) => {
+    const resultado = await new Promise((resolve, reject) => {
       pollTimer = setInterval(async () => {
         if (sig.aborted) { clearInterval(pollTimer); pollTimer = null; reject(new Error('Cancelado')); return; }
         if (Date.now() > prazo) { clearInterval(pollTimer); pollTimer = null; const e = new Error('a transcrição excedeu 25 min'); e.__timeout = true; reject(e); return; }
         try {
-          const r = await fetchComTimeout(AAI_POLL_BASE + id, { headers: authH() }, 20 * 1000, sig);
+          const r = await fetchComTimeout(AUDIO_STATUS_URL + encodeURIComponent(id), { headers: authH(), cache: 'no-store' }, 20 * 1000, sig);
           const result = await r.json();
-          if (result.status === 'completed') { clearInterval(pollTimer); pollTimer = null; resolve(result.text || ''); }
-          else if (result.status === 'error') { clearInterval(pollTimer); pollTimer = null; reject(new Error(result.error || 'erro na transcrição')); }
-          else { progresso = Math.min(progresso + 2, 92); setAudioProgress(progresso, 'Transcrevendo... (' + result.status + ')', 'Aguardando AssemblyAI...'); }
-        } catch (e) { if (e.name !== 'AbortError' && !e.__timeout) console.warn('poll transitório, reconsulta:', e.message); }
+          if (result.status === 'pronta') { clearInterval(pollTimer); pollTimer = null; resolve(result); }
+          else if (result.status === 'erro' || result.status === 'nao_encontrada') { clearInterval(pollTimer); pollTimer = null; reject(new Error(result.detalhe || 'erro na transcrição')); }
+          else { progresso = Math.min(progresso + 2, 92); setAudioProgress(progresso, 'Transcrevendo...', 'Aguardando...'); }
+        } catch (e) { if (e.name !== 'AbortError' && !e.__timeout) console.warn('consulta transitória, reconsulta:', e.message); }
       }, 3000);
     });
+    _ataTranscricaoId = id;
+    const texto = typeof resultado.texto === 'string' ? resultado.texto : '';
+    _ataTranscricaoOriginal = texto;
 
-    setAudioProgress(100, 'Transcrição concluída!', texto.slice(0, 200) + '...');
-    document.getElementById('ata-transcricao').value = texto;
+    const nCar = texto ? texto.length : (resultado.caracteres || 0);
+    setAudioProgress(100, 'Transcrição concluída!', texto ? texto.slice(0, 200) + '...' : '');
+    if (ataTranscricaoLivre()) document.getElementById('ata-transcricao').value = texto;
+    else ataMostrarTranscricaoGuardada(nCar, file.name);
     document.getElementById('btn-cancelar-audio').style.display = 'none';
-    toast('Transcrição concluída! ' + texto.length + ' caracteres' + (comp.comprimido ? ' (áudio otimizado)' : ''), 'ok');
+    toast('Transcrição concluída! ' + nCar + ' caracteres' + (comp.comprimido ? ' (áudio otimizado)' : ''), 'ok');
 
   } catch (e) {
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
@@ -271,10 +315,26 @@ function importarTranscricao(event) {
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = function(e) {
-    document.getElementById('ata-transcricao').value = e.target.result;
-    document.getElementById('ata-file-info').textContent = '✓ ' + file.name + ' (' + Math.round(file.size/1024) + ' KB)';
-    toast('Transcrição importada: ' + file.name, 'ok');
+  reader.onload = async function(e) {
+    const texto = String(e.target.result || '');
+    if (ataTranscricaoLivre()) {
+      document.getElementById('ata-transcricao').value = texto;
+      _ataTranscricaoId = null; _ataTranscricaoOriginal = '';
+      document.getElementById('ata-file-info').textContent = '✓ ' + file.name + ' (' + Math.round(file.size/1024) + ' KB)';
+      toast('Transcrição importada: ' + file.name, 'ok');
+      return;
+    }
+    const idCond = ataCondominioEscolhido();
+    if (!idCond) { toast('Escolha o condomínio da ata antes de importar a transcrição', 'err'); return; }
+    try {
+      const r = await apiAuthFetch('/api/transcricoes/texto', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texto, id_superlogica: idCond, origem: 'arquivo_txt', nome: file.name }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.transcricao_id) throw new Error(j.detalhe || 'não foi possível guardar a transcrição');
+      _ataTranscricaoId = j.transcricao_id; _ataTranscricaoOriginal = '';
+      ataMostrarTranscricaoGuardada(j.caracteres, file.name);
+      toast('Transcrição importada: ' + file.name, 'ok');
+    } catch (err) { toast('Erro: ' + (err.message || err), 'err'); }
   };
   reader.readAsText(file, 'UTF-8');
 }
@@ -400,30 +460,7 @@ function renderAtaDocs() {
 // EDITAL AUTOPREENCHE — IA lê PDF/imagem e preenche os 5 campos
 // ============================================================
 
-const EDITAL_MAX_BYTES = 8 * 1024 * 1024; // 8MB — limite seguro para Anthropic
-const EDITAL_SYSTEM_PROMPT = [
-  'Voce e um extrator de dados de editais condominiais brasileiros.',
-  'O usuario vai te entregar um edital de convocacao (PDF ou imagem).',
-  'Sua tarefa: extrair os 5 campos da reuniao em JSON puro, sem markdown, sem cercas, sem comentarios.',
-  '',
-  'Estrutura EXATA do JSON:',
-  '{',
-  '  "condominio": string | null,',
-  '  "data": string | null,',
-  '  "tipo": "AGO" | "AGE" | "Reuniao de Diretoria" | "Reuniao de Moradores" | null,',
-  '  "sindico": string | null,',
-  '  "local": string | null',
-  '}',
-  '',
-  'Regras invioláveis:',
-  '- Use null se o campo nao aparecer claramente no edital. NUNCA invente.',
-  '- AGO = Assembleia Geral Ordinaria; AGE = Assembleia Geral Extraordinaria.',
-  '- Data sempre no formato DD/MM/AAAA. Use a data da REUNIAO (nao a data da convocacao).',
-  '- Se a data estiver por extenso ("01 de abril de 2026"), converta pra 01/04/2026.',
-  '- Sindico: extraia somente se mencionado explicitamente como sindico (nao confunda com presidente da mesa).',
-  '- Local: extraia o local da reuniao como aparece (ex: "Salao de Festas", "presencial e remoto via Zoom").',
-  '- Condominio: extraia o nome oficial como aparece (sem aspas).',
-].join('\n');
+const EDITAL_MAX_BYTES = 7 * 1024 * 1024; // 7MB
 
 // Texto do edital anexado pelo dropzone "autopreencher", extraído por pdf.js (client side,
 // grátis). Alimenta o bloco EDITAIS ANEXADOS da geração (ver gerarAtaIA). Sem isso o edital do
@@ -501,50 +538,18 @@ async function processarEditalFile(file) {
       r.readAsDataURL(file);
     });
     progressBar.style.width = '45%';
-    status.textContent = 'Extraindo dados via IA...';
+    status.textContent = 'Lendo o edital...';
 
-    // Monta content block conforme tipo
     const isPdf = file.type === 'application/pdf';
-    const docBlock = isPdf
-      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } }
-      : { type: 'image',    source: { type: 'base64', media_type: file.type, data: base64 } };
-
-    const payload = {
-      model: 'claude-haiku-4-5',
-      max_tokens: 800,
-      system: EDITAL_SYSTEM_PROMPT,
-      messages: [{
-        role: 'user',
-        content: [
-          docBlock,
-          { type: 'text', text: 'Extraia os 5 campos do edital acima em JSON puro, conforme as regras do sistema.' }
-        ]
-      }]
-    };
-
-    const resp = await apiAuthFetch('/api/claude/messages', {
+    const resp = await apiAuthFetch('/api/processar/edital', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ arquivo: { mime: isPdf ? 'application/pdf' : file.type, base64 } })
     });
     progressBar.style.width = '85%';
-
-    if (!resp.ok) {
-      const erro = await resp.text();
-      throw new Error('IA retornou ' + resp.status + ': ' + erro.slice(0, 200));
-    }
-    const data = await resp.json();
-    const texto = data.content && data.content[0] && data.content[0].text ? data.content[0].text : '';
-    if (!texto) throw new Error('IA nao retornou texto');
-
-    // Parse JSON (tolerar cercas ```json se modelo escapar a regra)
-    let json;
-    try {
-      const limpo = texto.replace(/```(?:json)?\s*|\s*```/g, '').trim();
-      json = JSON.parse(limpo);
-    } catch (e) {
-      throw new Error('IA nao retornou JSON valido. Texto: ' + texto.slice(0, 200));
-    }
+    const retorno = await resp.json().catch(() => ({}));
+    if (!resp.ok || !retorno.campos) throw new Error(retorno.detalhe || 'não foi possível ler o edital');
+    const json = retorno.campos;
 
     aplicarCamposExtraidos(json);
     // TRANSPORTE (H1): além de autopreencher via Haiku, extrai o TEXTO do edital com pdf.js
@@ -600,6 +605,8 @@ function limparAta() {
   document.getElementById('ata-local').value = '';
   document.getElementById('ata-transcricao').value = '';
   document.getElementById('ata-participantes').value = '';
+  _ataTranscricaoId = null; _ataTranscricaoOriginal = '';
+  { const info = document.getElementById('ata-file-info'); if (info) info.textContent = ''; }
   // Reset uploader edital
   _editalDropzoneTexto = ''; _editalDropzoneNome = '';
   // Reset documentos da assembleia (T01): nunca levar PDF de uma ata para outra.
@@ -637,8 +644,9 @@ async function gerarAtaIA() {
   const trans   = document.getElementById('ata-transcricao').value.trim();
   const partic  = document.getElementById('ata-participantes').value.trim();
 
-  if (!trans) { toast('Cole ou importe a transcrição antes de gerar', 'err'); return; }
+  if (!trans && !_ataTranscricaoId) { toast('Envie o áudio ou importe a transcrição antes de gerar', 'err'); return; }
   if (!cond)  { toast('Informe o nome do condomínio', 'err'); return; }
+  if (!ataCondominioEscolhido()) { toast('Escolha o condomínio da ata na lista', 'err'); return; }
   if (!data)  { toast('Informe a data da reunião', 'err'); return; }
   if (_ataDocsApoio.some(d => d.status === 'lendo')) { toast('Aguarde terminar a leitura dos documentos da assembleia', 'warn'); return; }
 
@@ -680,28 +688,17 @@ async function gerarAtaIA() {
       editaisAnexos.map(e => `--- ${e.n}. ${e.titulo}${e.arquivo ? ' [arquivo: ' + e.arquivo + ']' : ''} ---\n${e.texto}`).join('\n\n') + '\n';
   }
 
-  const userMessage = [
-    '=== DADOS DA REUNIÃO ===',
-    `Condomínio: ${cond}`,
-    `CNPJ: ${(document.getElementById('ata-cnpj') || {}).value || '[a confirmar]'}`,
-    `Endereço: ${(document.getElementById('ata-endereco') || {}).value || '[a confirmar]'}`,
-    (_ataCadastro && _ataCadastro.ok ? '(Nome, CNPJ, endereço e síndico vêm do cadastro oficial do condomínio no Superlógica: use exatamente estes no cabeçalho.)' : ''),
-    `Tipo: ${tipo}`,
-    `Data: ${data}${dataExtenso !== data ? ' (' + dataExtenso + ')' : ''}`,
-    `Síndico: ${sindico || '[a confirmar]'}`,
-    `Local: ${local || '[a confirmar]'}`,
-    '',
-    '=== ITENS DE PAUTA ===',
-    pautasSemEdital.length ? pautasSemEdital.join('\n') : '(extrair da transcrição e/ou dos editais anexados abaixo)',
-    blocoEditais,
-    '=== PARTICIPANTES ===',
-    partic || '(extrair da transcrição; se não identificáveis, use [a confirmar])',
-    '',
-    '=== TRANSCRIÇÃO COMPLETA DA REUNIÃO ===',
-    trans,
-    '',
-    'Gere a ata completa seguindo todas as regras e estrutura do sistema. Use [a confirmar] em qualquer dado ausente.'
-  ].join('\n');
+  // T17: o pedido da ata é montado no servidor. Aqui vão só os dados.
+  const dadosAta = {
+    condominio: cond,
+    cnpj: (document.getElementById('ata-cnpj') || {}).value || '',
+    endereco: (document.getElementById('ata-endereco') || {}).value || '',
+    cadastro_oficial: !!(_ataCadastro && _ataCadastro.ok),
+    tipo, data, sindico, local,
+    participantes: partic,
+    pautas: pautasSemEdital.map(function (t) { return t.replace(/^\d+\.\s*/, ''); }),
+    editais: editaisAnexos.map(function (e) { return { titulo: e.titulo, arquivo: e.arquivo, texto: e.texto }; })
+  };
 
   // UI: loading state com contador ao vivo. O botão mostra os segundos correndo
   // (ticker local de 1s) pra deixar claro que está gerando e não travou.
@@ -725,10 +722,13 @@ async function gerarAtaIA() {
     // 4s até 'done'/'error'. Cada request é curto, imune a timeout de borda e a idle
     // do navegador. O backend monta o system prompt e faz retry Sonnet → Opus com
     // validação pós-geração; o payload final ({ ata, modelo_usado, ... }) é o mesmo.
+    // Transcrição: pelo código guardado; quem tem transcrição livre e corrigiu o texto manda o texto.
+    const usarTexto = ataTranscricaoLivre() && trans && (!_ataTranscricaoId || trans !== _ataTranscricaoOriginal);
     const corpoAta = JSON.stringify({
-        userMessage,
-        // T07: código do condomínio para o servidor conferir os participantes no cadastro
-        id_superlogica: (_ataCadastro && _ataCadastro.ok) ? _ataCadastro.id : undefined,
+        dados: dadosAta,
+        transcricao_id: usarTexto ? undefined : (_ataTranscricaoId || undefined),
+        transcricao_texto: usarTexto ? trans : undefined,
+        id_superlogica: ataCondominioEscolhido(),
         // T01: documentos da assembleia. Texto extraído aqui; escaneado vai como PDF (base64).
         documentos: _ataDocsApoio.filter(d => d.status === 'ok' || d.status === 'escaneado').map(d => (
           d.pdfBase64 ? { nome: d.nome, texto: '', pdf_base64: d.pdfBase64 } : { nome: d.nome, texto: d.texto }
@@ -818,7 +818,7 @@ async function gerarAtaIA() {
     if (payload.gate && Array.isArray(payload.gate.flags) && payload.gate.flags.length) {
       avisos.push(payload.gate.flags.length + ' trecho(s) sem apoio na transcrição nem nos documentos, marcados na ata para conferir');
     }
-    addHistorico('Ata gerada via IA: ' + cond + ' · ' + data + (avisos.length ? ' (com avisos)' : ''));
+    addHistorico('Ata gerada: ' + cond + ' · ' + data + (avisos.length ? ' (com avisos)' : ''));
     if (avisos.length) toast('Ata gerada. Pontos para revisar: ' + avisos.join('; '), 'warn');
     else toast('Ata gerada. Revise antes de baixar.', 'ok');
   } catch (e) {
@@ -1215,107 +1215,7 @@ function baixarAtaWord() {
   });
 }
 
-async function copiarProClaude() {
-  const cond    = document.getElementById('ata-cond').value.trim();
-  const data    = document.getElementById('ata-data').value.trim();
-  const tipo    = document.getElementById('ata-tipo').value;
-  const sindico = document.getElementById('ata-sindico').value.trim();
-  const local   = document.getElementById('ata-local').value.trim();
-  const trans   = document.getElementById('ata-transcricao').value.trim();
-  const partic  = document.getElementById('ata-participantes').value.trim();
-
-  if (!trans) { toast('Cole ou importe a transcrição antes de copiar', 'err'); return; }
-  if (!cond)  { toast('Informe o nome do condomínio', 'err'); return; }
-  if (!data)  { toast('Informe a data da reunião', 'err'); return; }
-
-  // Coleta itens de pauta (sem edital e com edital tratados separadamente abaixo)
-  const pautaItems = document.querySelectorAll('#pauta-list .pauta-item');
-
-  // Data por extenso (ex: "01 de abril de 2026")
-  const meses = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
-  let dataExtenso = data;
-  const mData = data.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (mData) {
-    const d = parseInt(mData[1], 10);
-    const m = parseInt(mData[2], 10);
-    const y = mData[3];
-    if (m >= 1 && m <= 12) {
-      dataExtenso = `${String(d).padStart(2,'0')} de ${meses[m-1]} de ${y}`;
-    }
-  }
-
-  // Separa itens de pauta SEM edital e COM edital (PDF anexado)
-  const pautasSemEdital = [];
-  const editaisAnexos = [];
-  Array.from(pautaItems).forEach((item, i) => {
-    const texto = item.querySelector('input[type=text]')?.value?.trim() || '';
-    const pdfInput = item.querySelector('input[type=file]');
-    const pdfTexto = pdfInput?.dataset?.pdfTexto || '';
-    const pdfNome = pdfInput?.files?.[0]?.name || '';
-    if (!texto && !pdfTexto) return;
-    if (pdfTexto) {
-      editaisAnexos.push({ n: i+1, titulo: texto || '(sem título)', arquivo: pdfNome, texto: pdfTexto });
-    } else {
-      pautasSemEdital.push(`${i+1}. ${texto}`);
-    }
-  });
-
-  // Bloco de editais formatado
-  let blocoEditais = '';
-  if (editaisAnexos.length) {
-    blocoEditais = '\n=== EDITAIS / DOCUMENTOS ANEXADOS ===\n' +
-      '(Estes documentos foram anexados pelo síndico como referência formal. Use o edital como fonte oficial dos pontos que DEVERIAM ser deliberados — a transcrição mostra o que DE FATO foi discutido. Cruze as duas coisas: se o edital prevê um item e a transcrição confirma, registre com precisão; se o edital traz números, datas ou valores, use os do edital como fonte oficial; se a transcrição contradiz o edital, registre o que foi efetivamente deliberado.)\n\n' +
-      editaisAnexos.map(e => `--- ${e.n}. ${e.titulo}${e.arquivo ? ' [arquivo: ' + e.arquivo + ']' : ''} ---\n${e.texto}`).join('\n\n') + '\n';
-  }
-
-  // Monta texto pro Claude
-  const bloco = `Use a skill ata-condominial para gerar a ata no padrão formal brasileiro consolidado (Grupo Service / Condomínio Service).
-
-=== DADOS DA REUNIÃO ===
-Condomínio: ${cond}
-Tipo: ${tipo}
-Data: ${data}${dataExtenso !== data ? ' (' + dataExtenso + ')' : ''}
-Síndico: ${sindico || '(não informado)'}
-Local: ${local || '(não informado)'}
-
-=== ITENS DE PAUTA ===
-${pautasSemEdital.length ? pautasSemEdital.join('\n') : '(pauta detalhada abaixo nos editais anexados; se vazio, extrair da transcrição)'}
-${blocoEditais}
-=== PARTICIPANTES ===
-${partic || '(extrair da transcrição)'}
-
-=== TRANSCRIÇÃO COMPLETA DA REUNIÃO ===
-${trans}
-
-=== INSTRUÇÕES FINAIS ===
-1. Gere a ata em formato formal brasileiro conforme a skill ata-condominial.
-2. Entregue como arquivo .docx pronto pra imprimir (use a skill docx).
-3. Para cada item de pauta, registre o que foi deliberado cruzando edital (quando houver) com transcrição.
-4. Preserve nomes, cargos e valores citados exatamente como aparecem.
-5. Atenção: se houver mais de uma pessoa com o mesmo primeiro nome (ex: síndico Sr. Paulo e morador Sr. Paulo), diferencie sempre pelo papel para evitar confusão.
-6. Encerre com espaços de assinatura: Síndico, Representante(s) da prestadora (quando aplicável), Conselho, Moradores presentes.`;
-
-  try {
-    await navigator.clipboard.writeText(bloco);
-    toast('✓ Copiado! Cole no Service Hub IA pra gerar a ata em .docx', 'ok');
-    addHistorico('Ata copiada pro Service Hub IA: ' + cond + ' · ' + data);
-  } catch(e) {
-    // Fallback: textarea temporário
-    const ta = document.createElement('textarea');
-    ta.value = bloco;
-    ta.style.cssText = 'position:fixed;top:-9999px';
-    document.body.appendChild(ta);
-    ta.select();
-    try {
-      document.execCommand('copy');
-      toast('✓ Copiado! Cole no Service Hub IA pra gerar a ata em .docx', 'ok');
-      addHistorico('Ata copiada pro Service Hub IA: ' + cond + ' · ' + data);
-    } catch(err) {
-      toast('Erro ao copiar: ' + err.message, 'err');
-    }
-    document.body.removeChild(ta);
-  }
-}
+// (o botão de copiar o pedido da ata para uso externo foi removido na T17)
 
 // ============================================================
 // CADASTRO DO CONDOMÍNIO NA ATA (T07)
@@ -1327,6 +1227,7 @@ let _ataCadastro = null; // { ok, id, dados } do condomínio ativo
 let _ataCadastroSeq = 0;
 
 function ataCondInit() {
+  if (typeof ataPrepararCaixaTranscricao === 'function') ataPrepararCaixaTranscricao();
   if (window.CondSeletor && document.getElementById('ata-cond-seletor')) {
     CondSeletor.montar('ata-cond-seletor', { placeholder: 'Clique para ver todos ou digite o nome' });
   }

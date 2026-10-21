@@ -1356,7 +1356,7 @@ var RECONHECEDORES_PDF = [
 // Oferta de fallback de IA com aviso explicito do custo. So dispara com o ok do
 // usuario (confirm), nunca automatico.
 function fallbackIaPdf(file, motivo) {
-  if (confirm(motivo + ' Posso usar a IA, que e mais lenta e consome mais tokens. Continuar com a IA?')) {
+  if (confirm(motivo + ' Posso processar o documento pelo modo avançado, que é mais lento. Continuar?')) {
     processarDocNormalizar(file);
   }
 }

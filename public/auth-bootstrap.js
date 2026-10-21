@@ -32,6 +32,7 @@
         <div style="text-align:center;margin-bottom:24px;">
           <div style="font-size:22px;font-weight:800;color:#1E2533;letter-spacing:-0.01em;">Service Hub</div>
           <div style="font-size:13px;color:#8892A4;margin-top:4px;">Acesso restrito</div>
+          <div style="font-size:11px;color:#8892A4;margin-top:10px;line-height:1.4;">Uso exclusivo nas atividades da empresa. As ações feitas neste sistema são registradas.</div>
         </div>
         <form id="auth-form" style="display:flex;flex-direction:column;gap:12px;">
           <input id="auth-email" type="email" placeholder="email" required autocomplete="username"
@@ -198,6 +199,13 @@
     if (gate) gate.remove();
     document.body.classList.remove('auth-pending');
     setSessionGlobals(session, user);
+    // T16: registra a entrada uma vez por aba aberta.
+    try {
+      if (session && !sessionStorage.getItem('hubEntrou')) {
+        sessionStorage.setItem('hubEntrou', '1');
+        fetch('/api/sessao/entrou', { method: 'POST', headers: { Authorization: 'Bearer ' + session.access_token } }).catch(() => {});
+      }
+    } catch (e) { /* sem sessionStorage: segue */ }
     document.dispatchEvent(new CustomEvent('auth:ready', { detail: { session, user } }));
   }
 

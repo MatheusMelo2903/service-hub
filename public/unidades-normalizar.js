@@ -1,19 +1,11 @@
 // ============================================================
-// NORMALIZADOR IA (aba Unidades): documento qualquer vira planilha de 26 colunas
-// do Superlógica. Aceita PDF (com texto ou escaneado), planilha (xlsx, xls, ods,
-// csv), Word (docx), texto e imagem. Imagem e PDF vão como documento ao Claude;
-// planilha, docx e texto vão como texto (em partes, se for grande).
-// A prévia é editável: marca linha com campo obrigatório faltando, dúvida da IA,
-// dado com formato estranho e unidade ou pessoa que já existe no Superlógica
-// (rota /api/condominio/:id/unidades/conferir). Nada é inventado: o que a IA não
-// tem certeza vem vazio e marcado. A importação segue o fluxo de sempre (revisão
-// de papéis, depois POST + PUT no botão Enviar unidades).
+// PROCESSAR DOCUMENTO (aba Unidades): documento qualquer vira planilha de 26 colunas
+// do Superlógica. Aceita PDF (com texto ou escaneado), planilha, Word, texto e imagem.
+// O navegador só separa o conteúdo em partes; o processamento é feito no servidor.
 // ============================================================
 
 const NORMALIZAR_MAX_BYTES = 8 * 1024 * 1024;        // planilha, docx, texto
 const NORMALIZAR_MAX_BYTES_BINARIO = 7 * 1024 * 1024; // PDF e imagem viram base64 (limite de 10 MB do servidor)
-const NORMALIZAR_MODELO = 'claude-sonnet-4-6';
-const NORMALIZAR_MAX_TOKENS = 24000;
 const NORMALIZAR_PARTE_MAX_CHARS = 8000;   // cada parte de texto enviada à IA
 const NORMALIZAR_PARTE_MAX_LINHAS = 60;
 const NORMALIZAR_PDF_TEXTO_DIRETO = 12000; // PDF com texto maior que isso vai em partes de texto
@@ -22,80 +14,9 @@ const NORMALIZAR_PARALELO = 4;
 // Cabeçalhos exatos das 26 colunas (formato unificado Superlógica)
 const NORMALIZAR_HEADERS = ['Tipo','Unidade','Bloco','Fração','Metragem','Nome','CPF','CNPJ','RG','Data Nascimento','Gênero','Email','DDI','Telefone','Tipo Telefone','CEP','Endereço','Número','Complemento','Bairro','Cidade','Estado','Data Entrada','Data Saída','Recebe Cobrança','Observação'];
 
-// Chaves da resposta da IA, na ordem das 26 colunas. A IA devolve uma pessoa por linha em
-// JSON (só as chaves com valor); o front monta as 26 colunas. Pedir CSV posicional fazia a
-// IA errar a contagem de ";" e deslocar colunas (nome caindo no CPF).
+// Chaves do resultado, na ordem das 26 colunas (o servidor devolve só as que têm valor).
 const NORMALIZAR_CHAVES = ['tipo','unidade','bloco','fracao','metragem','nome','cpf','cnpj','rg','nascimento','genero','email','ddi','telefone','tipo_telefone','cep','endereco','numero','complemento','bairro','cidade','estado','entrada','saida','recebe_cobranca','observacao'];
 
-const NORMALIZAR_SYSTEM_PROMPT = [
-  'Voce e um normalizador de dados de unidades condominiais.',
-  'O usuario vai te dar um documento (PDF, planilha fora do padrao, Word, imagem ou texto) com informacoes',
-  'de unidades + proprietarios + inquilinos + dependentes de um condominio.',
-  '',
-  'Sua tarefa: transformar cada PESSOA do documento em uma linha JSON (JSON Lines).',
-  '',
-  'FORMATO DE SAIDA (inviolavel):',
-  '- Uma linha por pessoa, cada linha um objeto JSON completo e valido, sem virgula entre linhas.',
-  '- Sem markdown, sem cercas ```, sem texto antes ou depois, sem array em volta.',
-  '- Inclua SO as chaves que tem valor. Nunca escreva chave com valor vazio.',
-  '',
-  'CHAVES (use exatamente estes nomes):',
-  '  tipo            "Proprietario" | "Inquilino" | "Dependente"',
-  '  unidade         numero/nome da unidade (apto, sala, casa, lote), como esta no documento',
-  '  bloco           torre, bloco ou quadra',
-  '  fracao          fracao ideal (numero decimal)',
-  '  metragem        area (numero)',
-  '  nome            nome completo da pessoa ou empresa',
-  '  cpf             so digitos (11)',
-  '  cnpj            so digitos (14)',
-  '  rg              como esta no documento',
-  '  nascimento      dd/mm/aaaa',
-  '  genero          "M" | "F" (so se o documento disser)',
-  '  email           endereco de email',
-  '  ddi             codigo do pais, padrao "55" quando houver telefone brasileiro',
-  '  telefone        so digitos com DDD (ex: 27998148653), sem +, espacos, parenteses ou hifen',
-  '  tipo_telefone   "1" fixo | "2" celular | "3" comercial',
-  '  cep             so digitos (8)',
-  '  endereco, numero, complemento, bairro, cidade',
-  '  estado          sigla de 2 letras (ES, SP, RJ...)',
-  '  entrada         dd/mm/aaaa (data de entrada do inquilino)',
-  '  saida           dd/mm/aaaa',
-  '  recebe_cobranca "Sim" | "Nao"',
-  '  observacao      texto livre que esteja no documento sobre a pessoa',
-  '  duvidas         lista de textos curtos (ver abaixo)',
-  '',
-  'EXEMPLO:',
-  'Entrada (planilha Nome;Apt;Bloco;Tel;Email;Tipo): "Joao da Silva;101;A;(27) 99814-8653;joao@email.com;Proprietario"',
-  'Saida:',
-  '{"tipo":"Proprietario","unidade":"101","bloco":"A","nome":"Joao da Silva","email":"joao@email.com","ddi":"55","telefone":"27998148653","tipo_telefone":"2"}',
-  '',
-  'COMO MAPEAR CABECALHOS DIFERENTES:',
-  '- "Apt", "Apartamento", "Numero do apartamento", "Unidade" -> unidade',
-  '- "Bloco", "Torre", "Quadra", "Bloco / Quadra" -> bloco',
-  '- "Tel", "Telefone", "Celular", "Whatsapp" -> telefone',
-  '- "Email", "E-mail" -> email',
-  '- "Nome", "Morador", "Proprietario", "Condomino" -> nome',
-  '- "Locatario" = Inquilino. Varias pessoas na mesma celula (separadas por virgula ou "e") = uma linha para cada pessoa.',
-  '- Celula com "-", "nao", "N/A" ou vazia = sem valor.',
-  '',
-  'TIPO DA PESSOA:',
-  '- Use o que o documento diz (proprietario, inquilino/locatario, dependente/morador/familiar).',
-  '- Quem aparece numa coluna ou campo de proprietario e Proprietario; de locatario/inquilino e Inquilino.',
-  '- Outras pessoas da unidade (condominos, moradores, familiares) que nao sao o proprietario nem o inquilino: Dependente.',
-  '- Mesma pessoa citada em dois lugares da mesma unidade (ex: na lista de condominos e como proprietario): UMA linha so, com o tipo mais forte (Proprietario > Inquilino > Dependente).',
-  '',
-  'REGRA ANTI-INVENCAO: se um dado nao aparece claramente no documento, NAO inclua a chave. Nunca inventar CPF, RG, datas, enderecos, emails ou telefones.',
-  '',
-  'DUVIDAS (obrigatorio, sem adivinhar):',
-  '- Copie nomes exatamente como estao no documento (sem corrigir grafia e sem comentar possivel erro de digitacao).',
-  '- Duvida e so para o que impede preencher um campo com seguranca. Nao repita a mesma duvida em todas as pessoas da unidade: coloque so na linha a que ela se refere.',
-  '- Valor ilegivel, cortado, ambiguo, ou voce nao tem certeza de qual campo ele e: NAO adivinhe. Deixe sem a chave (ou so a parte legivel) e coloque o motivo em "duvidas".',
-  '- Exemplos: "duvidas":["CPF ilegivel"] , "duvidas":["nao sei se e inquilino ou dependente"] , "duvidas":["unidade cortada na imagem"].',
-  '- Documento nao diz o tipo da pessoa: nao inclua "tipo" e coloque "tipo nao informado" em duvidas.',
-  '- Normalmente cada unidade tem 1 proprietario. Se o documento nao deixar claro quem e, NAO escolha: coloque "proprietario nao identificado" em duvidas.',
-  '- Linha do documento que nao e pessoa nem unidade (titulo, total, rodape, assinatura): nao emita.',
-  '- Unidade listada sem nenhuma pessoa: emita uma linha so com tipo "Proprietario", unidade, bloco e o que houver (fracao, metragem), sem nome, com "unidade sem pessoa no documento" em duvidas.',
-].join('\n');
 
 let _normalizarRows = null;       // linhas de 26 colunas (editáveis na prévia)
 let _normalizarMeta = [];         // por linha: { duvidas: [motivos da IA], conf: resultado da conferência }
@@ -257,35 +178,31 @@ function partesDeLinhas(linhas, cabecalho) {
   return partes.map((p) => (cabecalho ? [cabecalho].concat(p) : p).join('\n'));
 }
 
-// Monta o que vai para a IA: { partes: [pedido, ...], avisos: [...] }.
+// Separa o documento em partes: { partes: [ {parte} ou {arquivo} ], avisos: [...] }.
 async function montarPartesNormalizar(file, tipo) {
-  const pedido = 'Transforme cada pessoa do documento acima em uma linha JSON conforme as regras do sistema. Coloque as duvidas em "duvidas".';
   const avisos = [];
   // Texto grande vai em partes. Da parte 2 em diante vai junto o começo do documento
-  // (títulos e cabeçalho da tabela) para a IA saber o que é cada coluna.
+  // (títulos e cabeçalho da tabela) para saber o que é cada coluna.
   const textoEmPartes = (rotulo, linhas) => {
     const blocos = partesDeLinhas(linhas, '');
     const contexto = linhas.slice(0, 6).join('\n').slice(0, 1500);
-    return blocos.map((t, i) => [{ type: 'text', text:
-      (blocos.length > 1 && i > 0 ? 'COMECO DO DOCUMENTO, so para voce saber o que e cada coluna (NAO emita pessoas destas linhas, elas sao de outra parte):\n' + contexto + '\n\n' : '') +
-      rotulo + (blocos.length > 1 ? ' (parte ' + (i + 1) + ' de ' + blocos.length + '; a primeira ou a ultima linha pode estar incompleta: se estiver, emita o que da e coloque "dado cortado entre partes" em duvidas)' : '') +
-      ':\n\n' + t + '\n\n' + pedido }]);
+    return blocos.map((t, i) => ({ parte: { rotulo, texto: t, contexto, indice: i, total: blocos.length } }));
   };
 
   const mb = (file.size / 1024 / 1024).toFixed(1);
   const cabeBinario = () => file.size <= NORMALIZAR_MAX_BYTES_BINARIO;
   const limiteBinario = () => {
-    if (!cabeBinario()) throw new Error('Arquivo muito grande (' + mb + ' MB). PDF escaneado e imagem vão inteiros para a IA: o limite é 7 MB. Divida o arquivo ou reduza a resolução.');
+    if (!cabeBinario()) throw new Error('Arquivo muito grande (' + mb + ' MB). PDF escaneado e imagem são processados inteiros: o limite é 7 MB. Divida o arquivo ou reduza a resolução.');
   };
   if (tipo === 'pdf' ? file.size > 3 * NORMALIZAR_MAX_BYTES : file.size > NORMALIZAR_MAX_BYTES) {
     throw new Error('Arquivo muito grande (' + mb + ' MB). Limite ' + (tipo === 'pdf' ? '24' : '8') + ' MB.');
   }
-  const documentoInteiro = async () => [[{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: await fileToBase64(file) } }, { type: 'text', text: pedido }]];
+  const documentoInteiro = async () => [{ arquivo: { mime: 'application/pdf', base64: await fileToBase64(file) } }];
 
   if (tipo === 'imagem') {
     limiteBinario();
     const mt = file.type || (/\.png$/i.test(file.name) ? 'image/png' : /\.webp$/i.test(file.name) ? 'image/webp' : /\.gif$/i.test(file.name) ? 'image/gif' : 'image/jpeg');
-    return { partes: [[{ type: 'image', source: { type: 'base64', media_type: mt, data: await fileToBase64(file) } }, { type: 'text', text: pedido }]], avisos };
+    return { partes: [{ arquivo: { mime: mt, base64: await fileToBase64(file) } }], avisos };
   }
   if (tipo === 'pdf') {
     // Todas as páginas com texto: vai como texto (em partes se for grande; a resposta não corta).
@@ -330,50 +247,33 @@ async function montarPartesNormalizar(file, tipo) {
   throw new Error('Formato não suportado. Use PDF, Word (.docx), planilha (.xlsx, .xls, .ods, .csv), texto ou imagem (JPG, PNG, WEBP).');
 }
 
-// Resposta da IA (uma pessoa por linha, JSON) vira linhas de 26 colunas + dúvidas.
-// Linha que não é JSON válido (cortada ou texto solto) é ignorada e contada.
-function parseJsonlNormalizado(texto) {
+// Resultado do servidor (uma pessoa por objeto) vira linhas de 26 colunas + dúvidas.
+function linhasDeItens(lista) {
   const itens = [];
-  let invalidas = 0;
-  String(texto || '').split(/\r?\n/).forEach((l) => {
-    l = l.trim().replace(/,$/, '');
-    if (!l || l === '[' || l === ']') return;
-    let o;
-    try { o = JSON.parse(l); } catch (_) { invalidas++; return; }
-    (Array.isArray(o) ? o : [o]).forEach((x) => adicionar(x));
-  });
-  function adicionar(o) {
-    if (!o || typeof o !== 'object' || Array.isArray(o)) { invalidas++; return; }
+  (Array.isArray(lista) ? lista : []).forEach((o) => {
+    if (!o || typeof o !== 'object') return;
     const row = NORMALIZAR_CHAVES.map((k) => (o[k] == null ? '' : String(o[k]).replace(/\s+/g, ' ').trim()));
-    const duvidas = (Array.isArray(o.duvidas) ? o.duvidas : o.duvidas ? [o.duvidas] : [])
-      .map((d) => String(d).replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 8);
+    const duvidas = (Array.isArray(o.duvidas) ? o.duvidas : []).map((d) => String(d).replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 8);
     // Linha só com dúvida (pessoa ilegível) fica: aparece como "falta dado" na prévia.
     if (!row.some(Boolean) && !duvidas.length) return;
     itens.push({ row, duvidas });
-  }
-  return { itens, invalidas };
+  });
+  return itens;
 }
 
-// Um pedido à IA. Se a resposta for cortada por tamanho, a última linha (incompleta) sai e avisa.
-async function chamarIaNormalizar(content) {
-  const resp = await apiAuthFetch('/api/claude/messages', {
+// Um pedido ao servidor por parte.
+async function chamarIaNormalizar(parte) {
+  const resp = await apiAuthFetch('/api/processar/unidades', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: NORMALIZAR_MODELO, max_tokens: NORMALIZAR_MAX_TOKENS, system: NORMALIZAR_SYSTEM_PROMPT, messages: [{ role: 'user', content }] })
+    body: JSON.stringify(parte)
   });
+  const data = await resp.json().catch(() => ({}));
   if (!resp.ok) {
-    const erro = await resp.text().catch(() => '');
     if (resp.status === 413) throw new Error('Arquivo grande demais para enviar. Divida em partes menores.');
-    throw new Error('A IA respondeu ' + resp.status + ': ' + erro.slice(0, 160));
+    throw new Error(data.detalhe || ('Não foi possível processar (' + resp.status + ').'));
   }
-  const data = await resp.json();
-  let txt = (data.content || []).filter((b) => b && b.type === 'text').map((b) => b.text).join('');
-  if (!txt) throw new Error('A IA não devolveu texto.');
-  txt = txt.replace(/```(?:json|jsonl)?\s*|\s*```/g, '').trim();
-  const cortado = data.stop_reason === 'max_tokens';
-  const p = parseJsonlNormalizado(txt);
-  // Cortada por tamanho: a última linha veio pela metade e já foi ignorada pelo parser.
-  return { itens: p.itens, invalidas: Math.max(0, p.invalidas - (cortado ? 1 : 0)), cortado };
+  return { itens: linhasDeItens(data.itens), invalidas: data.invalidas || 0, cortado: !!data.cortado };
 }
 
 // Roda as partes com no máximo NORMALIZAR_PARALELO ao mesmo tempo, mantendo a ordem.
@@ -467,7 +367,7 @@ function validarNormalizado() {
 function motivosLinhaNormalizada(m) {
   const out = [];
   (m.erros || []).forEach((t) => out.push(t));
-  (m.duvidas || []).forEach((t) => out.push('IA: ' + t));
+  (m.duvidas || []).forEach((t) => out.push('Dúvida: ' + t));
   (m.avisos || []).forEach((t) => out.push(t));
   if (m.conf && m.conf.unidade_existe) {
     out.push('unidade já existe no Superlógica (' + m.conf.unidade_rotulo + '); importar criaria outra igual');
@@ -493,11 +393,11 @@ async function processarDocNormalizar(file) {
     const partes = montado.partes;
     if (geracao !== _normalizarGeracao) return;
     progressBar.style.width = '25%';
-    status.textContent = partes.length > 1 ? 'IA reformatando (' + partes.length + ' partes)...' : 'IA reformatando...';
+    status.textContent = partes.length > 1 ? 'Processando o documento (' + partes.length + ' partes)...' : 'Processando o documento...';
     const res = await rodarPartesNormalizar(partes, (f, t) => {
       if (geracao !== _normalizarGeracao) return;
       progressBar.style.width = (25 + Math.round(60 * f / t)) + '%';
-      if (t > 1) status.textContent = 'IA reformatando: ' + f + ' de ' + t + ' partes prontas...';
+      if (t > 1) status.textContent = 'Processando: ' + f + ' de ' + t + ' partes prontas...';
     });
     if (geracao !== _normalizarGeracao) return;
 
@@ -507,10 +407,10 @@ async function processarDocNormalizar(file) {
       const rot = partes.length > 1 ? 'Parte ' + (i + 1) + ' de ' + partes.length : 'O documento';
       if (r.erro) { avisos.push(rot + ' falhou (' + r.erro + '). As linhas dela não estão na prévia; tente de novo.'); return; }
       if (r.cortado) avisos.push(rot + ' era grande demais para uma resposta: as últimas pessoas podem ter ficado de fora. Confira o fim da lista ou divida o arquivo.');
-      if (r.invalidas) avisos.push(rot + ': ' + r.invalidas + ' linha(s) da resposta da IA vieram ilegíveis e ficaram de fora.');
+      if (r.invalidas) avisos.push(rot + ': ' + r.invalidas + ' linha(s) do resultado vieram ilegíveis e ficaram de fora.');
       r.itens.forEach((x) => itens.push(x));
     });
-    if (!itens.length) throw new Error(avisos[0] || 'A IA não encontrou unidades nem pessoas no documento.');
+    if (!itens.length) throw new Error(avisos[0] || 'Não foram encontradas unidades nem pessoas no documento.');
     const rows = itens.map((x) => x.row);
 
     _normalizarSourceName = file.name;

@@ -1968,7 +1968,7 @@ async function prestacaoGerarV13() {
     prestacaoAtualizarBotao();
   }
   // Servidor deste ambiente ainda sem o motor novo: segue pelo caminho anterior.
-  if (resultado === 'caminho_antigo') return prestacaoGerarServico();
+  if (resultado === 'caminho_antigo') toast('O serviço de geração deste ambiente está desatualizado. Avise o responsável pelo sistema.', 'err');
 }
 
 // Faz o envio e o acompanhamento. Devolve 'caminho_antigo' quando o servidor ainda
@@ -1989,7 +1989,7 @@ async function prestacaoExecutarV13(btn) {
   form.append('inicio', ini);
   form.append('fim', fim);
   var obs = (prestacaoState.observacoes || '').trim().slice(0, 1000);
-  var q = '?nome=' + encodeURIComponent((prestacaoState.condNome || '').trim()) + (obs ? '&obs=' + encodeURIComponent(obs) : '');
+  var q = '?nome=' + encodeURIComponent((prestacaoState.condNome || '').trim()) + '&cond=' + encodeURIComponent(prestacaoState.condIdSuperlogica || '') + (obs ? '&obs=' + encodeURIComponent(obs) : '');
 
   var resp = await apiAuthFetch('/api/prestacao/v13/iniciar' + q, { method: 'POST', body: form });
   if (resp.status === 404 || resp.status === 503) return 'caminho_antigo';
@@ -2106,7 +2106,7 @@ async function prestacaoGerarServico() {
     for (var i = 0; i < prestacaoState.arquivos.length; i++) {
       form.append('arquivos', prestacaoState.arquivos[i]);
     }
-    var resp = await apiAuthFetch('/api/prestacao/gerar-deck', { method: 'POST', body: form });
+    var resp = await apiAuthFetch('/api/prestacao/gerar-deck?cond=' + encodeURIComponent(prestacaoState.condIdSuperlogica || ''), { method: 'POST', body: form });
 
     if (resp.status === 422) {
       // Degradacao graciosa: relatorio invalido ou auditoria reprovada.
@@ -2245,10 +2245,7 @@ async function prestacaoGerarServico() {
       var msgServico = err.naoConfigurada
         ? 'O serviço de geração ainda não está configurado neste ambiente.'
         : 'O serviço de geração está indisponível no momento.';
-      var usarFallback = window.confirm(
-        msgServico + ' Quer usar o gerador local (modo offline)? '
-        + 'Ele usa extração por IA e não passa pela auditoria do servidor.');
-      if (usarFallback) { prestacaoGerar(); return; }
+      toast(msgServico + ' Tente de novo em alguns minutos.', 'err');
     } else {
       toast('Erro: ' + (err && err.message ? err.message : String(err)), 'err');
     }
@@ -2258,131 +2255,7 @@ async function prestacaoGerarServico() {
   }
 }
 
-// ── Fallback offline (PptxGenJS no browser) ──
-// /api/claude/messages. Em sucesso salva em prestacaoState.dadosExtraidos e
-// troca o botao para acionar prestacaoGerarPptx (B5). Em erro, restaura o botao
-// original e mostra toast com a mensagem.
-async function prestacaoGerar() {
-  var btn = document.getElementById('prest-btn-gerar');
-  if (!btn) return;
-  var textoOriginal = btn.textContent;
-  var onclickOriginal = btn.onclick;
-  btn.disabled = true;
-  btn.textContent = 'Lendo arquivos...';
-  try {
-    if (!prestacaoState.arquivos || prestacaoState.arquivos.length === 0) {
-      throw new Error('Nenhum arquivo carregado.');
-    }
-    var blocos = [];
-    for (var i = 0; i < prestacaoState.arquivos.length; i++) {
-      btn.textContent = 'Lendo arquivo ' + (i + 1) + ' de ' + prestacaoState.arquivos.length + '...';
-      var bloco = await prestacaoArquivoParaBloco(prestacaoState.arquivos[i]);
-      blocos.push(bloco);
-    }
-    btn.textContent = 'Consultando IA...';
-
-    // System prompt orienta o modelo a devolver JSON estruturado seguindo o
-    // padrao da skill powerpoint prestacao contas, com base no relatorio
-    // W016A do Superlogica (demonstrativo de receitas e despesas).
-    var systemPrompt = [
-      'Voce e um assistente especializado em montar prestacao de contas condominial em formato pptx.',
-      'O usuario vai fornecer o relatorio W016A do Superlogica (demonstrativo de receitas e despesas).',
-      'Sua tarefa e extrair os dados em JSON estruturado para alimentar a skill powerpoint prestacao contas.',
-      'Devolva SEMPRE um unico bloco JSON valido, dentro de cercas tripla com a tag json (```json ... ```), sem texto antes nem depois.',
-      'Estrutura obrigatoria do JSON:',
-      '{',
-      '  "cabecalho": { "condominio": string, "periodo": string, "dataApresentacao": string },',
-      '  "blocosTemporais": [ { "rotulo": string, "inicio": string, "fim": string } ],',
-      '  "despesasPorCategoria": [ { "categoria": string, "valor": number, "percentual": number, "granularidade": string, "distribuicaoTemporal": array ou null } ],',
-      '  "despesas": { "total": number, "distribuicaoTemporalTotal": array ou null, "granularidade": string },',
-      '  "receitas": { "total": number, "distribuicaoTemporalTotal": array ou null, "granularidade": string, "porCategoria": [ { "categoria": string, "valor": number, "granularidade": string, "distribuicaoTemporal": array ou null } ] },',
-      '  "saldo": { "inicial": number, "final": number, "movimentacao": number },',
-      '  "saldoMensal": array ou null,',
-      '  "observacoes": [ string ],',
-      '  "slidesSugeridos": [ { "titulo": string, "tipo": string, "conteudo": string } ]',
-      '}',
-      'Regras de granularidade e distribuicao temporal:',
-      'O campo granularidade deve ser uma string com valor mensal, trimestral ou anual indicando o nivel de detalhe que foi possivel extrair do PDF para aquele bloco ou categoria.',
-      'O campo distribuicaoTemporal de cada categoria deve ser array de 12 numeros (Jan a Dez) quando granularidade for mensal, array de 4 numeros (T1 a T4) quando trimestral, e null quando anual.',
-      'O campo distribuicaoTemporalTotal de receitas e de despesas segue a mesma logica (12 numeros, 4 numeros ou null) e representa o total do bloco mes a mes ou trimestre a trimestre.',
-      'O campo saldoMensal deve ser array de 13 numeros (saldo inicial seguido pelos 12 fechamentos mensais) quando possivel, array de 5 numeros (saldo inicial seguido pelos 4 fechamentos trimestrais) caso so haja dado trimestral, e null caso nao seja possivel nem mensal nem trimestral.',
-      'Em blocosTemporais mantenha apenas rotulo, inicio e fim, sem campos adicionais.',
-      'Prefira sempre a extracao mensal quando o PDF tiver os dados. Caia para trimestral somente se nao houver dado mensal, e use anual somente se nao houver nem mensal nem trimestral.',
-      'Nunca invente valores. Se o PDF nao trouxer detalhamento mensal, devolva granularidade trimestral ou anual com distribuicaoTemporal preenchido conforme possivel ou null. Nunca divida o total por 12 e finja que e mensal.',
-      'Use numeros decimais com ponto (nunca virgula) e datas em formato ISO 8601.',
-      'Se algum campo nao puder ser extraido com seguranca, devolva null nele em vez de inventar.'
-    ].join('\n');
-
-    var contextoUsuario = [];
-    contextoUsuario.push({
-      type: 'text',
-      text:
-        'Condominio: ' + (prestacaoState.condNome || 'nao informado') + '\n' +
-        'Período: ' + (prestacaoState.periodo || 'nao informado') + '\n' +
-        'Data da apresentacao: ' + (prestacaoState.dataApresentacao || 'nao informada') + '\n' +
-        'Observacoes adicionais: ' + (prestacaoState.observacoes || 'nenhuma') + '\n\n' +
-        'A seguir vao os arquivos da prestacao de contas. Extraia o JSON conforme as instrucoes do system prompt.'
-    });
-    for (var j = 0; j < blocos.length; j++) contextoUsuario.push(blocos[j]);
-
-    var payload = {
-      model: 'claude-sonnet-4-6',
-      max_tokens: 16000,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: contextoUsuario }]
-    };
-
-    var resp = await apiAuthFetch('/api/claude/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    if (!resp.ok) {
-      var erroTxt = await resp.text();
-      throw new Error('Falha na API (' + resp.status + '): ' + erroTxt.slice(0, 200));
-    }
-    var data = await resp.json();
-    var primeiroBloco = (data && Array.isArray(data.content))
-      ? data.content.find(function(b) { return b && b.type === 'text'; })
-      : null;
-    var textoResposta = primeiroBloco && primeiroBloco.text ? primeiroBloco.text : '';
-    if (!textoResposta) throw new Error('Resposta da IA sem bloco de texto.');
-
-    // Extracao do JSON: tenta cercas ```json primeiro, depois cercas genericas, depois parse direto.
-    var jsonStr = '';
-    var matchJson = textoResposta.match(/```json\s*([\s\S]*?)```/i);
-    if (matchJson && matchJson[1]) {
-      jsonStr = matchJson[1].trim();
-    } else {
-      var matchGen = textoResposta.match(/```\s*([\s\S]*?)```/);
-      jsonStr = matchGen && matchGen[1] ? matchGen[1].trim() : textoResposta.trim();
-    }
-    var dados;
-    try {
-      dados = JSON.parse(jsonStr);
-    } catch (e) {
-      // Diagnostico SEM dado financeiro: so o length e os ~100 primeiros chars
-      // (pra ver se veio vazio/truncado/malformado), NUNCA o corpo com valores.
-      var amostra = String(textoResposta || '').slice(0, 100);
-      console.error('[prestacao] falha ao parsear JSON da IA. length=' + String(textoResposta || '').length + ' inicio=' + JSON.stringify(amostra));
-      throw new Error('JSON invalido na resposta da IA.');
-    }
-    prestacaoState.dadosExtraidos = dados;
-
-    btn.disabled = false;
-    btn.textContent = 'Dados extraídos. Gerar PPTX';
-    btn.onclick = prestacaoGerarPptx;
-    toast('Extração concluída. Gere o PPTX.', 'ok');
-  } catch (err) {
-    console.error('[prestacao] erro ao gerar:', err);
-    btn.disabled = false;
-    btn.textContent = textoOriginal || 'Gerar prestacao de contas';
-    if (onclickOriginal) btn.onclick = onclickOriginal;
-    toast('Erro: ' + (err && err.message ? err.message : String(err)), 'err');
-  }
-}
-
-
+// (o gerador local antigo foi removido na T17: toda geração passa pelo servidor)
 
 // ============================================================
 // AJUSTAR ESTRUTURA (T03): só para quem tem a ação prestacao_contas.ajustar_estrutura.

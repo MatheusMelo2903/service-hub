@@ -9,6 +9,8 @@ const app = express();
 // Railway opera atrás de proxy reverso. trust proxy faz Express respeitar
 // X-Forwarded-For e devolver o IP real do cliente em req.ip
 app.set('trust proxy', true);
+// T17: não anunciar a tecnologia do servidor nas respostas.
+app.disable('x-powered-by');
 
 const PORT = process.env.PORT || 3000;
 const ASSEMBLYAI_KEY = process.env.ASSEMBLYAI_KEY || '';
@@ -215,6 +217,22 @@ function requireGestor(req, res, next) {
   next();
 }
 
+// T16: lista de bloqueados lida do banco a cada 20s (sem coluna ainda: ninguém bloqueado).
+let _bloqueados = new Set();
+let _bloqueadosAte = 0;
+let _bloqueadosLendo = null;
+async function usuarioBloqueado(id) {
+  if (Date.now() > _bloqueadosAte && SUPABASE_SERVICE_ROLE_KEY && !_bloqueadosLendo) {
+    _bloqueadosAte = Date.now() + 20000;
+    _bloqueadosLendo = supabaseAdminRequest('GET', '/rest/v1/profiles?bloqueado=eq.true&select=id').then((r) => {
+      if (r.status === 200 && Array.isArray(r.body)) _bloqueados = new Set(r.body.map((x) => x.id));
+    }).catch(() => {}).finally(() => { _bloqueadosLendo = null; });
+  }
+  if (_bloqueadosLendo) await _bloqueadosLendo;
+  return _bloqueados.has(id);
+}
+function esquecerBloqueios() { _bloqueadosAte = 0; }
+
 function requireAuth(req, res, next) {
   if (!INTERNAL_API_SECRET && !SUPABASE_URL) {
     res.status(503).json({ erro: 'auth_nao_configurada', detalhe: 'INTERNAL_API_SECRET ou SUPABASE_URL ausente no servidor' });
@@ -234,9 +252,15 @@ function requireAuth(req, res, next) {
   }
   // 2. Tentar como Supabase JWT ES256 (async — usa JWKS)
   if (SUPABASE_URL) {
-    verifySupabaseJwt(token).then((payload) => {
-      if (payload) { req.user = payload; req.authMode = 'supabase'; return next(); }
-      res.status(401).json({ erro: 'token_invalido' });
+    verifySupabaseJwt(token).then(async (payload) => {
+      if (!payload) return res.status(401).json({ erro: 'token_invalido' });
+      // T16: usuário bloqueado pelo dono cai na hora, mesmo com sessão aberta.
+      if (await usuarioBloqueado(payload.sub)) {
+        try { req.user = payload; req.authMode = 'supabase'; auditoria.evento(req, 'bloqueado_tentou_usar', null, true, 'usuario_bloqueado'); } catch (e) { /* segue */ }
+        req.user = undefined;
+        return res.status(401).json({ erro: 'usuario_bloqueado', detalhe: 'Seu acesso foi bloqueado. Fale com a administração.' });
+      }
+      req.user = payload; req.authMode = 'supabase'; return next();
     }).catch(() => res.status(401).json({ erro: 'token_invalido' }));
     return;
   }
@@ -245,10 +269,75 @@ function requireAuth(req, res, next) {
 
 // index: false impede que o express.static sirva index.html automaticamente para "/"
 // assim as rotas explícitas abaixo controlam o que aparece em cada caminho
+// T17: arquivos do sistema entregues sem comentários e compactados (preparados ao ligar).
+const ofuscar = require('./servico/ofuscar');
+app.use(ofuscar.middleware);
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
 // Aplica rate-limit + auth em todos os /api/* (exceto /api/config que é público)
 app.use('/api', rateLimit);
+
+// ─────────────────────────────────────────────────────────────────────────
+// T16 e T17: perfil com cache curto, condomínios da base, auditoria e processamento.
+// ─────────────────────────────────────────────────────────────────────────
+const _perfilCache = new Map(); // userId -> { p, ate }
+async function perfilDe(req) {
+  if (req.authMode === 'internal') return { role: 'GESTOR', permissoes: {} };
+  const id = req.user && req.user.sub;
+  if (!id) return null;
+  const c = _perfilCache.get(id);
+  if (c && c.ate > Date.now()) return c.p;
+  const p = await lerPerfil(id).catch(() => null);
+  if (p) _perfilCache.set(id, { p, ate: Date.now() + 30000 }); // falha passageira não fica guardada
+  return p;
+}
+function esquecerPerfil(id) {
+  _perfilCache.delete(id);
+  if (typeof _cachePerfilSL !== 'undefined') _cachePerfilSL.delete(id);
+  try { carteiraT18.esquecer(id); } catch (e) { /* carteira ainda não criada no boot */ }
+}
+// Ação marcada explicitamente (as restritas e as que não vêm com o cargo).
+function temAcao(p, modulo, acao) {
+  const m = p && p.permissoes && p.permissoes[modulo];
+  return !!(m && Array.isArray(m.acoes) && m.acoes.includes(acao));
+}
+// Módulo liberado (o GESTOR tem todos os módulos comuns).
+function podeModulo(p, modulo, acao) {
+  if (!p) return false;
+  if (p.role === 'GESTOR') return true;
+  const m = p.permissoes && p.permissoes[modulo];
+  return !!(m && m.visivel === true && (!acao || (Array.isArray(m.acoes) && m.acoes.includes(acao))));
+}
+// Condomínio está na base do sistema (lista sincronizada do Superlógica)?
+const _condBase = new Map(); // id -> { c, ate }
+async function condominioDaBase(id) {
+  const k = String(id);
+  const c = _condBase.get(k);
+  if (c && c.ate > Date.now()) return c.c;
+  const r = await supabaseAdminRequest('GET', '/rest/v1/condominios?id_superlogica=eq.' + encodeURIComponent(k) + '&select=nome,id_superlogica&limit=1');
+  let v = r.status === 200 && Array.isArray(r.body) && r.body[0] ? { nome: r.body[0].nome, id: r.body[0].id_superlogica } : null;
+  // Também tem de existir no Superlógica da empresa (linha antiga ou manual na tabela não basta).
+  // Se o Superlógica estiver fora do ar, vale a tabela (que só o servidor grava).
+  if (v && superlogicaNativa()) {
+    try {
+      const cli = require('./superlogica-dados').criarCliente({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN });
+      const j = await cli.get('condominios/get', { id: k, somenteCondominiosAtivos: 0 });
+      const c0 = Array.isArray(j) ? j[0] : j;
+      if (!c0 || String(c0.id_condominio_cond) !== k) v = null;
+    } catch (e) {
+      if (e && e.status && e.status < 500 && e.status !== 429) v = null;
+      else console.warn('[base] Superlógica sem resposta ao conferir ' + k + '; usando a tabela');
+    }
+  }
+  _condBase.set(k, { c: v, ate: Date.now() + (v ? 6 * 3600 * 1000 : 5 * 60 * 1000) });
+  return v;
+}
+const auditoria = require('./servico/auditoria').criarAuditoria({ banco: supabaseAdminRequest, perfilDe, temAcao });
+app.use('/api', auditoria.middleware);
+const processar = require('./servico/processar');
+const audioMod = require('./servico/audio');
+const ataMensagem = require('./servico/ata-mensagem');
+const permRegras = require('./servico/permissoes');
 
 // ─────────────────────────────────────────────────────────────────────────
 // /api/config — público (não precisa auth). Devolve ENVs públicas pro frontend.
@@ -333,6 +422,8 @@ const carteiraT18 = require('./superlogica/carteira').criarCarteira({
   gruposCarteiras: () => gruposCarteiras(),
   ativo: () => !!(SUPABASE_SERVICE_ROLE_KEY && SUPABASE_URL && superlogicaNativa()),
   express,
+  // Recusa da carteira vira registro suspeito com o motivo (o middleware da auditoria grava).
+  aoNegar: (req, motivo) => { req._motivoNegado = motivo; },
 });
 app.use('/api/superlogica', requireAuth, carteiraT18.guardaProxy);
 app.use('/api', carteiraT18.guardaRotas(requireAuth));
@@ -414,66 +505,47 @@ app.use('/api/superlogica', requireAuth, async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Proxies AssemblyAI — protegidos por requireAuth
+// T17: processamento de documentos e áudio SÓ pelo servidor. As antigas pontes
+// abertas (que deixavam o navegador mandar qualquer pedido ao serviço de texto ou de
+// transcrição) foram removidas. Cada rota tem pedido fixo, permissão e limite por hora.
 // ─────────────────────────────────────────────────────────────────────────
-// Upload de áudio em STREAMING (sem express.raw). Encaminha os bytes direto pro
-// AssemblyAI conforme chegam do navegador, SEM carregar o arquivo na RAM. Antes,
-// express.raw bufferizava o arquivo inteiro e pr.write(req.body) copiava de novo
-// (~2x o tamanho na memória): um m4a de 187MB dava ~375MB de pico, estourava a RAM
-// do container (OOM), o container caía e o navegador via 502. Com req.pipe o uso de
-// memória é constante, independente do tamanho do arquivo. Content-Length repassado
-// do request original; timeout explícito + erro claro no lugar do 502 mudo.
-app.post('/api/assemblyai/upload', requireAuth, (req, res) => {
-  const len = req.headers['content-length'];
-  const opts = {
-    hostname: 'api.assemblyai.com', path: '/v2/upload', method: 'POST',
-    headers: Object.assign(
-      { 'authorization': ASSEMBLYAI_KEY, 'content-type': 'application/octet-stream' },
-      len ? { 'content-length': len } : { 'transfer-encoding': 'chunked' }
-    ),
-    timeout: 300000 // 5min: uploads grandes precisam de folga
-  };
-  const pr = https.request(opts, (r) => {
-    const chunks = [];
-    r.on('data', (c) => chunks.push(c));
-    r.on('end', () => {
-      const d = Buffer.concat(chunks).toString('utf8');
-      try { res.json(JSON.parse(d)); }
-      catch (e) { if (!res.headersSent) res.status(502).json({ error: 'resposta inválida do AssemblyAI no upload', detalhe: d.slice(0, 300) }); }
-    });
+const _limiteProc = new Map(); // user|tipo -> { n, ate }
+function dentroDoLimite(req, tipo, maxHora) {
+  if (req.authMode === 'internal') return true;
+  const k = ((req.user && req.user.sub) || '?') + '|' + tipo;
+  const agora = Date.now();
+  let b = _limiteProc.get(k);
+  if (!b || b.ate < agora) { b = { n: 0, ate: agora + 3600000 }; _limiteProc.set(k, b); }
+  b.n++;
+  return b.n <= maxHora;
+}
+function rotaProcessar(caminho, tipo, modulo, acao, maxHora, fn) {
+  app.post(caminho, requireAuth, express.json({ limit: '12mb' }), async (req, res) => {
+    const p = await perfilDe(req);
+    if (req.authMode !== 'internal' && !podeModulo(p, modulo, acao)) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso a essa função.' });
+    if (!dentroDoLimite(req, tipo, maxHora)) {
+      auditoria.evento(req, 'limite_processamento', { tipo }, true, 'volume_alto');
+      return res.status(429).json({ erro: 'limite', detalhe: 'Muitos processamentos nesta hora. Tente mais tarde.' });
+    }
+    try {
+      const r = await fn(req.body || {}, req.user && req.user.sub);
+      res.status(r.status).json(r.corpo);
+    } catch (e) {
+      console.error('[processar ' + tipo + ']', e && e.message);
+      res.status(500).json({ erro: 'falha_processamento', detalhe: 'Não foi possível processar agora. Tente de novo.' });
+    }
   });
-  pr.on('error', (e) => { if (!res.headersSent) res.status(502).json({ error: 'falha ao enviar o áudio ao AssemblyAI', detalhe: e.message }); });
-  pr.on('timeout', () => { pr.destroy(); if (!res.headersSent) res.status(504).json({ error: 'timeout no upload ao AssemblyAI (5 min)' }); });
-  req.on('aborted', () => pr.destroy()); // cliente cancelou: corta o envio ao AssemblyAI
-  req.pipe(pr);
-});
+}
+rotaProcessar('/api/processar/edital', 'edital', 'atas', null, 60, processar.processarEdital);
+rotaProcessar('/api/processar/medidor', 'medidor', 'leitura_consumo', null, 600, processar.processarMedidor);
+rotaProcessar('/api/processar/unidades', 'unidades', 'importar_unidades', 'normalizar', 300, processar.processarUnidades);
 
-app.post('/api/assemblyai/transcript', requireAuth, express.json(), (req, res) => {
-  const body = JSON.stringify(req.body);
-  const opts = { hostname:'api.assemblyai.com', path:'/v2/transcript', method:'POST', headers:{'authorization':ASSEMBLYAI_KEY,'content-type':'application/json','content-length':Buffer.byteLength(body)} };
-  const pr = https.request(opts, r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ try{res.json(JSON.parse(d))}catch(e){res.status(500).json({error:d})} }); });
-  pr.on('error', e => res.status(500).json({error:e.message}));
-  pr.write(body); pr.end();
-});
-
-app.get('/api/assemblyai/transcript/:id', requireAuth, (req, res) => {
-  const opts = { hostname:'api.assemblyai.com', path:'/v2/transcript/'+req.params.id, method:'GET', headers:{'authorization':ASSEMBLYAI_KEY} };
-  const pr = https.request(opts, r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ try{res.json(JSON.parse(d))}catch(e){res.status(500).json({error:d})} }); });
-  pr.on('error', e => res.status(500).json({error:e.message}));
-  pr.end();
-});
-
-// ─────────────────────────────────────────────────────────────────────────
-// Proxy Anthropic — protegido por requireAuth
-// ─────────────────────────────────────────────────────────────────────────
-app.post('/api/claude/messages', requireAuth, express.json({limit:'10mb'}), (req, res) => {
-  if (!ANTHROPIC_KEY) { res.status(500).json({error:'ANTHROPIC_KEY ausente no servidor'}); return; }
-  const body = JSON.stringify(req.body);
-  const opts = { hostname:'api.anthropic.com', path:'/v1/messages', method:'POST', headers:{'x-api-key':ANTHROPIC_KEY,'anthropic-version':'2023-06-01','content-type':'application/json','content-length':Buffer.byteLength(body)} };
-  const pr = https.request(opts, r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>{ try{res.status(r.statusCode).json(JSON.parse(d))}catch(e){res.status(500).json({error:d})} }); });
-  pr.on('error', e => res.status(500).json({error:e.message}));
-  pr.write(body); pr.end();
-});
+audioMod.criarRotasAudio(app, { requireAuth, express, banco: supabaseAdminRequest, perfilDe, temAcao, condominioDaBase,
+  podeAtas: async (req) => req.authMode === 'internal' || podeModulo(await perfilDe(req), 'atas'),
+  dentroDoLimite,
+  auditar: (req, acao, det, susp) => auditoria.evento(req, acao, det, susp) });
+require('./servico/rotas-seguranca').criarRotasSeguranca(app, { requireAuth, express, banco: supabaseAdminRequest, perfilDe, temAcao, auditoria,
+  lerPerfil, esquecerPerfil, esquecerBloqueios, usoRecente: require('./servico/modelo').usoRecente });
 
 // ─────────────────────────────────────────────────────────────────────────
 // Engine de geração de ata — Sonnet 4.6 primário + Opus 4.7 último recurso CONDICIONAL.
@@ -2150,7 +2222,9 @@ function chamarAnthropicAta(modelo, maxTokens, system, userMessage, cacheSystem)
               ' cache_read=' + (j.usage.cache_read_input_tokens || 0) +
               ' input=' + (j.usage.input_tokens || 0));
           }
-          const texto = (j.content && j.content[0] && j.content[0].text || '').trim();
+          // Modelos novos podem devolver outros blocos antes do texto: junta só os de texto.
+          const texto = (Array.isArray(j.content) ? j.content : []).filter((b) => b && b.type === 'text').map((b) => b.text || '').join('').trim();
+          if (!texto) console.warn('[ATA] sem texto: status=' + resp.statusCode + ' stop=' + (j && j.stop_reason) + ' blocos=' + (Array.isArray(j && j.content) ? j.content.map((b) => b && b.type).join(',') : '-') + ' erro=' + (j && j.error && j.error.type || '-'));
           resolve({ ok: resp.statusCode === 200 && !!texto, status: resp.statusCode, texto, raw: j });
         } catch (e) {
           resolve({ ok: false, status: resp.statusCode || 500, erro: 'parse_falhou', raw: d.slice(0, 500) });
@@ -2198,7 +2272,23 @@ const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 7;
 // Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
 // PRIMEIRA passada Sonnet que retornar texto; a validação é só aviso, nunca bloqueia
 // nem dispara retry. Retry (1x, Sonnet) só se a API não retornar texto. Sem Opus.
-async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia) {
+// Modelo da ata: ATA_MODELO no ambiente (padrão o atual). Teste comparativo pode trocar por
+// geração (só pela chave interna). O uso de tokens de cada geração fica em uso_tokens.
+const ATA_MODELO_PADRAO = process.env.ATA_MODELO || 'claude-sonnet-4-6';
+const ATA_MODELOS_PERMITIDOS = ['claude-sonnet-4-6', 'claude-sonnet-5-5'];
+async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia, opcoes) {
+  const modeloSonnet = (opcoes && ATA_MODELOS_PERMITIDOS.includes(opcoes.modelo)) ? opcoes.modelo : ATA_MODELO_PADRAO;
+  const usoTokens = { entrada: 0, saida: 0, cache_lido: 0, cache_criado: 0, por_modelo: {} };
+  const trocaModelo = (m) => (m === 'claude-sonnet-4-6' ? modeloSonnet : m);
+  const somarUso = (m, r) => {
+    const u = r && r.raw && r.raw.usage;
+    if (!u) return r;
+    usoTokens.entrada += u.input_tokens || 0; usoTokens.saida += u.output_tokens || 0;
+    usoTokens.cache_lido += u.cache_read_input_tokens || 0; usoTokens.cache_criado += u.cache_creation_input_tokens || 0;
+    const pm = usoTokens.por_modelo[m] || (usoTokens.por_modelo[m] = { entrada: 0, saida: 0, cache_lido: 0, cache_criado: 0, chamadas: 0 });
+    pm.entrada += u.input_tokens || 0; pm.saida += u.output_tokens || 0; pm.cache_lido += u.cache_read_input_tokens || 0; pm.cache_criado += u.cache_creation_input_tokens || 0; pm.chamadas++;
+    return r;
+  };
   const documentos = Array.isArray(documentosEntrada) ? documentosEntrada : [];
   let system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_DETALHAMENTO_MAXIMO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
@@ -2221,7 +2311,8 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia)
     if (++_chamadas > MAX_CHAMADAS_ANTHROPIC_POR_ATA) {
       throw new Error('TETO_CHAMADAS: teto de ' + MAX_CHAMADAS_ANTHROPIC_POR_ATA + ' chamadas à API por geração atingido; abortado para não gerar custo');
     }
-    return chamarAnthropicAta(modelo, maxTokens, sys, msg, cacheSystem);
+    const m = trocaModelo(modelo);
+    return chamarAnthropicAta(m, maxTokens, sys, msg, cacheSystem).then((r) => somarUso(m, r));
   };
 
   // ─── DOCUMENTOS DA ASSEMBLEIA (T01) ───────────────────────────────────────
@@ -2246,7 +2337,8 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia)
     if (++_chamadasApoio > MAX_CHAMADAS_APOIO_POR_ATA) {
       throw new Error('TETO_APOIO: teto de ' + MAX_CHAMADAS_APOIO_POR_ATA + ' chamadas de apoio por geração atingido');
     }
-    return chamarAnthropicAta(modelo, maxTokens, sys, msg);
+    const m = trocaModelo(modelo);
+    return chamarAnthropicAta(m, maxTokens, sys, msg).then((r) => somarUso(m, r));
   };
   async function prepararDocumentos() {
     if (!documentos.length) return;
@@ -2463,7 +2555,8 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia)
     };
     return concluir({
       ata: ataFinal,
-      modelo_usado: usouOpus ? modelo_usado + ' + opus (inserção)' : modelo_usado,
+      modelo_usado: (usouOpus ? modelo_usado + ' + opus (inserção)' : modelo_usado).replace('claude-sonnet-4-6', modeloSonnet),
+      uso_tokens: usoTokens,
       tentativas, auditoria: etapa, avisos: consol.avisoSkip ? vFinal.avisos.concat([consol.avisoSkip]) : vFinal.avisos,
       gate: g.gate,
       documentos: docsInfo,
@@ -2521,37 +2614,80 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia)
 // POST dispara a geração em background e responde JÁ com o jobId (request curto).
 // limit 36mb (T01): até 3 PDFs escaneados de 8MB em base64 (~11MB cada) mais a transcrição.
 app.post('/api/atas/gerar', requireAuth, express.json({ limit: '36mb' }), async (req, res) => {
-  if (!ANTHROPIC_KEY) return res.status(500).json({ erro: 'anthropic_key_ausente' });
-  if (!ATA_SKILL_MD) return res.status(500).json({ erro: 'skill_md_nao_carregada', detalhe: 'skills-server/ata-condominial.md não encontrada no servidor' });
+  if (!ANTHROPIC_KEY || !ATA_SKILL_MD) { console.error('[ata] gerador sem configuração'); return res.status(503).json({ erro: 'indisponivel', detalhe: 'A geração de atas está indisponível no momento.' }); }
+  const b = req.body || {};
+  const p = await perfilDe(req);
+  if (req.authMode !== 'internal' && !podeModulo(p, 'atas', 'gerar')) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não pode gerar atas.' });
 
-  const userMessage = (req.body && req.body.userMessage) || '';
-  if (typeof userMessage !== 'string' || userMessage.length < 50) {
-    return res.status(400).json({ erro: 'userMessage_invalido', detalhe: 'envie a transcrição + dados da reunião como string em userMessage (mín 50 chars)' });
+  // T16: ata só de condomínio que está na base do sistema (vale para todos).
+  const idSL = b.id_superlogica != null ? String(b.id_superlogica) : '';
+  if (!/^[1-9][0-9]{0,8}$/.test(idSL)) return res.status(400).json({ erro: 'condominio_obrigatorio', detalhe: 'Escolha o condomínio da ata.' });
+  if (!(await _exigirCarteira(req, res, idSL))) return; // T18: só condomínio da carteira
+  const cond = await condominioDaBase(idSL);
+  if (!cond && req.authMode !== 'internal') {
+    auditoria.evento(req, 'ata_recusada', { id_superlogica: idSL, motivo: 'condominio_fora_da_base' }, true, 'condominio_fora_da_base');
+    return res.status(403).json({ erro: 'condominio_fora_da_base', detalhe: 'Esse condomínio não está na base do sistema.' });
+  }
+
+  // T16: a transcrição vem do banco (pelo código). Texto solto só para quem tem transcrição livre,
+  // e ainda assim fica guardado.
+  const userId = (req.user && req.user.sub) || null;
+  let transc = null;
+  if (b.transcricao_id) transc = await audioMod.lerTranscricaoDoUsuario(supabaseAdminRequest, b.transcricao_id, userId);
+  if (!transc && typeof b.transcricao_texto === 'string' && b.transcricao_texto.trim().length >= 50) {
+    if (req.authMode !== 'internal' && !temAcao(p, 'atas', 'transcricao_livre')) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Envie o áudio ou o arquivo .txt da reunião.' });
+    const texto = b.transcricao_texto.trim().slice(0, 2000000);
+    const ins = await supabaseAdminRequest('POST', '/rest/v1/transcricoes', { user_id: userId, email: (req.user && req.user.email) || null,
+      id_superlogica: Number(idSL), condominio_nome: cond ? cond.nome : null, origem: 'editada', status: 'pronta', texto, caracteres: texto.length });
+    const row = ins.status === 201 && Array.isArray(ins.body) ? ins.body[0] : null;
+    if (!row) return res.status(500).json({ erro: 'falha_registro', detalhe: 'Não foi possível registrar a transcrição.' });
+    transc = row;
+  }
+  if (!transc) return res.status(400).json({ erro: 'transcricao_obrigatoria', detalhe: 'Envie o áudio ou o arquivo da transcrição antes de gerar.' });
+  // Transcrição feita para um condomínio não vira ata de outro (salvo quem tem transcrição livre).
+  if (transc.id_superlogica && String(transc.id_superlogica) !== idSL && req.authMode !== 'internal' && !temAcao(p, 'atas', 'transcricao_livre')) {
+    auditoria.evento(req, 'ata_recusada', { id_superlogica: idSL, transcricao_id: transc.id, condominio_da_transcricao: transc.id_superlogica }, true, 'transcricao_de_outro_condominio');
+    return res.status(400).json({ erro: 'transcricao_de_outro_condominio', detalhe: 'Essa transcrição foi feita para outro condomínio. Envie o áudio desta reunião.' });
   }
 
   // T01: documentos da assembleia (opcional). Lista inválida recusa antes de gastar API.
-  const docsNorm = normalizarDocumentosApoio(req.body && req.body.documentos);
+  const docsNorm = normalizarDocumentosApoio(b.documentos);
   if (docsNorm.erro) return res.status(400).json({ erro: 'documentos_invalidos', detalhe: docsNorm.erro });
 
-  // T07: código do condomínio para conferir os participantes no cadastro (opcional).
-  const idSL = req.body && req.body.id_superlogica != null ? String(req.body.id_superlogica) : '';
-  if (idSL && !/^[1-9][0-9]{0,8}$/.test(idSL)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
-  if (idSL && !(await _exigirCarteira(req, res, idSL))) return;
+  // Nome, CNPJ e endereço do cabeçalho vêm do cadastro lido aqui no servidor, nunca da tela
+  // (senão daria para escolher um condomínio da base e escrever o de outro).
+  const dados = Object.assign({}, b.dados || {});
+  if (req.authMode !== 'internal' || !dados.condominio) {
+    let cad = null;
+    if (superlogicaNativa()) {
+      try { cad = await slModulo.buscarCadastro(slModulo.cliente({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }), idSL); }
+      catch (e) { cad = null; }
+    }
+    dados.condominio = (cad && (cad.nome || cad.nome_fantasia)) || (cond && cond.nome) || '';
+    dados.cnpj = (cad && cad.cnpj) || '';
+    dados.endereco = (cad && cad.endereco && cad.endereco.completo) || '';
+    dados.cadastro_oficial = !!cad;
+  }
+  const userMessage = ataMensagem.montarMensagemAta(dados, transc.texto);
+
+  supabaseAdminRequest('PATCH', '/rest/v1/transcricoes?id=eq.' + transc.id, { usada_em_ata: new Date().toISOString(), id_superlogica: Number(idSL), condominio_nome: cond ? cond.nome : null }).catch(() => {});
+  auditoria.evento(req, 'ata_gerada', { id_superlogica: idSL, transcricao_id: transc.id, condominio: cond ? cond.nome : null });
 
   const jobId = crypto.randomUUID();
-  atasJobs.set(jobId, { status: 'processing', criadoEm: Date.now(), dono: req.authMode === 'internal' ? 'internal' : String((req.user && req.user.sub) || '') });
+  atasJobs.set(jobId, { status: 'processing', criadoEm: Date.now(), dono: req.authMode === 'internal' ? 'internal' : String(userId || '') });
   // fire-and-forget: não aguarda. gerarAtaJob já trata tudo internamente; o .catch
   // é rede de segurança caso algo escape do try interno.
   // Só confere quem tem acesso aos dados do Superlógica (a checagem é feita aqui, antes do job).
   const podeConferir = async () => {
-    if (!idSL || !superlogicaNativa()) return null;
+    if (!superlogicaNativa()) return null;
     if (req.authMode === 'internal') return idSL;
     if (!SUPABASE_SERVICE_ROLE_KEY) return null;
-    try { return (await podeUsarSuperlogica(req.user && req.user.sub)) ? idSL : null; } catch (e) { return null; }
+    try { return (await podeUsarSuperlogica(userId)) ? idSL : null; } catch (e) { return null; }
   };
-  podeConferir().then((idConf) => gerarAtaJob(jobId, userMessage, docsNorm.docs, idConf)).catch((e) => {
+  podeConferir().then((idConf) => gerarAtaJob(jobId, userMessage, docsNorm.docs, idConf, { modelo: req.authMode === 'internal' ? b.modelo_teste : undefined })).catch((e) => {
+    console.error('[ata] erro fora do job:', e && e.message);
     const j = atasJobs.get(jobId);
-    if (j && j.status === 'processing') { j.status = 'error'; j.erro = { httpStatus: 500, erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' }; }
+    if (j && j.status === 'processing') { j.status = 'error'; j.erro = { httpStatus: 500, erro: 'erro_inesperado' }; }
   });
   return res.status(202).json({ jobId });
 });
@@ -2579,8 +2715,9 @@ app.get('/api/atas/gerar/status/:jobId', requireAuth, (req, res) => {
     if (quem !== j.dono) return enviar(404, { status: 'not_found' });
   }
   if (!j) return enviar(404, { status: 'not_found' });
-  if (j.status === 'done') return enviar(200, Object.assign({ status: 'done' }, j.payload));
-  if (j.status === 'error') return enviar(200, Object.assign({ status: 'error' }, j.erro));
+  // T17: só o que a tela usa; nada de modelo, tentativas ou erro técnico do serviço.
+  if (j.status === 'done') return enviar(200, Object.assign({ status: 'done' }, req.authMode === 'internal' ? j.payload : ataMensagem.limparResultadoAta(j.payload)));
+  if (j.status === 'error') return enviar(200, Object.assign({ status: 'error' }, ataMensagem.limparErroAta(j.erro)));
   return enviar(200, { status: 'processing', esperando_s: Math.round((Date.now() - j.criadoEm) / 1000) });
 });
 
@@ -2605,7 +2742,7 @@ function requireServiceRoleKey(req, res, next) {
 async function lerPerfil(id) {
   if (!id) return null;
   const r = await supabaseAdminRequest('GET',
-    `/rest/v1/profiles?id=eq.${encodeURIComponent(id)}&select=id,email,role,pode_convidar,permissoes`);
+    `/rest/v1/profiles?id=eq.${encodeURIComponent(id)}&select=id,email,role,pode_convidar,permissoes,concede`);
   return (r.status === 200 && Array.isArray(r.body) && r.body[0]) ? r.body[0] : null;
 }
 
@@ -2698,9 +2835,12 @@ async function supabaseAdminRequest(method, pathStr, body) {
   };
   return new Promise((resolve) => {
     const r = https.request(opts, (resp) => {
-      let d = '';
-      resp.on('data', (c) => d += c);
+      // Buffer inteiro e UTF-8 uma vez só: juntar como texto por pedaço corrompe acento
+      // quando o corte cai no meio de um caractere (transcrições longas).
+      const partes = [];
+      resp.on('data', (c) => partes.push(c));
       resp.on('end', () => {
+        const d = Buffer.concat(partes).toString('utf8');
         let json = null;
         try { json = d ? JSON.parse(d) : null; } catch { json = { raw: d }; }
         resolve({ status: resp.statusCode, body: json });
@@ -2780,8 +2920,8 @@ app.post('/api/admin/usuarios/convidar',
     if (!['GERENTE', 'OPERACIONAL'].includes(role)) {
       return res.status(400).json({ erro: 'role_invalido', detalhe: 'Convite só permite GERENTE ou OPERACIONAL. GESTOR é imutável.' });
     }
-    if (req.gestor.role === 'GERENTE' && role !== 'OPERACIONAL') {
-      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Gerente só pode convidar OPERACIONAL.' });
+    if (role !== 'OPERACIONAL' && req.authMode !== 'internal' && !permRegras.ehDono(req.gestor)) {
+      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Só o administrador principal convida GERENTE.' });
     }
     // GoTrue invite — POST /auth/v1/invite envia magic link e cria user em auth.users
     // (status: invited). NÃO usar /auth/v1/admin/invite (404 em GoTrue moderno).
@@ -2807,12 +2947,21 @@ app.get('/api/admin/usuarios',
   requireAuth, requireServiceRoleKey, requireGestaoUsuarios,
   async (req, res) => {
     const r = await supabaseAdminRequest('GET',
-      '/rest/v1/profiles?select=id,email,nome,role,pode_convidar,permissoes,criado_em,atualizado_em&order=criado_em.asc');
+      '/rest/v1/profiles?select=id,email,nome,role,pode_convidar,permissoes,bloqueado,concede,criado_em,atualizado_em&order=criado_em.asc');
+    if (r.status !== 200 || !Array.isArray(r.body)) return res.status(r.status).json(r.body);
+    // T16: ações restritas só aparecem para quem também as tem (ninguém descobre quem audita).
+    const minhas = (req.gestor && req.gestor.permissoes && req.gestor.permissoes.configuracoes && req.gestor.permissoes.configuracoes.acoes) || [];
+    const souDono = req.authMode === 'internal' || minhas.includes('auditoria_total');
+    const ocultar = ['auditoria_total', 'ver_auditoria', 'ver_chaves'].filter((a) => !souDono && !minhas.includes(a));
+    const lista = r.body.map((u0) => {
+      const u = souDono ? u0 : Object.assign({}, u0, { concede: undefined });
+      if (!ocultar.length || !u.permissoes || !u.permissoes.configuracoes) return u;
+      const cfg = Object.assign({}, u.permissoes.configuracoes, { acoes: (u.permissoes.configuracoes.acoes || []).filter((a) => !ocultar.includes(a)) });
+      return Object.assign({}, u, { permissoes: Object.assign({}, u.permissoes, { configuracoes: cfg }) });
+    });
     // GERENTE so enxerga (e administra) os OPERACIONAIS.
-    if (r.status === 200 && Array.isArray(r.body) && req.gestor.role === 'GERENTE') {
-      return res.status(200).json(r.body.filter((u) => u.role === 'OPERACIONAL'));
-    }
-    res.status(r.status).json(r.body);
+    if (req.gestor.role === 'GERENTE') return res.status(200).json(lista.filter((u) => u.role === 'OPERACIONAL'));
+    res.status(200).json(lista);
   });
 
 // PUT /api/admin/usuarios/:id/role
@@ -2830,6 +2979,11 @@ app.put('/api/admin/usuarios/:id/role',
     const alvo = await lerPerfil(req.params.id);
     if (!alvo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
     if (alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_imutavel', detalhe: 'O cargo do GESTOR não muda pelo sistema.' });
+    // T21: só o dono muda cargo.
+    if (req.authMode !== 'internal' && !permRegras.ehDono(await lerPerfil(req.user && req.user.sub))) {
+      auditoria.evento(req, 'cargo_negado', { alvo: req.params.id, role }, true, 'tentou_liberar_acesso_restrito');
+      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Só o administrador principal muda cargo.' });
+    }
     // Rebaixar pra OPERACIONAL tira junto o direito de convidar.
     const patch = role === 'OPERACIONAL' ? { role, pode_convidar: false } : { role };
     _cachePerfilSL.delete(req.params.id);
@@ -2856,40 +3010,76 @@ app.put('/api/admin/usuarios/:id/permissoes',
     const alvo = await lerPerfil(req.params.id);
     if (!alvo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
     if (alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_imutavel', detalhe: 'As permissões do GESTOR não mudam pelo sistema.' });
-    // Ver chaves do Superlógica: só quem já tem pode dar ou tirar (o cargo GESTOR não basta).
-    if (req.authMode !== 'internal' && listaTemVerChaves(permissoes) !== listaTemVerChaves(alvo.permissoes)
-        && !listaTemVerChaves(req.gestor && req.gestor.permissoes)) {
-      return res.status(403).json({ erro: 'acima_do_limite', detalhe: 'Só quem vê as chaves do Superlógica pode dar ou tirar esse acesso (inclusive escondendo Configurações).' });
+    // T21: quem pode mexer em quem e o quê (servico/permissoes.js).
+    const interno = req.authMode === 'internal';
+    const editor = interno ? null : await lerPerfil(req.user && req.user.sub);
+    const pode = permRegras.podeEditarAlvo(editor, alvo, interno);
+    if (!pode.ok) {
+      auditoria.evento(req, 'permissao_negada', { alvo: req.params.id, email_alvo: alvo.email, motivo: pode.motivo }, true, 'tentou_liberar_acesso_restrito');
+      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Você não pode alterar esse usuário.' });
     }
-    _cachePerfilSL.delete(req.params.id);
-    carteiraT18.esquecer(req.params.id);
-    const patch = { permissoes };
-    // Filtro extra pro GERENTE: o PATCH so aplica se o alvo ainda for OPERACIONAL na hora
-    // da escrita (fecha a janela entre a leitura e a gravacao).
-    let filtroExtra = '';
-    if (req.gestor.role === 'GERENTE') {
-      if (alvo.role !== 'OPERACIONAL') return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Gerente só edita OPERACIONAL.' });
-      if (!permissoesDentroDoLimite(permissoes, req.gestor.permissoes, alvo.permissoes)) {
-        return res.status(403).json({ erro: 'acima_do_limite', detalhe: 'Você não pode liberar um acesso que você mesmo não tem.' });
-      }
-      filtroExtra = '&role=eq.OPERACIONAL';
-    } else if (typeof pode_convidar === 'boolean' && alvo.role === 'GERENTE') {
-      patch.pode_convidar = pode_convidar;
-      // Quem gerencia usuarios precisa enxergar Configuracoes, onde fica a tela de usuarios.
-      if (pode_convidar) {
-        const cfg = permissoes.configuracoes || { visivel: false, acoes: [] };
-        patch.permissoes = Object.assign({}, permissoes, {
-          configuracoes: { visivel: true, acoes: Array.from(new Set(['ver'].concat(cfg.acoes || []))) }
+    // Quem não é dono não vê as ações restritas do alvo; elas ficam como estavam.
+    const novas = JSON.parse(JSON.stringify(permissoes));
+    if (!interno && !permRegras.ehDono(editor)) {
+      Object.keys(alvo.permissoes || {}).forEach((m) => {
+        const antes = (alvo.permissoes[m] && alvo.permissoes[m].acoes) || [];
+        permRegras.RESTRITAS.filter((a) => antes.includes(a)).forEach((a) => {
+          if (!novas[m]) novas[m] = { visivel: !!alvo.permissoes[m].visivel, acoes: [] };
+          if (!novas[m].acoes.includes(a)) novas[m].acoes.push(a);
         });
+      });
+    }
+    const conf = permRegras.conferirMudanca(editor, alvo.permissoes || {}, novas, interno);
+    if (!conf.ok) {
+      auditoria.evento(req, 'permissao_negada', { alvo: req.params.id, email_alvo: alvo.email, motivo: conf.motivo, fora: conf.fora || null }, true, 'tentou_liberar_acesso_restrito');
+      const det = conf.motivo === 'fora_do_que_pode_liberar' ? 'Você não pode liberar ou tirar: ' + (conf.fora || []).join(', ') + '.' : 'Esse acesso não pode ser alterado por você.';
+      return res.status(403).json({ erro: 'acima_do_limite', detalhe: det });
+    }
+    const patch = { permissoes: novas };
+    // Só o dono decide quem pode gerenciar usuários.
+    if (typeof pode_convidar === 'boolean' && alvo.role === 'GERENTE' && (interno || permRegras.ehDono(editor)) && pode_convidar !== !!alvo.pode_convidar) {
+      patch.pode_convidar = pode_convidar;
+      if (pode_convidar) {
+        const cfg = novas.configuracoes || { visivel: false, acoes: [] };
+        patch.permissoes = Object.assign({}, novas, { configuracoes: { visivel: true, acoes: Array.from(new Set(['ver'].concat(cfg.acoes || []))) } });
       }
     }
+    const filtroExtra = (editor && editor.role === 'GERENTE') ? '&role=eq.OPERACIONAL' : '';
+    _cachePerfilSL.delete(req.params.id);
+    esquecerPerfil(req.params.id);
     const r = await supabaseAdminRequest('PATCH',
       `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}${filtroExtra}`,
       patch);
     if (filtroExtra && r.status === 200 && Array.isArray(r.body) && r.body.length === 0) {
       return res.status(409).json({ erro: 'cargo_mudou', detalhe: 'O cargo desse usuário mudou. Atualize a lista e tente de novo.' });
     }
+    if (r.status < 300) {
+      // Quem não é o dono liberou ou tirou acesso: vira alerta para o dono.
+      const naoDono = !interno && !permRegras.ehDono(editor);
+      const livre = conf.adicionadas.includes('atas.transcricao_livre');
+      auditoria.evento(req, 'permissoes_alteradas', { alvo: req.params.id, email_alvo: alvo.email, adicionadas: conf.adicionadas, removidas: conf.removidas },
+        naoDono && (conf.adicionadas.length || conf.removidas.length), naoDono ? (livre ? 'liberou_transcricao_livre' : 'acesso_liberado') : null);
+    }
     res.status(r.status).json(r.body);
+  });
+
+// T21: o dono define o que cada pessoa pode liberar para os outros.
+app.put('/api/admin/usuarios/:id/concede',
+  requireAuth, requireServiceRoleKey, validarIdUsuario, express.json(),
+  async (req, res) => {
+    const interno = req.authMode === 'internal';
+    const editor = interno ? null : await lerPerfil(req.user && req.user.sub);
+    if (!interno && !permRegras.ehDono(editor)) return res.status(403).json({ erro: 'acesso_negado' });
+    const concede = (req.body && req.body.concede) || {};
+    if (!permRegras.concedeBemFormado(concede)) return res.status(400).json({ erro: 'formato_invalido' });
+    const alvo = await lerPerfil(req.params.id);
+    if (!alvo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
+    if (permRegras.ehDono(alvo)) return res.status(400).json({ erro: 'alvo_dono' });
+    const r = await supabaseAdminRequest('PATCH', `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`, { concede });
+    if (r.status >= 300) return res.status(500).json({ erro: 'falha_gravacao' });
+    esquecerPerfil(req.params.id);
+    auditoria.evento(req, 'concede_alterado', { alvo: req.params.id, email_alvo: alvo.email, concede });
+    res.json({ ok: true });
   });
 
 // DELETE /api/admin/usuarios/:id
@@ -2906,9 +3096,12 @@ app.delete('/api/admin/usuarios/:id',
     const alvo = await lerPerfil(id);
     if (!alvo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
     if (alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_imutavel', detalhe: 'O GESTOR não pode ser removido pelo sistema.' });
-    if (req.gestor.role === 'GERENTE' && alvo.role !== 'OPERACIONAL') {
-      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Gerente só remove OPERACIONAL.' });
+    const podeExcluir = permRegras.podeEditarAlvo(req.gestor && req.gestor.interno ? null : req.gestor, alvo, req.authMode === 'internal');
+    if (!podeExcluir.ok) {
+      auditoria.evento(req, 'exclusao_negada', { alvo: id, email_alvo: alvo.email }, true, 'tentou_liberar_acesso_restrito');
+      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Você não pode remover esse usuário.' });
     }
+    auditoria.evento(req, 'usuario_excluido', { alvo: id, email_alvo: alvo.email });
     _cachePerfilSL.delete(id);
     carteiraT18.esquecer(id);
     const r = await supabaseAdminRequest('DELETE', `/auth/v1/admin/users/${encodeURIComponent(id)}`);
@@ -3014,7 +3207,7 @@ app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
   const upstream = cliente.request(opts, r => {
     res.status(r.statusCode);
     Object.entries(r.headers).forEach(([k, v]) => {
-      if (!['connection', 'transfer-encoding'].includes(k.toLowerCase())) {
+      if (!['connection', 'transfer-encoding', 'server', 'x-powered-by', 'via'].includes(k.toLowerCase())) {
         res.setHeader(k, v);
       }
     });
@@ -3049,7 +3242,13 @@ app.post('/api/previsao/extrair-pdfs', requireAuth, (req, res) => {
 // quebrado).
 // ─────────────────────────────────────────────────────────────────────────
 
-app.post('/api/prestacao/gerar-deck', requireAuth, (req, res) => {
+app.post('/api/prestacao/gerar-deck', requireAuth, async (req, res) => {
+  // T16: o caminho antigo não confere de qual condomínio é o relatório, então
+  // fica fechado para usuários. A geração passa só pelo motor novo (v13).
+  if (req.authMode !== 'internal') {
+    auditoria.evento(req, 'prestacao_recusada', { id_superlogica: parseInt(req.query.cond, 10) || null }, true, 'caminho_antigo_fechado');
+    return res.status(410).json({ erro: 'caminho_desativado', detalhe: 'Esta forma de gerar foi desativada. Atualize a página e gere de novo.' });
+  }
   if (!INTERNAL_API_SECRET || !PRESTACAO_PDF_API_URL) {
     // Sem microserviço configurado o Hub cai no fallback offline (PptxGenJS).
     res.status(503).json({ erro: 'prestacao_api_nao_configurada' });
@@ -3088,7 +3287,7 @@ app.post('/api/prestacao/gerar-deck', requireAuth, (req, res) => {
   const upstream = cliente.request(opts, r => {
     res.status(r.statusCode);
     Object.entries(r.headers).forEach(([k, v]) => {
-      if (!['connection', 'transfer-encoding'].includes(k.toLowerCase())) {
+      if (!['connection', 'transfer-encoding', 'server', 'x-powered-by', 'via'].includes(k.toLowerCase())) {
         res.setHeader(k, v);
       }
     });
@@ -3113,6 +3312,8 @@ app.post('/api/prestacao/gerar-deck', requireAuth, (req, res) => {
 require('./prestacao-v13')(app, {
   requireAuth, ANTHROPIC_KEY, INTERNAL_API_SECRET, PRESTACAO_PDF_API_URL,
   exigirCarteira: (req, res, id) => carteiraT18.exigir(req, res, id),
+  condominioDaBase: SUPABASE_SERVICE_ROLE_KEY ? condominioDaBase : null,
+  auditar: (req, acao, det, susp, motivo) => auditoria.evento(req, acao, det, susp, motivo),
   superlogica: superlogicaNativa()
     ? { base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }
     : null,
@@ -3164,6 +3365,32 @@ app.post('/api/condominios/sincronizar-superlogica', requireAuth, async (req, re
   if (r.motivo === 'em_andamento') return res.status(409).json({ erro: 'em_andamento', detalhe: 'A atualização já está rodando. Aguarde alguns segundos.' });
   if (r.motivo === 'nao_configurado') return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
   return res.status(502).json({ erro: 'falha_sincronizar', detalhe: 'O Superlógica não respondeu. Tente de novo em alguns minutos.' });
+});
+
+// T16: cadastro manual de um condomínio na base. Só GESTOR, e só se o código existir no
+// Superlógica (o nome vem de lá). Antes o navegador gravava direto no banco qualquer nome.
+app.post('/api/condominios/cadastrar', requireAuth, requireGestor, express.json(), async (req, res) => {
+  const id = parseInt(req.body && req.body.id_superlogica, 10);
+  if (!(id > 0)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Informe o código do Superlógica.' });
+  if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado' });
+  const ja = await condominioDaBase(id);
+  if (ja) return res.status(409).json({ erro: 'ja_existe', detalhe: 'Esse condomínio já está na base: ' + ja.nome + '.' });
+  let c = null;
+  try {
+    const cli = slDados.criarCliente({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN });
+    const j = await cli.get('condominios/get', { id, somenteCondominiosAtivos: 0 });
+    c = Array.isArray(j) ? j[0] : j;
+  } catch (e) { c = null; }
+  if (!c || String(c.id_condominio_cond) !== String(id)) {
+    auditoria.evento(req, 'cadastro_condominio_recusado', { id_superlogica: id }, true, 'condominio_fora_da_base');
+    return res.status(404).json({ erro: 'nao_existe_no_superlogica', detalhe: 'Esse código não existe no Superlógica.' });
+  }
+  const nome = slDados.nomeAmigavel ? slDados.nomeAmigavel(c) : (c.st_fantasia_cond || c.st_nome_cond);
+  const r = await supabaseAdminRequest('POST', '/rest/v1/condominios', { id: crypto.randomUUID(), nome, sindico: null, id_superlogica: id, criado_em: new Date().toISOString() });
+  if (r.status !== 201) return res.status(500).json({ erro: 'falha_gravacao', detalhe: 'Não foi possível cadastrar.' });
+  _condBase.delete(String(id));
+  auditoria.evento(req, 'condominio_cadastrado', { id_superlogica: id, nome });
+  res.json(Array.isArray(r.body) ? r.body[0] : r.body);
 });
 
 app.get('/api/condominios/sincronizar-superlogica', requireAuth, (req, res) => {
@@ -3798,15 +4025,15 @@ app.post('/api/comunicados/rascunho', requireAuth, express.json({ limit: '50kb' 
   const assunto = String(b.assunto || '').trim().slice(0, 300);
   const detalhes = String(b.detalhes || '').trim().slice(0, 4000);
   if (!tipo || !assunto) return res.status(400).json({ erro: 'dados_invalidos', detalhe: 'Informe o tipo e o assunto.' });
-  if (!ANTHROPIC_KEY) return res.status(503).json({ erro: 'anthropic_key_ausente' });
+  if (!ANTHROPIC_KEY) return res.status(503).json({ erro: 'indisponivel', detalhe: 'Função indisponível no momento.' });
   if (!(await exigirEscritaSuperlogica(req, res))) return;
   const msg = 'Tipo: ' + tipo + '\nCondomínio: ' + String(b.condominio || '[a confirmar]').slice(0, 150) +
     (b.unidade ? '\nUnidade: ' + String(b.unidade).slice(0, 60) : '') + '\nAssunto: ' + assunto + '\nDetalhes informados: ' + (detalhes || '(nenhum)');
-  const r = await chamarAnthropicAta('claude-sonnet-4-6', 2000, PROMPT_COMUNICADO, msg);
-  if (!r.ok) return res.status(502).json({ erro: 'falha_ia', detalhe: 'Não foi possível gerar o texto agora.' });
+  const r = await chamarAnthropicAta(ATA_MODELO_PADRAO, 2000, PROMPT_COMUNICADO, msg);
+  if (!r.ok) return res.status(502).json({ erro: 'falha_processamento', detalhe: 'Não foi possível gerar o texto agora.' });
   let j = null;
   try { j = JSON.parse(String(r.texto).replace(/```(?:json)?\s*|\s*```/g, '').trim()); } catch (e) { j = null; }
-  if (!j || !j.titulo || !j.texto) return res.status(502).json({ erro: 'falha_ia', detalhe: 'A IA não devolveu o texto no formato esperado. Tente de novo.' });
+  if (!j || !j.titulo || !j.texto) return res.status(502).json({ erro: 'falha_processamento', detalhe: 'O texto não saiu no formato esperado. Tente de novo.' });
   // regra da casa: sem hífen nem travessão no texto gerado
   const semTraco = (s) => String(s).replace(/^\s*[–—-]\s*/gm, '').replace(/\s+[–—-]\s+/g, ', ').replace(/[–—]/g, ', ').replace(/[<>]/g, '');
   res.json({ titulo: semTraco(j.titulo).slice(0, 150), texto: semTraco(j.texto).slice(0, 20000) });
@@ -4399,20 +4626,27 @@ function semCacheHtml(res) {
 }
 
 // Rota raiz: serve a landing page ServiceZone
-app.get('/', (req, res) => { semCacheHtml(res); res.sendFile(path.join(__dirname, 'public', 'landing.html')); });
+function enviarPagina(res, nome) {
+  semCacheHtml(res);
+  const pronta = ofuscar.pagina(nome);
+  if (pronta) { res.type('html'); return res.end(pronta); }
+  res.sendFile(path.join(__dirname, 'public', nome));
+}
+app.get('/', (req, res) => enviarPagina(res, 'landing.html'));
 
 // Rota do sistema principal, acessada a partir do botão Entrar na landing
-app.get('/hub', (req, res) => { semCacheHtml(res); res.sendFile(path.join(__dirname, 'public', 'index.html')); });
+app.get('/hub', (req, res) => enviarPagina(res, 'index.html'));
 
 // Qualquer rota desconhecida cai na landing, não no sistema
-app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'landing.html')));
+app.get('*', (req, res) => enviarPagina(res, 'landing.html'));
 
 // Só sobe o listener quando executado direto (node server.js). Quando o arquivo é
 // requerido por um teste (require), NÃO abre porta — deixa as funções determinísticas
 // testáveis isoladas. Em produção o Railway roda `node server.js` direto, então
 // require.main === module é verdadeiro e o servidor sobe normal.
 if (require.main === module) {
-  app.listen(PORT, () => console.log('Service Hub porta ' + PORT));
+  ofuscar.preparar(path.join(__dirname, 'public')).catch((e) => console.warn('[ofuscar] falhou: ' + e.message))
+    .finally(() => app.listen(PORT, () => console.log('Service Hub porta ' + PORT)));
 }
 
 // Export só para teste determinístico da correção cirúrgica e do passe de consolidação de

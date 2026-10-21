@@ -1113,6 +1113,9 @@
     <div class="nav-item" onclick="showPanel('consumo')">
       <span class="nav-icon">◎</span> Leitura de Consumo
     </div>
+    <div class="nav-item" id="nav-seguranca" style="display:none" onclick="showPanel('seguranca')">
+      <span class="nav-icon">◉</span> Segurança
+    </div>
     <div class="nav-item" onclick="showPanel('tarefas')">
       <span class="nav-icon">✓</span> Tarefas
       <span class="nav-badge">em breve</span>
@@ -1351,7 +1354,7 @@
       <!-- NORMALIZADOR IA: doc fora do padrão → planilha 26 colunas -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Normalizar via IA</span>
+          <span class="card-title">Processar documento fora do padrão</span>
           <span style="font-size:10px;font-family:var(--mono);color:var(--muted)">opcional — se a planilha já está no formato 26 colunas, pula direto pra "Importar Unidades" abaixo</span>
         </div>
         <div id="normalizar-dropzone" style="background:var(--bg3);border:1.5px dashed var(--border2);border-radius:var(--radius);padding:14px 18px;transition:all 0.2s"
@@ -1359,7 +1362,7 @@
           ondragleave="normalizarDragLeave(event)"
           ondrop="normalizarDrop(event)">
           <div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">🔄 Reformatar documento qualquer → modelo Superlógica (26 colunas)</div>
-          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:10px">Anexe PDF (com texto ou escaneado), Word (.docx), planilha fora do padrão (.xlsx, .xls, .ods, .csv), texto ou foto. A IA reformata pro modelo exato e marca o que não tem certeza. Na prévia você corrige clicando na célula, e as unidades que já existem no condomínio escolhido aparecem marcadas. Nada vai pro Superlógica sem sua confirmação.</p>
+          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:10px">Anexe PDF (com texto ou escaneado), Word (.docx), planilha fora do padrão (.xlsx, .xls, .ods, .csv), texto ou foto. O sistema reformata pro modelo exato e marca o que não tem certeza. Na prévia você corrige clicando na célula, e as unidades que já existem no condomínio escolhido aparecem marcadas. Nada vai pro Superlógica sem sua confirmação.</p>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <label style="display:inline-flex;align-items:center;gap:8px;padding:8px 14px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:var(--sans);color:var(--gs-blue);transition:all 0.15s">
               📎 Selecionar documento
@@ -1417,7 +1420,7 @@
           <input type="file" accept=".xlsx,.xls,.csv,application/pdf" onchange="handleFile(event,'unidades')">
           <div class="drop-icon">⊡</div>
           <div class="drop-title">Arraste a planilha ou o PDF de unidades</div>
-          <div class="drop-sub">.pdf .xlsx .xls .csv · W045A e planilhas conhecidas processados por código, sem IA</div>
+          <div class="drop-sub">.pdf .xlsx .xls .csv · W045A e planilhas conhecidas processados direto</div>
         </div>
       </div>
 
@@ -1765,6 +1768,7 @@
         <!-- ÁREA DE TEXTO -->
         <div style="font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">③ Transcrição</div>
         <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
+          <button class="btn btn-ghost" id="ata-btn-baixar-txt" style="font-size:11px;padding:5px 10px;margin-right:6px;display:none" onclick="ataBaixarTranscricaoTxt()">⬇ Baixar .txt</button>
           <button class="btn btn-ghost" style="font-size:11px;padding:5px 10px" onclick="document.getElementById('ata-transcricao').value='';document.getElementById('ata-file-info').textContent=''">✕ Limpar</button>
         </div>
         <textarea class="ata-field" id="ata-transcricao" rows="10"
@@ -1776,15 +1780,14 @@
           <span class="card-title">Participantes</span>
         </div>
         <textarea class="ata-field" id="ata-participantes" rows="4"
-          placeholder="Liste os participantes presentes (opcional — se não informar, a Service Hub IA vai extrair da transcrição)"></textarea>
+          placeholder="Liste os participantes presentes (opcional: se não informar, os participantes são tirados da transcrição)"></textarea>
       </div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:20px">
         <button class="btn btn-ghost" onclick="limparAta()">✕ Limpar tudo</button>
-        <button class="btn btn-ghost" id="btn-copiar-claude" onclick="copiarProClaude()" title="Fallback: copia o texto pra colar no Claude.ai externo. NÃO passa pela geração do servidor nem inclui o edital do autopreencher; os campos do edital podem sair como [a confirmar].">⎘ Copiar pro Service Hub IA</button>
         <button class="btn btn-primary" id="btn-gerar-ata" onclick="gerarAtaIA()">📄 Gerar ata</button>
       </div>
-      <p style="font-size:11px;color:var(--muted);font-family:var(--mono);margin:-12px 0 20px;text-align:right">Atenção: "Copiar pro Service Hub IA" é um atalho que NÃO passa pela geração do servidor e não inclui o edital anexado pelo autopreencher. Nesse caminho, CNPJ, endereço, data e signatário do edital podem sair como [a confirmar]. Prefira "Gerar ata".</p>
+      
 
       <!-- MODAL: Ata gerada -->
       <div id="ata-gerada-modal" style="display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,0.5);justify-content:center;align-items:center;padding:24px">
@@ -1943,6 +1946,58 @@
       </div>
     </div>
 
+    <!-- SEGURANÇA (T16): JS em public/seguranca.js -->
+    <div class="panel" id="panel-seguranca">
+      <div class="tabs" style="margin-bottom:12px">
+        <div class="tab active" id="seg-tab-alertas" onclick="segAba('alertas')">Alertas de uso</div>
+        <div class="tab" id="seg-tab-registro" onclick="segAba('registro')">Registro</div>
+        <div class="tab" id="seg-tab-transcricoes" onclick="segAba('transcricoes')">Transcrições</div>
+      </div>
+      <div class="card" id="seg-alertas">
+        <div class="card-header"><span class="card-title">Uso fora do normal nos últimos 30 dias</span>
+          <button class="btn btn-ghost" style="font-size:11px" onclick="segCarregarAlertas()">Atualizar</button></div>
+        <div id="seg-alertas-lista"></div>
+      </div>
+      <div class="card" id="seg-registro" style="display:none">
+        <div class="card-header"><span class="card-title">O que cada pessoa fez</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          <input type="text" id="seg-f-pessoa" placeholder="Email da pessoa" style="width:220px">
+          <input type="date" id="seg-f-de"> <input type="date" id="seg-f-ate">
+          <label style="font-size:12px;display:flex;gap:4px;align-items:center"><input type="checkbox" id="seg-f-suspeito"> só suspeitos</label>
+          <button class="btn btn-primary" onclick="segCarregarRegistro()">Buscar</button>
+        </div>
+        <div id="seg-registro-lista" style="overflow-x:auto"></div>
+      </div>
+      <div class="card" id="seg-transcricoes" style="display:none">
+        <div class="card-header"><span class="card-title">Transcrições feitas no sistema</span>
+          <button class="btn btn-ghost" style="font-size:11px" onclick="segCarregarTranscricoes()">Atualizar</button></div>
+        <div id="seg-transcricoes-lista"></div>
+      </div>
+    </div>
+    <div id="seg-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px;width:min(900px,94vw);max-height:90vh;display:flex;flex-direction:column;gap:10px">
+        <div id="seg-modal-titulo" style="font-size:13px;font-weight:600;color:var(--text)"></div>
+        <textarea id="seg-modal-texto" readonly style="flex:1;min-height:50vh;font-size:12px"></textarea>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-ghost" onclick="segBaixarTranscricao()">Baixar .txt</button>
+          <button class="btn btn-primary" onclick="segFecharModal()">Fechar</button>
+        </div>
+      </div>
+    </div>
+    <div id="modal-admin-senha" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;align-items:center;justify-content:center">
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:18px;width:min(380px,94vw);display:flex;flex-direction:column;gap:10px">
+        <div style="font-size:14px;font-weight:600;color:var(--text)">Nova senha</div>
+        <div id="admin-senha-email" style="font-size:12px;color:var(--muted)"></div>
+        <input type="password" id="admin-senha-1" placeholder="Nova senha (mínimo 8)" autocomplete="new-password">
+        <input type="password" id="admin-senha-2" placeholder="Repita a senha" autocomplete="new-password">
+        <div id="admin-senha-erro" style="font-size:12px;color:var(--danger)"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn btn-ghost" onclick="adminFecharSenha()">Cancelar</button>
+          <button class="btn btn-primary" onclick="adminSalvarSenha()">Salvar</button>
+        </div>
+      </div>
+    </div>
+
     <!-- COMPARATIVO (T14): JS em public/comparativo.js -->
     <div class="panel" id="panel-comparativo">
       <div class="card">
@@ -1990,7 +2045,7 @@
           <span class="card-title">Importar Fotos de Medidores</span>
         </div>
         <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:16px">
-          Arraste as fotos dos medidores de água e gás. A IA vai extrair a leitura automaticamente.
+          Arraste as fotos dos medidores de água e gás. A leitura é extraída automaticamente.
         </p>
         <div class="dropzone" id="dropzone-consumo"
              ondragover="handleDrag(event, this)"
@@ -2179,14 +2234,10 @@
 
     <div id="dash-modal-aba-cadastrar" style="display:none">
       <div class="form-group">
-        <label for="dash-modal-nome-cond">Nome</label>
-        <input type="text" id="dash-modal-nome-cond" placeholder="Ex: Residencial Acácias" autocomplete="off">
-      </div>
-      <div class="form-group">
         <label for="dash-modal-id-superlogica">ID Superlógica</label>
         <input type="text" id="dash-modal-id-superlogica" inputmode="numeric" pattern="[0-9]*" placeholder="Ex: 167" autocomplete="off">
       </div>
-      <p style="font-size:12px;color:var(--muted);margin-top:4px">Após salvar, o condomínio será selecionado automaticamente.</p>
+      <p style="font-size:12px;color:var(--muted);margin-top:4px">O nome vem do Superlógica. Os condomínios novos também entram sozinhos todo dia. Só o gestor cadastra.</p>
     </div>
 
     <div class="modal-actions" style="text-align:right;margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
@@ -2618,12 +2669,13 @@ const PAGE_META = {
   configuracoes: { title: 'Configurações', sub: 'credenciais e preferências' },
   prestacao:     { title: 'Prestação de Contas', sub: 'gerar apresentação financeira anual' },
   previsao:      { title: 'Previsão Orçamentária', sub: 'PDFs W011A e W045A geram planilha editável' },
-  atas:          { title: 'Atas Condominiais', sub: 'geração automática com IA' },
+  atas:          { title: 'Atas Condominiais', sub: 'geração automática' },
   consumo:       { title: 'Leitura de Consumo', sub: 'fotos de medidores → Superlógica' },
   condominio:    { title: 'Ficha do Condomínio', sub: 'consulta ao Superlógica, só leitura' },
   comunicados:   { title: 'Comunicados e Multas', sub: 'grava no Superlógica só com confirmação' },
   cobranca:      { title: 'Cobrança', sub: 'inadimplência por carteira, acordo e 2ª via' },
   comparativo:   { title: 'Comparativo', sub: 'custo por unidade e fornecedores entre condomínios' },
+  seguranca:     { title: 'Segurança', sub: 'uso do sistema por pessoa' },
 };
 
 function showPanel(name) {
@@ -2655,6 +2707,9 @@ function showPanel(name) {
   }
   if (name === 'comparativo') {
     if (typeof comparativoAbrir === 'function') comparativoAbrir();
+  }
+  if (name === 'seguranca') {
+    if (typeof segAbrir === 'function') segAbrir();
   }
   if (name === 'cobranca') {
     if (typeof cobrancaAbrir === 'function') cobrancaAbrir();
@@ -2891,7 +2946,7 @@ function processFile(file, type) {
 
       // Nenhuma familia reconhecida por codigo: orienta o mesmo fallback do
       // PDF, nunca processa uma estrutura desconhecida em silencio.
-      toast('Não reconheci a estrutura desta planilha. Use "Normalizar via IA" para reformatar antes de importar.', 'warn');
+      toast('Não reconheci a estrutura desta planilha. Use "Processar documento fora do padrão" para reformatar antes de importar.', 'warn');
     } else {
       const headers = allRows[0].map(h => String(h||'').trim());
       const data_rows = allRows.slice(1).filter(r => r.some(c => c !== '' && c !== null && c !== undefined));
@@ -3337,26 +3392,16 @@ async function processFilesConsumo(files) {
     consumoItems.push({ id, file, url, leitura: '', unidade: '', status: 'processando' });
     renderConsumoGrid();
 
-    // Extrai leitura via Claude
+    // Leitura feita no servidor
     try {
       const b64 = await fileToBase64(file);
-      const resp = await apiAuthFetch('/api/claude/messages', {
+      const resp = await apiAuthFetch('/api/processar/medidor', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5',
-          max_tokens: 200,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'image', source: { type: 'base64', media_type: file.type, data: b64 } },
-              { type: 'text', text: 'Esta é uma foto de um medidor (água ou gás) de condomínio. Extraia APENAS o número de leitura atual do mostrador. Responda somente com o número, sem texto adicional. Se não conseguir ler, responda "ilegível".' }
-            ]
-          }]
-        })
+        body: JSON.stringify({ arquivo: { mime: file.type, base64: b64 } })
       });
-      const d = await resp.json();
-      const leitura = (d.content?.[0]?.text || 'ilegível').trim();
+      const d = await resp.json().catch(() => ({}));
+      const leitura = resp.ok ? String(d.leitura || 'ilegível').trim() : 'ilegível';
       const item = consumoItems.find(c => c.id === id);
       if (item) {
         item.leitura = leitura;
@@ -3600,7 +3645,18 @@ async function apiAuthFetch(url, options = {}) {
   const token = window.AUTH_TOKEN;
   const headers = { ...(options.headers || {}) };
   if (token) headers['Authorization'] = 'Bearer ' + token;
-  return fetch(url, { ...options, headers });
+  const resp = await fetch(url, { ...options, headers });
+  // T16: usuário bloqueado sai na hora.
+  if (resp.status === 401) {
+    resp.clone().json().then((j) => {
+      if (j && j.erro === 'usuario_bloqueado') {
+        alert('Seu acesso foi bloqueado. Fale com a administração.');
+        try { sessionStorage.removeItem('hubEntrou'); } catch (e) {}
+        if (window.authLogout) window.authLogout();
+      }
+    }).catch(() => {});
+  }
+  return resp;
 }
 
 // ============================================================
@@ -3668,11 +3724,10 @@ async function carregarPermissoesUser() {
   const user = window.AUTH_USER;
   if (!user || !window.__SUPABASE__) return;
   try {
-    const { data, error } = await window.__SUPABASE__
-      .from('profiles')
-      .select('role, permissoes, pode_convidar')
-      .eq('id', user.id)
-      .single();
+    const ler = (campos) => window.__SUPABASE__.from('profiles').select(campos).eq('id', user.id).single();
+    let { data, error } = await ler('role, permissoes, pode_convidar, concede');
+    // Banco ainda sem a coluna concede: lê o resto normalmente.
+    if (error && /concede/i.test(String(error.message || ''))) ({ data, error } = await ler('role, permissoes, pode_convidar'));
     if (error || !data) {
       console.warn('[perms] falha ao carregar profile, default OPERACIONAL', error);
       window.USER_PERMS = null;
@@ -3681,8 +3736,13 @@ async function carregarPermissoesUser() {
     window.USER_PERMS = data.permissoes || {};
     window.USER_ROLE = data.role; // sobrescreve fallback do JWT
     window.USER_PODE_CONVIDAR = data.pode_convidar === true;
+    // T21: o que esta pessoa pode liberar para outras (o dono define) e se ela é o dono.
+    window.USER_CONCEDE = (data.concede && typeof data.concede === 'object') ? data.concede : {};
+    window.USER_DONO = !!(data.permissoes && data.permissoes.configuracoes && (data.permissoes.configuracoes.acoes || []).includes('auditoria_total'));
     aplicarPermissoesSidebar();
     atualizarCardUsuariosAdmin();
+    if (typeof segAtualizarMenu === 'function') segAtualizarMenu();
+    if (typeof ataPrepararCaixaTranscricao === 'function') ataPrepararCaixaTranscricao();
   } catch (e) {
     console.warn('[perms] erro carregar permissoes', e);
   }
@@ -3788,14 +3848,14 @@ const MODULOS_CATALOGO = {
   conciliacao:        { label: 'Conciliação',         acoes: ['ver'] },
   notas_fiscais:      { label: 'Notas Fiscais',       acoes: ['ver'] },
   prestacao_contas:   { label: 'Prestação de Contas', acoes: ['ver', 'gerar', 'ajustar_estrutura'] },
-  atas:               { label: 'Atas Condominiais',   acoes: ['ver', 'gerar', 'edital'] },
+  atas:               { label: 'Atas Condominiais',   acoes: ['ver', 'gerar', 'edital', 'transcricao_livre'] },
   leitura_consumo:    { label: 'Leitura de Consumo',  acoes: ['ver', 'ler'] },
   tarefas:            { label: 'Tarefas',             acoes: ['ver'] },
-  configuracoes:      { label: 'Configurações',       acoes: ['ver', 'editar', 'convidar', 'ver_chaves'] }
+  configuracoes:      { label: 'Configurações',       acoes: ['ver', 'editar', 'convidar', 'ver_chaves', 'ver_auditoria'] }
 };
 
 // Ações que nem o cargo GESTOR libera sozinho: só quem já tem pode dar ou tirar (T15).
-const ACOES_RESTRITAS_PERM = ['ver_chaves'];
+const ACOES_RESTRITAS_PERM = ['ver_chaves', 'ver_auditoria'];
 
 const ROLE_COR = { GESTOR: '#00D2FF', GERENTE: '#A78BFA', OPERACIONAL: '#8B95A8' };
 let _perfilEditando = null;
@@ -3881,10 +3941,13 @@ function renderListaUsuarios() {
       <span style="display:inline-block;padding:3px 10px;background:${cor}20;color:${cor};border:1px solid ${cor}40;border-radius:12px;font-size:10px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.05em">${esc(u.role)}</span>
       <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">${visiveis}/${Object.keys(MODULOS_CATALOGO).length} módulos</span>
       ${u.pode_convidar ? '<span style="font-size:10px;color:var(--gs-blue);font-family:var(--mono)" title="Pode convidar usuários">✉</span>' : ''}
+      ${u.bloqueado ? '<span style="font-size:10px;color:var(--danger);font-family:var(--mono);font-weight:700">BLOQUEADO</span>' : ''}
       ${(!isGestor && window.USER_ROLE === 'GESTOR' && _carteirasDisponivel) ? `<span style="font-size:10px;color:var(--muted);font-family:var(--mono)" title="Condomínios que o usuário vê">${(_carteirasPorUsuario[u.id] || []).length ? esc(nomesCarteiras(_carteirasPorUsuario[u.id]).join(', ')) : 'todos os condomínios'}</span>` : ''}
       ${isGestor
         ? '<button class="btn btn-ghost" disabled style="font-size:11px;padding:6px 10px;opacity:0.5;cursor:not-allowed" title="GESTOR tem permissões totais imutáveis">imutável</button>'
         : `<button class="btn btn-ghost" onclick='abrirModalPermissoes(${JSON.stringify(u.id)})' style="font-size:11px;padding:6px 10px">Editar permissões</button>`}
+      ${(isGestor || isSelf || window.USER_ROLE !== 'GESTOR') ? '' : `<button class="btn btn-ghost" onclick='adminTrocarSenha(${JSON.stringify(u.id)}, ${JSON.stringify(u.email)})' style="font-size:11px;padding:6px 10px" title="Definir uma nova senha">Senha</button>
+      <button class="btn btn-ghost" onclick='adminBloquear(${JSON.stringify(u.id)}, ${JSON.stringify(u.email)}, ${u.bloqueado ? 'false' : 'true'})' style="font-size:11px;padding:6px 10px;color:${u.bloqueado ? 'var(--success)' : 'var(--warning)'}">${u.bloqueado ? 'Desbloquear' : 'Bloquear'}</button>`}
       ${(isGestor || isSelf) ? '' : `<button class="btn btn-ghost" onclick='deletarUsuario(${JSON.stringify(u.id)}, ${JSON.stringify(u.email)})' style="font-size:11px;padding:6px 10px;color:var(--danger)" title="Remover usuário">✕</button>`}
     </div>`;
   }).join('');
@@ -3935,6 +3998,7 @@ function abrirModalPermissoes(userId) {
   if (!u) return;
   _perfilEditando = JSON.parse(JSON.stringify(u)); // clone deep
   _perfilEditando._roleOriginal = u.role;
+  _perfilEditando._concedeOriginal = JSON.parse(JSON.stringify(u.concede || {}));
   _perfilEditando._carteirasOriginal = (_carteirasPorUsuario[u.id] || []).slice();
   _perfilEditando.carteiras = (_carteirasPorUsuario[u.id] || []).slice();
   if (!_perfilEditando.permissoes) _perfilEditando.permissoes = {};
@@ -3950,15 +4014,14 @@ function fecharModalPermissoes() {
 
 function renderPermissoesForm(u) {
   const esc = (s) => String(s || '').replace(/</g,'&lt;');
-  const souGestor = window.USER_ROLE === 'GESTOR';
-  // GERENTE so libera o que ele mesmo tem (o backend confere de novo ao salvar)
-  const limite = souGestor ? null : (window.USER_PERMS || {});
-  const tenhoModulo = (m) => !limite || !!(limite[m] && limite[m].visivel);
-  // Ações que nem o cargo GESTOR libera sozinho: só quem tem pode dar ou tirar (o servidor confere).
+  // T21: o dono libera tudo (menos o próprio acesso de dono). Os outros só mexem no que o
+  // dono deixou cada um liberar (USER_CONCEDE). O servidor confere de novo ao salvar.
+  const souDono = window.USER_DONO === true;
+  const concedeMeu = window.USER_CONCEDE || {};
   const ACOES_RESTRITAS = ACOES_RESTRITAS_PERM;
-  const tenhoRestrita = (m, a) => { const meu = (window.USER_PERMS || {})[m]; return !!(meu && (meu.acoes || []).includes(a)); };
-  const tenhoAcao = (m, a) => ACOES_RESTRITAS.includes(a) ? tenhoRestrita(m, a) : (!limite || (tenhoModulo(m) && (limite[m].acoes || []).includes(a)));
-  const cargo = (souGestor && u._roleOriginal !== 'GESTOR')
+  const tenhoModulo = (m) => souDono || (Array.isArray(concedeMeu[m]) && concedeMeu[m].includes('ver'));
+  const tenhoAcao = (m, a) => ACOES_RESTRITAS.includes(a) ? souDono : (souDono || (Array.isArray(concedeMeu[m]) && concedeMeu[m].includes(a)));
+  const cargo = (souDono && u._roleOriginal !== 'GESTOR')
     ? `<div style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:10px">
          <label style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text)">
            Cargo
@@ -3968,34 +4031,35 @@ function renderPermissoesForm(u) {
            </select>
          </label>
        </div>` : '';
-  const podeConvidar = (souGestor && u.role === 'GERENTE')
+  const podeConvidar = (souDono && u.role === 'GERENTE')
     ? `<div style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:14px">
          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;color:var(--text)">
            <input type="checkbox" id="perm-pode-convidar" ${u.pode_convidar ? 'checked' : ''}>
-           Pode gerenciar usuários: convidar, liberar acessos e remover OPERACIONAIS (só com os acessos que ele mesmo tem)
+           Pode gerenciar usuários: convidar, liberar acessos e remover OPERACIONAIS (só o que você marcar em "Pode liberar para outros")
          </label>
        </div>` : '';
   const linhas = Object.entries(MODULOS_CATALOGO).map(([modulo, def]) => {
     const atual = u.permissoes[modulo] || { visivel: false, acoes: [] };
     const checks = def.acoes.map(a => {
       const c = (atual.acoes || []).includes(a);
-      const travada = !atual.visivel || (!c && !tenhoAcao(modulo, a)) || (ACOES_RESTRITAS.includes(a) && !tenhoAcao(modulo, a));
+      // Travada: módulo escondido, ou ação que você não pode liberar nem tirar.
+      const travada = !atual.visivel || !tenhoAcao(modulo, a);
       return `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;font-size:11px;font-family:var(--mono);color:var(--text);cursor:pointer">
         <input type="checkbox" data-modulo="${modulo}" data-acao="${a}" ${c ? 'checked' : ''} ${travada ? 'disabled' : ''}> ${esc(a.replace(/_/g, ' '))}
       </label>`;
     }).join('');
-    const visTravada = !atual.visivel && !tenhoModulo(modulo);
+    const visTravada = !tenhoModulo(modulo);
     return `<tr style="border-bottom:1px solid var(--border)">
       <td style="padding:8px 10px;font-size:12px;color:var(--text);width:42%">${esc(def.label)}</td>
       <td style="padding:8px 10px;text-align:center;width:18%">
         <label style="cursor:pointer">
-          <input type="checkbox" data-modulo-visivel="${modulo}" ${atual.visivel ? 'checked' : ''} ${visTravada ? 'disabled title="Você não tem esse módulo"' : ''}>
+          <input type="checkbox" data-modulo-visivel="${modulo}" ${atual.visivel ? 'checked' : ''} ${visTravada ? 'disabled title="Você não pode liberar nem tirar esse módulo"' : ''}>
         </label>
       </td>
       <td style="padding:8px 10px">${checks || '<span style="font-size:10px;color:var(--muted);font-family:var(--mono)">—</span>'}</td>
     </tr>`;
   }).join('');
-  return cargo + podeConvidar + renderCarteirasForm(u) + `<table style="width:100%;border-collapse:collapse">
+  return cargo + podeConvidar + renderConcedeForm(u) + renderCarteirasForm(u) + `<table style="width:100%;border-collapse:collapse">
     <thead><tr style="background:var(--bg3)">
       <th style="padding:9px 10px;text-align:left;font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Módulo</th>
       <th style="padding:9px 10px;text-align:center;font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Visível</th>
@@ -4003,7 +4067,25 @@ function renderPermissoesForm(u) {
     </tr></thead>
     <tbody>${linhas}</tbody>
   </table>
-  <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:10px">Desmarcar "Visível" desabilita o módulo na sidebar — ações ficam ignoradas.</div>`;
+  <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:10px">Desmarcar "Visível" esconde o módulo do menu; as ações dele ficam sem efeito.</div>`;
+}
+
+// T21: só o dono vê. Define o que um GERENTE pode liberar ou tirar de outras pessoas.
+// "ver" é mostrar o módulo. Cada mudança que ele fizer vira alerta na aba Segurança.
+function renderConcedeForm(u) {
+  if (window.USER_DONO !== true || u.role !== 'GERENTE') return '';
+  const esc = (s) => String(s || '').replace(/</g, '&lt;');
+  const atual = (u.concede && typeof u.concede === 'object') ? u.concede : {};
+  const linhas = Object.entries(MODULOS_CATALOGO).map(([m, def]) => {
+    const tem = (a) => Array.isArray(atual[m]) && atual[m].includes(a);
+    const acoes = ['ver'].concat(def.acoes.filter(a => !ACOES_RESTRITAS_PERM.includes(a) && a !== 'ver' && a !== 'auditoria_total'));
+    return `<div style="margin:4px 0;font-size:11px;font-family:var(--mono);color:var(--text)"><span style="display:inline-block;min-width:150px">${esc(def.label)}</span>` +
+      acoes.map(a => `<label style="display:inline-flex;align-items:center;gap:3px;margin-right:12px;cursor:pointer"><input type="checkbox" data-concede-modulo="${m}" data-concede-acao="${a}" ${tem(a) ? 'checked' : ''}> ${esc(a === 'ver' ? 'mostrar módulo' : a.replace(/_/g, ' '))}</label>`).join('') + '</div>';
+  }).join('');
+  return `<details style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:14px">
+      <summary style="cursor:pointer;font-size:12px;color:var(--text)">Pode liberar para outros <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">(só funciona com "Pode gerenciar usuários" marcado; você recebe alerta a cada liberação)</span></summary>
+      <div style="margin-top:8px">${linhas}</div>
+    </details>`;
 }
 
 // T09: carteiras que o usuário vê (só GESTOR edita; GESTOR vê todos e não tem carteira).
@@ -4033,22 +4115,32 @@ document.addEventListener('change', (ev) => {
 
 function coletarPermissoesDoForm() {
   if (!_perfilEditando) return;
+  // Parte do que já está salvo: o que está travado (que você não pode mexer) fica igual.
+  const antes = _perfilEditando.permissoes || {};
   const novas = {};
-  Object.keys(MODULOS_CATALOGO).forEach(m => {
-    novas[m] = { visivel: false, acoes: [] };
+  Object.keys(Object.assign({}, MODULOS_CATALOGO, antes)).forEach(m => {
+    const a = antes[m] || { visivel: false, acoes: [] };
+    novas[m] = { visivel: a.visivel === true, acoes: (a.acoes || []).slice() };
   });
   document.querySelectorAll('[data-modulo-visivel]').forEach(cb => {
     const m = cb.dataset.moduloVisivel;
-    if (cb.checked && novas[m]) novas[m].visivel = true;
+    if (!cb.disabled && novas[m]) novas[m].visivel = cb.checked;
   });
   document.querySelectorAll('[data-modulo][data-acao]').forEach(cb => {
     const m = cb.dataset.modulo;
     const a = cb.dataset.acao;
-    // Ação restrita travada continua como estava (quem não tem não dá nem tira).
-    if (!cb.checked || (cb.disabled && !ACOES_RESTRITAS_PERM.includes(a))) return;
-    if (novas[m] && novas[m].visivel) novas[m].acoes.push(a);
+    if (cb.disabled || !novas[m]) return;
+    const l = novas[m].acoes;
+    if (cb.checked && !l.includes(a)) l.push(a);
+    if (!cb.checked && l.includes(a)) l.splice(l.indexOf(a), 1);
   });
   _perfilEditando.permissoes = novas;
+  const cbsConc = document.querySelectorAll('[data-concede-modulo]');
+  if (cbsConc.length) {
+    const conc = {};
+    cbsConc.forEach(cb => { if (cb.checked) (conc[cb.dataset.concedeModulo] = conc[cb.dataset.concedeModulo] || []).push(cb.dataset.concedeAcao); });
+    _perfilEditando.concede = conc;
+  }
   const cbsCart = document.querySelectorAll('[data-carteira]');
   if (cbsCart.length) _perfilEditando.carteiras = Array.from(cbsCart).filter(cb => cb.checked).map(cb => Number(cb.dataset.carteira));
   const pc = document.getElementById('perm-pode-convidar');
@@ -4087,6 +4179,18 @@ async function salvarPermissoes() {
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.detalhe?.message || (typeof data.detalhe === 'string' ? data.detalhe : '') || data.erro || ('HTTP ' + resp.status));
+    // T21: o que ele pode liberar para outros (só o dono, só se mudou)
+    if (window.USER_DONO === true && _perfilEditando.role === 'GERENTE' && _perfilEditando.concede
+        && JSON.stringify(_perfilEditando.concede) !== JSON.stringify(_perfilEditando._concedeOriginal || {})) {
+      const rk = await apiAuthFetch(`/api/admin/usuarios/${encodeURIComponent(_perfilEditando.id)}/concede`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ concede: _perfilEditando.concede })
+      });
+      const dk = await rk.json().catch(() => ({}));
+      if (!rk.ok) throw new Error('Permissões salvas, mas o "pode liberar" não: ' + (dk.detalhe || dk.erro || ('HTTP ' + rk.status)));
+      _perfilEditando._concedeOriginal = JSON.parse(JSON.stringify(_perfilEditando.concede));
+    }
     // T09: carteira (só GESTOR, só se mudou)
     const cartNova = (_perfilEditando.carteiras || []).slice().sort((a, b) => a - b);
     const cartAntes = (_perfilEditando._carteirasOriginal || []).slice().sort((a, b) => a - b);
@@ -4144,6 +4248,7 @@ async function deletarUsuario(userId, email) {
 <script src="/condominio.js"></script>
 <script src="/cobranca.js"></script>
 <script src="/comparativo.js"></script>
+<script src="/seguranca.js"></script>
 <script src="/atas.js"></script>
 <script src="/comunicados.js"></script>
 <script src="/relatorio.js"></script>

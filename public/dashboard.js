@@ -18,7 +18,7 @@ function atualizarDashCond() {
 function dashAbrirModalGerenciarCond(aba) {
   const m = document.getElementById('dash-modal-gerenciar-cond');
   if (!m) return;
-  document.getElementById('dash-modal-nome-cond').value = '';
+  { const n = document.getElementById('dash-modal-nome-cond'); if (n) n.value = ''; }
   document.getElementById('dash-modal-id-superlogica').value = '';
   if (window.CondSeletor) {
     CondSeletor.montar('dash-modal-cond-seletor', {
@@ -57,31 +57,17 @@ function dashModalSetTab(aba) {
 
 // Valida campos, faz POST no Supabase e auto seleciona o condominio recem cadastrado como ativo no Dashboard.
 async function dashSalvarNovoCondominio() {
-  const nome = (document.getElementById('dash-modal-nome-cond').value || '').trim();
   const idSupRaw = (document.getElementById('dash-modal-id-superlogica').value || '').trim();
-  if (!nome) { toast('Informe o nome do condomínio.', 'err'); return; }
   if (!idSupRaw || !/^[0-9]+$/.test(idSupRaw) || parseInt(idSupRaw, 10) <= 0) {
     toast('ID Superlógica deve ser um número inteiro positivo.', 'err');
     return;
   }
   const idSuperlogica = parseInt(idSupRaw, 10);
-  // UUID gerado no cliente porque a coluna id é NOT NULL sem default no Supabase.
-  // sindico: null evita violação NOT NULL caso a coluna seja NOT NULL sem default.
-  // Fallback para browsers que não suportam crypto.randomUUID (ex: HTTP sem TLS)
-  const novoId = (window.crypto && typeof crypto.randomUUID === 'function')
-    ? crypto.randomUUID()
-    : 'cond-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
-  const payload = { id: novoId, nome, sindico: null, id_superlogica: idSuperlogica, criado_em: new Date().toISOString() };
-  // Usa supaFetchRich para expor o erro real ao usuário (RLS, schema, constraint, etc.)
-  const ret = await supaFetchRich('condominios', { method: 'POST', body: JSON.stringify(payload) });
-  if (!ret.ok) {
-    console.error('[supabase] erro ao salvar condominio:', ret);
-    toast('Erro Supabase ' + ret.status + ': ' + ret.detail, 'err');
-    return;
-  }
-  const dados = ret.data;
-  if (!dados || (Array.isArray(dados) && dados.length === 0)) {
-    toast('Falha ao salvar condomínio.', 'err');
+  // T16: o cadastro passa pelo servidor, que confere o código no Superlógica e usa o nome de lá.
+  const resp = await apiAuthFetch('/api/condominios/cadastrar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id_superlogica: idSuperlogica }) });
+  const dados = await resp.json().catch(() => null);
+  if (!resp.ok || !dados) {
+    toast((dados && dados.detalhe) || ('Não foi possível cadastrar (' + resp.status + ').'), 'err');
     return;
   }
   const novo = Array.isArray(dados) ? dados[0] : dados;

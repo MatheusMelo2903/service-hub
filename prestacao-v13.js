@@ -410,7 +410,21 @@ module.exports = function registrarPrestacaoV13(app, {
   podeUsarSuperlogica = null,    // async (userId) -> bool
   podeAjustarEstrutura = null,   // async (userId) -> bool (ação prestacao_contas.ajustar_estrutura)
   exigirCarteira = null,         // async (req, res, id) -> bool; responde 403 fora da carteira (T18)
+  condominioDaBase = null,       // T16: async (idSuperlogica) -> { nome } | null (só condomínio da base)
+  auditar = null,                // T16: (req, acao, detalhe, suspeito, motivo) registra na auditoria
 }) {
+  const registrar = (req, ...a) => { try { if (auditar) auditar(req, ...a); } catch (e) { /* nunca derruba a geração */ } };
+  // T16: o relatório anexado tem de ser do condomínio escolhido (que é da base).
+  const PALAVRAS_FORA = new Set(['condominio', 'cond', 'residencial', 'res', 'edificio', 'ed', 'edif', 'do', 'da', 'de', 'dos', 'das', 'e', 'the', 'associacao', 'conjunto', 'parque', 'jardim', 'torre', 'bloco']);
+  const tokensNome = (n) => String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter((t) => t && t.length > 1 && !PALAVRAS_FORA.has(t));
+  function mesmoCondominio(a, b) {
+    const ta = new Set(tokensNome(a)); const tb = new Set(tokensNome(b));
+    if (!ta.size || !tb.size) return null; // sem nome legível: não dá para afirmar
+    const [menor, maior] = ta.size <= tb.size ? [ta, tb] : [tb, ta];
+    let comuns = 0; menor.forEach((t) => { if (maior.has(t)) comuns++; });
+    return comuns / menor.size >= 0.6;
+  }
   const jobs = new Map(); // jobId -> { dono, status, etapa, criadoEm, payload?, erro? }
   const clienteSL = superlogica && superlogica.appToken && superlogica.accessToken ? criarCliente(superlogica) : null;
 
@@ -472,7 +486,7 @@ module.exports = function registrarPrestacaoV13(app, {
     agendarLimpeza(jobId);
   }
 
-  async function executar(jobId, { corpo, contentType, nome, observacoes, fonteSL, podeAjustar }) {
+  async function executar(jobId, { corpo, contentType, nome, observacoes, fonteSL, podeAjustar, condBase, req }) {
     const job = jobs.get(jobId);
     const etapa = (e) => { if (job) job.etapa = e; };
     const falhar = (detalhe, erro) => {
@@ -517,6 +531,14 @@ module.exports = function registrarPrestacaoV13(app, {
       return falhar('O serviço de geração não respondeu. Tente de novo em alguns minutos.', 'servico_indisponivel');
     }
     const { dados, rascunho } = ext.json;
+    // T16: relatório de outro condomínio não gera prestação.
+    if (!fonteSL && condBase && req && req.authMode !== 'internal') {
+      const igual = mesmoCondominio(dados && dados.condominio, condBase.nome);
+      if (igual === false) {
+        registrar(req, 'prestacao_recusada', { id_superlogica: condBase.id, condominio_escolhido: condBase.nome, condominio_do_relatorio: String((dados && dados.condominio) || '').slice(0, 150) }, true, 'relatorio_de_outro_condominio');
+        return falhar('Os relatórios anexados são de outro condomínio. Escolha o condomínio certo e anexe os relatórios dele.', 'condominio_diferente');
+      }
+    }
 
     // 2. Curadoria da composição pelo Claude (só no modo detalhado; o simples não tem itens).
     let composicaoIA = null;
@@ -549,13 +571,13 @@ module.exports = function registrarPrestacaoV13(app, {
 
     // 3. Montar, auditar e converter (código da skill).
     const avisos = [];
-    if (motivoIA) avisos.push('A revisão de texto por IA não respondeu; a composição foi montada automaticamente.');
-    else if (parcialIA) avisos.push('Parte das despesas ficou com a composição automática (a revisão por IA não respondeu nesse trecho).');
+    if (motivoIA) avisos.push('A revisão automática de texto não respondeu; a composição foi montada no modo simples.');
+    else if (parcialIA) avisos.push('Parte das despesas ficou com a composição no modo simples (a revisão automática não respondeu nesse trecho).');
     if (uso) console.log('[prestacao-v13] tokens_in=' + uso.input_tokens + ' cache_lido=' + (uso.cache_lido || 0) + ' tokens_out=' + uso.output_tokens);
     await montarEConcluir(jobId, { dados, rascunho, nome, composicaoIA }, { avisosAntes: avisos, t0, podeAjustar: !!podeAjustar });
   }
 
-  app.post('/api/prestacao/v13/iniciar', requireAuth, (req, res) => {
+  app.post('/api/prestacao/v13/iniciar', requireAuth, async (req, res) => {
     if (!INTERNAL_API_SECRET || !PRESTACAO_PDF_API_URL) {
       return res.status(503).json({ erro: 'prestacao_api_nao_configurada' });
     }
@@ -567,6 +589,18 @@ module.exports = function registrarPrestacaoV13(app, {
     if (!tamanho) return res.status(411).json({ erro: 'content_length_obrigatorio' });
     if (tamanho > TAMANHO_MAX) return res.status(413).json({ erro: 'upload_muito_grande', detalhe: 'Limite: 50MB.' });
 
+    // T16: só condomínio da base (o relatório também é conferido contra ele depois de lido).
+    const idCondQ = parseInt(req.query.cond, 10);
+    let condBase = null;
+    if (req.authMode !== 'internal') {
+      if (!(idCondQ > 0)) return res.status(400).json({ erro: 'condominio_obrigatorio', detalhe: 'Escolha o condomínio da prestação.' });
+      const cb = condominioDaBase ? await condominioDaBase(idCondQ) : null;
+      if (!cb) {
+        registrar(req, 'prestacao_recusada', { id_superlogica: idCondQ }, true, 'condominio_fora_da_base');
+        return res.status(403).json({ erro: 'condominio_fora_da_base', detalhe: 'Esse condomínio não está na base do sistema.' });
+      }
+      condBase = { id: idCondQ, nome: cb.nome };
+    }
     const dono = donoDe(req);
     // Reserva a vaga ANTES de receber o corpo: sem isso, uploads em paralelo do
     // mesmo usuário passavam todos na contagem e cada um segurava até 50MB em memória.
@@ -581,7 +615,8 @@ module.exports = function registrarPrestacaoV13(app, {
     jobs.set(jobId, { dono, status: 'enviando', etapa: 'enviando', criadoEm: Date.now() });
     const liberar = () => jobs.delete(jobId);
 
-    const nome = typeof req.query.nome === 'string' ? req.query.nome.trim().slice(0, 120) : '';
+    // O nome na capa é o do cadastro da base, não o que veio da tela.
+    const nome = condBase ? String(condBase.nome || '').slice(0, 120) : (typeof req.query.nome === 'string' ? req.query.nome.trim().slice(0, 120) : '');
     const observacoes = typeof req.query.obs === 'string' ? req.query.obs.trim().slice(0, 1000) : '';
 
     const partes = [];
@@ -611,7 +646,7 @@ module.exports = function registrarPrestacaoV13(app, {
       const job = jobs.get(jobId);
       if (!job) return;
       job.status = 'processing';
-      podeAjustar(req).then((pa) => executar(jobId, { corpo: Buffer.concat(partes), contentType, nome: nome || null, observacoes, podeAjustar: pa })).catch((e) => {
+      podeAjustar(req).then((pa) => (registrar(req, 'prestacao_gerada', { id_superlogica: condBase && condBase.id, origem: 'relatorios' }), executar(jobId, { corpo: Buffer.concat(partes), contentType, nome: nome || null, observacoes, podeAjustar: pa, condBase, req }))).catch((e) => {
         const j = jobs.get(jobId);
         if (j && j.status === 'processing') {
           j.status = 'error';
@@ -638,6 +673,14 @@ module.exports = function registrarPrestacaoV13(app, {
     const RE = /^\d{4}-(0[1-9]|1[0-2])$/;
     if (!(idCond > 0)) return res.status(400).json({ erro: 'condominio_sem_id', detalhe: 'Esse condomínio não tem o código do Superlógica no cadastro.' });
     if (!RE.test(inicio) || !RE.test(fim) || inicio > fim) return res.status(400).json({ erro: 'periodo_invalido', detalhe: 'Confira o mês inicial e o mês final.' });
+    let condSL = null;
+    if (req.authMode !== 'internal') {
+      condSL = condominioDaBase ? await condominioDaBase(idCond) : null;
+      if (!condSL) {
+        registrar(req, 'prestacao_recusada', { id_superlogica: idCond }, true, 'condominio_fora_da_base');
+        return res.status(403).json({ erro: 'condominio_fora_da_base', detalhe: 'Esse condomínio não está na base do sistema.' });
+      }
+    }
     const [yi, mi] = inicio.split('-').map(Number);
     const [yf, mf] = fim.split('-').map(Number);
     if ((yf - yi) * 12 + (mf - mi) + 1 > MAX_MESES) return res.status(400).json({ erro: 'periodo_longo', detalhe: 'O período pode ter no máximo ' + MAX_MESES + ' meses.' });
@@ -655,10 +698,11 @@ module.exports = function registrarPrestacaoV13(app, {
     if (ativos.length >= MAX_JOBS_ATIVOS_GERAL) {
       return res.status(429).json({ erro: 'servidor_ocupado', detalhe: 'Muitas prestações sendo geradas agora. Tente de novo em alguns minutos.' });
     }
-    const nome = typeof b.nome === 'string' ? b.nome.trim().slice(0, 120) : '';
+    const nome = condSL ? String(condSL.nome || '').slice(0, 120) : (typeof b.nome === 'string' ? b.nome.trim().slice(0, 120) : '');
     const observacoes = typeof b.obs === 'string' ? b.obs.trim().slice(0, 1000) : '';
     const jobId = crypto.randomUUID();
     jobs.set(jobId, { dono, status: 'processing', etapa: 'puxando os dados do Superlógica', criadoEm: Date.now() });
+    registrar(req, 'prestacao_gerada', { id_superlogica: idCond, origem: 'superlogica' });
     const pa = await podeAjustar(req);
     executar(jobId, {
       nome: nome || null,
