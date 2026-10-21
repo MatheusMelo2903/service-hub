@@ -280,6 +280,11 @@ async def v13_montar(
                 res = await run_in_threadpool(v13.montar, dados, comp, tmpdir)
                 origem = "ia"
             except v13.ErroPrestacao as e:
+                if estrutura:
+                    # Com ajuste de estrutura, a falha e do ajuste (ex.: nome longo nao coube):
+                    # nao troca a composicao da IA pela automatica; avisa o motivo.
+                    _log("v13_estrutura_reprovada", motivo=str(e)[:200])
+                    raise _422("O ajuste de estrutura não coube na apresentação: " + str(e), "estrutura")
                 # A curadoria da IA nao passou na conferencia (ex.: soma citada nao bate).
                 # Refaz com a composicao automatica, que sempre fecha com o total.
                 _log("v13_ia_reprovada", motivo=str(e)[:200])
@@ -295,6 +300,8 @@ async def v13_montar(
                 res = await run_in_threadpool(v13.montar, dados, comp, tmpdir)
             except v13.ErroPrestacao as e:
                 _log("v13_montar_recusou", motivo=str(e)[:200])
+                if estrutura:
+                    raise _422("O ajuste de estrutura não coube na apresentação: " + str(e), "estrutura")
                 raise _422(str(e), "montagem")
         _log("v13_gerado", origem=origem, pdf_kb=len(res["pdf"]) // 1024, estrutura=bool(estrutura),
              duracao_ms=int((time.perf_counter() - inicio_t) * 1000))

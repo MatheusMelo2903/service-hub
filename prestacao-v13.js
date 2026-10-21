@@ -450,9 +450,9 @@ module.exports = function registrarPrestacaoV13(app, {
     if (mon.json.aviso) avisos.push(mon.json.aviso);
     if (job) {
       job.status = 'done';
-      // Guardado só no servidor (some com o job): permite reajustar sem puxar tudo de novo.
-      job.base = base;
-      job.podeAjustar = podeAjustar;
+      // Guardado só no servidor (some com o job) e só para quem pode ajustar:
+      // permite reajustar sem puxar tudo de novo.
+      if (podeAjustar) job.base = base;
       job.payload = {
         pdf_b64: mon.json.pdf_b64,
         pptx_b64: mon.json.pptx_b64,

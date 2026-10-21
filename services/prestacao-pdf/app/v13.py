@@ -245,9 +245,11 @@ def completar_composicao(comp_ia: dict, dados: dict, rascunho: dict, nome_hub: s
     return comp
 
 
-def _nome_limpo(v) -> str:
-    s = re.sub(r"[\u2010-\u2015]", " ", str(v or ""))  # sem travessao nos textos do deck
-    return re.sub(r"\s+", " ", s).strip()[:80]
+def _nome_limpo(v, limite: int = 80) -> str:
+    # Sem hifen nem travessao nos textos do deck: " - " vira virgula, o resto vira espaco.
+    s = re.sub(r"\s+[-\u2010-\u2015\u2212]\s+", ", ", str(v or ""))
+    s = re.sub(r"[-\u2010-\u2015\u2212]", " ", s)
+    return re.sub(r"\s+", " ", s).strip(" ,")[:limite]
 
 
 def sanear_estrutura(est, dados: dict) -> dict | None:
@@ -268,8 +270,8 @@ def sanear_estrutura(est, dados: dict) -> dict | None:
         if k in cat_de and _nome_limpo(v):
             out["renomear"][k] = _nome_limpo(v)
     for k, v in (est.get("renomear_categorias") or {}).items() if isinstance(est.get("renomear_categorias"), dict) else []:
-        if k in cats and _nome_limpo(v):
-            out["renomear_categorias"][k] = _nome_limpo(v)
+        if k in cats and _nome_limpo(v, 40):
+            out["renomear_categorias"][k] = _nome_limpo(v, 40)
     usadas = set()
     for g in (est.get("juntar") or [])[:100] if isinstance(est.get("juntar"), list) else []:
         if not isinstance(g, dict):

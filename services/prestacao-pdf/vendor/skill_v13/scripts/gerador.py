@@ -384,6 +384,7 @@ def s_estrutura(D):
     lst = [(c['curto'] + ('\n(não detalhado nesta apresentação)' if c.get('oculta') else ''), c['total']) for c in CFG['despesas']]
     nd = sum(1 for c in CFG['despesas'] if not c.get('oculta'))
     sub = (f"{len(lst)} categorias, cada uma detalhada a seguir" if nd == len(lst)
+           else f"{len(lst)} categorias, nenhuma detalhada nesta apresentação" if nd == 0
            else f"{len(lst)} categorias, {nd} detalhada{'s' if nd != 1 else ''} a seguir")
     cabecalho(s, "06  •  ESTRUTURA DE DESPESAS", "Como a despesa", "foi distribuída",
               f"Total gasto: {brl(D['desp'])}    •    {sub}")

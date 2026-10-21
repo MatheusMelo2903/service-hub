@@ -2375,6 +2375,7 @@ async function prestacaoGerar() {
 var prestAjuste = { jobId: null, base: null, juntar: [] };
 
 function prestacaoPodeAjustar() {
+  if (window.USER_ROLE === 'GESTOR') return true; // o servidor libera GESTOR pelo papel
   return typeof temPermissao === 'function' ? temPermissao('prestacao_contas', 'ajustar_estrutura') : false;
 }
 
@@ -2402,14 +2403,14 @@ function prestacaoMostrarAjuste(jobId, r) {
   r.estrutura_base.forEach(function(c, ci) {
     html += '<div class="prest-aj-cat" data-cat="' + ci + '">'
       + '<div class="prest-aj-cab">'
-      + '<input type="text" class="prest-aj-nomecat" value="' + prestacaoEscAj(rencat[c.nome] || '') + '" placeholder="' + prestacaoEscAj(c.nome) + '" title="Renomear a categoria">'
+      + '<input type="text" class="prest-aj-nomecat" maxlength="40" value="' + prestacaoEscAj(rencat[c.nome] || '') + '" placeholder="' + prestacaoEscAj(c.nome) + '" title="Renomear a categoria">'
       + '<span class="prest-aj-valor">' + prestacaoFmtBRL(c.total) + '</span>'
       + '<label class="prest-aj-chk"><input type="checkbox" class="prest-aj-ocat"' + (occ.indexOf(c.nome) >= 0 ? ' checked' : '') + '> Ocultar categoria</label>'
       + '</div>';
     c.rubricas.forEach(function(rb, ri) {
       html += '<div class="prest-aj-rub" data-rub="' + ri + '">'
         + '<label class="prest-aj-chk" title="Marcar para juntar"><input type="checkbox" class="prest-aj-sel"> juntar</label>'
-        + '<input type="text" class="prest-aj-nomerub" value="' + prestacaoEscAj(ren[rb.chave] || rb.nome) + '" data-original="' + prestacaoEscAj(rb.nome) + '">'
+        + '<input type="text" class="prest-aj-nomerub" maxlength="80" value="' + prestacaoEscAj(ren[rb.chave] || rb.nome) + '" data-original="' + prestacaoEscAj(rb.nome) + '">'
         + '<span class="prest-aj-valor">' + prestacaoFmtBRL(rb.total) + '</span>'
         + '<label class="prest-aj-chk"><input type="checkbox" class="prest-aj-orub"' + (ocr.indexOf(rb.chave) >= 0 ? ' checked' : '') + '> ocultar</label>'
         + '</div>';
@@ -2472,7 +2473,7 @@ function prestacaoColetarEstrutura() {
     if (!bloco) return;
     if (bloco.querySelector('.prest-aj-ocat').checked) est.ocultar_categorias.push(c.nome);
     var nc = bloco.querySelector('.prest-aj-nomecat').value.trim();
-    if (nc) est.renomear_categorias[c.nome] = nc.slice(0, 80);
+    if (nc) est.renomear_categorias[c.nome] = nc.slice(0, 40);
     bloco.querySelectorAll('.prest-aj-rub').forEach(function(linha) {
       var rb = c.rubricas[parseInt(linha.dataset.rub, 10)];
       if (!rb) return;
