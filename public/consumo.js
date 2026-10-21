@@ -4,7 +4,7 @@
 (function () {
   'use strict';
   const LEITURAS_SIMULTANEAS = 3;
-  const LADO_MAX = 1200; // fotos reduzidas antes de enviar (lado maior em pixels)
+  const LADO_MAX = 800; // fotos reduzidas antes de enviar (lado maior em pixels); 800 teve o melhor acerto e custo na comparação de 21/10
 
   const st = {
     itens: [],            // { id, nome, url, b64, status, leitura, unidade, bloco, medidor, varios, id_unidade, escolhida, conf, lancar, lancada, erro }
@@ -172,6 +172,43 @@
       });
     } catch (e) { toast('Falha de conexão ao conferir.', 'err'); }
     render();
+    reforcar();
+  }
+
+  // Foto marcada (ilegível, menor que a anterior ou salto) é lida mais uma vez, com mais cuidado,
+  // antes de ir para o leiturista. Uma vez por foto; leitura editada à mão não é relida.
+  const MOTIVOS_REFORCO = ['ilegivel', 'menor_que_anterior', 'salto_alto'];
+  async function reforcar() {
+    if (st.reforcando || st.lancando) return;
+    const alvo = st.itens.filter((it) => it.conf && it.status === 'lida' && it.b64 && !it.reforcado && !it.editada && !it.lancada &&
+      it.conf.suspeitas.some((x) => MOTIVOS_REFORCO.includes(x.codigo)));
+    if (!alvo.length) return;
+    st.reforcando = true; st.lendo++; travar();
+    alvo.forEach((it) => { it.status = 'lendo'; });
+    render();
+    let i = 0;
+    async function trab() {
+      while (i < alvo.length) {
+        const it = alvo[i++];
+        try {
+          const r = await apiAuthFetch('/api/processar/medidor', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ arquivo: { mime: 'image/jpeg', base64: it.b64 }, reforco: true }),
+          });
+          const d = await lerJson(r);
+          if (r.ok && !it.editada) {
+            if (d.leitura && d.leitura !== 'ilegível') it.leitura = String(d.leitura);
+            if (!it.escolhida && d.unidade && !it.unidadeTxt) { it.unidadeTxt = d.unidade; it.blocoTxt = d.bloco || it.blocoTxt; }
+            if (d.varios_medidores) it.varios = true;
+          }
+        } catch (e) { /* fica a primeira leitura */ }
+        it.reforcado = true; it.status = 'lida'; it.conf = null;
+        render();
+      }
+    }
+    try { await Promise.all(Array.from({ length: Math.min(LEITURAS_SIMULTANEAS, alvo.length) }, trab)); }
+    finally { st.lendo--; st.reforcando = false; travar(); }
+    await conferir();
   }
 
   function opcoesUnidade(sel) {
@@ -195,6 +232,7 @@
         : (it.erro ? '<span class="consumo-chip err">' + esc(it.erro) + '</span>' : '') +
           o.suspeitas.map((s) => '<span class="consumo-chip warn">' + esc(s.texto) + '</span>').join('') +
           (o.avisos || []).map((a) => '<span class="consumo-chip">' + esc(a) + '</span>').join('') +
+          (it.reforcado ? '<span class="consumo-chip">Foto lida duas vezes</span>' : '') +
           (!o.suspeitas.length && !it.erro && it.conf ? '<span class="consumo-chip ok">Sem suspeita</span>' : '');
       // Mês seguinte já lançado: o servidor sempre recusa, então nem deixa marcar.
       const bloqueada = o.suspeitas.some((s) => s.codigo === 'mes_seguinte_lancado');
@@ -228,7 +266,7 @@
       const it = itemDoEvento(e); if (!it) return;
       const campo = e.target.getAttribute('data-campo');
       if (campo === 'unidade') { it.id_unidade = Number(e.target.value) || null; it.escolhida = !!it.id_unidade; it.conf = null; agendarConferir(); }
-      else if (campo === 'leitura') { it.leitura = e.target.value.trim(); it.erro = ''; it.conf = null; agendarConferir(); }
+      else if (campo === 'leitura') { it.leitura = e.target.value.trim(); it.erro = ''; it.editada = true; it.conf = null; agendarConferir(); }
       else if (campo === 'lancar') { it.lancar = e.target.checked; render(); }
     });
     corpo.addEventListener('click', (e) => {

@@ -145,26 +145,44 @@ async function processarMedidor(corpo, usuario) {
   const arq = corpo && corpo.arquivo;
   const bloco = arq && MIMES_IMAGEM.includes(String(arq.mime || '')) ? blocoArquivo(arq) : null;
   if (!bloco) return { status: 400, corpo: { erro: 'arquivo_invalido', detalhe: 'Envie a foto do medidor (JPG, PNG ou WEBP).' } };
-  const r = await chamarModelo({ modelo: MEDIDOR_MODELO, maxTokens: 300, rotulo: 'medidor', usuario,
+  // Segunda leitura (reforco): só para foto que a conferência marcou (ilegível, menor que a
+  // anterior ou salto), com a configuração mais cuidadosa.
+  const cfg = corpo.reforco === true ? MEDIDOR_REFORCO : MEDIDOR_PRIMEIRA;
+  const r = await chamarModelo({ modelo: cfg.modelo, esforco: cfg.esforco, maxTokens: cfg.maxTokens, rotulo: corpo.reforco === true ? 'medidor_reforco' : 'medidor', usuario,
     content: [bloco, { type: 'text', text: MEDIDOR_PEDIDO }] });
   if (!r.ok) return erroPadrao(r);
-  return { status: 200, corpo: lerRespostaMedidor(r.texto) };
+  return { status: 200, corpo: Object.assign(lerRespostaMedidor(r.texto), { reforco: corpo.reforco === true }) };
 }
 
 // T20: além da leitura, a unidade e o bloco escritos na foto (etiqueta, placa ou caneta) e o
 // número de série do medidor, para casar a foto com a unidade do condomínio. O que não aparece
 // na foto volta null (nunca adivinhar). Os algarismos vêm separados (inteiros e decimais) e a
-// leitura é montada aqui. Modelo: o padrão, porque o rápido trocou algarismos no teste de 21/10
-// (00123,45 virou 001234,45); MEDIDOR_MODELO troca sem mexer no código.
-const MEDIDOR_MODELO = process.env.MEDIDOR_MODELO || MODELO_PADRAO;
+// leitura é montada aqui.
+// Modelos (comparação de 21/10 com 61 fotos reais de água e gás com o valor do leiturista,
+// resultado em EXECUCAO/testes/T20/modelos.md): a primeira leitura usa a configuração de melhor
+// custo e acerto; a foto marcada na conferência é lida de novo pela configuração mais cuidadosa.
+// Os modelos novos pensam antes de responder: maxTokens alto para não voltar vazio.
+// Variáveis: MEDIDOR_MODELO e MEDIDOR_ESFORCO (primeira), MEDIDOR_MODELO_REFORCO e
+// MEDIDOR_ESFORCO_REFORCO (segunda); esforço vazio = padrão do modelo.
+const _esf = (v, padrao) => (v === undefined ? padrao : (['low', 'medium', 'high'].includes(v) ? v : undefined));
+// Padrão (pedido do Matheus 21/10: acerto acima de custo): primeira leitura sonnet 5.5 no esforço
+// padrão (70% exato, nenhum erro sem suspeita, cerca de R$ 4,90 por 100 fotos); releitura da
+// foto marcada com opus 5.5 (72% no total, cerca de R$ 7,20 por 100). Mais barato: MEDIDOR_ESFORCO=low
+// (65%, R$ 3,10) e MEDIDOR_MODELO_REFORCO=claude-sonnet-5-5.
+const MEDIDOR_PRIMEIRA = { modelo: process.env.MEDIDOR_MODELO || 'claude-sonnet-5-5', esforco: _esf(process.env.MEDIDOR_ESFORCO, undefined), maxTokens: 6000 };
+const MEDIDOR_REFORCO = { modelo: process.env.MEDIDOR_MODELO_REFORCO || 'claude-opus-5-5', esforco: _esf(process.env.MEDIDOR_ESFORCO_REFORCO, undefined), maxTokens: 6000 };
 const MEDIDOR_PEDIDO = [
-  'Foto de medidor de água ou gás de condomínio, tirada pelo leiturista.',
-  'Passo 1: copie os algarismos do mostrador um por um, da esquerda para a direita, separando os de fundo preto ou branco (parte inteira) dos de fundo vermelho ou depois da vírgula (parte decimal). Não repita nem pule algarismo.',
-  'Passo 2: procure na foto qualquer texto escrito à mão ou em etiqueta, placa ou adesivo que indique a unidade (exemplos: "APTO 101", "AP 302 BL B", "CASA 5", "999 TESTE HUB") e copie exatamente.',
-  'Se houver mais de um mostrador na foto, NÃO escolha nenhum: inteiros e decimais null, legivel false e medidores_na_foto com a quantidade.',
-  'Sua resposta inteira deve ser SÓ este JSON, sem explicação, sem texto antes ou depois:',
-  '{"inteiros": "algarismos da parte inteira ou null", "decimais": "algarismos da parte decimal ou null", "legivel": true ou false, "unidade": "número ou nome da unidade escrito na foto, ou null", "bloco": "bloco, torre ou quadra escrito na foto, ou null", "medidor": "número de série gravado no medidor, ou null", "medidores_na_foto": número de mostradores na foto}',
-  'legivel = false se algum algarismo da parte inteira não der para ler com segurança. Nunca invente: o que não aparece com clareza fica null.',
+  'Foto de medidor de água ou gás de condomínio, tirada pelo leiturista. Leia o mostrador de rolos (números), não os ponteiros dos relógios pequenos.',
+  'A foto pode estar girada ou de cabeça para baixo: gire mentalmente até os números ficarem em pé antes de ler. Confira se 6, 8, 9 e 0 não foram trocados.',
+  'Regras de leitura:',
+  '1. Os rolos de fundo preto ou branco são a parte inteira; os de fundo vermelho (ou depois da vírgula) são a parte decimal. Copie todos, da esquerda para a direita, inclusive zeros à esquerda, sem repetir nem pular rolo. Confira quantos rolos há de cada cor antes de responder.',
+  '2. Rolo girando entre dois números: use o MENOR (o que está saindo de cima). De 9 para 0: use 9. Isso é leitura normal, não é ilegível.',
+  '3. Parte decimal: copie todos os rolos vermelhos com a mesma regra do rolo girando. Só marque legivel false se um rolo da parte inteira estiver realmente escondido, borrado ou com reflexo a ponto de não dar para saber o número.',
+  '4. Unidade: número escrito à mão no medidor ou na parede, etiqueta, placa ou adesivo (exemplos: "01", "APTO 101", "AP 302 BL B", "999 TESTE HUB"). Copie como está. Não confunda com o número de série do medidor.',
+  '5. Mais de um mostrador na foto: não escolha; inteiros e decimais null, legivel false e medidores_na_foto com a quantidade.',
+  'Responda SÓ com o JSON abaixo, sem explicação nem texto antes ou depois:',
+  '{"inteiros": "algarismos da parte inteira ou null", "decimais": "algarismos da parte decimal ou null", "legivel": true ou false, "unidade": "unidade escrita na foto ou null", "bloco": "bloco, torre ou quadra escrito na foto ou null", "medidor": "número de série do medidor ou null", "medidores_na_foto": número de mostradores}',
+  'Nunca invente: o que não aparece com clareza fica null.',
 ].join('\n');
 
 const textoCurto = (v, max) => (v == null ? null : (String(v).replace(/\s+/g, ' ').trim().slice(0, max) || null));

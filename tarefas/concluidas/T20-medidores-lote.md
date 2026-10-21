@@ -18,7 +18,9 @@ Nenhum texto de tela cita IA nem fornecedor (scripts/conferir-textos-publicos.js
 scripts/teste-consumo-lote.js: 44 ok.
 Local com as variáveis do dev: 4 fotos (3 geradas e 1 real com dois medidores) lidas certo; 999 TESTE HUB casada pela etiqueta; condomínio 2 só leitura com as suspeitas certas; lançamento no 2 recusado 423; no 167 unidade 41565: leitura 123,45 lançada com foto (arquivo 656808) e conferida, repetição sem substituir recusada 409, troca para 123,5 com PUT conferida.
 
+## Modelo (pedido do Matheus 21/10, acerto acima de custo)
+Comparação com 61 fotos reais de água e gás (EXECUCAO/testes/T20/modelos.md). Primeira leitura com sonnet 5.5 (cerca de 70% exato contra 40% do modelo anterior), foto de 800 px; foto marcada na conferência é relida com opus 5.5. Custo estimado R$ 7,20 por 100 fotos; opção mais barata pelas variáveis (cerca de R$ 4). Nenhuma leitura errada passou sem suspeita.
+
 ## Para o Matheus
-Modelo da leitura: o rápido trocou algarismos nas fotos de teste; ficou o padrão (mais caro, estimativa de R$ 2 a 3 por 100 fotos contra R$ 1 aprovado). MEDIDOR_MODELO troca sem mexer no código.
 Apagar no 167: leitura de água de outubro/2026 da unidade 41565 (123,5) e o arquivo 656808.
 Liberar o lançamento num condomínio real: CONSUMO_LANCAMENTO_LIBERADO com os códigos.

@@ -16,10 +16,12 @@ function registrarUso(info) {
 function usoRecente() { return _uso.slice(); }
 
 // system: string; content: string ou lista de blocos; cache: marca o system para reaproveitar.
-function chamarModelo({ modelo, maxTokens, system, content, cache, timeoutMs, rotulo, usuario }) {
+// esforco (opcional): 'low', 'medium' ou 'high' nos modelos que pensam antes de responder.
+function chamarModelo({ modelo, maxTokens, system, content, cache, timeoutMs, rotulo, usuario, esforco }) {
   return new Promise((resolve) => {
     if (!CHAVE()) return resolve({ ok: false, status: 503, erro: 'servico_indisponivel' });
     const corpo = { model: modelo, max_tokens: maxTokens, messages: [{ role: 'user', content }] };
+    if (esforco) corpo.output_config = { effort: esforco };
     if (system) corpo.system = cache ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system;
     const body = JSON.stringify(corpo);
     const req = https.request({
