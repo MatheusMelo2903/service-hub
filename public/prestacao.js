@@ -2264,7 +2264,7 @@ async function prestacaoGerarServico() {
 // Os números nunca mudam: o servidor monta de novo com os mesmos dados
 // (sem Superlógica e sem IA) e o motor confere que cada total fica igual.
 // ============================================================
-var prestAjuste = { jobId: null, base: null, juntar: [] };
+var prestAjuste = { jobId: null, base: null, juntar: [], tela: null };
 
 function prestacaoPodeAjustar() {
   if (window.USER_ROLE === 'GESTOR') return true; // o servidor libera GESTOR pelo papel
@@ -2287,6 +2287,7 @@ function prestacaoMostrarAjuste(jobId, r) {
   }
   prestAjuste.jobId = jobId;
   prestAjuste.base = r.estrutura_base;
+  prestAjuste.tela = null; // geração nova: vale o que o servidor aplicou
   var ap = r.estrutura_aplicada || {};
   prestAjuste.juntar = (ap.juntar || []).map(function(g) { return { rubricas: g.rubricas.slice(), nome: g.nome || '' }; });
   var occ = ap.ocultar_categorias || [], ocr = ap.ocultar_rubricas || [];
@@ -2333,10 +2334,44 @@ function prestacaoRenderGrupos() {
   });
 }
 
+// Guarda o que está marcado e escrito na tela (ocultar e renomear) antes de
+// qualquer redesenho do card, para nada se perder ao juntar ou desfazer.
+function prestacaoGuardarTela() {
+  if (!document.querySelector('#prest-ajuste-lista [data-cat]')) return;
+  var e = prestacaoColetarEstrutura();
+  prestAjuste.tela = {
+    ocultar_categorias: e.ocultar_categorias, ocultar_rubricas: e.ocultar_rubricas,
+    renomear: e.renomear, renomear_categorias: e.renomear_categorias,
+  };
+}
+
+// Devolve à tela o estado guardado por prestacaoGuardarTela.
+function prestacaoAplicarTela() {
+  var t = prestAjuste.tela;
+  if (!t) return;
+  (prestAjuste.base || []).forEach(function(c, ci) {
+    var bloco = document.querySelector('#prest-ajuste-lista [data-cat="' + ci + '"]');
+    if (!bloco) return;
+    var ocat = bloco.querySelector('.prest-aj-ocat');
+    if (ocat) ocat.checked = t.ocultar_categorias.indexOf(c.nome) >= 0;
+    var nc = bloco.querySelector('.prest-aj-nomecat');
+    if (nc) nc.value = t.renomear_categorias[c.nome] || '';
+    bloco.querySelectorAll('.prest-aj-rub').forEach(function(linha) {
+      var rb = c.rubricas[parseInt(linha.dataset.rub, 10)];
+      if (!rb) return;
+      var orub = linha.querySelector('.prest-aj-orub');
+      if (orub) orub.checked = t.ocultar_rubricas.indexOf(rb.chave) >= 0;
+      var nr = linha.querySelector('.prest-aj-nomerub');
+      if (nr) nr.value = t.renomear[rb.chave] || rb.nome;
+    });
+  });
+}
+
 function prestacaoJuntarMarcadas(ci) {
   var bloco = document.querySelector('#prest-ajuste-lista [data-cat="' + ci + '"]');
   var c = prestAjuste.base[ci];
   if (!bloco || !c) return;
+  prestacaoGuardarTela();
   var emGrupo = {};
   prestAjuste.juntar.forEach(function(g) { g.rubricas.forEach(function(k) { emGrupo[k] = true; }); });
   var marcadas = [];
@@ -2351,11 +2386,14 @@ function prestacaoJuntarMarcadas(ci) {
   prestAjuste.juntar.push({ rubricas: marcadas, nome: (inp && inp.value || '').trim().slice(0, 80) });
   if (inp) inp.value = '';
   prestacaoRenderGrupos();
+  prestacaoAplicarTela();
 }
 
 function prestacaoDesfazerGrupo(gi) {
+  prestacaoGuardarTela();
   prestAjuste.juntar.splice(gi, 1);
   prestacaoRenderGrupos();
+  prestacaoAplicarTela();
 }
 
 function prestacaoColetarEstrutura() {
@@ -2416,7 +2454,7 @@ async function prestacaoGerarComAjuste() {
 // Trocou de condomínio: o ajuste era da prestação do anterior.
 window.addEventListener('condominioAtivo:trocou', function() {
   if (prestacaoState.gerando) return;
-  prestAjuste = { jobId: null, base: null, juntar: [] };
+  prestAjuste = { jobId: null, base: null, juntar: [], tela: null };
   var card = document.getElementById('prest-ajuste');
   if (card) card.style.display = 'none';
 });
