@@ -36,19 +36,32 @@ async function todasPaginas(cliente, rota, params, maxPaginas) {
   return { itens: out, truncado };
 }
 
+// Saldo atual de uma conta: caixa/saldo até hoje (o mesmo número da tela Contas bancárias).
+// vl_saldo_cb do contabancos/index é o saldo de ABERTURA da conta, não o atual (achado na T30).
+async function saldoAtual(cliente, idCond, idConta, hoje) {
+  const j = await cliente.get('caixa/saldo', { idConta, idEmpresa: idCond, dtInicio: dataSL(hoje), ateAData: 1 });
+  const l = Array.isArray(j) ? j[0] : j;
+  if (!l || l.saldo === undefined || l.saldo === null || l.saldo === '') throw new Error('saldo_indisponivel');
+  return cent(num(l.saldo));
+}
+
 // Saldo por conta bancária ativa.
-async function contas(cliente, id) {
+async function contas(cliente, id, hoje) {
+  const quando = hoje instanceof Date ? hoje : new Date();
   const j = await cliente.get('contabancos/index', { idCondominio: id, exibirContasAtivas: 1, exibirDadosBanco: 1 });
-  const lista = (Array.isArray(j) ? j : [])
-    .filter((c) => !limpar(c.dt_datafechamento_cb))
-    .map((c) => ({
+  const ativas = (Array.isArray(j) ? j : []).filter((c) => !limpar(c.dt_datafechamento_cb));
+  const lista = [];
+  // Uma conta por vez (condomínio tem poucas contas; evita pico de chamadas no Superlógica).
+  for (const c of ativas) {
+    lista.push({
       descricao: limpar(c.st_descricao_cb) || 'Conta',
       banco: limpar(c.st_nome_banc),
       conta: limpar(c.st_conta_cb),
       principal: String(c.fl_principal_cb) === '1',
-      saldo: cent(num(c.vl_saldo_cb)),
-    }))
-    .sort((a, b) => (b.principal - a.principal) || a.descricao.localeCompare(b.descricao, 'pt-BR'));
+      saldo: await saldoAtual(cliente, id, c.id_contabanco_cb, quando),
+    });
+  }
+  lista.sort((a, b) => (b.principal - a.principal) || a.descricao.localeCompare(b.descricao, 'pt-BR'));
   return { contas: lista, total: cent(lista.reduce((s, c) => s + c.saldo, 0)) };
 }
 
