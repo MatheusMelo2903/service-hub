@@ -3468,6 +3468,154 @@ app.put('/api/admin/usuarios/:id/carteiras',
     res.json({ id: req.params.id, carteiras: unicas });
   });
 
+
+// ─────────────────────────────────────────────────────────────────────────
+// Comunicados e multas (T10). Texto no padrão gerado pela IA (só rascunho, o usuário revisa),
+// publicação e multa gravadas no Superlógica pelo servidor SÓ com confirmação explícita
+// (campo confirmacao) e SÓ por GESTOR ou GERENTE. Regras de segurança em superlogica/comunicados.js.
+// ─────────────────────────────────────────────────────────────────────────
+const slComunicados = require('./superlogica/comunicados');
+function _credSL() { return { base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }; }
+async function exigirEscritaSuperlogica(req, res) {
+  if (!(await exigirLeituraSuperlogica(req, res))) return false;
+  if (req.authMode === 'internal') return true;
+  if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) { res.status(503).json({ erro: 'service_role_nao_configurada' }); return false; }
+  let p = null;
+  try { p = await lerPerfil(req.user && req.user.sub); } catch (e) { p = null; }
+  if (p && (p.role === 'GESTOR' || p.role === 'GERENTE')) return true;
+  res.status(403).json({ erro: 'acesso_negado', detalhe: 'Só gestor ou gerente pode publicar comunicados e registrar multas.' });
+  return false;
+}
+// Mesma publicação (condomínio, título e texto) não repete em 10 minutos (duplo clique, reenvio).
+const _publicadosRecentes = new Map();
+function _jaPublicado(chave) {
+  const agora = Date.now();
+  for (const [k, t] of _publicadosRecentes) if (agora - t > 10 * 60 * 1000) _publicadosRecentes.delete(k);
+  if (_publicadosRecentes.has(chave)) return true;
+  _publicadosRecentes.set(chave, agora);
+  return false;
+}
+// Texto simples (como o usuário revisou) vira HTML mínimo e escapado para o Superlógica.
+function _textoParaHtml(t) {
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return String(t || '').split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).map((p) => '<p>' + esc(p).replace(/\n/g, '<br>') + '</p>').join('');
+}
+const _logEscrita = (oque, req, id, ok, extra) => console.log('[escrita-superlogica] ' + oque + ' cond=' + id + ' ok=' + ok + ' por=' + (req.authMode === 'internal' ? 'internal' : (req.user && req.user.sub)) + (extra ? ' ' + extra : ''));
+
+const PROMPT_COMUNICADO = `Você redige comunicados e notificações de condomínio da administradora Condomínio Service (Grupo Service), em português formal e cordial.
+
+Devolva SÓ um JSON, sem texto fora dele: {"titulo": "...", "texto": "..."}.
+REGRAS:
+R1. O texto é prosa simples em parágrafos separados por linha em branco. Sem markdown, sem HTML, sem listas com hífen.
+R2. Nunca use hífen ou travessão no texto. Use vírgula, ponto e vírgula ou frase nova.
+R3. Nunca invente dado: data, valor, prazo, nome, unidade, artigo da convenção ou número que não esteja no pedido vira [a confirmar].
+R4. Comece com "Prezados condôminos," (comunicado geral) ou "Prezado(a) responsável pela unidade [unidade]," (notificação a uma unidade) e termine com "Atenciosamente," e "A Administração do [nome do condomínio]".
+R5. Título curto (até 80 caracteres), sem ponto final.
+R6. Tipos: "comunicado" (aviso geral aos moradores); "multa_unidade" (notificação de multa a uma unidade: descreva a infração e o valor só se informados, cite que cabe recurso conforme a convenção sem inventar prazo); "multa_condominio" (aviso aos moradores de que o CONDOMÍNIO recebeu uma multa de órgão ou concessionária: explique o motivo e o valor informados e o que será feito, sem culpar ninguém sem informação).`;
+
+// POST /api/comunicados/rascunho { tipo, assunto, detalhes, condominio, unidade }
+app.post('/api/comunicados/rascunho', requireAuth, express.json({ limit: '50kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const b = req.body || {};
+  const tipo = ['comunicado', 'multa_unidade', 'multa_condominio'].includes(b.tipo) ? b.tipo : null;
+  const assunto = String(b.assunto || '').trim().slice(0, 300);
+  const detalhes = String(b.detalhes || '').trim().slice(0, 4000);
+  if (!tipo || !assunto) return res.status(400).json({ erro: 'dados_invalidos', detalhe: 'Informe o tipo e o assunto.' });
+  if (!ANTHROPIC_KEY) return res.status(503).json({ erro: 'anthropic_key_ausente' });
+  if (!(await exigirEscritaSuperlogica(req, res))) return;
+  const msg = 'Tipo: ' + tipo + '\nCondomínio: ' + String(b.condominio || '[a confirmar]').slice(0, 150) +
+    (b.unidade ? '\nUnidade: ' + String(b.unidade).slice(0, 60) : '') + '\nAssunto: ' + assunto + '\nDetalhes informados: ' + (detalhes || '(nenhum)');
+  const r = await chamarAnthropicAta('claude-sonnet-4-6', 2000, PROMPT_COMUNICADO, msg);
+  if (!r.ok) return res.status(502).json({ erro: 'falha_ia', detalhe: 'Não foi possível gerar o texto agora.' });
+  let j = null;
+  try { j = JSON.parse(String(r.texto).replace(/```(?:json)?\s*|\s*```/g, '').trim()); } catch (e) { j = null; }
+  if (!j || !j.titulo || !j.texto) return res.status(502).json({ erro: 'falha_ia', detalhe: 'A IA não devolveu o texto no formato esperado. Tente de novo.' });
+  // regra da casa: sem hífen nem travessão no texto gerado
+  const semTraco = (s) => String(s).replace(/^\s*[–—-]\s*/gm, '').replace(/\s+[–—-]\s+/g, ', ').replace(/[–—]/g, ', ').replace(/[<>]/g, '');
+  res.json({ titulo: semTraco(j.titulo).slice(0, 150), texto: semTraco(j.texto).slice(0, 20000) });
+});
+
+// POST /api/comunicados/publicar { id_superlogica, titulo, texto, destinatario, canal, notificar, confirmacao:'PUBLICAR' }
+app.post('/api/comunicados/publicar', requireAuth, express.json({ limit: '100kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const b = req.body || {};
+  const id = String(b.id_superlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (b.confirmacao !== 'PUBLICAR') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme a publicação na tela.' });
+  const c = slComunicados.validarComunicado(b);
+  if (c.erro) return res.status(400).json({ erro: 'dados_invalidos', detalhe: c.erro });
+  if (!(await exigirEscritaSuperlogica(req, res))) return;
+  const chaveDup = id + '|' + crypto.createHash('sha256').update(c.titulo + '\n' + c.texto).digest('hex');
+  if (_jaPublicado(chaveDup)) return res.status(409).json({ erro: 'repetido', detalhe: 'Este mesmo comunicado acabou de ser publicado neste condomínio.' });
+  c.texto = _textoParaHtml(c.texto);
+  const r = await slComunicados.publicarComunicado(_credSL(), id, c);
+  _logEscrita('comunicado', req, id, r.ok, 'notificar=' + c.notificar);
+  if (!r.ok) {
+    if (/^HTTP 504|sem resposta/.test(r.msg)) return res.status(504).json({ erro: 'incerto', detalhe: 'O Superlógica não respondeu; o comunicado pode ter sido criado. Confira no Superlógica antes de tentar de novo.' });
+    _publicadosRecentes.delete(chaveDup);
+    return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'O Superlógica recusou: ' + r.msg });
+  }
+  res.json({ ok: true, id_comunicado: r.data && (r.data.id_comunicado_com || r.data.ID_COMUNICADO_COM) || null, notificacao_pendente: c.notificar });
+});
+
+// POST /api/comunicados/disparar — TRAVADO: o notificarcomunicado da API dispara os pendentes de
+// TODOS os condomínios da licença. Só libera com COMUNICADOS_DISPARO_LIBERADO=1 (decisão do Matheus).
+app.post('/api/comunicados/disparar', requireAuth, express.json({ limit: '10kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!(await exigirEscritaSuperlogica(req, res))) return;
+  if (process.env.COMUNICADOS_DISPARO_LIBERADO !== '1') {
+    return res.status(423).json({ erro: 'disparo_travado', detalhe: 'O disparo pela API envia os comunicados pendentes de TODOS os condomínios de uma vez. Está travado até a administração liberar. O comunicado publicado com "notificar" fica na fila do Superlógica e pode ser disparado por lá.' });
+  }
+  if ((req.body || {}).confirmacao !== 'DISPARAR') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme o disparo na tela.' });
+  const r = slComunicados.resultado(await slComunicados.enviar(_credSL(), 'POST', 'comunicados/notificarcomunicado', {}));
+  _logEscrita('disparo', req, '-', r.ok);
+  if (!r.ok) return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'O Superlógica recusou: ' + r.msg });
+  res.json({ ok: true });
+});
+
+// GET /api/condominio/:id/multa-opcoes — unidades e contas bancárias para a tela de multa
+app.get('/api/condominio/:idSuperlogica/multa-opcoes', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (!(await exigirEscritaSuperlogica(req, res))) return;
+  try {
+    const cli = clienteSL();
+    const [unidades, contas] = await Promise.all([slComunicados.listarUnidades(cli, id), slComunicados.listarContas(cli, id)]);
+    res.json({ unidades, contas });
+  } catch (e) {
+    console.warn('[multa-opcoes] ' + id + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler as unidades agora.' });
+  }
+});
+
+// POST /api/multas/registrar { id_superlogica, id_unidade, data MM/DD/AAAA, tipo, titulo, texto, notificar, email, carta, cobranca?, confirmacao:'REGISTRAR' }
+app.post('/api/multas/registrar', requireAuth, express.json({ limit: '100kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const b = req.body || {};
+  const id = String(b.id_superlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (b.confirmacao !== 'REGISTRAR') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme o registro na tela.' });
+  const m = slComunicados.validarMulta(b);
+  if (m.erro) return res.status(400).json({ erro: 'dados_invalidos', detalhe: m.erro });
+  // Cobrança da multa ainda não validada de ponta a ponta (condomínio de teste sem CNPJ): travada
+  // até liberar (MULTA_COBRANCA_LIBERADA=1). Recusa ANTES de gravar qualquer coisa.
+  if (m.cobranca && process.env.MULTA_COBRANCA_LIBERADA !== '1') return res.status(423).json({ erro: 'cobranca_travada', detalhe: 'O lançamento da cobrança da multa ainda está travado pela administração. Registre a ocorrência sem a cobrança.' });
+  if (!(await exigirEscritaSuperlogica(req, res))) return;
+  m.texto = _textoParaHtml(m.texto);
+  try {
+    const r = await slComunicados.registrarMulta(_credSL(), clienteSL(), id, m);
+    _logEscrita('multa', req, id, r.ok, 'unidade=' + m.idUni + ' carta=' + !!m.carta + ' cobranca=' + !!m.cobranca);
+    if (r.incerto) return res.status(504).json({ erro: 'incerto', detalhe: r.msg, resultado: r });
+    if (r.parcial) return res.status(207).json(r); // ocorrência criada, algum passo opcional falhou
+    if (!r.ok) return res.status(r.etapa === 'unidade' || r.etapa === 'conta' ? 400 : 502).json({ erro: 'falha_' + (r.etapa || 'superlogica'), detalhe: r.msg, resultado: r });
+    res.json(r);
+  } catch (e) {
+    console.warn('[multa] ' + id + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível registrar agora.' });
+  }
+});
+
 // Agenda: 1 minuto depois de subir e depois todo dia às 6h de Brasília (9h UTC).
 function _agendarSyncDiario() {
   const agora = new Date();
