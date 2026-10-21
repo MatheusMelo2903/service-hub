@@ -135,7 +135,7 @@ function idsCondominio(rota, pares) {
     if (!idxCond.length) continue;
     const ultimo = partes.length - 1;
     // Bandeira (somenteCondominiosAtivos, exibirCondominiosInativos...): nome simples, sem
-    // colchetes, que cita condomínio só no nome base e começa por um prefixo de bandeira.
+    // colchetes, cujo nome base está na lista exata BANDEIRAS (C04).
     // Com valor exatamente "0" ou "1" não é código de condomínio; qualquer outro valor recusa.
     if (ultimo === 0 && BANDEIRA.test(partes[0])) {
       const vb = typeof v === 'string' ? v : String(v == null ? '' : v);

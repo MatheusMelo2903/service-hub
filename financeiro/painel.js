@@ -155,11 +155,20 @@ async function montarBase(cliente, fila, hoje) {
   const falhas = [];
   const iniPagas = inicioMesesAtras(hoje, MESES_PAGAS);
   const iniPend = inicioMesesAtras(hoje, 6);
-  const tarefas = quinzenas(iniPagas, hoje).map(([a, b]) => janela(cliente, fila, 'despesas/index', Object.assign({ idCondominio: -1 }, LIQ), a, b, falhas));
-  tarefas.push(janela(cliente, fila, 'despesas/index', Object.assign({ idCondominio: -1 }, PEND), '2025-01-01', U.maisDias(iniPend, -1), falhas));
-  tarefas.push(janela(cliente, fila, 'despesas/index', Object.assign({ idCondominio: -1 }, PEND), iniPend, U.maisDias(hoje, 60), falhas));
+  // C05: cada janela principal anota as próprias falhas (o teto de quebras continua comum a todas)
+  // para contar quantas janelas principais falharam, e não quantos pedaços.
+  let quebras = 0;
+  let janelasFalhas = 0;
+  const principal = (action, params, a, b) => {
+    const f = [];
+    Object.defineProperty(f, 'quebras', { get: () => quebras, set: (v) => { quebras = v; } });
+    return janela(cliente, fila, action, params, a, b, f).then((l) => { if (f.length) { janelasFalhas++; falhas.push(...f); } return l; });
+  };
+  const tarefas = quinzenas(iniPagas, hoje).map(([a, b]) => principal('despesas/index', Object.assign({ idCondominio: -1 }, LIQ), a, b));
+  tarefas.push(principal('despesas/index', Object.assign({ idCondominio: -1 }, PEND), '2025-01-01', U.maisDias(iniPend, -1)));
+  tarefas.push(principal('despesas/index', Object.assign({ idCondominio: -1 }, PEND), iniPend, U.maisDias(hoje, 60)));
   const dias = ultimosDiasUteis(hoje, DIAS_AUDITORIA);
-  const tAud = dias.map((d) => janela(cliente, fila, 'auditoria/index', { idCondominio: -1 }, d, d, falhas).then(enxugarAuditoria));
+  const tAud = dias.map((d) => principal('auditoria/index', { idCondominio: -1 }, d, d).then(enxugarAuditoria));
   const despesas = [].concat(...(await Promise.all(tarefas))).map(enxugarDespesa);
   const auditoria = [].concat(...(await Promise.all(tAud)));
   const r = regras.rodarRegras({ despesas, auditoria }, { hoje });
@@ -179,7 +188,7 @@ async function montarBase(cliente, fila, hoje) {
     periodo: { pagas_desde: iniPagas, pendentes_ate: U.maisDias(hoje, 60), auditoria_dias: dias },
     totais: { parcelas: despesas.length, linhas_auditoria: auditoria.length, alertas: r.alertas.length },
     condominios, porCondominio, analistas: r.analistasPorCondominio, falhas,
-    janelas_pedidas: tarefas.length + tAud.length,
+    janelas_pedidas: tarefas.length + tAud.length, janelas_falhas: janelasFalhas,
   };
 }
 
@@ -302,7 +311,7 @@ function criarPainel(opcoes) {
         if (b.falhas.length && !b.totais.parcelas) { const e = new Error('base_vazia_com_falhas'); throw e; }
         // C05: a janela engole o erro e só anota em falhas; metade ou mais das leituras falhando
         // também não substitui a base boa (menor 2 da revisão 2 da T31).
-        if (b.janelas_pedidas && b.falhas.length * 2 >= b.janelas_pedidas) { const e = new Error('base_com_muitas_falhas'); throw e; }
+        if (b.janelas_pedidas && (b.janelas_falhas || 0) * 2 >= b.janelas_pedidas) { const e = new Error('base_com_muitas_falhas'); throw e; }
         base = b; ultimoErro = null; return b;
       })
       .catch((e) => { ultimoErro = new Date().toISOString(); log('[financeiro] base falhou: ' + (e && e.message)); throw e; })
