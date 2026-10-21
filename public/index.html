@@ -2036,6 +2036,21 @@
       <div class="card" id="cob-unidades" style="display:none"></div>
     </div>
 
+    <!-- FINANCEIRO (T31): JS em public/financeiro.js -->
+    <div class="panel" id="panel-fincontrole">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Alertas financeiros da carteira</span></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="fin-carteira" style="width:auto;min-width:260px"><option value="">Meus condomínios</option></select>
+          <button class="btn btn-primary" onclick="finCarregar()">Carregar</button>
+          <button class="btn btn-ghost" onclick="finCarregar(true)" title="Lê de novo no Superlógica">Atualizar</button>
+        </div>
+        <div id="fin-info" class="ficha-sub" style="margin:10px 0"></div>
+        <div id="fin-quadro"></div>
+      </div>
+      <div class="card" id="fin-detalhe" style="display:none"></div>
+    </div>
+
     <!-- LEITURA DE CONSUMO -->
     <div class="panel" id="panel-consumo">
       <!-- Banner populado por renderBannerCondAtivo('consumo') ao abrir o painel -->
@@ -4252,6 +4267,7 @@ async function deletarUsuario(userId, email) {
 <script src="/atas.js"></script>
 <script src="/comunicados.js"></script>
 <script src="/relatorio.js"></script>
+<script src="/financeiro.js"></script>
 
 <div id="prestacao-modal" class="prestacao-modal" style="display:none">
   <div class="prestacao-modal-overlay" onclick="prestacaoFecharModal()"></div>

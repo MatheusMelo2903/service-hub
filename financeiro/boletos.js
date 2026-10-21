@@ -17,7 +17,7 @@
 
 const POR_PAGINA = 50;          // limite da API (51 ou mais dá HTTP 400)
 const MAX_PAGINAS = 40;         // trava: 2.000 cobranças por mês
-const SIMULTANEAS = 3;          // regra da noite: no máximo 3 chamadas ao mesmo tempo
+const SIMULTANEAS = 2;          // no máximo 2 chamadas ao mesmo tempo (T31: mesma carga da aba Financeiro)
 const MESES_HISTORICO = 3;
 const FATOR_ALTO = 1.5;
 const FATOR_BAIXO = 0.5;

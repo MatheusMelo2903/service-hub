@@ -3806,6 +3806,7 @@ app.get('/api/financeiro/boletos/:idSuperlogica', requireAuth, async (req, res) 
   if (finBoletos.NAO_CONDOMINIOS.has(id)) return res.status(400).json({ erro: 'nao_condominio', detalhe: 'Esse cadastro não é um condomínio.' });
   const competencia = String(req.query.competencia || '');
   if (!finBoletos.competenciaValida(competencia)) return res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Informe a competência no formato AAAA-MM.' });
+  if (!(await _exigirFinanceiro(req, res, 'ver'))) return;
   if (!(await exigirLeituraSuperlogica(req, res))) return;
   if (!(await _exigirCarteira(req, res, id))) return;
   const chave = id + '|' + competencia;
@@ -3815,6 +3816,117 @@ app.get('/api/financeiro/boletos/:idSuperlogica', requireAuth, async (req, res) 
   } catch (e) {
     console.warn('[boletos] ' + id + ' ' + competencia + ' falhou: ' + (e && e.message));
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler os boletos deste condomínio agora.' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Aba Financeiro (T31). Só leitura (GET) no Superlógica, sem banco e sem gravação.
+// Módulo "financeiro" (ações ver e pre_balancete) conferido aqui no servidor; carteira
+// conferida como nas outras rotas. Regras em financeiro/regras (T25), dados em financeiro/painel.js.
+// ─────────────────────────────────────────────────────────────────────────
+const finPainel = require('./financeiro/painel');
+const _painelFin = finPainel.criarPainel({ cliente: () => clienteSL() });
+async function _exigirFinanceiro(req, res, acao) {
+  if (req.authMode === 'internal') return true;
+  if (!SUPABASE_SERVICE_ROLE_KEY) { res.status(503).json({ erro: 'service_role_nao_configurada' }); return false; }
+  let perfil = null;
+  try { perfil = await lerPerfil(req.user && req.user.sub); } catch (e) {
+    res.status(503).json({ erro: 'permissao_indisponivel', detalhe: 'Não foi possível conferir suas permissões agora.' });
+    return false;
+  }
+  if (finPainel.temFinanceiro(perfil, acao)) return true;
+  res.status(403).json({ erro: 'modulo_sem_acesso', detalhe: acao === 'pre_balancete' ? 'Seu usuário não pode gerar o pré balancete.' : 'Seu usuário não tem acesso a esta aba.' });
+  return false;
+}
+// Condomínios que quem chama pode ver: null = todos (GESTOR, acesso interno, sem carteira).
+// Erro ao ler a carteira recusa (não libera tudo).
+async function _escopoFinanceiro(req) {
+  if (req.authMode === 'internal') return null;
+  const perfil = await lerPerfil(req.user && req.user.sub);
+  if (!perfil) throw new Error('perfil_ausente');
+  if (perfil.role === 'GESTOR') return null;
+  const mapa = await lerCarteirasPerfis(perfil.id);
+  if (!mapa) { if (lerCarteirasPerfis.semColuna) return null; throw new Error('carteira_indisponivel'); }
+  const minhas = mapa[perfil.id] || [];
+  if (!minhas.length) return null;
+  const r = slModulo.carteiras.condominiosDasCarteiras(await gruposCarteiras(), minhas);
+  if (!r.carteiras.length) return new Set();
+  return new Set(r.ids_superlogica.map(String));
+}
+function _respostaCalculando(res) {
+  return res.status(202).json(Object.assign({ calculando: true, detalhe: 'Os alertas estão sendo calculados. A tela tenta de novo sozinha.' }, _painelFin.situacao()));
+}
+
+// GET /api/financeiro/resumo[?carteira=<id do grupo>][&forcar=1]
+// Quadro da carteira: por condomínio, contagem de alertas por tipo e por gravidade.
+app.get('/api/financeiro/resumo', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const carteira = String(req.query.carteira || '');
+  if (carteira && !/^[1-9][0-9]{0,8}$/.test(carteira)) return res.status(400).json({ erro: 'carteira_invalida', detalhe: 'Carteira inválida.' });
+  if (!(await _exigirFinanceiro(req, res, 'ver'))) return;
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  let escopo;
+  try { escopo = await _escopoFinanceiro(req); } catch (e) {
+    return res.status(503).json({ erro: 'carteira_indisponivel', detalhe: 'Não foi possível conferir sua carteira agora.' });
+  }
+  let ids = escopo;
+  if (carteira) {
+    let grupo = null;
+    try { grupo = (await gruposCarteiras()).find((g) => String(g.id) === carteira); } catch (e) {
+      return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler as carteiras agora.' });
+    }
+    if (!grupo) return res.status(404).json({ erro: 'carteira_nao_encontrada', detalhe: 'Essa carteira não existe mais.' });
+    const daCarteira = new Set((grupo.condominios || []).map(String));
+    ids = escopo ? new Set([...daCarteira].filter((x) => escopo.has(x))) : daCarteira;
+  }
+  try {
+    const base = await _painelFin.obterBase(req.query.forcar === '1');
+    if (!base) return _respostaCalculando(res);
+    res.json(Object.assign(_painelFin.resumo(base, ids), { recalculando: _painelFin.situacao().calculando }));
+  } catch (e) {
+    console.warn('[financeiro] resumo falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível calcular os alertas agora. Tente de novo em alguns minutos.' });
+  }
+});
+
+// GET /api/financeiro/condominio/:id/alertas[?forcar=1]
+app.get('/api/financeiro/condominio/:idSuperlogica/alertas', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (finBoletos.NAO_CONDOMINIOS.has(id)) return res.status(400).json({ erro: 'nao_condominio', detalhe: 'Esse cadastro não é um condomínio.' });
+  if (!(await _exigirFinanceiro(req, res, 'ver'))) return;
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  if (!(await _exigirCarteira(req, res, id))) return;
+  try {
+    const base = await _painelFin.obterBase(req.query.forcar === '1');
+    if (!base) return _respostaCalculando(res);
+    res.json(Object.assign(_painelFin.alertasDoCondominio(base, id), { recalculando: _painelFin.situacao().calculando }));
+  } catch (e) {
+    console.warn('[financeiro] alertas ' + id + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível calcular os alertas agora. Tente de novo em alguns minutos.' });
+  }
+});
+
+// GET /api/financeiro/condominio/:id/pre-balancete?competencia=AAAA-MM[&forcar=1]
+// O que impede fechar o mês: sem comprovante, sem nota, vencida sem baixa, lançamento tardio, mexida suspeita.
+app.get('/api/financeiro/condominio/:idSuperlogica/pre-balancete', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (finBoletos.NAO_CONDOMINIOS.has(id)) return res.status(400).json({ erro: 'nao_condominio', detalhe: 'Esse cadastro não é um condomínio.' });
+  const competencia = String(req.query.competencia || '');
+  const comp = finPainel.competencia(competencia);
+  if (!comp) return res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Informe o mês no formato AAAA-MM.' });
+  if (!(await _exigirFinanceiro(req, res, 'pre_balancete'))) return;
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  if (!(await _exigirCarteira(req, res, id))) return;
+  try {
+    res.json(await _painelFin.preBalancete(id, competencia, req.query.forcar === '1'));
+  } catch (e) {
+    if (e && e.status === 400) return res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Escolha um mês que já começou.' });
+    console.warn('[financeiro] pre balancete ' + id + ' ' + competencia + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível montar o pré balancete agora.' });
   }
 });
 
