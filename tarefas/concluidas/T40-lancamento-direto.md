@@ -12,3 +12,12 @@ Branch feat/financeiro-lancar a partir de origin/dev 6735bb6. Sem migration (tud
 4. Depois de gravar: relê a despesa e confere valor, fornecedor, condomínio, vencimento e o anexo (resultado.prova); se a releitura não bater, a tela avisa para conferir no Superlógica. Registro de quem lançou: lancado_por (uuid), resultado.lancado_por_email, origem (individual ou lote), auditoria entrada_lancada e entrada_lote.
 5. Rotas novas: POST /api/entrada/lancar-lote (ação lancar, confirmação LANCAR_LOTE, valor e vencimento vistos na lista precisam bater) e POST /api/entrada/:id/pronto (ação ver).
 6. Testes: scripts/teste-entrada-lancar.js (travas puras, conferência com Superlógica simulado e rotas num express local com banco em memória e gravação simulada).
+
+## Correções da revisão 1 (0 GRAVE, 5 MÉDIO)
+* M1: emissão dentro de mês fechado com vencimento aberto entra sem DT_DESPESA_DES (o Superlógica usa a data de hoje) e gera aviso que fica fora do lote; se hoje também estiver fechado, recusa.
+* M2: "Gerar rascunho" segue a mesma regra do lançamento (nada que impeça; alerta grave só marcado na tela, registrado em dados.pronto.aceitos), com limite por hora.
+* M3: comprovante de pagamento virou alerta grave; no lote também não passam vencido, emissão em mês fechado e valor diferente da linha.
+* M4: o lançamento limpa só o cache do condomínio e do fornecedor; o lote relê a lista geral uma vez e não começa item novo depois de 90 s (os outros voltam como "nao_tentado").
+* M5: testes de carteira no lote, lote e individual ao mesmo tempo, confirmação pelo valor digitado, prova (provaDe) e datas relativas a hoje.
+* Menores: id do lote normalizado (maiúsculas e não texto recusam), 403 de carteira não para o lote, PATCH final grava id_superlogica e tipo, prova exige o condomínio na releitura, rótulo escapado, botão Lançar não fica travado só por "conferi".
+* Implantação: criar ENTRADA_LANCAMENTO_LIBERADO quando for liberar outro condomínio; ENTRADA_LIBERADA pode ser apagada.

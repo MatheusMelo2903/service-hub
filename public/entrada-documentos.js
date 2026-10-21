@@ -222,16 +222,18 @@
       return '<option value="' + esc(c.id_superlogica) + '"' + (String(c.id_superlogica) === String(d.id_superlogica) ? ' selected' : '') + '>' + esc(c.nome) + ' (' + esc(c.id_superlogica) + ')</option>';
     }).join('');
     if (d.id_superlogica && !conds.some(function (c) { return String(c.id_superlogica) === String(d.id_superlogica); })) optsCond += '<option value="' + esc(d.id_superlogica) + '" selected>' + esc(d.nome_condominio || d.id_superlogica) + '</option>';
-    var campo = function (rot, html) { return '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px">' + rot + html + '</label>'; };
+    var campo = function (rot, html) { return '<label style="display:flex;flex-direction:column;gap:4px;font-size:12px">' + esc(rot) + html + '</label>'; };
     var al = it.alertas || [];
     var alertas = al.map(function (a) {
       var itens = (a.itens || []).map(function (x) {
         return '<div style="font-size:11px;color:var(--muted);margin-left:18px">' + esc([x.condominio, x.fornecedor, x.documento ? 'doc ' + x.documento : '', brl(x.valor), dataBR(x.vencimento), x.id_despesa ? 'despesa ' + x.id_despesa : '', x.liquidada ? 'paga' : '', x.nome_arquivo || ''].filter(Boolean).join(' · ')) + '</div>';
       }).join('');
-      var marca = a.nivel === 'grave' && editavel && it.liberado ? '<input type="checkbox" class="ent-aceite" value="' + esc(a.codigo) + '" style="margin-right:6px">' : '';
+      var marca = a.nivel === 'grave' && editavel ? '<input type="checkbox" class="ent-aceite" value="' + esc(a.codigo) + '" style="margin-right:6px">' : '';
       return '<div style="margin:4px 0"><label style="font-size:12px;color:' + (COR[a.nivel] || 'var(--text)') + '">' + marca + esc(a.texto) + (a.quantidade ? ' (' + esc(a.quantidade) + ')' : '') + (marca ? ' (marque se conferiu)' : '') + '</label>' + itens + '</div>';
     }).join('');
-    var impede = al.some(function (a) { return a.nivel === 'impede'; });
+    // Valor ou vencimento a conferir não trava o botão: o "conferi" vai junto ao salvar antes de lançar.
+    var impede = al.some(function (a) { return a.nivel === 'impede' && a.codigo !== 'confirmar_valor' && a.codigo !== 'confirmar_vencimento'; });
+    var aConferir = al.some(function (a) { return a.codigo === 'confirmar_valor' || a.codigo === 'confirmar_vencimento'; });
     var cnpjs = (d.cnpjs || []).map(function (c) { return esc(c.cnpj) + ' (' + esc(c.papel === 'pagador' ? 'pagador ou tomador' : c.papel === 'beneficiario' ? 'beneficiário ou emitente' : 'sem rótulo') + (c.condominio ? ', condomínio' : '') + ')'; }).join('<br>');
     var res = it.resultado || {};
     var linhaRes = function (rot, val) { return '<div style="display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">' + esc(rot) + '</span><span style="text-align:right">' + val + '</span></div>'; };
@@ -262,7 +264,7 @@
       (alertas ? '<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px">' + alertas + '</div>' : '') +
       (botao ? '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + botao + '</div>' : '') +
       '<div id="ent-det-info"></div>' +
-      '<details' + (editavel && impede ? ' open' : '') + ' style="border:1px solid var(--border);border-radius:6px;padding:8px 10px"><summary style="font-size:12px;cursor:pointer">' + (editavel ? 'Editar' : 'Detalhes') + '</summary><div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">' +
+      '<details' + (editavel && (impede || aConferir) ? ' open' : '') + ' style="border:1px solid var(--border);border-radius:6px;padding:8px 10px"><summary style="font-size:12px;cursor:pointer">' + (editavel ? 'Editar' : 'Detalhes') + '</summary><div style="display:flex;flex-direction:column;gap:10px;margin-top:8px">' +
       campo('Condomínio', '<select id="ent-cond"' + dis + '>' + optsCond + '</select>') +
       campo('Fornecedor (código do Superlógica)', '<span style="display:flex;gap:8px;align-items:center"><input id="ent-forn" style="width:120px" value="' + esc(d.id_fornecedor || '') + '"' + dis + '><span style="font-size:12px">' + esc(d.nome_fornecedor || (d.cnpj_fornecedor ? 'CNPJ ' + d.cnpj_fornecedor + ' não cadastrado' : 'não encontrado')) + '</span></span>') +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">' +
@@ -327,9 +329,12 @@
     if (!est.atual) return;
     var btn = document.getElementById('ent-pronto');
     if (btn) btn.disabled = true;
+    // Marcas lidas antes de salvar (salvar redesenha a tela).
+    var marcados = [].slice.call(document.querySelectorAll('.ent-aceite:checked')).map(function (x) { return x.value; });
     if (!(await window.entSalvar(true))) { if (btn) btn.disabled = false; return; }
+    var aceitos = marcados.filter(function (c) { return (est.atual.alertas || []).some(function (a) { return a.codigo === c; }); });
     try {
-      var j = await api('/api/entrada/' + encodeURIComponent(est.atual.id) + '/pronto', { method: 'POST' });
+      var j = await api('/api/entrada/' + encodeURIComponent(est.atual.id) + '/pronto', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ aceitar_alertas: aceitos }) });
       est.atual = j.item;
       await desenhar();
       toast('Rascunho conferido. Lance no Superlógica com estes dados.', 'ok');

@@ -145,6 +145,30 @@ const cods = (r) => r.alertas.map((a) => a.codigo);
   r = await E.conferir(cliente({ parcelas: [] }), base({ conta: null }), { hojeIso: HOJE });
   t('sem histórico perto, procura 180 dias', r.sugestao_conta === null);
 
+  // emissão em mês fechado com vencimento aberto: entra sem a data de emissão; hoje fechado recusa
+  E.limparCache();
+  r = await E.conferir(cliente({ bloqueio: '09/30/2026' }), base({ emissao: '2026-09-15' }), { hojeIso: HOJE });
+  t('emissão em mês fechado vira aviso e fica fora do lote', cods(r).includes('emissao_mes_fechado') && !cods(r).includes('mes_fechado') && E.FORA_DO_LOTE.includes('emissao_mes_fechado'));
+  E.limparCache();
+  r = await E.conferir(cliente({ bloqueio: '10/31/2026' }), base({ emissao: '2026-10-01' }), { hojeIso: HOJE });
+  t('emissão fechada e hoje fechado recusa', cods(r).includes('mes_fechado'));
+  const cd = (o) => new URLSearchParams(E.corpoDespesa(Object.assign({ id_superlogica: '167', id_fornecedor: '10', vencimento: '2026-11-10', conta: '2.2', valor: 1, tipo: 'boleto' }, o)));
+  t('corpo sem emissão quando ela está no mês fechado', !cd({ emissao: '2026-09-15', bloqueio_contas: '2026-09-30' }).has('DT_DESPESA_DES') && cd({ emissao: '2026-10-15', bloqueio_contas: '2026-09-30' }).get('DT_DESPESA_DES') === '10/15/2026');
+  t('comprovante é grave', E.GRAVES.includes('comprovante') && E.FORA_DO_LOTE.includes('vencido'));
+  // prova depois de gravar
+  const parc = { vl_valor_pdes: '250.00', id_contato_con: '10', id_condominio_cond: '167', dt_vencimento_pdes: '11/10/2026', arquivos: [{ id_arquivo_arq: '77' }] };
+  const pv = E.provaDe(parc, base(), '77');
+  t('prova completa', pv.valor && pv.fornecedor && pv.condominio && pv.vencimento && pv.anexo);
+  t('prova acusa vencimento, condomínio e anexo diferentes', !E.provaDe(Object.assign({}, parc, { dt_vencimento_pdes: '11/11/2026' }), base(), '77').vencimento &&
+    !E.provaDe(Object.assign({}, parc, { id_condominio_cond: null }), base(), '77').condominio && !E.provaDe(parc, base(), '78').anexo && E.provaDe(null, base(), '1') === null);
+  E.limparCache();
+  const cli2 = cliente({});
+  await E.conferir(cli2, base(), { hojeIso: HOJE });
+  E.limparCache(['desp:167:', 'cb:167']);
+  const antes = cli2.chamadas.length;
+  await E.conferir(cli2, base(), { hojeIso: HOJE });
+  t('limpeza seletiva mantém o cadastro em cache', !cli2.chamadas.slice(antes).includes('condominios/get') && cli2.chamadas.slice(antes).includes('contabancos/index'));
+
   // ---------- 6. rotas com banco em memória e gravação simulada ----------
   await testeRotas();
   console.log('entrada lançar: ' + ok + ' ok, ' + falhou + ' falhou');
@@ -178,31 +202,47 @@ function bancoMemoria(linhas) {
     },
   };
 }
+// Datas relativas a hoje (fuso de Brasília), para o teste não vencer com o calendário.
+const hojeBR = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+const dia = (n) => new Date(Date.parse(hojeBR() + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+const paraSL = (iso) => iso.slice(5, 7) + '/' + iso.slice(8, 10) + '/' + iso.slice(0, 4);
+const fatorDe = (iso) => 1000 + Math.round((Date.parse(iso + 'T00:00:00Z') - Date.parse('2025-02-22T00:00:00Z')) / 86400000);
 async function testeRotas() {
   let express;
   try { express = require('express'); } catch (e) { console.log('AVISO: express não encontrado (use NODE_PATH); rotas não testadas'); falhou++; return; }
   const { criarRotasEntrada } = require('../servico/rotas-entrada');
+  const V0 = dia(20), V2 = dia(22), V3 = dia(23), V4 = dia(24), ONTEM = dia(-1);
+  const LR = linhaBoleto(fatorDe(V0), 25000, '9876543210987654321098765');
+  t('linha relativa a hoje', (E.acharLinha(LR, hojeBR()) || {}).vencimento === V0);
   const pdf = Buffer.from('%PDF-1.4\n' + 'x'.repeat(300)).toString('base64');
-  const linha = (id, idSL, dados, extra) => Object.assign({ id, status: 'rascunho', nome_arquivo: id.slice(0, 4) + '.pdf', arquivo_base64: pdf, hash_sha256: id, criado_por: 'u1', id_superlogica: Number(idSL),
-    dados: Object.assign({ id_superlogica: String(idSL), nome_condominio: 'C' + idSL, id_fornecedor: '10', valor: 250, vencimento: '2026-11-10', conta: '2.2', tipo: 'boleto' }, dados || {}), alertas: [] }, extra || {});
+  const linha = (id, idSL, dados, extra) => Object.assign({ id, status: 'rascunho', nome_arquivo: id.slice(-4) + '.pdf', arquivo_base64: pdf, hash_sha256: id, criado_por: 'u1', id_superlogica: Number(idSL),
+    dados: Object.assign({ id_superlogica: String(idSL), nome_condominio: 'C' + idSL, id_fornecedor: '10', valor: 250, vencimento: V0, conta: '2.2', tipo: 'boleto' }, dados || {}), alertas: [] }, extra || {});
   const U = (n) => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
+  const conf = (v, venc) => ({ valor: v, vencimento: venc, confirmado: { valor: v, vencimento: venc } });
   const mem = bancoMemoria([
-    linha(U(1), 167, { linha: L, barras: E.barrasDaLinha(L) }), linha(U(2), 167, { valor: 80, vencimento: '2026-11-12' }),
-    linha(U(3), 136, { confirmado: { valor: 250, vencimento: '2026-11-10' } }), linha(U(4), 167, { valor: 90, vencimento: '2026-11-13', cond_documento: '136', confirmado: { valor: 90, vencimento: '2026-11-13' } }),
-    linha(U(5), 167, { valor: 70, vencimento: '2026-11-14', confirmado: { valor: 70, vencimento: '2026-11-14' } }), linha(U(6), 167, {}, { status: 'lancado' }),
+    linha(U(1), 167, { linha: LR, barras: E.barrasDaLinha(LR) }), linha(U(2), 167, { valor: 80, vencimento: V2 }),
+    linha(U(3), 136, conf(250, V0)), linha(U(4), 167, Object.assign(conf(90, V3), { cond_documento: '136' })),
+    linha(U(5), 167, conf(70, V4)), linha(U(6), 167, {}, { status: 'lancado' }),
+    linha(U(7), 167, Object.assign(conf(60, V2), { tipo: 'comprovante' })), linha(U(8), 167, conf(50, ONTEM)),
+    linha(U(9), 167, conf(41, V2)), linha(U(10), 167, conf(42, V2)), linha(U(11), 167, conf(43, V3)), linha(U(12), 167, conf(44, V4)),
   ]);
   const gravados = [], eventos = [];
+  let bloqueio = paraSL(dia(-30)), negarCarteira = 0, atraso = 0;
   const cli = {
     async get(rota, p) {
       if (rota === 'condominios/get') return p.pagina > 1 ? [] : [{ id_condominio_cond: '167', st_fantasia_cond: 'Residencial Teste', id_planoconta_plc: '1', st_cnpj_cond: C167 }, { id_condominio_cond: '136', st_fantasia_cond: 'Casablanca', id_planoconta_plc: '2', st_cnpj_cond: C136 }];
       if (rota === 'fornecedores/index') return [{ id_contato_con: '10', st_nome_con: 'FORNECEDOR TESTE' }];
       if (rota === 'planocontas') return [{ st_conta_cont: '2.2', st_descricao_cont: 'Outros' }];
-      if (rota === 'contabancos/index') return [{ id_condominio_cond: String(p.idCondominio), id_contabanco_cb: '823', fl_principal_cb: '1', st_descricao_cb: 'Conta movimento', dt_bloquearlancamentos_cb: '09/30/2026' }];
+      if (rota === 'contabancos/index') return [{ id_condominio_cond: String(p.idCondominio), id_contabanco_cb: '823', fl_principal_cb: '1', st_descricao_cb: 'Conta movimento', dt_bloquearlancamentos_cb: bloqueio }];
       return [];
     },
   };
   const original = E.lancar;
-  E.lancar = async (cred, c, d) => { gravados.push({ cond: d.id_superlogica, valor: d.valor, cb: d.id_contabanco }); return { ok: true, conferido: true, anexado: true, prova: { valor: true, fornecedor: true, condominio: true, vencimento: true, anexo: true }, id_despesa: String(9000 + gravados.length), id_arquivo: '1', id_parcela: '2' }; };
+  E.lancar = async (cred, c, d) => {
+    if (atraso) await new Promise((r) => setTimeout(r, atraso));
+    gravados.push({ cond: d.id_superlogica, valor: d.valor, cb: d.id_contabanco });
+    return { ok: true, conferido: true, anexado: true, prova: { valor: true, fornecedor: true, condominio: true, vencimento: true, anexo: true }, id_despesa: String(9000 + gravados.length), id_arquivo: '1', id_parcela: '2' };
+  };
   const app = express();
   app.use((req, res, next) => { req.user = { sub: 'u1', email: 'analista@example.com' }; req.authMode = 'user'; next(); });
   let podeLancarModulo = true;
@@ -211,16 +251,17 @@ async function testeRotas() {
     podeModulo: (p, m, a) => m === 'entrada_documentos' && (a === 'ver' || podeLancarModulo),
     carteiraT18: { escopo: async () => ({ todas: true }) }, exigirLeituraSuperlogica: async () => true, superlogicaNativa: () => true,
     clienteSL: () => cli, credSL: () => ({}), dentroDoLimite: () => true, auditoria: { evento: (req, tipo, det) => eventos.push({ tipo, det }) }, processar: {},
-    carteiraEstrita: async () => true,
+    carteiraEstrita: async (req, res) => { if (negarCarteira > 0) { negarCarteira--; res.status(403).json({ erro: 'fora_da_carteira' }); return false; } return true; },
   });
   const srv = app.listen(0);
   const porta = srv.address().port;
   const chama = async (m, url, corpo) => { const r = await fetch('http://127.0.0.1:' + porta + url, { method: m, headers: { 'Content-Type': 'application/json' }, body: corpo ? JSON.stringify(corpo) : undefined }); return { st: r.status, j: await r.json().catch(() => ({})) }; };
+  const item = (n) => { const d = mem.db.get(U(n)).dados; return { id: U(n), valor: d.valor, vencimento: d.vencimento }; };
   delete process.env.ENTRADA_LANCAMENTO_LIBERADO;
   try {
     let r = await chama('GET', '/api/entrada/fila?status=rascunho');
-    const it1 = (r.j.itens || []).find((x) => x.id === U(1)), it3 = (r.j.itens || []).find((x) => x.id === U(3)), it2 = (r.j.itens || []).find((x) => x.id === U(2));
-    t('fila diz o que é liberado', r.st === 200 && r.j.so_teste === true && it1.liberado === true && it3.liberado === false && it2.confianca.valor === 'baixa');
+    const f = (n) => (r.j.itens || []).find((x) => x.id === U(n)) || {};
+    t('fila diz o que é liberado', r.st === 200 && r.j.so_teste === true && f(1).liberado === true && f(3).liberado === false && f(2).confianca.valor === 'baixa');
     r = await chama('POST', '/api/entrada/' + U(3) + '/lancar', { confirmacao: 'LANCAR' });
     t('condomínio fora da lista: 423 e nada gravado', r.st === 423 && gravados.length === 0);
     r = await chama('POST', '/api/entrada/' + U(3) + '/pronto');
@@ -229,39 +270,54 @@ async function testeRotas() {
     t('valor sem confiança não lança', r.st === 409 && r.j.erro === 'impede' && /valor/.test(r.j.detalhe) && gravados.length === 0);
     r = await chama('PUT', '/api/entrada/' + U(2), { confirmar_valor: true, confirmar_vencimento: true });
     t('conferi na tela grava a confirmação', r.st === 200 && r.j.item.confianca.valor === 'confirmado' && r.j.item.dados.confirmado.valor_por === 'analista@example.com');
-    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [{ id: U(1), valor: 250, vencimento: '2026-11-10' }, { id: U(2), valor: 80, vencimento: '2026-11-12' }, { id: U(3), valor: 250, vencimento: '2026-11-10' }, { id: U(4), valor: 90, vencimento: '2026-11-13' }, { id: U(5), valor: 71, vencimento: '2026-11-14' }, { id: U(6), valor: 250, vencimento: '2026-11-10' }] });
-    const rs = (id) => (r.j.resultados || []).find((x) => x.id === id) || {};
-    t('lote: liberados e conferidos lançam', r.st === 200 && rs(U(1)).ok && rs(U(2)).ok && gravados.length === 2 && gravados.every((g) => g.cond === '167' && g.cb === '823'));
-    t('lote: fora da lista recusa', rs(U(3)).st === 423);
-    t('lote: alerta grave não passa', rs(U(4)).st === 409 && rs(U(4)).erro === 'grave_nao_aceito' && mem.db.get(U(4)).status === 'rascunho');
-    t('lote: valor mudou é pulado', rs(U(5)).erro === 'mudou');
-    t('lote: já lançado recusa', rs(U(6)).st === 409);
+    r = await chama('PUT', '/api/entrada/' + U(12), { valor: '45,00' });
+    t('valor digitado vale como conferido e prende ao novo valor', r.st === 200 && r.j.item.dados.valor === 45 && r.j.item.confianca.valor === 'confirmado' && r.j.item.dados.confirmado.valor === 45);
+    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [item(1), item(2), item(3), item(4), Object.assign(item(5), { valor: 71 }), item(6), item(7), item(8)] });
+    const rs = (n) => (r.j.resultados || []).find((x) => x.id === U(n)) || {};
+    t('lote: liberados e conferidos lançam', r.st === 200 && rs(1).ok && rs(2).ok && gravados.length === 2 && gravados.every((g) => g.cond === '167' && g.cb === '823'));
+    t('lote: fora da lista recusa', rs(3).st === 423);
+    t('lote: alerta grave não passa', rs(4).st === 409 && rs(4).erro === 'grave_nao_aceito' && mem.db.get(U(4)).status === 'rascunho');
+    t('lote: valor mudou é pulado', rs(5).erro === 'mudou');
+    t('lote: já lançado recusa', rs(6).st === 409);
+    t('lote: comprovante não passa', rs(7).st === 409 && rs(7).erro === 'grave_nao_aceito');
+    t('lote: vencido não passa', rs(8).st === 409 && rs(8).erro === 'fora_do_lote');
     const l1 = mem.db.get(U(1));
-    t('registro de quem lançou', l1.status === 'lancado' && l1.lancado_por === 'u1' && l1.resultado.lancado_por_email === 'analista@example.com' && l1.resultado.origem === 'lote' && l1.id_despesa);
+    t('registro de quem lançou', l1.status === 'lancado' && l1.lancado_por === 'u1' && l1.resultado.lancado_por_email === 'analista@example.com' && l1.resultado.origem === 'lote' && l1.id_despesa && l1.id_superlogica === 167);
     t('auditoria do lote', eventos.some((e) => e.tipo === 'entrada_lote' && e.det.lancados === 2) && eventos.some((e) => e.tipo === 'entrada_lancada' && e.det.origem === 'lote'));
     r = await chama('POST', '/api/entrada/' + U(1) + '/lancar', { confirmacao: 'LANCAR' });
     t('lançar de novo recusa', r.st === 409 && gravados.length === 2);
-    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [{ id: U(5), valor: 70, vencimento: '2026-11-14' }, { id: U(5), valor: 70, vencimento: '2026-11-14' }] });
-    t('lote com id repetido recusa inteiro', r.st === 400 && gravados.length === 2);
-    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'SIM', itens: [{ id: U(5), valor: 70, vencimento: '2026-11-14' }] });
+    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [item(5), Object.assign(item(5), { id: U(5).toUpperCase() })] });
+    t('lote com id repetido (mesmo em maiúsculas) recusa inteiro', r.st === 400 && gravados.length === 2);
+    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [{ id: [U(5)], valor: 70, vencimento: V4 }] });
+    t('lote com id que não é texto recusa', r.st === 400);
+    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'SIM', itens: [item(5)] });
     t('lote sem confirmação recusa', r.st === 400);
-    // mês fechado: bloqueio depois do vencimento
-    const getAntes = cli.get;
-    cli.get = async (rota, p) => rota === 'contabancos/index' ? [{ id_condominio_cond: String(p.idCondominio), id_contabanco_cb: '823', fl_principal_cb: '1', dt_bloquearlancamentos_cb: '11/30/2026' }] : getAntes(rota, p);
+    negarCarteira = 1;
+    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [item(9), item(10)] });
+    t('lote: fora da carteira recusa o item e segue com o próximo', (r.j.resultados || [])[0].st === 403 && (r.j.resultados || [])[1].ok === true && gravados.length === 3 && mem.db.get(U(9)).status === 'rascunho');
+    atraso = 300;
+    const [a1, a2] = await Promise.all([chama('POST', '/api/entrada/' + U(11) + '/lancar', { confirmacao: 'LANCAR' }), chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [item(11)] })]);
+    atraso = 0;
+    t('individual e lote ao mesmo tempo gravam uma vez só', gravados.length === 4 && [a1.st === 200, (a2.j.resultados || [])[0].ok === true].filter(Boolean).length === 1);
+    bloqueio = paraSL(dia(40));
     r = await chama('POST', '/api/entrada/' + U(5) + '/lancar', { confirmacao: 'LANCAR', aceitar_alertas: ['mes_fechado'] });
-    t('mês fechado recusa mesmo marcando', r.st === 409 && /fechado/.test(r.j.detalhe) && gravados.length === 2);
-    cli.get = getAntes;
+    t('mês fechado recusa mesmo marcando', r.st === 409 && /fechado/.test(r.j.detalhe) && gravados.length === 4);
+    bloqueio = paraSL(dia(-30));
     process.env.ENTRADA_LANCAMENTO_LIBERADO = '136';
     r = await chama('POST', '/api/entrada/' + U(5) + '/lancar', { confirmacao: 'LANCAR' });
-    t('lista sem o 167 trava o 167', r.st === 423 && gravados.length === 2);
+    t('lista sem o 167 trava o 167', r.st === 423 && gravados.length === 4);
     delete process.env.ENTRADA_LANCAMENTO_LIBERADO;
     podeLancarModulo = false;
     r = await chama('POST', '/api/entrada/' + U(5) + '/lancar', { confirmacao: 'LANCAR' });
-    t('sem a ação lancar: 403', r.st === 403 && gravados.length === 2);
-    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [{ id: U(5), valor: 70, vencimento: '2026-11-14' }] });
-    t('lote sem a ação lancar: 403', r.st === 403 && gravados.length === 2);
+    t('sem a ação lancar: 403', r.st === 403 && gravados.length === 4);
+    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [item(5)] });
+    t('lote sem a ação lancar: 403', r.st === 403 && gravados.length === 4);
     podeLancarModulo = true;
+    r = await chama('POST', '/api/entrada/' + U(4) + '/pronto');
+    t('gerar rascunho com alerta grave sem marcar recusa', r.st === 409 && r.j.erro === 'grave_nao_aceito' && !mem.db.get(U(4)).dados.pronto);
+    r = await chama('POST', '/api/entrada/' + U(4) + '/pronto', { aceitar_alertas: ['condominio_diferente_do_documento'] });
+    t('gerar rascunho com alerta grave marcado', r.st === 200 && r.j.item.dados.pronto.aceitos.includes('condominio_diferente_do_documento') && gravados.length === 4);
     r = await chama('POST', '/api/entrada/' + U(5) + '/lancar', { confirmacao: 'LANCAR' });
-    t('individual com tudo certo lança', r.st === 200 && r.j.conferido === true && gravados.length === 3 && mem.db.get(U(5)).resultado.origem === 'individual');
+    t('individual com tudo certo lança', r.st === 200 && r.j.conferido === true && gravados.length === 5 && mem.db.get(U(5)).resultado.origem === 'individual');
   } finally { srv.close(); E.lancar = original; }
 }

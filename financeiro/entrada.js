@@ -376,7 +376,11 @@ async function comCache(chave, ms, fn) {
   if (_cache.size > 500) _cache.delete(_cache.keys().next().value);
   return v;
 }
-function limparCache() { _cache.clear(); }
+// Sem argumento limpa tudo; com prefixos limpa só essas chaves (o lote não refaz o que é geral).
+function limparCache(prefixos) {
+  if (!Array.isArray(prefixos)) { _cache.clear(); return; }
+  for (const k of [..._cache.keys()]) if (prefixos.some((p) => k.startsWith(p))) _cache.delete(k);
+}
 // estrito: página cheia no teto lança erro (conferência de duplicidade não pode ficar cortada).
 async function paginas(cliente, rota, params, max, estrito) {
   const out = [];
@@ -584,7 +588,9 @@ function confianca(d) {
 
 // Alertas do rascunho. GRAVES precisam ser vistos e aceitos na tela antes de lançar;
 // IMPEDE não deixa lançar de jeito nenhum.
-const GRAVES = ['duplicidade', 'outro_condominio', 'condominio_diferente_do_documento', 'na_fila', 'cnpj_repetido'];
+const GRAVES = ['duplicidade', 'outro_condominio', 'condominio_diferente_do_documento', 'na_fila', 'cnpj_repetido', 'comprovante'];
+// Avisos que o lote não aceita (só lançando pelo documento, olhando).
+const FORA_DO_LOTE = ['vencido', 'emissao_mes_fechado', 'valor_diferente_linha'];
 const IMPEDE = ['sem_condominio', 'sem_fornecedor', 'sem_valor', 'sem_vencimento', 'sem_conta', 'conferencia_incompleta', 'fora_da_carteira',
   'confirmar_valor', 'confirmar_vencimento', 'mes_fechado'];
 // d: { id_superlogica, id_fornecedor, valor, vencimento, documento, linha, barras, conta, tipo, cond_documento }
@@ -632,6 +638,12 @@ async function conferir(cliente, d, opts) {
       contaBanco = await contasBanco(cliente, d.id_superlogica, !!o.semCache);
       if (contaBanco.bloqueio && d.vencimento && d.vencimento <= contaBanco.bloqueio) {
         add('mes_fechado', 'O mês deste vencimento já está fechado no Superlógica (lançamentos bloqueados até ' + contaBanco.bloqueio.split('-').reverse().join('/') + '). Não dá para lançar.');
+      }
+      // Emissão em mês fechado com vencimento aberto: a despesa entra sem a data de emissão
+      // (o Superlógica usa a de hoje), nunca dentro do mês fechado. Hoje fechado também recusa.
+      if (contaBanco.bloqueio && d.emissao && d.emissao <= contaBanco.bloqueio && !(d.vencimento && d.vencimento <= contaBanco.bloqueio)) {
+        if (hoje <= contaBanco.bloqueio) add('mes_fechado', 'O mês de hoje já está fechado no Superlógica (lançamentos bloqueados até ' + contaBanco.bloqueio.split('-').reverse().join('/') + '). Não dá para lançar.');
+        else add('emissao_mes_fechado', 'A emissão é de mês já fechado no Superlógica: a despesa entra com a data de hoje no lugar da emissão.');
       }
       if (!contaBanco.id) add('sem_conta_bancaria', 'O condomínio não tem conta bancária ativa no Superlógica; a despesa entra sem conta.');
     } catch (e) { contaBanco = null; add('conferencia_incompleta', 'Não deu para conferir se o mês está fechado no Superlógica agora. Tente de novo.'); }
@@ -722,7 +734,8 @@ function corpoDespesa(d) {
   p.set('ID_FORMA_PAG', String(d.forma_pag == null ? 0 : d.forma_pag));
   if (TIPOS_DOC_SL[d.tipo]) p.set('ID_TIPO_DOC', String(TIPOS_DOC_SL[d.tipo]));
   if (d.documento) p.set('ST_DOCUMENTO_DES', String(d.documento).slice(0, 25));
-  if (d.emissao) p.set('DT_DESPESA_DES', isoParaSL(d.emissao));
+  // Emissão dentro de mês fechado (bloqueio_contas lido na conferência) não vai: o Superlógica usa a data de hoje.
+  if (d.emissao && !(d.bloqueio_contas && d.emissao <= d.bloqueio_contas)) p.set('DT_DESPESA_DES', isoParaSL(d.emissao));
   p.set('APROPRIACAO[0][ST_CONTA_CONT]', d.conta);
   p.set('APROPRIACAO[0][VL_VALOR_PDES]', d.valor.toFixed(2));
   if (d.complemento) p.set('APROPRIACAO[0][ST_COMPLEMENTO_APRO]', String(d.complemento).slice(0, 200));
@@ -731,6 +744,17 @@ function corpoDespesa(d) {
   if (d.id_arquivo) p.set('ARQUIVOS[0][ID_ARQUIVO_ARQ]', String(d.id_arquivo));
   p.set('FL_ACAO_IMPRESSAO', '1');
   return p.toString();
+}
+// Prova (T40): despesa relida com o mesmo valor, fornecedor, condomínio e vencimento, e o arquivo anexado.
+function provaDe(parc, d, idArquivo) {
+  if (!parc) return null;
+  return {
+    valor: Math.abs((Number(parc.vl_valor_pdes) || 0) - d.valor) < 0.005,
+    fornecedor: String(parc.id_contato_con) === String(d.id_fornecedor),
+    condominio: parc.id_condominio_cond != null && String(parc.id_condominio_cond) === String(d.id_superlogica),
+    vencimento: slParaIso(parc.dt_vencimento_pdes) === d.vencimento,
+    anexo: !!(Array.isArray(parc.arquivos) && parc.arquivos.some((a) => String(a.id_arquivo_arq) === String(idArquivo))),
+  };
 }
 // Lança a despesa com o PDF: envia o arquivo, cria a despesa já com o arquivo, anexa de novo se
 // não ficou, põe a etiqueta e prova relendo. Devolve { ok, incerto, msg, id_despesa, id_parcela, id_arquivo, conferido }.
@@ -768,21 +792,14 @@ async function lancar(cred, cliente, d, pdf, nome) {
     const re = corpoOk(await pedir(cred, 'PUT', 'arquivos/adicionaretiqueta', null, Buffer.from(new URLSearchParams({ idDocumento: arq.id, idEtiqueta: String(ETIQUETA[d.tipo]) }).toString(), 'utf8')));
     etiqueta = re.ok;
   }
-  // Prova (T40): despesa relida com o mesmo valor, fornecedor, condomínio e vencimento, e o arquivo anexado.
-  const prova = parc ? {
-    valor: Math.abs((Number(parc.vl_valor_pdes) || 0) - d.valor) < 0.005,
-    fornecedor: String(parc.id_contato_con) === String(d.id_fornecedor),
-    condominio: parc.id_condominio_cond == null || String(parc.id_condominio_cond) === String(d.id_superlogica),
-    vencimento: slParaIso(parc.dt_vencimento_pdes) === d.vencimento,
-    anexo: anexado,
-  } : null;
+  const prova = provaDe(parc, d, arq.id);
   const conferido = !!prova && prova.valor && prova.fornecedor && prova.condominio && prova.vencimento;
   return { ok: true, conferido, prova, anexado, etiqueta, id_despesa: idDespesa, id_parcela: parc ? String(parc.id_parcela_pdes) : null, id_arquivo: arq.id,
     codigo_barras_gravado: parc ? !!soDig(parc.st_codigobarras_pdes) : null, msg: c.msg };
 }
 
 module.exports = {
-  MAX_PDF_BYTES, NAO_CONDOMINIOS, TIPOS_DOC_SL, GRAVES, IMPEDE,
+  MAX_PDF_BYTES, NAO_CONDOMINIOS, TIPOS_DOC_SL, GRAVES, IMPEDE, FORA_DO_LOTE, provaDe,
   cnpjValido, formatarCnpj, cnpjsDoTexto, linhaBoletoValida, linhaArrecValida, barrasDaLinha, vencimentoDoFator, acharLinha,
   lerDinheiro, brParaIso, isoParaSL, slParaIso, lerCampos, camposDaLeitura, chaveNota, faltaEssencial, juntarLeituras, classificar, acharDocumento, textoUtil, ehPdf, hashDe, extrairTexto,
   mapaCondominios, cadastroCondominios, cnpjsRepetidos, condominioPorId, fornecedorPorCnpj, fornecedorPorId, contasDoPlano, contaPrincipal, contasBanco, resumoContas, dataSL, identificar,
