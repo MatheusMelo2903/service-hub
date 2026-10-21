@@ -17,6 +17,7 @@ const TTL_BASE = 10 * 60 * 1000;
 const MESES_PAGAS = 2;          // mês atual mais os 2 anteriores
 const DIAS_AUDITORIA = 3;       // últimos dias úteis lidos da auditoria na base
 const ESPERA_ROTA = 20000;      // a rota espera a base até 20 s; depois responde "calculando"
+const ESPERA_APOS_ERRO = 120000; // C05: depois de um cálculo que falhou, 2 min sem tentar de novo
 const WEB_BASE = (process.env.SUPERLOGICA_WEB_BASE || 'https://condominioes.superlogica.net/clients/condor').replace(/\/+$/, '');
 
 // ── fila de chamadas ao Superlógica ───────────────────────────────────────
@@ -178,6 +179,7 @@ async function montarBase(cliente, fila, hoje) {
     periodo: { pagas_desde: iniPagas, pendentes_ate: U.maisDias(hoje, 60), auditoria_dias: dias },
     totais: { parcelas: despesas.length, linhas_auditoria: auditoria.length, alertas: r.alertas.length },
     condominios, porCondominio, analistas: r.analistasPorCondominio, falhas,
+    janelas_pedidas: tarefas.length + tAud.length,
   };
 }
 
@@ -298,6 +300,9 @@ function criarPainel(opcoes) {
       .then((b) => {
         // Superlógica fora do ar: cálculo sem nenhuma parcela e com falhas não substitui a base boa.
         if (b.falhas.length && !b.totais.parcelas) { const e = new Error('base_vazia_com_falhas'); throw e; }
+        // C05: a janela engole o erro e só anota em falhas; metade ou mais das leituras falhando
+        // também não substitui a base boa (menor 2 da revisão 2 da T31).
+        if (b.janelas_pedidas && b.falhas.length * 2 >= b.janelas_pedidas) { const e = new Error('base_com_muitas_falhas'); throw e; }
         base = b; ultimoErro = null; return b;
       })
       .catch((e) => { ultimoErro = new Date().toISOString(); log('[financeiro] base falhou: ' + (e && e.message)); throw e; })
@@ -313,9 +318,15 @@ function criarPainel(opcoes) {
     if (forcar && !andamento && base && Date.now() - forcadoEm > 300000 && Date.now() - Date.parse(base.gerado_em) > 60000) {
       forcadoEm = Date.now();
       recalcular();
-      return base;
+      // C05: na virada do dia a base de ontem não aparece; sem base do dia segue o caminho normal.
+      if (doDia()) return doDia();
     }
     if (!vencida(base)) return base;
+    // C05: depois de uma falha, espera 2 minutos antes de tentar de novo (não dispara um recálculo por requisição).
+    if (!andamento && ultimoErro && Date.now() - Date.parse(ultimoErro) < ESPERA_APOS_ERRO) {
+      if (doDia()) return doDia();
+      const e = new Error('falha_superlogica'); e.status = 502; throw e;
+    }
     const p = recalcular();
     const tempo = new Promise((ok) => setTimeout(() => ok(null), ESPERA_ROTA));
     const r = await Promise.race([p.catch(() => 'erro'), tempo]);
