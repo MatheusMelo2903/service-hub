@@ -10,7 +10,7 @@ const M = require('./mapear');
 const TIPOS = ['contas', 'despesas_liquidadas', 'despesas_pendentes', 'movimentos', 'cobrancas', 'auditoria'];
 const NAO_CONDOMINIO = /\bVIRTUAL SERVICE\b/i;
 const POR_CONDOMINIO = new Set(['cobrancas', 'movimentos']); // janelas por condomínio
-const MAX_PAGINAS = 400;
+const MAX_PAGINAS = 1500; // auditoria de um dia cheio passa de 40 mil linhas (28/04/2026)
 const MAX_DIAS = 400;
 
 function listaDe(j) {
