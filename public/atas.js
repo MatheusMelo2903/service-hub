@@ -355,7 +355,7 @@ async function anexarDocsAssembleia(event) {
       doc.paginas = lido.paginas;
       const util = lido.texto.replace(/\[página \d+\]/g, '').replace(/\s+/g, '');
       // Escaneado: quase nenhum texto por página. Vai como PDF para o servidor ler.
-      if (util.length < 80 * Math.max(1, lido.paginas)) {
+      if (util.length < 30 * Math.max(1, lido.paginas)) { // menos de 30 letras por página: sem camada de texto
         const escaneados = _ataDocsApoio.filter(d => d.pdfBase64).length;
         if (escaneados >= ATA_DOCS_MAX_ESCANEADOS) throw new Error('no máximo ' + ATA_DOCS_MAX_ESCANEADOS + ' PDFs escaneados por ata');
         if (file.size > ATA_DOCS_MAX_BYTES_ESCANEADO) throw new Error('PDF escaneado acima de 8MB');
