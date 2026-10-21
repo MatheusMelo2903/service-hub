@@ -75,8 +75,10 @@ function fecharLista(itens, truncado) {
 async function despesasMes(cliente, id, ano, mes) {
   const ini = new Date(ano, mes - 1, 1);
   const fim = new Date(ano, mes, 0);
-  const r = await todasPaginas(cliente, 'despesas/index', { idCondominio: id, comStatus: 'liquidadas', dtInicio: dataSL(ini), dtFim: dataSL(fim) }, 30);
-  return Object.assign({ ano, mes }, fecharLista(r.itens.map(resumirDespesa), r.truncado));
+  // filtrarpor=liquidacao: o período vale para a data do pagamento (o padrão da API é o vencimento).
+  const r = await todasPaginas(cliente, 'despesas/index', { idCondominio: id, comStatus: 'liquidadas', filtrarpor: 'liquidacao', dtInicio: dataSL(ini), dtFim: dataSL(fim) }, 20);
+  const pagas = r.itens.filter((d) => String(d.fl_liquidado_pdes) === '1');
+  return Object.assign({ ano, mes }, fecharLista(pagas.map(resumirDespesa), r.truncado));
 }
 
 // Contas pendentes: vencidas (últimos 12 meses até ontem) e a vencer (hoje até 30 dias).
@@ -86,8 +88,8 @@ async function contasPendentes(cliente, id, hoje) {
   const umAno = new Date(h); umAno.setFullYear(h.getFullYear() - 1);
   const em30 = new Date(h); em30.setDate(h.getDate() + 30);
   const [venc, aVencer] = await Promise.all([
-    todasPaginas(cliente, 'despesas/index', { idCondominio: id, comStatus: 'pendentes', dtInicio: dataSL(umAno), dtFim: dataSL(ontem) }, 10),
-    todasPaginas(cliente, 'despesas/index', { idCondominio: id, comStatus: 'pendentes', dtInicio: dataSL(h), dtFim: dataSL(em30) }, 10),
+    todasPaginas(cliente, 'despesas/index', { idCondominio: id, comStatus: 'pendentes', dtInicio: dataSL(umAno), dtFim: dataSL(ontem) }, 6),
+    todasPaginas(cliente, 'despesas/index', { idCondominio: id, comStatus: 'pendentes', dtInicio: dataSL(h), dtFim: dataSL(em30) }, 6),
   ]);
   return {
     vencidas: fecharLista(venc.itens.map(resumirDespesa), venc.truncado),
@@ -99,7 +101,7 @@ async function contasPendentes(cliente, id, hoje) {
 async function inadimplencia(cliente, id, hoje) {
   const r = await todasPaginas(cliente, 'inadimplencia/index', {
     idCondominio: id, posicaoEm: dataSL(hoje), comValoresAtualizados: 1, apenasResumoInad: 0,
-  }, 20);
+  }, 12);
   const unidades = r.itens.map((u) => {
     const recs = Array.isArray(u.recebimento) ? u.recebimento : [];
     let original = 0, corrigido = 0, maiorAtraso = 0, maisAntigo = '';
@@ -154,7 +156,7 @@ async function buscarUnidades(cliente, termo) {
 // Auditoria cadastral: unidades sem email, CPF/CNPJ ou telefone no proprietário, e a
 // soma da fração ideal (o Superlógica usa escala 1 ou 100 conforme o condomínio).
 async function auditoria(cliente, id) {
-  const r = await todasPaginas(cliente, 'unidades/index', { idCondominio: id, exibirDadosDosContatos: 1 }, 40);
+  const r = await todasPaginas(cliente, 'unidades/index', { idCondominio: id, exibirDadosDosContatos: 1 }, 30);
   let soma = 0;
   const pendencias = [];
   const semFracao = [];
@@ -189,17 +191,27 @@ async function auditoria(cliente, id) {
   };
 }
 
-// Cache simples em memória.
-function criarCache(ttlMs, max) {
+// Cache simples em memória. Pedidos iguais ao mesmo tempo esperam a mesma consulta
+// (não repetem tudo no Superlógica). Teto de tempo por consulta: passou, vira erro.
+function criarCache(ttlMs, max, tetoMs) {
   const m = new Map();
+  const andamento = new Map();
   return {
-    async pegar(chave, fn) {
+    pegar(chave, fn) {
       const c = m.get(chave);
-      if (c && c.ate > Date.now()) return c.v;
-      const v = await fn();
-      m.set(chave, { ate: Date.now() + ttlMs, v });
-      if (m.size > max) m.delete(m.keys().next().value);
-      return v;
+      if (c && c.ate > Date.now()) return Promise.resolve(c.v);
+      if (andamento.has(chave)) return andamento.get(chave);
+      let timer = null;
+      const teto = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('tempo_esgotado')), tetoMs || 45000); });
+      const p = Promise.race([Promise.resolve().then(fn), teto])
+        .then((v) => {
+          m.set(chave, { ate: Date.now() + ttlMs, v });
+          if (m.size > max) m.delete(m.keys().next().value);
+          return v;
+        })
+        .finally(() => { clearTimeout(timer); andamento.delete(chave); });
+      andamento.set(chave, p);
+      return p;
     },
   };
 }

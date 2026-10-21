@@ -3046,7 +3046,7 @@ app.get('/api/condominio/:idSuperlogica/cadastro', requireAuth, async (req, res)
 // superlogica/consulta.js. Cache curto para não repetir chamadas a cada clique.
 // ─────────────────────────────────────────────────────────────────────────
 const _cacheFicha = slModulo.consulta.criarCache(5 * 60 * 1000, 300);
-const _cacheAuditoria = slModulo.consulta.criarCache(10 * 60 * 1000, 100);
+const _cacheAuditoria = slModulo.consulta.criarCache(10 * 60 * 1000, 100, 90 * 1000);
 const _cacheBusca = slModulo.consulta.criarCache(2 * 60 * 1000, 200);
 
 async function exigirLeituraSuperlogica(req, res) {
@@ -3077,7 +3077,7 @@ app.get('/api/condominio/:idSuperlogica/ficha', requireAuth, async (req, res) =>
   const agora = new Date(Date.now() - 3 * 3600 * 1000); // Brasília
   let ano = agora.getUTCFullYear(), mes = agora.getUTCMonth() + 1;
   const m = String(req.query.mes || '').match(/^(\d{4})-(\d{2})$/);
-  if (req.query.mes && !m) return res.status(400).json({ erro: 'mes_invalido', detalhe: 'Use o formato AAAA-MM.' });
+  if (req.query.mes && !m) return res.status(400).json({ erro: 'mes_invalido', detalhe: 'Mês inválido.' });
   if (m) {
     ano = +m[1]; mes = +m[2];
     if (mes < 1 || mes > 12 || ano < 2000 || ano > agora.getUTCFullYear() + 1) return res.status(400).json({ erro: 'mes_invalido', detalhe: 'Mês fora do intervalo.' });

@@ -6,7 +6,7 @@
 // Rotas: /api/condominio/:id/ficha, /api/condominio/:id/auditoria, /api/unidades/busca.
 // ============================================================
 
-var fichaEstado = { idCarregado: null, mes: '', carregando: false, seq: 0 };
+var fichaEstado = { idCarregado: null, mes: '', seq: 0, seqBusca: 0 };
 
 function fichaEsc(s) {
   return String(s == null ? '' : s)
@@ -207,8 +207,10 @@ async function fichaBuscar(ev) {
   var q = (inp.value || '').replace(/\s+/g, ' ').trim();
   if (q.length < 3) { el.innerHTML = '<div class="ficha-erro">Digite pelo menos 3 caracteres.</div>'; return; }
   el.innerHTML = '<div class="cond-loading">Buscando em todos os condomínios...</div>';
+  var seq = ++fichaEstado.seqBusca;
   try {
     var r = await fichaGet('/api/unidades/busca?q=' + encodeURIComponent(q));
+    if (seq !== fichaEstado.seqBusca) return; // chegou uma busca mais nova
     if (!r.itens.length) { el.innerHTML = '<div class="ficha-sub">Nada encontrado para "' + fichaEsc(q) + '".</div>'; return; }
     el.innerHTML = '<div class="ficha-sub">' + r.quantidade + ' resultado' + (r.quantidade > 1 ? 's' : '') + (r.truncado ? ' (mostrando os primeiros)' : '') + '</div>'
       + '<table class="ficha-tab"><tr><th>Condomínio</th><th>Unidade</th><th>Proprietário</th><th>Contatos</th><th></th></tr>'
@@ -219,7 +221,7 @@ async function fichaBuscar(ev) {
           + '</td><td>' + (hub ? '<button class="btn btn-ghost ficha-abrir" data-hub="' + fichaEsc(hub.id) + '" style="font-size:11px;padding:4px 10px">Abrir ficha</button>' : '') + '</td></tr>';
       }).join('') + '</table>';
   } catch (e) {
-    el.innerHTML = '<div class="ficha-erro">' + fichaEsc(e.message) + '</div>';
+    if (seq === fichaEstado.seqBusca) el.innerHTML = '<div class="ficha-erro">' + fichaEsc(e.message) + '</div>';
   }
 }
 
