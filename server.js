@@ -4399,6 +4399,134 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// Leitura de medidores em lote (T20). A foto passa por /api/processar/medidor (leitura, unidade
+// e bloco); aqui ficam a lista de unidades com a última leitura, a conferência (casamento com a
+// unidade e suspeitas) e o lançamento no Superlógica (consumo/put), uma unidade por chamada,
+// com a foto guardada como arquivo de medição quando o Superlógica aceitar.
+// Lançamento só nos condomínios de CONSUMO_LANCAMENTO_LIBERADO (padrão: só o 167, de teste).
+// ─────────────────────────────────────────────────────────────────────────
+const slConsumo = require('./superlogica/consumo-lote');
+const _cacheConsumo = slModulo.consulta.criarCache(2 * 60 * 1000, 200, 90 * 1000);
+const _consumoEmCurso = new Set(); // um lançamento por condomínio de cada vez
+function _consumoLiberados() {
+  return String(process.env.CONSUMO_LANCAMENTO_LIBERADO || '167').split(/[\s,;]+/).filter((x) => slModulo.idValido(x));
+}
+// Permissão, chaves do Superlógica e carteira. acao 'ler' para lançar.
+async function _exigirConsumo(req, res, id, acao) {
+  if (req.authMode !== 'internal') {
+    const p = await perfilDe(req);
+    if (!podeModulo(p, 'leitura_consumo', acao)) { res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso a essa função.' }); return false; }
+  }
+  if (!(await exigirLeituraSuperlogica(req, res))) return false;
+  return _exigirCarteira(req, res, id);
+}
+function _consumoParams(req, res, fonte) {
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) { res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' }); return null; }
+  const tipo = Number(fonte.tipo);
+  if (!slConsumo.TIPOS[tipo]) { res.status(400).json({ erro: 'tipo_invalido', detalhe: 'Escolha Água ou Gás.' }); return null; }
+  const ref = slConsumo.mesRef(fonte.mes);
+  if (!ref) { res.status(400).json({ erro: 'mes_invalido', detalhe: 'Escolha o mês atual ou um dos dois anteriores.' }); return null; }
+  return { id, tipo, ref };
+}
+function _unidadesConsumoCache(id, tipo, ref) {
+  return _cacheConsumo.pegar(id + ':' + tipo + ':' + ref.ano + '-' + ref.mes, () => slConsumo.unidadesConsumo(clienteSL(), id, tipo, ref));
+}
+function _erroConsumo(res, e, onde) {
+  if (e && e.semLeitura) return res.status(404).json({ erro: 'tipo_sem_leitura', detalhe: 'Este condomínio não tem esse tipo de leitura no Superlógica.' });
+  console.warn('[consumo-' + onde + '] falhou: ' + (e && e.message));
+  return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler as leituras no Superlógica agora.' });
+}
+
+// GET /api/consumo/:id/unidades?tipo=2&mes=AAAA-MM — unidades com a última leitura e a média
+app.get('/api/consumo/:idSuperlogica/unidades', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const P = _consumoParams(req, res, req.query || {});
+  if (!P) return;
+  if (!(await _exigirConsumo(req, res, P.id))) return;
+  try {
+    const unidades = await _unidadesConsumoCache(P.id, P.tipo, P.ref);
+    res.json({ tipo: P.tipo, nome_tipo: slConsumo.TIPOS[P.tipo], mes: P.ref.rotulo, ultimo_dia: P.ref.ultimoDia, corrente: P.ref.corrente,
+      lancamento_liberado: _consumoLiberados().includes(P.id), unidades });
+  } catch (e) { _erroConsumo(res, e, 'unidades'); }
+});
+
+// POST /api/consumo/:id/conferir { tipo, mes, itens:[{ chave, unidade, bloco, id_unidade?, leitura, varios_medidores? }] }
+app.post('/api/consumo/:idSuperlogica/conferir', requireAuth, express.json({ limit: '300kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const b = req.body || {};
+  const P = _consumoParams(req, res, b);
+  if (!P) return;
+  if (!Array.isArray(b.itens) || b.itens.length > 500) return res.status(400).json({ erro: 'itens_invalidos', detalhe: 'Envie de 1 a 500 leituras.' });
+  if (!(await _exigirConsumo(req, res, P.id))) return;
+  try {
+    const lista = await _unidadesConsumoCache(P.id, P.tipo, P.ref);
+    res.json({ itens: slConsumo.conferirLote(lista, b.itens) });
+  } catch (e) { _erroConsumo(res, e, 'conferir'); }
+});
+
+// POST /api/consumo/:id/lancar { tipo, mes, dia, id_unidade, leitura, foto?:{ mime, base64 },
+//   substituir?, aceitar_suspeita?, confirmacao:'LANCAR' } — grava UMA leitura no Superlógica.
+app.post('/api/consumo/:idSuperlogica/lancar', requireAuth, express.json({ limit: '22mb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const b = req.body || {};
+  const P = _consumoParams(req, res, b);
+  if (!P) return;
+  if (b.confirmacao !== 'LANCAR') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme o lançamento na tela.' });
+  // Trava antes de tudo: só condomínios liberados (padrão: só o de teste).
+  if (!_consumoLiberados().includes(P.id)) return res.status(423).json({ erro: 'lancamento_travado', detalhe: 'O lançamento de leituras ainda está travado para este condomínio pela administração. A conferência funciona normalmente.' });
+  if (!(await _exigirConsumo(req, res, P.id, 'ler'))) return;
+  if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado' });
+  const idUni = Number(b.id_unidade);
+  if (!Number.isInteger(idUni) || idUni <= 0) return res.status(400).json({ erro: 'unidade_invalida', detalhe: 'Escolha a unidade.' });
+  const valor = slConsumo.lerValor(b.leitura);
+  if (valor == null) return res.status(400).json({ erro: 'leitura_invalida', detalhe: 'Leitura inválida: use só números, com vírgula para a parte decimal.' });
+  const hoje = P.ref.corrente ? new Date(Date.now() - 3 * 3600 * 1000).getUTCDate() : P.ref.ultimoDia;
+  const dia = Number(b.dia == null || b.dia === '' ? hoje : b.dia);
+  if (!Number.isInteger(dia) || dia < 1 || dia > hoje) return res.status(400).json({ erro: 'dia_invalido', detalhe: 'Dia da leitura inválido para o mês escolhido.' });
+  let foto = null;
+  if (b.foto != null) {
+    const f = b.foto;
+    if (!f || typeof f.base64 !== 'string' || f.base64.length > Math.ceil(slConsumo.MAX_FOTO_BYTES / 3) * 4 + 8) return res.status(400).json({ erro: 'foto_invalida', detalhe: 'Foto inválida ou maior que 15 MB.' });
+    foto = Buffer.from(f.base64, 'base64');
+    if (!slConsumo.tipoImagem(foto)) return res.status(400).json({ erro: 'foto_invalida', detalhe: 'A foto precisa ser JPG, PNG ou WEBP.' });
+  }
+  if (!dentroDoLimite(req, 'consumo_lancar', 600)) {
+    auditoria.evento(req, 'limite_processamento', { tipo: 'consumo_lancar', id_superlogica: P.id }, true, 'volume_alto');
+    return res.status(429).json({ erro: 'limite', detalhe: 'Muitos lançamentos nesta hora. Tente mais tarde.' });
+  }
+  if (_consumoEmCurso.has(P.id)) return res.status(409).json({ erro: 'em_andamento', detalhe: 'Já há um lançamento em andamento neste condomínio. Aguarde.' });
+  _consumoEmCurso.add(P.id);
+  const chaveCache = P.id + ':' + P.tipo + ':' + P.ref.ano + '-' + P.ref.mes;
+  try {
+    // Lista lida agora (não do cache): a unidade tem de ser do condomínio e a conferência é refeita aqui.
+    let lista;
+    try { lista = await slConsumo.unidadesConsumo(clienteSL(), P.id, P.tipo, P.ref); } catch (e) { return _erroConsumo(res, e, 'lancar'); }
+    const u = lista.find((x) => x.id_unidade === idUni);
+    if (!u) return res.status(400).json({ erro: 'unidade_fora', detalhe: 'Essa unidade não é deste condomínio.' });
+    const conf = slConsumo.conferirLote(lista, [{ id_unidade: idUni, leitura: valor }])[0];
+    const cods = conf.suspeitas.map((s) => s.codigo);
+    if (cods.includes('ja_lancada') && b.substituir !== true) return res.status(409).json({ erro: 'ja_lancada', detalhe: 'Já existe leitura neste mês para esta unidade. Marque substituir para trocar.', suspeitas: conf.suspeitas });
+    const graves = cods.filter((c) => c === 'menor_que_anterior' || c === 'salto_alto');
+    if (graves.length && b.aceitar_suspeita !== true) return res.status(409).json({ erro: 'suspeita', detalhe: 'Leitura suspeita: confira e marque que conferiu antes de lançar.', suspeitas: conf.suspeitas });
+    const r = await slConsumo.lancarLeitura(_credSL(), clienteSL(), { id: P.id, tipo: P.tipo, ref: P.ref, dia, u, valor, foto });
+    _cacheConsumo.limpar(chaveCache);
+    if (r.lista) _cacheConsumo.pegar(chaveCache, () => r.lista).catch(() => {});
+    auditoria.evento(req, 'consumo_lancado', { id_superlogica: P.id, id_unidade: idUni, tipo: P.tipo, mes: P.ref.rotulo, valor,
+      anterior: u.anterior, substituiu: u.atual, suspeitas: cods, ok: r.ok, incerto: !!r.incerto, foto: r.foto }, !r.ok);
+    console.log('[consumo] ' + (req.user && req.user.email ? req.user.email : req.authMode) + ' lançou ' + slConsumo.TIPOS[P.tipo] + ' ' + P.ref.rotulo + ' unidade ' + idUni + ' no condomínio ' + P.id + ': ' + (r.ok ? 'ok' : r.incerto ? 'incerto' : 'falhou') + ' foto ' + r.foto);
+    if (r.ok) return res.json({ ok: true, foto: r.foto, id_arquivo: r.id_arquivo, valor, consumo: u.anterior != null ? Math.round((valor - u.anterior) * 10000) / 10000 : null });
+    if (r.incerto) return res.status(504).json({ erro: 'incerto', detalhe: 'O Superlógica não confirmou a leitura. Confira no Superlógica antes de lançar de novo.', foto: r.foto });
+    return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'O Superlógica recusou: ' + r.msg, foto: r.foto });
+  } catch (e) {
+    console.warn('[consumo-lancar] ' + P.id + ' falhou: ' + (e && e.message));
+    return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível lançar agora. Confira no Superlógica antes de tentar de novo.' });
+  } finally {
+    _consumoEmCurso.delete(P.id);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // Relatório mensal do síndico (T13). GET /api/condominio/:id/relatorio-mensal?mes=AAAA-MM
 // (padrão: mês anterior, o último fechado). Só leitura no Superlógica; o PDF é montado no
 // navegador. Detalhes em superlogica/relatorio.js.

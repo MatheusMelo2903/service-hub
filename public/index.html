@@ -933,75 +933,28 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* CONSUMO */
-  .consumo-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 14px;
-    margin-top: 16px;
-  }
-  .consumo-card {
-    background: var(--bg3);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-    position: relative;
-  }
-  .consumo-card img {
-    width: 100%;
-    height: 140px;
-    object-fit: cover;
-    display: block;
-  }
-  .consumo-card-body {
-    padding: 10px 12px;
-  }
-  .consumo-card-label {
-    font-size: 10px;
-    font-family: var(--mono);
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-bottom: 4px;
-  }
-  .consumo-leitura {
-    font-size: 20px;
-    font-weight: 700;
-    color: var(--gs-blue);
-    font-family: var(--mono);
-  }
-  .consumo-status {
-    font-size: 10px;
-    font-family: var(--mono);
-    margin-top: 4px;
-  }
-  .consumo-remove {
-    position: absolute;
-    top: 6px; right: 6px;
-    background: rgba(0,0,0,0.6);
-    border: none;
-    color: white;
-    border-radius: 50%;
-    width: 22px; height: 22px;
-    cursor: pointer;
-    font-size: 12px;
-    display: flex; align-items: center; justify-content: center;
-    transition: background 0.15s;
-  }
-  .consumo-remove:hover { background: var(--danger); }
-  .consumo-input-leitura {
-    width: 100%;
-    background: var(--bg2);
-    border: 1px solid var(--border2);
-    border-radius: 6px;
-    padding: 6px 10px;
-    color: var(--text);
-    font-family: var(--mono);
-    font-size: 13px;
-    outline: none;
-    margin-top: 6px;
-  }
-  .consumo-input-leitura:focus { border-color: var(--gs-blue); }
+  /* CONSUMO (T20): conferência em tabela */
+  .consumo-filtros { display: flex; flex-wrap: wrap; gap: 14px; }
+  .consumo-filtros label { display: flex; flex-direction: column; gap: 4px; font-size: 10px; font-family: var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .consumo-input { background: var(--bg2); border: 1px solid var(--border2); border-radius: 6px; padding: 6px 8px; color: var(--text); font-family: var(--mono); font-size: 13px; outline: none; max-width: 100%; }
+  .consumo-input:focus { border-color: var(--gs-blue); }
+  .consumo-sub { font-size: 11px; font-family: var(--mono); color: var(--muted); }
+  .consumo-nome { font-size: 12px; font-family: var(--mono); color: var(--text); word-break: break-all; }
+  .consumo-tabela-wrap { overflow-x: auto; }
+  .consumo-tabela { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .consumo-tabela th { text-align: left; font-size: 10px; font-family: var(--mono); color: var(--muted); text-transform: uppercase; padding: 6px; border-bottom: 1px solid var(--border); }
+  .consumo-tabela td { padding: 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .consumo-tabela td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
+  .consumo-tabela tr.suspeita { background: rgba(245, 158, 11, 0.08); }
+  .consumo-tabela .consumo-input { width: 130px; }
+  .consumo-mini { width: 72px; height: 72px; object-fit: cover; border-radius: 6px; display: block; }
+  .consumo-situacao { min-width: 180px; }
+  .consumo-chip { display: inline-block; margin: 0 4px 4px 0; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: var(--bg3); color: var(--muted); }
+  .consumo-chip.warn { background: rgba(245, 158, 11, 0.18); color: #b45309; }
+  .consumo-chip.err { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
+  .consumo-chip.ok { background: rgba(16, 185, 129, 0.15); color: #047857; }
+  .consumo-remover { background: transparent; border: 1px solid var(--border2); color: var(--muted); border-radius: 50%; width: 24px; height: 24px; cursor: pointer; }
+  .consumo-remover:hover { color: var(--danger); border-color: var(--danger); }
 
   /* Modal de revisao da prestacao de contas (B5). Layout em 2 colunas:
      edicao das secoes a esquerda e preview de slides a direita. */
@@ -2051,7 +2004,7 @@
       <div class="card" id="fin-detalhe" style="display:none"></div>
     </div>
 
-    <!-- LEITURA DE CONSUMO -->
+    <!-- LEITURA DE CONSUMO (T20): JS em public/consumo.js -->
     <div class="panel" id="panel-consumo">
       <!-- Banner populado por renderBannerCondAtivo('consumo') ao abrir o painel -->
       <div id="banner-cond-consumo"></div>
@@ -2059,34 +2012,57 @@
         <div class="card-header">
           <span class="card-title">Importar Fotos de Medidores</span>
         </div>
-        <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:16px">
-          Arraste as fotos dos medidores de água e gás. A leitura é extraída automaticamente.
+        <div class="consumo-filtros">
+          <label>Tipo de leitura
+            <select id="consumo-tipo" class="consumo-input" onchange="consumoMudouFiltro()">
+              <option value="2">Água</option>
+              <option value="1">Gás</option>
+            </select>
+          </label>
+          <label>Mês da leitura
+            <select id="consumo-mes" class="consumo-input" onchange="consumoMudouFiltro()"></select>
+          </label>
+          <label>Dia da leitura
+            <input id="consumo-dia" class="consumo-input" type="number" min="1" max="31" style="width:90px">
+          </label>
+        </div>
+        <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin:12px 0 16px">
+          Envie de uma vez as fotos dos medidores do condomínio. A leitura e a unidade são extraídas da foto e comparadas com a última leitura do Superlógica.
+          Dica: fotografe a etiqueta da unidade junto do medidor ou nomeie a foto com a unidade (exemplo: 101A.jpg).
         </p>
         <div class="dropzone" id="dropzone-consumo"
              ondragover="handleDrag(event, this)"
              ondragleave="handleDragLeave(this)"
              ondrop="handleDropConsumo(event)">
-          <input type="file" accept="image/*" multiple onchange="handleFilesConsumo(event)">
+          <input type="file" accept="image/jpeg,image/png,image/webp" multiple onchange="handleFilesConsumo(event)">
           <div class="drop-icon">◎</div>
           <div class="drop-title">Arraste as fotos dos medidores</div>
-          <div class="drop-sub">JPG, PNG — múltiplos arquivos aceitos</div>
+          <div class="drop-sub">JPG, PNG ou WEBP, várias fotos de uma vez</div>
         </div>
+        <div id="consumo-aviso" class="consumo-sub" style="margin-top:10px"></div>
       </div>
 
       <div id="consumo-results" style="display:none">
         <div class="card">
           <div class="card-header">
-            <span class="card-title">Leituras Extraídas</span>
+            <span class="card-title">Conferência das leituras</span>
             <div style="display:flex;gap:8px">
               <button class="btn btn-ghost" onclick="limparConsumo()" style="font-size:12px;padding:6px 12px">✕ Limpar</button>
-              <button class="btn btn-primary" id="btn-enviar-consumo" onclick="enviarConsumo()" style="font-size:12px;padding:6px 14px">↑ Enviar ao Superlógica</button>
+              <button class="btn btn-primary" id="btn-lancar-consumo" onclick="lancarConsumo()" style="font-size:12px;padding:6px 14px" disabled>↑ Lançar marcadas no Superlógica</button>
             </div>
           </div>
-          <div class="consumo-grid" id="consumo-grid"></div>
+          <div id="consumo-resumo" class="consumo-sub" style="margin-bottom:10px"></div>
+          <div class="consumo-tabela-wrap">
+            <table class="consumo-tabela">
+              <thead><tr><th>Foto</th><th>Arquivo</th><th>Unidade</th><th>Leitura</th><th>Anterior</th><th>Consumo</th><th>Média</th><th>Situação</th><th>Lançar</th><th></th></tr></thead>
+              <tbody id="consumo-tabela"></tbody>
+            </table>
+          </div>
+          <p class="consumo-sub" style="margin-top:10px">Linhas com suspeita ficam desmarcadas: confira a foto, corrija a unidade ou a leitura e marque Lançar só depois de conferir.</p>
         </div>
 
         <div class="card" id="consumo-log-card" style="display:none">
-          <div class="card-header"><span class="card-title">Log de envio</span></div>
+          <div class="card-header"><span class="card-title">Registro do lançamento</span></div>
           <div class="log-wrap" id="consumo-log"></div>
         </div>
       </div>
@@ -3381,56 +3357,9 @@ function configCondInit() {
 // (código da aba Atas movido para public/atas.js na T07)
 
 // ============================================================
-// LEITURA DE CONSUMO
+// LEITURA DE CONSUMO: tela em public/consumo.js (T20)
 // ============================================================
-let consumoItems = [];
-
-function handleDropConsumo(e) {
-  e.preventDefault();
-  document.getElementById('dropzone-consumo').classList.remove('dragover');
-  const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
-  if (files.length) processFilesConsumo(files);
-}
-
-function handleFilesConsumo(e) {
-  const files = Array.from(e.target.files);
-  if (files.length) processFilesConsumo(files);
-}
-
-async function processFilesConsumo(files) {
-  document.getElementById('consumo-results').style.display = 'block';
-  toast(files.length + ' imagem(ns) carregada(s) — extraindo leituras...', 'info');
-
-  for (const file of files) {
-    const id = Date.now() + Math.random();
-    const url = URL.createObjectURL(file);
-    consumoItems.push({ id, file, url, leitura: '', unidade: '', status: 'processando' });
-    renderConsumoGrid();
-
-    // Leitura feita no servidor
-    try {
-      const b64 = await fileToBase64(file);
-      const resp = await apiAuthFetch('/api/processar/medidor', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ arquivo: { mime: file.type, base64: b64 } })
-      });
-      const d = await resp.json().catch(() => ({}));
-      const leitura = resp.ok ? String(d.leitura || 'ilegível').trim() : 'ilegível';
-      const item = consumoItems.find(c => c.id === id);
-      if (item) {
-        item.leitura = leitura;
-        item.status = leitura === 'ilegível' ? 'erro' : 'ok';
-      }
-    } catch(e) {
-      const item = consumoItems.find(c => c.id === id);
-      if (item) { item.leitura = 'erro'; item.status = 'erro'; }
-    }
-    renderConsumoGrid();
-  }
-  toast('Extração concluída!', 'ok');
-}
-
+// Usada também por public/unidades-normalizar.js.
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -3438,104 +3367,6 @@ function fileToBase64(file) {
     r.onerror = reject;
     r.readAsDataURL(file);
   });
-}
-
-function renderConsumoGrid() {
-  const grid = document.getElementById('consumo-grid');
-  grid.innerHTML = consumoItems.map((item, i) => `
-    <div class="consumo-card">
-      <img src="${item.url}" alt="Medidor">
-      <button class="consumo-remove" onclick="removeConsumoItem(${i})">×</button>
-      <div class="consumo-card-body">
-        <div class="consumo-card-label">Unidade</div>
-        <input class="consumo-input-leitura" placeholder="ex: 101-A"
-          value="${item.unidade}"
-          oninput="consumoItems[${i}].unidade = this.value">
-        <div class="consumo-card-label" style="margin-top:8px">Leitura</div>
-        ${item.status === 'processando'
-          ? '<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><div class="spinner" style="width:14px;height:14px"></div><span style="font-size:12px;color:var(--muted);font-family:var(--mono)">Extraindo...</span></div>'
-          : `<input class="consumo-input-leitura" value="${item.leitura}"
-              oninput="consumoItems[${i}].leitura = this.value"
-              style="color:${item.status === 'erro' ? 'var(--danger)' : 'var(--gs-blue)'}">`
-        }
-      </div>
-    </div>`).join('');
-}
-
-function removeConsumoItem(i) {
-  consumoItems.splice(i, 1);
-  renderConsumoGrid();
-  if (!consumoItems.length) document.getElementById('consumo-results').style.display = 'none';
-}
-
-function limparConsumo() {
-  consumoItems = [];
-  document.getElementById('consumo-results').style.display = 'none';
-  document.getElementById('consumo-log-card').style.display = 'none';
-}
-
-// Trocou de condomínio (T02): as fotos e leituras eram do anterior.
-window.addEventListener('condominioAtivo:trocou', function() {
-  if (!consumoItems.length) return;
-  limparConsumo();
-  toast('Leituras de consumo descartadas: o condomínio mudou.', 'info');
-});
-
-async function enviarConsumo() {
-  if (!apiPronta()) { toast('Configure os tokens da API primeiro', 'err'); return; }
-  // Proxy obrigatório — usa getProxy() para checar valor já sanitizado e com https://
-  if (!getProxy()) { toast('Configure o proxy nas Configuracoes', 'err'); return; }
-  const validos = consumoItems.filter(c => c.unidade && c.leitura && c.leitura !== 'ilegível' && c.leitura !== 'erro');
-  if (!validos.length) { toast('Preencha unidade e leitura para todos os medidores', 'err'); return; }
-  // Condomínio do envio: o ativo do sistema, pelo código do Superlógica (nunca o id interno).
-  const condAtivo = getCondominioAtivo();
-  const condIdSL = condAtivo && condAtivo.id_superlogica;
-  if (!condIdSL) { toast('Selecione um condomínio com código do Superlógica antes de enviar', 'err'); return; }
-
-  const logCard = document.getElementById('consumo-log-card');
-  const logDiv = document.getElementById('consumo-log');
-  logCard.style.display = 'block';
-  logDiv.innerHTML = '';
-
-  const btn = document.getElementById('btn-enviar-consumo');
-  btn.disabled = true;
-  btn.textContent = '⏳ Enviando...';
-  // Trava a troca de condomínio durante o envio (condTrocaBloqueada)
-  window._enviandoConsumo = true;
-
-  let ok = 0, err = 0;
-  for (const item of validos) {
-    try {
-      addLog(logDiv, `Unidade ${item.unidade}: leitura ${item.leitura} — enviando...`, 'info');
-      // Endpoint de leitura de consumo do Superlógica
-      const body = new URLSearchParams({
-        ID_CONDOMINIO_COND: String(condIdSL),
-        ST_UNIDADE_UNI: item.unidade,
-        VL_LEITURA: item.leitura,
-      });
-      // Usa apiPost para centralizar o null-check de proxy e os headers
-      const r = await apiPost('/consumo/post', body.toString());
-      if (r.ok) {
-        ok++;
-        addLog(logDiv, `Unidade ${item.unidade}: ✓ enviado`, 'ok');
-      } else {
-        err++;
-        const txt = await r.text();
-        addLog(logDiv, `Unidade ${item.unidade}: erro ${r.status} — ${txt.slice(0,80)}`, 'err');
-      }
-    } catch(e) {
-      err++;
-      addLog(logDiv, `Unidade ${item.unidade}: ${e.message}`, 'err');
-    }
-    await sleep(150);
-  }
-
-  window._enviandoConsumo = false;
-  btn.disabled = false;
-  btn.textContent = '↑ Enviar ao Superlógica';
-  addHistorico(`Consumo: ${ok} leituras enviadas${err ? ', ' + err + ' erros' : ' ✓'}`);
-  if (err === 0) toast(ok + ' leituras enviadas com sucesso!', 'ok');
-  else toast(ok + ' enviadas, ' + err + ' com erro', 'warn');
 }
 
 // Helper global de escape HTML para uso em templates que precisam de innerHTML.
@@ -4268,6 +4099,7 @@ async function deletarUsuario(userId, email) {
 <script src="/comunicados.js"></script>
 <script src="/relatorio.js"></script>
 <script src="/financeiro.js"></script>
+<script src="/consumo.js"></script>
 
 <div id="prestacao-modal" class="prestacao-modal" style="display:none">
   <div class="prestacao-modal-overlay" onclick="prestacaoFecharModal()"></div>

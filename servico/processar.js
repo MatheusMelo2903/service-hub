@@ -145,14 +145,52 @@ async function processarMedidor(corpo, usuario) {
   const arq = corpo && corpo.arquivo;
   const bloco = arq && MIMES_IMAGEM.includes(String(arq.mime || '')) ? blocoArquivo(arq) : null;
   if (!bloco) return { status: 400, corpo: { erro: 'arquivo_invalido', detalhe: 'Envie a foto do medidor (JPG, PNG ou WEBP).' } };
-  const r = await chamarModelo({ modelo: MODELO_RAPIDO, maxTokens: 200, rotulo: 'medidor', usuario,
-    content: [bloco, { type: 'text', text: 'Esta é uma foto de um medidor (água ou gás) de condomínio. Extraia APENAS o número de leitura atual do mostrador. Responda somente com o número, sem texto adicional. Se não conseguir ler, responda "ilegível".' }] });
+  const r = await chamarModelo({ modelo: MEDIDOR_MODELO, maxTokens: 300, rotulo: 'medidor', usuario,
+    content: [bloco, { type: 'text', text: MEDIDOR_PEDIDO }] });
   if (!r.ok) return erroPadrao(r);
-  const t = String(r.texto || '').trim();
-  // Aceita o número mesmo com texto em volta ("Leitura: 1234,5"); sem número claro, ilegível.
-  const achado = String(t || '').match(/[0-9][0-9.,]{0,14}/g);
+  return { status: 200, corpo: lerRespostaMedidor(r.texto) };
+}
+
+// T20: além da leitura, a unidade e o bloco escritos na foto (etiqueta, placa ou caneta) e o
+// número de série do medidor, para casar a foto com a unidade do condomínio. O que não aparece
+// na foto volta null (nunca adivinhar). Os algarismos vêm separados (inteiros e decimais) e a
+// leitura é montada aqui. Modelo: o padrão, porque o rápido trocou algarismos no teste de 21/10
+// (00123,45 virou 001234,45); MEDIDOR_MODELO troca sem mexer no código.
+const MEDIDOR_MODELO = process.env.MEDIDOR_MODELO || MODELO_PADRAO;
+const MEDIDOR_PEDIDO = [
+  'Foto de medidor de água ou gás de condomínio, tirada pelo leiturista.',
+  'Passo 1: copie os algarismos do mostrador um por um, da esquerda para a direita, separando os de fundo preto ou branco (parte inteira) dos de fundo vermelho ou depois da vírgula (parte decimal). Não repita nem pule algarismo.',
+  'Passo 2: procure na foto qualquer texto escrito à mão ou em etiqueta, placa ou adesivo que indique a unidade (exemplos: "APTO 101", "AP 302 BL B", "CASA 5", "999 TESTE HUB") e copie exatamente.',
+  'Se houver mais de um mostrador na foto, NÃO escolha nenhum: inteiros e decimais null, legivel false e medidores_na_foto com a quantidade.',
+  'Sua resposta inteira deve ser SÓ este JSON, sem explicação, sem texto antes ou depois:',
+  '{"inteiros": "algarismos da parte inteira ou null", "decimais": "algarismos da parte decimal ou null", "legivel": true ou false, "unidade": "número ou nome da unidade escrito na foto, ou null", "bloco": "bloco, torre ou quadra escrito na foto, ou null", "medidor": "número de série gravado no medidor, ou null", "medidores_na_foto": número de mostradores na foto}',
+  'legivel = false se algum algarismo da parte inteira não der para ler com segurança. Nunca invente: o que não aparece com clareza fica null.',
+].join('\n');
+
+const textoCurto = (v, max) => (v == null ? null : (String(v).replace(/\s+/g, ' ').trim().slice(0, max) || null));
+function lerRespostaMedidor(texto) {
+  const t = String(texto || '').trim();
+  const j = extrairJson(t);
+  if (j && typeof j === 'object' && !Array.isArray(j)) {
+    const nulo = (v) => { const s = textoCurto(v, 40); return s && !/^(null|nenhum|nao|não|n\/a|-)$/i.test(s) ? s : null; };
+    const n = parseInt(j.medidores_na_foto, 10);
+    const varios = isFinite(n) && n > 1;
+    let leitura = 'ilegível';
+    const so = (v) => { const s = nulo(v); return s ? s.replace(/\s/g, '') : null; };
+    const int = so(j.inteiros), dec = so(j.decimais);
+    if (j.legivel !== false && !varios && int && /^[0-9]{1,12}$/.test(int) && (!dec || /^[0-9]{1,4}$/.test(dec))) {
+      leitura = int + (dec ? ',' + dec : '');
+    } else if (j.inteiros === undefined && j.legivel !== false && !varios) {
+      // Formato antigo { leitura: "123,4" }
+      const b = so(j.leitura);
+      if (b && /^[0-9]{1,12}([.,][0-9]{1,4})?$/.test(b)) leitura = b;
+    }
+    return { leitura, unidade: nulo(j.unidade), bloco: nulo(j.bloco), medidor: nulo(j.medidor), varios_medidores: varios };
+  }
+  // Sem JSON: aceita o número mesmo com texto em volta ("Leitura: 1234,5"); sem número claro, ilegível.
+  const achado = t.match(/[0-9][0-9.,]{0,14}/g);
   const leitura = achado && achado.length === 1 ? achado[0].replace(/[.,]$/, '') : 'ilegível';
-  return { status: 200, corpo: { leitura } };
+  return { leitura, unidade: null, bloco: null, medidor: null, varios_medidores: false };
 }
 
 // ---------- Unidades fora do padrão (aba Unidades, Processar documento) ----------
@@ -207,4 +245,4 @@ async function processarUnidades(corpo, usuario) {
   return { status: 200, corpo: lerLinhasUnidades(r.texto, r.cortado) };
 }
 
-module.exports = { processarEdital, processarMedidor, processarUnidades, lerLinhasUnidades, montarConteudoUnidades, blocoArquivo };
+module.exports = { processarEdital, processarMedidor, lerRespostaMedidor, processarUnidades, lerLinhasUnidades, montarConteudoUnidades, blocoArquivo };
