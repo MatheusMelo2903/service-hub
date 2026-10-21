@@ -2005,6 +2005,34 @@
       <div class="card" id="fin-detalhe" style="display:none"></div>
     </div>
 
+    <!-- ENTRADA DE DOCUMENTOS (T33): JS em public/entrada-documentos.js -->
+    <div class="panel" id="panel-entrada">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Entrada de documentos</span></div>
+        <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin:0 0 12px">
+          Envie boletos, notas e guias em PDF (vários de uma vez, até 10 MB cada). O sistema lê os dados, acha o condomínio pelo CNPJ do pagador ou tomador e o fornecedor pelo CNPJ, e confere no Superlógica se já existe lançamento parecido. Cada documento vira um rascunho para conferir antes de lançar.
+        </p>
+        <div id="ent-trava" style="display:none;font-size:12px;color:var(--warning);margin-bottom:10px">Por enquanto o lançamento só está liberado no condomínio de teste. A leitura e a conferência funcionam em todos.</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="file" id="ent-arquivos" accept="application/pdf,.pdf" multiple>
+          <button class="btn btn-primary" id="ent-enviar" onclick="entEnviar()">Ler documentos</button>
+        </div>
+        <div id="ent-log" style="margin-top:10px;max-height:180px;overflow:auto"></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><span class="card-title">Fila</span>
+          <span style="display:flex;gap:6px">
+            <button class="btn btn-primary" id="ent-f-rascunho" onclick="entFiltro('rascunho')">Rascunhos</button>
+            <button class="btn btn-ghost" id="ent-f-lancado" onclick="entFiltro('lancado')">Lançados</button>
+            <button class="btn btn-ghost" onclick="entCarregar()" title="Atualizar">Atualizar</button>
+          </span>
+        </div>
+        <div id="ent-info" style="margin:6px 0"></div>
+        <div id="ent-fila" style="overflow-x:auto"></div>
+      </div>
+      <div class="card" id="ent-detalhe" style="display:none"></div>
+    </div>
+
     <!-- LEITURA DE CONSUMO (T20): JS em public/consumo.js -->
     <div class="panel" id="panel-consumo">
       <!-- Banner populado por renderBannerCondAtivo('consumo') ao abrir o painel -->
@@ -4102,6 +4130,7 @@ async function deletarUsuario(userId, email) {
 <script src="/financeiro.js"></script>
 <script src="/conciliacao-casar.js"></script>
 <script src="/financeiro-conciliacao.js"></script>
+<script src="/entrada-documentos.js"></script>
 <script src="/consumo.js"></script>
 
 <div id="prestacao-modal" class="prestacao-modal" style="display:none">

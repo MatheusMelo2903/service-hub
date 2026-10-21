@@ -4665,6 +4665,16 @@ app.post('/api/consumo/:idSuperlogica/lancar', requireAuth, express.json({ limit
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// Entrada de documentos (T33, substitui o Paybox): rotas em servico/rotas-entrada.js, leitura
+// e lançamento em financeiro/entrada.js. Lançamento só nos condomínios liberados (sem
+// ENTRADA_LIBERADA, só o 167 de teste).
+// ─────────────────────────────────────────────────────────────────────────
+require('./servico/rotas-entrada').criarRotasEntrada(app, {
+  requireAuth, express, banco: supabaseAdminRequest, perfilDe, podeModulo, carteiraT18, exigirLeituraSuperlogica, superlogicaNativa,
+  clienteSL, credSL: _credSL, dentroDoLimite, auditoria, processar, carteiraEstrita: _carteiraEstrita,
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // Relatório mensal do síndico (T13). GET /api/condominio/:id/relatorio-mensal?mes=AAAA-MM
 // (padrão: mês anterior, o último fechado). Só leitura no Superlógica; o PDF é montado no
 // navegador. Detalhes em superlogica/relatorio.js.

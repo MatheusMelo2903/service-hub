@@ -283,4 +283,40 @@ async function processarUnidades(corpo, usuario) {
   return { status: 200, corpo: lerLinhasUnidades(r.texto, r.cortado) };
 }
 
-module.exports = { processarEdital, processarMedidor, lerRespostaMedidor, textoContexto, processarUnidades, lerLinhasUnidades, montarConteudoUnidades, blocoArquivo };
+// ---------- Documento financeiro (T33, entrada de documentos) ----------
+// Só para PDF ou foto sem texto (escaneado). O resultado passa pelas mesmas conferências do
+// texto (dígitos da linha digitável e do CNPJ) em financeiro/entrada.js.
+const DOCFIN_MODELO = () => process.env.ENTRADA_MODELO || 'claude-sonnet-5-5';
+const DOCFIN_ESFORCO = () => _esf(process.env.ENTRADA_ESFORCO, 'low');
+const DOCFIN_PEDIDO = [
+  'Documento de contas a pagar de condomínio (boleto, nota fiscal, guia de imposto, fatura de concessionária ou comprovante).',
+  'Copie os dados exatamente como aparecem. Nunca invente: o que não aparece com clareza fica null.',
+  'Responda SÓ com o JSON abaixo, sem texto antes ou depois:',
+  '{"tipo": "boleto" | "nota" | "guia" | "fatura" | "comprovante" | "outro",',
+  ' "valor": "valor a pagar como no documento (ex: 1.234,56) ou null",',
+  ' "vencimento": "DD/MM/AAAA ou null",',
+  ' "emissao": "DD/MM/AAAA ou null",',
+  ' "linha_digitavel": "só os dígitos da linha digitável ou do código de barras, ou null",',
+  ' "numero_documento": "número da nota ou do documento, ou null",',
+  ' "cnpj_beneficiario": "CNPJ de quem recebe (beneficiário, cedente, prestador ou emitente), só dígitos, ou null",',
+  ' "cnpj_pagador": "CNPJ de quem paga (pagador, sacado, tomador ou cliente), só dígitos, ou null"}',
+  'Em nota fiscal de serviço, o valor é o valor líquido da nota. Se houver mais de um documento no arquivo, use o primeiro boleto ou a primeira nota.',
+].join('\n');
+async function processarDocumentoFinanceiro(corpo, usuario) {
+  const bloco = blocoArquivo(corpo && corpo.arquivo);
+  if (!bloco) return { status: 400, corpo: { erro: 'arquivo_invalido', detalhe: 'Envie o documento em PDF ou imagem (até 7 MB).' } };
+  const r = await chamarModelo({ modelo: DOCFIN_MODELO(), esforco: DOCFIN_ESFORCO(), maxTokens: 6000, rotulo: 'entrada_documento', usuario,
+    content: [bloco, { type: 'text', text: DOCFIN_PEDIDO }] });
+  if (!r.ok) return erroPadrao(r);
+  const j = extrairJson(r.texto);
+  if (!j || typeof j !== 'object' || Array.isArray(j)) return { status: 422, corpo: { erro: 'documento_ilegivel', detalhe: 'Não deu para ler o documento.' } };
+  const s = (v, max) => { const t = textoCurto(v, max); return t && !/^(null|nenhum|n\/a|-)$/i.test(t) ? t : null; };
+  const tipos = ['boleto', 'nota', 'guia', 'fatura', 'comprovante', 'outro'];
+  return { status: 200, corpo: {
+    tipo: tipos.includes(j.tipo) ? j.tipo : 'outro', valor: s(j.valor, 20), vencimento: s(j.vencimento, 10), emissao: s(j.emissao, 10),
+    linha_digitavel: s(j.linha_digitavel, 80), numero_documento: s(j.numero_documento, 30),
+    cnpj_beneficiario: s(j.cnpj_beneficiario, 20), cnpj_pagador: s(j.cnpj_pagador, 20),
+  } };
+}
+
+module.exports = { processarDocumentoFinanceiro, processarEdital, processarMedidor, lerRespostaMedidor, textoContexto, processarUnidades, lerLinhasUnidades, montarConteudoUnidades, blocoArquivo };

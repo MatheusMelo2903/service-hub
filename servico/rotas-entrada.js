@@ -1,0 +1,332 @@
+// T33: rotas da entrada de documentos (substitui o Paybox). Módulo "entrada_documentos" com as
+// ações ver (subir, ler, editar e descartar rascunhos) e lancar (aprovar e criar a despesa).
+// Leitura no Superlógica só GET; gravação só em POST /api/entrada/:id/lancar, com a trava do
+// condomínio (sem ENTRADA_LIBERADA só o 167), carteira conferida sem folga, limite por hora,
+// auditoria e o rascunho marcado "incerto" antes de gravar (nunca lança duas vezes).
+// Textos de tela sem citar leitura automática por fornecedor externo.
+
+const E = require('../financeiro/entrada');
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CAMPOS_LISTA = 'id,criado_em,atualizado_em,criado_por,criado_por_email,status,nome_arquivo,tamanho,leitura,tipo,id_superlogica,cond_documento,dados,alertas,id_despesa,id_parcela,id_arquivo,lancado_em,resultado';
+const hojeBR = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+
+function criarRotasEntrada(app, d) {
+  const { requireAuth, express, banco, perfilDe, podeModulo, carteiraT18, exigirLeituraSuperlogica, superlogicaNativa,
+    clienteSL, credSL, dentroDoLimite, auditoria, processar, carteiraEstrita } = d;
+  const emCurso = new Set();
+
+  async function exigir(req, res, acao) {
+    if (req.authMode !== 'internal') {
+      let p = null;
+      try { p = await perfilDe(req); } catch (e) { p = null; }
+      if (!podeModulo(p, 'entrada_documentos', acao)) {
+        res.status(403).json({ erro: 'acesso_negado', detalhe: acao === 'lancar' ? 'Seu usuário não pode lançar despesas por aqui.' : 'Seu usuário não tem acesso a esta aba.' });
+        return false;
+      }
+    }
+    return exigirLeituraSuperlogica(req, res);
+  }
+  // null = vê todos; Set de códigos (texto) = só esses. Erro ao ler a carteira recusa.
+  async function escopo(req, res) {
+    try {
+      const e = await carteiraT18.escopo(req);
+      return { escopo: e.todas ? null : new Set([...(e.ids || [])].map(String)) };
+    } catch (e) {
+      res.status(503).json({ erro: 'carteira_indisponivel', detalhe: 'Não foi possível conferir sua carteira agora.' });
+      return null;
+    }
+  }
+  const visivel = (req, esc, linha) => !esc || (req.user && linha.criado_por === req.user.sub) || (linha.id_superlogica != null && esc.has(String(linha.id_superlogica)));
+  // Esconde o condomínio que não é da carteira de quem vê (vale para itens de alerta também).
+  function paraTela(linha, esc) {
+    const o = Object.assign({}, linha);
+    delete o.arquivo_base64; delete o.hash_sha256;
+    if (esc && o.cond_documento != null && !esc.has(String(o.cond_documento))) o.cond_documento = null;
+    if (esc && o.dados && o.dados.cond_documento != null && !esc.has(String(o.dados.cond_documento))) o.dados = Object.assign({}, o.dados, { cond_documento: null });
+    return o;
+  }
+  async function lerLinha(id) {
+    const r = await banco('GET', '/rest/v1/fin_entrada?id=eq.' + id + '&select=*');
+    if (r.status !== 200) throw new Error('banco_' + r.status);
+    return Array.isArray(r.body) && r.body[0] ? r.body[0] : null;
+  }
+  async function naFila(dados, idAtual) {
+    if (!dados.linha) return [];
+    const r = await banco('GET', '/rest/v1/fin_entrada?select=id,status,nome_arquivo,criado_em&status=neq.descartado&dados->>linha=eq.' + encodeURIComponent(dados.linha) + (idAtual ? '&id=neq.' + idAtual : '') + '&limit=5');
+    return r.status === 200 && Array.isArray(r.body) ? r.body : [];
+  }
+  async function conferirDados(dados, esc, idAtual) {
+    const fila = await naFila(dados, idAtual).catch(() => []);
+    const c = await E.conferir(clienteSL(), dados, { escopo: esc, naFila: fila, hojeIso: hojeBR() });
+    if (!dados.conta && c.sugestao_conta) { dados.conta = c.sugestao_conta.conta; dados.nome_conta = c.sugestao_conta.nome; dados.conta_sugerida = true; }
+    return c.alertas.filter((a) => !(a.codigo === 'sem_conta' && dados.conta));
+  }
+  function erroInterno(res, onde, e) {
+    console.warn('[entrada ' + onde + '] ' + (e && e.message));
+    if (!res.headersSent) res.status(502).json({ erro: 'falha', detalhe: 'Não foi possível concluir agora. Tente de novo em instantes.' });
+  }
+
+  // GET /api/entrada/fila?status=rascunho|lancado|todos
+  app.get('/api/entrada/fila', requireAuth, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!(await exigir(req, res, 'ver'))) return;
+    const E2 = await escopo(req, res); if (!E2) return;
+    const st = String(req.query.status || 'rascunho');
+    const filtro = st === 'todos' ? '&status=neq.descartado' : st === 'lancado' ? '&status=in.(lancado,incerto)' : '&status=eq.rascunho';
+    try {
+      const r = await banco('GET', '/rest/v1/fin_entrada?select=' + CAMPOS_LISTA + filtro + '&order=criado_em.desc&limit=300');
+      if (r.status !== 200) throw new Error('banco_' + r.status);
+      res.json({ itens: (r.body || []).filter((l) => visivel(req, E2.escopo, l)).map((l) => paraTela(l, E2.escopo)), lancamento_liberado: !!String(process.env.ENTRADA_LIBERADA || '').trim() });
+    } catch (e) { erroInterno(res, 'fila', e); }
+  });
+
+  // POST /api/entrada/ler { arquivo: { nome, base64 } } — um PDF por chamada; vira rascunho.
+  app.post('/api/entrada/ler', requireAuth, express.json({ limit: '15mb' }), async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!(await exigir(req, res, 'ver'))) return;
+    const a = req.body && req.body.arquivo;
+    if (!a || typeof a.base64 !== 'string' || a.base64.length > Math.ceil(E.MAX_PDF_BYTES / 3) * 4 + 8) return res.status(400).json({ erro: 'arquivo_invalido', detalhe: 'Envie um PDF de até 10 MB.' });
+    const buf = Buffer.from(a.base64, 'base64');
+    if (!E.ehPdf(buf) || buf.length > E.MAX_PDF_BYTES) return res.status(400).json({ erro: 'arquivo_invalido', detalhe: 'O arquivo precisa ser PDF (até 10 MB).' });
+    const nome = String(a.nome || 'documento.pdf').replace(/[\r\n\t]/g, ' ').slice(0, 150);
+    const E2 = await escopo(req, res); if (!E2) return;
+    if (!dentroDoLimite(req, 'entrada_ler', 300)) {
+      auditoria.evento(req, 'limite_processamento', { tipo: 'entrada_ler' }, true, 'volume_alto');
+      return res.status(429).json({ erro: 'limite', detalhe: 'Muitos documentos nesta hora. Tente mais tarde.' });
+    }
+    const hash = E.hashDe(buf);
+    try {
+      const ja = await banco('GET', '/rest/v1/fin_entrada?select=' + CAMPOS_LISTA + '&hash_sha256=eq.' + hash + '&status=neq.descartado&limit=1');
+      if (ja.status === 200 && ja.body && ja.body[0]) {
+        if (!visivel(req, E2.escopo, ja.body[0])) return res.status(409).json({ erro: 'ja_enviado', detalhe: 'Este mesmo arquivo já foi enviado por outra pessoa.' });
+        return res.json({ item: paraTela(ja.body[0], E2.escopo), repetido: true });
+      }
+      const cli = clienteSL();
+      const mapa = await E.mapaCondominios(cli);
+      const x = await E.extrairTexto(buf);
+      const util = !!(x && E.textoUtil(x.texto));
+      let campos = util ? E.lerCampos(x.texto, hojeBR()) : null;
+      let leitura = util ? 'texto' : 'nenhuma';
+      if (E.faltaEssencial(campos, mapa) && buf.length <= 7.5 * 1024 * 1024) {
+        if (dentroDoLimite(req, 'entrada_interna', 120)) {
+          const r = await processar.processarDocumentoFinanceiro({ arquivo: { mime: 'application/pdf', base64: buf.toString('base64') } }, req.user && req.user.sub);
+          const ci = r.status === 200 ? E.camposDaLeitura(r.corpo, hojeBR()) : null;
+          if (ci) { campos = E.juntarLeituras(campos, ci, !campos || !campos.cnpjs.some((c) => mapa.has(c.cnpj))); leitura = util ? 'texto+interna' : 'interna'; }
+        } else auditoria.evento(req, 'limite_processamento', { tipo: 'entrada_interna' }, true, 'volume_alto');
+      }
+      campos = campos || { tipo: 'outro', valor: null, vencimento: null, emissao: null, documento: null, linha: null, barras: null, especie_linha: null, cnpjs: [] };
+      const id = await E.identificar(cli, campos, E2.escopo);
+      const condDoc = campos.cnpjs.map((c) => mapa.get(c.cnpj)).filter(Boolean)[0];
+      const dados = {
+        tipo: campos.tipo, valor: campos.valor, valor_linha: campos.origem_valor === 'linha' ? campos.valor : null, origem_valor: campos.origem_valor,
+        vencimento: campos.vencimento, emissao: campos.emissao, documento: campos.documento, linha: campos.linha, barras: campos.barras, especie_linha: campos.especie_linha,
+        cnpjs: campos.cnpjs.map((c) => ({ cnpj: E.formatarCnpj(c.cnpj), papel: c.papel, condominio: mapa.has(c.cnpj) })),
+        id_superlogica: id.condominio ? id.condominio.id : null, nome_condominio: id.condominio ? id.condominio.nome : null, motivo_condominio: id.motivo_condominio,
+        cond_documento: condDoc ? condDoc.id : null,
+        id_fornecedor: id.fornecedor ? id.fornecedor.id : null, nome_fornecedor: id.fornecedor ? id.fornecedor.nome : null,
+        cnpj_fornecedor: id.cnpj_fornecedor ? E.formatarCnpj(id.cnpj_fornecedor) : null,
+        conta: null, nome_conta: null, forma_pag: campos.especie_linha ? 0 : null,
+        complemento: [id.fornecedor ? id.fornecedor.nome : null, campos.documento ? 'doc ' + campos.documento : null].filter(Boolean).join(' ').slice(0, 200) || null,
+      };
+      if (dados.forma_pag == null) dados.forma_pag = 0;
+      const alertas = await conferirDados(dados, E2.escopo, null);
+      const linha = {
+        criado_por: req.user ? req.user.sub : null, criado_por_email: req.user ? req.user.email || null : null, status: 'rascunho',
+        nome_arquivo: nome, hash_sha256: hash, tamanho: buf.length, arquivo_base64: buf.toString('base64'), leitura, tipo: dados.tipo,
+        id_superlogica: dados.id_superlogica ? Number(dados.id_superlogica) : null, cond_documento: condDoc ? Number(condDoc.id) : null, dados, alertas,
+      };
+      const ins = await banco('POST', '/rest/v1/fin_entrada?select=' + CAMPOS_LISTA, linha);
+      if (ins.status === 409) return res.status(409).json({ erro: 'ja_enviado', detalhe: 'Este mesmo arquivo acabou de ser enviado.' });
+      if (ins.status !== 201 || !Array.isArray(ins.body) || !ins.body[0]) throw new Error('banco_' + ins.status);
+      auditoria.evento(req, 'entrada_lida', { id_superlogica: dados.id_superlogica, entrada: ins.body[0].id, leitura, tipo: dados.tipo });
+      res.json({ item: paraTela(ins.body[0], E2.escopo) });
+    } catch (e) { erroInterno(res, 'ler', e); }
+  });
+
+  // Carrega o rascunho e confere se quem chama pode vê-lo. Devolve { linha, esc } ou null (já respondeu).
+  async function carregar(req, res, acao) {
+    if (!UUID.test(String(req.params.id || ''))) { res.status(400).json({ erro: 'id_invalido' }); return null; }
+    if (!(await exigir(req, res, acao))) return null;
+    const E2 = await escopo(req, res); if (!E2) return null;
+    let linha;
+    try { linha = await lerLinha(req.params.id); } catch (e) { erroInterno(res, 'carregar', e); return null; }
+    if (!linha || !visivel(req, E2.escopo, linha)) { res.status(404).json({ erro: 'nao_encontrado', detalhe: 'Documento não encontrado.' }); return null; }
+    return { linha, esc: E2.escopo };
+  }
+
+  app.get('/api/entrada/:id', requireAuth, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const c = await carregar(req, res, 'ver'); if (!c) return;
+    res.json({ item: paraTela(c.linha, c.esc) });
+  });
+
+  // PDF para conferir na tela (só para quem vê o rascunho).
+  app.get('/api/entrada/:id/pdf', requireAuth, async (req, res) => {
+    const c = await carregar(req, res, 'ver'); if (!c) return;
+    res.set('Cache-Control', 'no-store');
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', 'inline; filename="documento.pdf"');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.send(Buffer.from(c.linha.arquivo_base64, 'base64'));
+  });
+
+  // GET /api/entrada/contas/:idSuperlogica — categorias de despesa do plano do condomínio.
+  app.get('/api/entrada/contas/:idSuperlogica', requireAuth, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const id = String(req.params.idSuperlogica || '');
+    if (!/^[1-9]\d{0,8}$/.test(id)) return res.status(400).json({ erro: 'id_invalido' });
+    if (!(await exigir(req, res, 'ver'))) return;
+    const E2 = await escopo(req, res); if (!E2) return;
+    if (E2.escopo && !E2.escopo.has(id)) return res.status(403).json({ erro: 'fora_da_carteira', detalhe: 'Esse condomínio não está na sua carteira.' });
+    try {
+      const cond = await E.condominioPorId(clienteSL(), id);
+      if (!cond) return res.status(404).json({ erro: 'nao_encontrado', detalhe: 'Condomínio não encontrado.' });
+      res.json({ id_superlogica: id, nome: cond.nome, contas: await E.contasDoPlano(clienteSL(), cond.plano) });
+    } catch (e) { erroInterno(res, 'contas', e); }
+  });
+
+  // PUT /api/entrada/:id { campos editados } — refaz a conferência e salva o rascunho.
+  app.put('/api/entrada/:id', requireAuth, express.json({ limit: '20kb' }), async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const c = await carregar(req, res, 'ver'); if (!c) return;
+    if (c.linha.status !== 'rascunho') return res.status(409).json({ erro: 'nao_editavel', detalhe: 'Só rascunho pode ser editado.' });
+    const b = req.body || {};
+    const dados = Object.assign({}, c.linha.dados);
+    const ruim = (detalhe) => res.status(400).json({ erro: 'campo_invalido', detalhe });
+    try {
+      const cli = clienteSL();
+      if (b.id_superlogica !== undefined) {
+        const id = String(b.id_superlogica || '');
+        if (!id) { dados.id_superlogica = null; dados.nome_condominio = null; }
+        else {
+          if (!/^[1-9]\d{0,8}$/.test(id) || E.NAO_CONDOMINIOS.has(id)) return ruim('Condomínio inválido.');
+          if (c.esc && !c.esc.has(id)) return res.status(403).json({ erro: 'fora_da_carteira', detalhe: 'Esse condomínio não está na sua carteira.' });
+          const cond = await E.condominioPorId(cli, id);
+          if (!cond) return ruim('Condomínio não encontrado no Superlógica.');
+          if (String(dados.id_superlogica) !== id) { dados.conta = null; dados.nome_conta = null; dados.conta_sugerida = false; }
+          dados.id_superlogica = id; dados.nome_condominio = cond.nome;
+        }
+      }
+      if (b.id_fornecedor !== undefined) {
+        if (!b.id_fornecedor) { dados.id_fornecedor = null; dados.nome_fornecedor = null; }
+        else {
+          const f = await E.fornecedorPorId(cli, String(b.id_fornecedor));
+          if (!f) return ruim('Fornecedor não encontrado no Superlógica com esse código.');
+          dados.id_fornecedor = f.id; dados.nome_fornecedor = f.nome;
+        }
+      }
+      if (b.valor !== undefined) {
+        const v = typeof b.valor === 'number' ? Math.round(b.valor * 100) / 100 : E.lerDinheiro(b.valor);
+        if (b.valor !== null && b.valor !== '' && !(v > 0 && v < 1e9)) return ruim('Valor inválido.');
+        dados.valor = v > 0 ? v : null;
+      }
+      for (const k of ['vencimento', 'emissao']) {
+        if (b[k] === undefined) continue;
+        if (b[k] && !/^\d{4}-\d{2}-\d{2}$/.test(String(b[k]))) return ruim('Data inválida.');
+        dados[k] = b[k] ? E.brParaIso(String(b[k]).split('-').reverse().join('/')) : null;
+        if (b[k] && !dados[k]) return ruim('Data inválida.');
+      }
+      if (b.documento !== undefined) dados.documento = b.documento ? String(b.documento).replace(/[\r\n\t]/g, ' ').trim().slice(0, 25) : null;
+      if (b.complemento !== undefined) dados.complemento = b.complemento ? String(b.complemento).replace(/[\r\n\t]/g, ' ').trim().slice(0, 200) : null;
+      if (b.tipo !== undefined) { if (!Object.prototype.hasOwnProperty.call(E.TIPOS_DOC_SL, b.tipo) && b.tipo !== 'comprovante') return ruim('Tipo inválido.'); dados.tipo = b.tipo; }
+      if (b.forma_pag !== undefined) { const fp = Number(b.forma_pag); if (![0, 1, 2, 3, 4, 7, 8, 9, 10, 12, 13, 14].includes(fp)) return ruim('Forma de pagamento inválida.'); dados.forma_pag = fp; }
+      if (b.linha !== undefined) {
+        if (!b.linha) { dados.linha = null; dados.barras = null; dados.especie_linha = null; dados.valor_linha = null; }
+        else {
+          const l = E.acharLinha(String(b.linha).replace(/[^\d]/g, ''), hojeBR());
+          if (!l) return ruim('Linha digitável inválida (os dígitos de conferência não batem).');
+          dados.linha = l.linha; dados.barras = l.barras; dados.especie_linha = l.especie; dados.valor_linha = l.valor;
+        }
+      }
+      if (b.conta !== undefined) {
+        if (!b.conta) { dados.conta = null; dados.nome_conta = null; }
+        else {
+          const cond = dados.id_superlogica ? await E.condominioPorId(cli, dados.id_superlogica) : null;
+          const contas = cond ? await E.contasDoPlano(cli, cond.plano) : [];
+          const achou = contas.find((x) => x.conta === String(b.conta));
+          if (!achou) return ruim('Categoria não existe no plano de contas deste condomínio.');
+          dados.conta = achou.conta; dados.nome_conta = achou.nome; dados.conta_sugerida = false;
+        }
+      }
+      const alertas = await conferirDados(dados, c.esc, c.linha.id);
+      const up = await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + c.linha.id + '&status=eq.rascunho&select=' + CAMPOS_LISTA,
+        { dados, alertas, tipo: dados.tipo, id_superlogica: dados.id_superlogica ? Number(dados.id_superlogica) : null, atualizado_em: new Date().toISOString() });
+      if (up.status !== 200 || !Array.isArray(up.body) || !up.body[0]) return res.status(409).json({ erro: 'nao_editavel', detalhe: 'O rascunho mudou enquanto você editava. Abra de novo.' });
+      res.json({ item: paraTela(up.body[0], c.esc) });
+    } catch (e) { erroInterno(res, 'editar', e); }
+  });
+
+  app.post('/api/entrada/:id/descartar', requireAuth, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const c = await carregar(req, res, 'ver'); if (!c) return;
+    const up = await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + c.linha.id + '&status=eq.rascunho&select=id', { status: 'descartado', atualizado_em: new Date().toISOString() });
+    if (up.status !== 200 || !Array.isArray(up.body) || !up.body[0]) return res.status(409).json({ erro: 'nao_editavel', detalhe: 'Só rascunho pode ser descartado.' });
+    auditoria.evento(req, 'entrada_descartada', { id_superlogica: c.linha.id_superlogica, entrada: c.linha.id });
+    res.json({ ok: true });
+  });
+
+  // POST /api/entrada/:id/lancar { confirmacao: 'LANCAR', aceitar_alertas: [códigos] }
+  // Cria a despesa no Superlógica com o PDF anexado. Trava: só condomínio liberado.
+  app.post('/api/entrada/:id/lancar', requireAuth, express.json({ limit: '5kb' }), async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const b = req.body || {};
+    if (b.confirmacao !== 'LANCAR') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme o lançamento na tela.' });
+    const c = await carregar(req, res, 'lancar'); if (!c) return;
+    const L = c.linha, dados = Object.assign({}, L.dados);
+    if (L.status !== 'rascunho') return res.status(409).json({ erro: 'nao_editavel', detalhe: L.status === 'incerto' ? 'Este documento ficou sem confirmação do Superlógica. Confira lá antes de qualquer coisa.' : 'Este documento já foi lançado ou descartado.' });
+    const idSL = String(dados.id_superlogica || '');
+    if (!/^[1-9]\d{0,8}$/.test(idSL)) return res.status(400).json({ erro: 'sem_condominio', detalhe: 'Escolha o condomínio.' });
+    // Trava antes de tudo: sem ENTRADA_LIBERADA só o condomínio de teste.
+    if (!E.lancamentoLiberado(idSL)) {
+      auditoria.evento(req, 'entrada_recusada', { id_superlogica: idSL, entrada: L.id, motivo: 'lancamento_travado' }, true, 'condominio_nao_liberado');
+      return res.status(423).json({ erro: 'lancamento_travado', detalhe: 'O lançamento por aqui ainda está travado para este condomínio pela administração. A conferência funciona normalmente.' });
+    }
+    if (!(await carteiraEstrita(req, res, idSL))) return;
+    if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado' });
+    if (!dentroDoLimite(req, 'entrada_lancar', 120)) {
+      auditoria.evento(req, 'limite_processamento', { tipo: 'entrada_lancar', id_superlogica: idSL }, true, 'volume_alto');
+      return res.status(429).json({ erro: 'limite', detalhe: 'Muitos lançamentos nesta hora. Tente mais tarde.' });
+    }
+    if (emCurso.has(L.id)) return res.status(409).json({ erro: 'em_andamento', detalhe: 'Este documento já está sendo lançado.' });
+    emCurso.add(L.id);
+    const cli = clienteSL();
+    try {
+      // Conferência refeita agora, sem cache: fornecedor, categoria, duplicidade e outro condomínio.
+      E.limparCache();
+      const f = dados.id_fornecedor ? await E.fornecedorPorId(cli, dados.id_fornecedor) : null;
+      if (!f) return res.status(400).json({ erro: 'sem_fornecedor', detalhe: 'Fornecedor não encontrado no Superlógica.' });
+      const cond = await E.condominioPorId(cli, idSL);
+      if (!cond) return res.status(400).json({ erro: 'sem_condominio', detalhe: 'Condomínio não encontrado no Superlógica.' });
+      const contas = await E.contasDoPlano(cli, cond.plano);
+      if (!dados.conta || !contas.some((x) => x.conta === dados.conta)) return res.status(400).json({ erro: 'sem_conta', detalhe: 'Escolha uma categoria do plano de contas deste condomínio.' });
+      const alertas = await conferirDados(dados, c.esc, L.id);
+      const pode = E.podeLancar(alertas, Array.isArray(b.aceitar_alertas) ? b.aceitar_alertas : []);
+      if (!pode.ok) {
+        await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + L.id + '&status=eq.rascunho', { alertas, atualizado_em: new Date().toISOString() });
+        auditoria.evento(req, 'entrada_recusada', { id_superlogica: idSL, entrada: L.id, motivo: pode.motivo, alertas: pode.alertas.map((a) => a.codigo) }, false);
+        return res.status(409).json({ erro: pode.motivo, detalhe: pode.motivo === 'impede' ? 'Falta corrigir: ' + pode.alertas.map((a) => a.texto).join(' ') : 'Confira e marque os alertas antes de lançar.', alertas });
+      }
+      // Marca "incerto" antes de gravar: se algo cair no meio, ninguém lança de novo sem conferir.
+      const trava = await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + L.id + '&status=eq.rascunho&select=id', { status: 'incerto', alertas, lancado_por: req.user ? req.user.sub : null, atualizado_em: new Date().toISOString() });
+      if (trava.status !== 200 || !Array.isArray(trava.body) || !trava.body[0]) return res.status(409).json({ erro: 'nao_editavel', detalhe: 'Este documento mudou de situação. Abra de novo.' });
+      const idCb = await E.contaPrincipal(cli, idSL).catch(() => null);
+      const r = await E.lancar(credSL(), cli, Object.assign({}, dados, { id_superlogica: idSL, id_fornecedor: f.id, nome_fornecedor: f.nome, id_contabanco: idCb }),
+        Buffer.from(L.arquivo_base64, 'base64'), L.nome_arquivo);
+      const fim = { atualizado_em: new Date().toISOString(), resultado: r };
+      if (r.ok) Object.assign(fim, { status: 'lancado', id_despesa: r.id_despesa, id_parcela: r.id_parcela, id_arquivo: r.id_arquivo, lancado_em: new Date().toISOString() });
+      else if (!r.incerto) Object.assign(fim, { status: 'rascunho', lancado_por: null });
+      await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + L.id, fim);
+      auditoria.evento(req, 'entrada_lancada', { id_superlogica: idSL, entrada: L.id, ok: r.ok, incerto: !!r.incerto, id_despesa: r.id_despesa || null, id_arquivo: r.id_arquivo || null,
+        valor: dados.valor, aceitos: (b.aceitar_alertas || []).slice(0, 10) }, !r.ok);
+      console.log('[entrada] ' + (req.user && req.user.email ? req.user.email : req.authMode) + ' lançou documento ' + L.id + ' no condomínio ' + idSL + ': ' + (r.ok ? 'ok despesa ' + r.id_despesa : r.incerto ? 'incerto' : 'recusado'));
+      if (r.ok) return res.json({ ok: true, id_despesa: r.id_despesa, id_arquivo: r.id_arquivo, anexado: r.anexado, conferido: r.conferido, etiqueta: r.etiqueta });
+      if (r.incerto) return res.status(504).json({ erro: 'incerto', detalhe: 'O Superlógica não confirmou. Confira no Superlógica antes de tentar de novo.' });
+      return res.status(502).json({ erro: 'recusado', detalhe: r.msg });
+    } catch (e) {
+      erroInterno(res, 'lancar', e);
+    } finally { emCurso.delete(L.id); }
+  });
+}
+
+module.exports = { criarRotasEntrada };
