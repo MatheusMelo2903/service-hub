@@ -1,8 +1,12 @@
 // T33: rotas da entrada de documentos (substitui o Paybox). Módulo "entrada_documentos" com as
 // ações ver (subir, ler, editar e descartar rascunhos) e lancar (aprovar e criar a despesa).
-// Leitura no Superlógica só GET; gravação só em POST /api/entrada/:id/lancar, com a trava do
-// condomínio (sem ENTRADA_LIBERADA só o 167), carteira conferida sem folga, limite por hora,
-// auditoria e o rascunho marcado "incerto" antes de gravar (nunca lança duas vezes).
+// Leitura no Superlógica só GET; gravação só em POST /api/entrada/:id/lancar e no lote
+// (T40: POST /api/entrada/lancar-lote), com a trava do condomínio (ENTRADA_LANCAMENTO_LIBERADO,
+// padrão só o 167), carteira conferida sem folga, limite por hora, auditoria e o rascunho marcado
+// "incerto" antes de gravar (nunca lança duas vezes).
+// T40: valor e vencimento só passam com confiança alta (linha digitável conferida) ou confirmados
+// na tela; mês fechado no Superlógica recusa; fora da lista o botão gera o rascunho conferido
+// (POST /api/entrada/:id/pronto) para lançar no Superlógica.
 // Textos de tela sem citar leitura automática por fornecedor externo.
 
 const E = require('../financeiro/entrada');
@@ -60,8 +64,28 @@ function criarRotasEntrada(app, d) {
     o.alertas = mascararAlertas(o.alertas, esc);
     if (esc && o.cond_documento != null && !esc.has(String(o.cond_documento))) o.cond_documento = null;
     if (esc && o.dados && o.dados.cond_documento != null && !esc.has(String(o.dados.cond_documento))) o.dados = Object.assign({}, o.dados, { cond_documento: null });
+    // T40: o que a tela precisa para o botão (lançar ou gerar rascunho) e para o lote.
+    const al = Array.isArray(o.alertas) ? o.alertas : [];
+    o.liberado = E.lancamentoLiberado(o.id_superlogica);
+    o.confianca = E.confianca(o.dados || {});
+    o.pronto_para_lote = o.status === 'rascunho' && !al.some((a) => a && (a.nivel === 'impede' || a.nivel === 'grave'));
     return o;
   }
+  // Valor e vencimento que a própria linha digitável traz (conferida pelos dígitos).
+  function valoresDaLinha(dados) {
+    const l = dados.linha ? E.acharLinha(String(dados.linha).replace(/[^\d]/g, ''), hojeBR()) : null;
+    dados.valor_linha = l && l.valor ? l.valor : null;
+    dados.vencimento_linha = l && l.vencimento ? l.vencimento : null;
+  }
+  // Para chamar as conferências que respondem direto (carteira) sem ter um res de verdade (lote).
+  function resFalso() {
+    const o = { headersSent: false, st: 200, j: null };
+    o.status = (s) => { o.st = s; return o; };
+    o.json = (j) => { o.j = j; o.headersSent = true; return o; };
+    o.set = () => o;
+    return o;
+  }
+  const quem = (req) => (req.user && (req.user.email || req.user.sub)) || 'interno';
   async function lerLinha(id) {
     const r = await banco('GET', '/rest/v1/fin_entrada?id=eq.' + id + '&select=*');
     if (r.status !== 200) throw new Error('banco_' + r.status);
@@ -72,10 +96,14 @@ function criarRotasEntrada(app, d) {
     const r = await banco('GET', '/rest/v1/fin_entrada?select=id,status,nome_arquivo,criado_em&status=neq.descartado&dados->>linha=eq.' + encodeURIComponent(dados.linha) + (idAtual ? '&id=neq.' + idAtual : '') + '&limit=5');
     return r.status === 200 && Array.isArray(r.body) ? r.body : [];
   }
-  async function conferirDados(dados, esc, idAtual) {
+  async function conferirDados(dados, esc, idAtual, semCache) {
     const fila = await naFila(dados, idAtual).catch(() => []);
-    const c = await E.conferir(clienteSL(), dados, { escopo: esc, naFila: fila, hojeIso: hojeBR() });
-    if (!dados.conta && c.sugestao_conta) { dados.conta = c.sugestao_conta.conta; dados.nome_conta = c.sugestao_conta.nome; dados.conta_sugerida = true; }
+    const c = await E.conferir(clienteSL(), dados, { escopo: esc, naFila: fila, hojeIso: hojeBR(), semCache: !!semCache });
+    if (!dados.conta && c.sugestao_conta) {
+      dados.conta = c.sugestao_conta.conta; dados.nome_conta = c.sugestao_conta.nome; dados.conta_sugerida = true;
+      dados.conta_sugerida_vezes = c.sugestao_conta.vezes ? c.sugestao_conta.vezes + ' de ' + c.sugestao_conta.de : null;
+    }
+    if (c.conta_banco) { dados.id_contabanco = c.conta_banco.id; dados.nome_contabanco = c.conta_banco.nome; }
     return c.alertas.filter((a) => !(a.codigo === 'sem_conta' && dados.conta));
   }
   function erroInterno(res, onde, e) {
@@ -93,7 +121,8 @@ function criarRotasEntrada(app, d) {
     try {
       const r = await banco('GET', '/rest/v1/fin_entrada?select=' + CAMPOS_LISTA + filtro + '&order=criado_em.desc&limit=300');
       if (r.status !== 200) throw new Error('banco_' + r.status);
-      res.json({ itens: (r.body || []).filter((l) => visivel(req, E2.escopo, l)).map((l) => paraTela(l, E2.escopo)), lancamento_liberado: !!String(process.env.ENTRADA_LIBERADA || '').trim() });
+      const lib = E.liberados();
+      res.json({ itens: (r.body || []).filter((l) => visivel(req, E2.escopo, l)).map((l) => paraTela(l, E2.escopo)), so_teste: lib.length === 1 && lib[0] === '167' });
     } catch (e) { erroInterno(res, 'fila', e); }
   });
 
@@ -137,8 +166,8 @@ function criarRotasEntrada(app, d) {
       const id = await E.identificar(cli, campos, E2.escopo);
       const condDoc = campos.cnpjs.map((c) => mapa.get(c.cnpj)).filter(Boolean)[0];
       const dados = {
-        tipo: campos.tipo, valor: campos.valor, valor_linha: campos.origem_valor === 'linha' ? campos.valor : null, origem_valor: campos.origem_valor,
-        vencimento: campos.vencimento, emissao: campos.emissao, documento: campos.documento, linha: campos.linha, barras: campos.barras, especie_linha: campos.especie_linha,
+        tipo: campos.tipo, valor: campos.valor, origem_valor: campos.origem_valor,
+        vencimento: campos.vencimento, origem_vencimento: campos.origem_vencimento || null, emissao: campos.emissao, documento: campos.documento, linha: campos.linha, barras: campos.barras, especie_linha: campos.especie_linha,
         cnpjs: campos.cnpjs.map((c) => ({ cnpj: E.formatarCnpj(c.cnpj), papel: c.papel, condominio: mapa.has(c.cnpj) })),
         id_superlogica: id.condominio ? id.condominio.id : null, nome_condominio: id.condominio ? id.condominio.nome : null, motivo_condominio: id.motivo_condominio,
         cond_documento: condDoc ? condDoc.id : null,
@@ -148,6 +177,7 @@ function criarRotasEntrada(app, d) {
         complemento: [id.fornecedor ? id.fornecedor.nome : null, campos.documento ? 'doc ' + campos.documento : null].filter(Boolean).join(' ').slice(0, 200) || null,
       };
       if (dados.forma_pag == null) dados.forma_pag = 0;
+      valoresDaLinha(dados);
       const alertas = await conferirDados(dados, E2.escopo, null);
       const linha = {
         criado_por: req.user ? req.user.sub : null, criado_por_email: req.user ? req.user.email || null : null, status: 'rascunho',
@@ -252,13 +282,23 @@ function criarRotasEntrada(app, d) {
       if (b.tipo !== undefined) { if (!Object.prototype.hasOwnProperty.call(E.TIPOS_DOC_SL, b.tipo) && b.tipo !== 'comprovante') return ruim('Tipo inválido.'); dados.tipo = b.tipo; }
       if (b.forma_pag !== undefined) { const fp = Number(b.forma_pag); if (![0, 1, 2, 3, 4, 7, 8, 9, 10, 12, 13, 14].includes(fp)) return ruim('Forma de pagamento inválida.'); dados.forma_pag = fp; }
       if (b.linha !== undefined) {
-        if (!b.linha) { dados.linha = null; dados.barras = null; dados.especie_linha = null; dados.valor_linha = null; }
+        if (!b.linha) { dados.linha = null; dados.barras = null; dados.especie_linha = null; dados.valor_linha = null; dados.vencimento_linha = null; }
         else {
           const l = E.acharLinha(String(b.linha).replace(/[^\d]/g, ''), hojeBR());
           if (!l) return ruim('Linha digitável inválida (os dígitos de conferência não batem).');
-          dados.linha = l.linha; dados.barras = l.barras; dados.especie_linha = l.especie; dados.valor_linha = l.valor;
+          dados.linha = l.linha; dados.barras = l.barras; dados.especie_linha = l.especie;
         }
       }
+      valoresDaLinha(dados);
+      // T40: valor e vencimento conferidos na tela. Vale o "conferi" marcado ou o valor digitado
+      // diferente do lido; a confirmação fica presa ao valor (se mudar depois, perde).
+      const conf = Object.assign({}, dados.confirmado || {});
+      const agora = new Date().toISOString();
+      const antes = c.linha.dados || {};
+      if (dados.valor > 0 && (b.confirmar_valor === true || (b.valor !== undefined && dados.valor !== antes.valor))) Object.assign(conf, { valor: dados.valor, valor_por: quem(req), valor_em: agora });
+      if (dados.vencimento && (b.confirmar_vencimento === true || (b.vencimento !== undefined && dados.vencimento !== antes.vencimento))) Object.assign(conf, { vencimento: dados.vencimento, vencimento_por: quem(req), vencimento_em: agora });
+      dados.confirmado = conf;
+      dados.pronto = null; // qualquer edição desfaz o "rascunho conferido"
       if (b.conta !== undefined) {
         if (!b.conta) { dados.conta = null; dados.nome_conta = null; }
         else {
@@ -286,6 +326,78 @@ function criarRotasEntrada(app, d) {
     res.json({ ok: true });
   });
 
+  // T40: lança um rascunho já carregado e visível. Devolve { st, j } (quem chama responde).
+  // origem: 'individual' (aceita alertas graves marcados na tela) ou 'lote' (sem graves).
+  async function lancarUm(req, L, esc, aceitos, origem) {
+    const dados = Object.assign({}, L.dados);
+    let travado = false;
+    if (L.status !== 'rascunho') return { st: 409, j: { erro: 'nao_editavel', detalhe: L.status === 'incerto' ? 'Este documento ficou sem confirmação do Superlógica. Confira lá antes de qualquer coisa.' : 'Este documento já foi lançado ou descartado.' } };
+    const idSL = String(dados.id_superlogica || '');
+    if (!/^[1-9]\d{0,8}$/.test(idSL)) return { st: 400, j: { erro: 'sem_condominio', detalhe: 'Escolha o condomínio.' } };
+    // Trava antes de tudo: só os condomínios de ENTRADA_LANCAMENTO_LIBERADO (padrão só o 167).
+    if (!E.lancamentoLiberado(idSL)) {
+      auditoria.evento(req, 'entrada_recusada', { id_superlogica: idSL, entrada: L.id, motivo: 'lancamento_travado', origem }, true, 'condominio_nao_liberado');
+      return { st: 423, j: { erro: 'lancamento_travado', detalhe: 'O lançamento direto ainda não está liberado para este condomínio. Use "Gerar rascunho" e lance no Superlógica.' } };
+    }
+    const rf = resFalso();
+    if (!(await carteiraEstrita(req, rf, idSL))) return { st: rf.st, j: rf.j };
+    if (!superlogicaNativa()) return { st: 503, j: { erro: 'superlogica_nao_configurado' } };
+    if (!dentroDoLimite(req, 'entrada_lancar', 120)) {
+      auditoria.evento(req, 'limite_processamento', { tipo: 'entrada_lancar', id_superlogica: idSL }, true, 'volume_alto');
+      return { st: 429, j: { erro: 'limite', detalhe: 'Muitos lançamentos nesta hora. Tente mais tarde.' } };
+    }
+    if (emCurso.has(L.id)) return { st: 409, j: { erro: 'em_andamento', detalhe: 'Este documento já está sendo lançado.' } };
+    emCurso.add(L.id);
+    const cli = clienteSL();
+    try {
+      // Conferência refeita agora, sem cache: fornecedor, categoria, confiança, mês fechado,
+      // duplicidade e outro condomínio.
+      E.limparCache();
+      const f = dados.id_fornecedor ? await E.fornecedorPorId(cli, dados.id_fornecedor) : null;
+      if (!f) return { st: 400, j: { erro: 'sem_fornecedor', detalhe: 'Fornecedor não encontrado no Superlógica.' } };
+      const cond = await E.condominioPorId(cli, idSL);
+      if (!cond) return { st: 400, j: { erro: 'sem_condominio', detalhe: 'Condomínio não encontrado no Superlógica.' } };
+      const contas = await E.contasDoPlano(cli, cond.plano);
+      if (!dados.conta || !contas.some((x) => x.conta === dados.conta)) return { st: 400, j: { erro: 'sem_conta', detalhe: 'Escolha uma categoria do plano de contas deste condomínio.' } };
+      dados.id_contabanco = null;
+      valoresDaLinha(dados); // confiança recalculada da linha digitável guardada, nunca do que veio antes
+      const alertas = await conferirDados(dados, esc, L.id, true);
+      const pode = E.podeLancar(alertas, origem === 'lote' ? [] : aceitos);
+      if (!pode.ok) {
+        await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + L.id + '&status=eq.rascunho', { alertas, atualizado_em: new Date().toISOString() });
+        auditoria.evento(req, 'entrada_recusada', { id_superlogica: idSL, entrada: L.id, motivo: pode.motivo, origem, alertas: pode.alertas.map((a) => a.codigo) }, false);
+        return { st: 409, j: { erro: pode.motivo, detalhe: pode.motivo === 'impede' ? 'Falta corrigir: ' + pode.alertas.map((a) => a.texto).join(' ')
+          : origem === 'lote' ? 'Tem alerta para conferir: abra o documento e lance por ele.' : 'Confira e marque os alertas antes de lançar.', alertas: mascararAlertas(alertas, esc) } };
+      }
+      // Marca "incerto" antes de gravar: se algo cair no meio, ninguém lança de novo sem conferir.
+      const trava = await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + L.id + '&status=eq.rascunho&select=id', { status: 'incerto', alertas, lancado_por: req.user ? req.user.sub : null, atualizado_em: new Date().toISOString() });
+      if (trava.status !== 200 || !Array.isArray(trava.body) || !trava.body[0]) return { st: 409, j: { erro: 'nao_editavel', detalhe: 'Este documento mudou de situação. Abra de novo.' } };
+      travado = true;
+      const r = await E.lancar(credSL(), cli, Object.assign({}, dados, { id_superlogica: idSL, id_fornecedor: f.id, nome_fornecedor: f.nome, id_contabanco: dados.id_contabanco || null }),
+        Buffer.from(L.arquivo_base64, 'base64'), L.nome_arquivo);
+      const registro = Object.assign({}, r, { lancado_por_email: quem(req), origem, conta_bancaria: dados.nome_contabanco || null, confianca: E.confianca(dados), aceitos: origem === 'lote' ? [] : aceitos });
+      const fim = { atualizado_em: new Date().toISOString(), resultado: registro };
+      if (r.ok) Object.assign(fim, { status: 'lancado', id_despesa: r.id_despesa, id_parcela: r.id_parcela, id_arquivo: r.id_arquivo, lancado_em: new Date().toISOString(), dados });
+      else if (!r.incerto) Object.assign(fim, { status: 'rascunho', lancado_por: null });
+      await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + L.id, fim);
+      auditoria.evento(req, 'entrada_lancada', { id_superlogica: idSL, entrada: L.id, ok: r.ok, incerto: !!r.incerto, id_despesa: r.id_despesa || null, id_arquivo: r.id_arquivo || null,
+        valor: dados.valor, vencimento: dados.vencimento, conferido: !!r.conferido, anexado: !!r.anexado, origem, aceitos: origem === 'lote' ? [] : aceitos }, !r.ok || !r.conferido || !r.anexado);
+      console.log('[entrada] ' + quem(req) + ' lançou documento ' + L.id + ' no condomínio ' + idSL + ' (' + origem + '): ' + (r.ok ? 'ok despesa ' + r.id_despesa + (r.conferido && r.anexado ? ' conferida' : ' SEM PROVA COMPLETA') : r.incerto ? 'incerto' : 'recusado'));
+      if (r.ok) return { st: 200, j: { ok: true, id_despesa: r.id_despesa, id_arquivo: r.id_arquivo, anexado: r.anexado, conferido: r.conferido, prova: r.prova, etiqueta: r.etiqueta } };
+      if (r.incerto) return { st: 504, j: { erro: 'incerto', detalhe: 'O Superlógica não confirmou. Confira no Superlógica antes de tentar de novo.' } };
+      return { st: 502, j: { erro: 'recusado', detalhe: r.msg } };
+    } catch (e) {
+      // Depois da trava, erro inesperado pode ter gravado: o rascunho fica "incerto" e a tela avisa.
+      if (travado) {
+        console.warn('[entrada lancar] ' + (e && e.message));
+        auditoria.evento(req, 'entrada_lancada', { id_superlogica: idSL, entrada: L.id, ok: false, incerto: true, origem, erro: String(e && e.message).slice(0, 120) }, true, 'lancamento_incerto');
+        return { st: 504, j: { erro: 'incerto', detalhe: 'O lançamento não foi confirmado. Confira no Superlógica antes de tentar de novo.' } };
+      }
+      console.warn('[entrada lancar] ' + (e && e.message));
+      return { st: 502, j: { erro: 'falha', detalhe: 'Não foi possível concluir agora. Tente de novo em instantes.' } };
+    } finally { emCurso.delete(L.id); }
+  }
+
   // POST /api/entrada/:id/lancar { confirmacao: 'LANCAR', aceitar_alertas: [códigos] }
   // Cria a despesa no Superlógica com o PDF anexado. Trava: só condomínio liberado.
   app.post('/api/entrada/:id/lancar', requireAuth, express.json({ limit: '5kb' }), async (req, res) => {
@@ -294,66 +406,57 @@ function criarRotasEntrada(app, d) {
     if (b.confirmacao !== 'LANCAR') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme o lançamento na tela.' });
     const aceitos = Array.isArray(b.aceitar_alertas) ? b.aceitar_alertas.filter((x) => typeof x === 'string').map((x) => x.slice(0, 40)).slice(0, 20) : [];
     const c = await carregar(req, res, 'lancar'); if (!c) return;
-    const L = c.linha, dados = Object.assign({}, L.dados);
-    let travado = false;
-    if (L.status !== 'rascunho') return res.status(409).json({ erro: 'nao_editavel', detalhe: L.status === 'incerto' ? 'Este documento ficou sem confirmação do Superlógica. Confira lá antes de qualquer coisa.' : 'Este documento já foi lançado ou descartado.' });
-    const idSL = String(dados.id_superlogica || '');
-    if (!/^[1-9]\d{0,8}$/.test(idSL)) return res.status(400).json({ erro: 'sem_condominio', detalhe: 'Escolha o condomínio.' });
-    // Trava antes de tudo: sem ENTRADA_LIBERADA só o condomínio de teste.
-    if (!E.lancamentoLiberado(idSL)) {
-      auditoria.evento(req, 'entrada_recusada', { id_superlogica: idSL, entrada: L.id, motivo: 'lancamento_travado' }, true, 'condominio_nao_liberado');
-      return res.status(423).json({ erro: 'lancamento_travado', detalhe: 'O lançamento por aqui ainda está travado para este condomínio pela administração. A conferência funciona normalmente.' });
-    }
-    if (!(await carteiraEstrita(req, res, idSL))) return;
-    if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado' });
-    if (!dentroDoLimite(req, 'entrada_lancar', 120)) {
-      auditoria.evento(req, 'limite_processamento', { tipo: 'entrada_lancar', id_superlogica: idSL }, true, 'volume_alto');
-      return res.status(429).json({ erro: 'limite', detalhe: 'Muitos lançamentos nesta hora. Tente mais tarde.' });
-    }
-    if (emCurso.has(L.id)) return res.status(409).json({ erro: 'em_andamento', detalhe: 'Este documento já está sendo lançado.' });
-    emCurso.add(L.id);
-    const cli = clienteSL();
-    try {
-      // Conferência refeita agora, sem cache: fornecedor, categoria, duplicidade e outro condomínio.
-      E.limparCache();
-      const f = dados.id_fornecedor ? await E.fornecedorPorId(cli, dados.id_fornecedor) : null;
-      if (!f) return res.status(400).json({ erro: 'sem_fornecedor', detalhe: 'Fornecedor não encontrado no Superlógica.' });
-      const cond = await E.condominioPorId(cli, idSL);
-      if (!cond) return res.status(400).json({ erro: 'sem_condominio', detalhe: 'Condomínio não encontrado no Superlógica.' });
-      const contas = await E.contasDoPlano(cli, cond.plano);
-      if (!dados.conta || !contas.some((x) => x.conta === dados.conta)) return res.status(400).json({ erro: 'sem_conta', detalhe: 'Escolha uma categoria do plano de contas deste condomínio.' });
-      const alertas = await conferirDados(dados, c.esc, L.id);
-      const pode = E.podeLancar(alertas, aceitos);
-      if (!pode.ok) {
-        await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + L.id + '&status=eq.rascunho', { alertas, atualizado_em: new Date().toISOString() });
-        auditoria.evento(req, 'entrada_recusada', { id_superlogica: idSL, entrada: L.id, motivo: pode.motivo, alertas: pode.alertas.map((a) => a.codigo) }, false);
-        return res.status(409).json({ erro: pode.motivo, detalhe: pode.motivo === 'impede' ? 'Falta corrigir: ' + pode.alertas.map((a) => a.texto).join(' ') : 'Confira e marque os alertas antes de lançar.', alertas: mascararAlertas(alertas, c.esc) });
+    const r = await lancarUm(req, c.linha, c.esc, aceitos, 'individual');
+    res.status(r.st).json(r.j);
+  });
+
+  // POST /api/entrada/lancar-lote { confirmacao: 'LANCAR_LOTE', itens: [{ id, valor, vencimento }] }
+  // Vários rascunhos já conferidos, um de cada vez. Valor e vencimento vêm da lista que a pessoa
+  // viu: se mudaram, o item é pulado. Alerta grave não passa no lote (abre e lança pelo documento).
+  app.post('/api/entrada/lancar-lote', requireAuth, express.json({ limit: '20kb' }), async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const b = req.body || {};
+    if (b.confirmacao !== 'LANCAR_LOTE') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme o lançamento na tela.' });
+    const vistos = new Set();
+    const itens = Array.isArray(b.itens) ? b.itens.filter((x) => x && UUID.test(String(x.id || '')) && !vistos.has(x.id) && vistos.add(x.id)) : [];
+    if (!itens.length || itens.length > 20 || itens.length !== b.itens.length) return res.status(400).json({ erro: 'lote_invalido', detalhe: 'Escolha de 1 a 20 documentos.' });
+    if (!(await exigir(req, res, 'lancar'))) return;
+    const E2 = await escopo(req, res); if (!E2) return;
+    const resultados = [];
+    for (const it of itens) {
+      let L = null;
+      try { L = await lerLinha(it.id); } catch (e) { resultados.push({ id: it.id, ok: false, erro: 'falha', detalhe: 'Não deu para abrir o documento.' }); continue; }
+      if (!L || !visivel(req, E2.escopo, L)) { resultados.push({ id: it.id, ok: false, erro: 'nao_encontrado', detalhe: 'Documento não encontrado.' }); continue; }
+      const d = L.dados || {};
+      if (!(Number(d.valor) > 0) || Math.abs(Number(d.valor) - Number(it.valor)) >= 0.005 || String(d.vencimento || '') !== String(it.vencimento || '')) {
+        resultados.push({ id: it.id, ok: false, erro: 'mudou', detalhe: 'Valor ou vencimento mudou desde que a lista foi aberta. Atualize a fila.' }); continue;
       }
-      // Marca "incerto" antes de gravar: se algo cair no meio, ninguém lança de novo sem conferir.
-      const trava = await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + L.id + '&status=eq.rascunho&select=id', { status: 'incerto', alertas, lancado_por: req.user ? req.user.sub : null, atualizado_em: new Date().toISOString() });
-      if (trava.status !== 200 || !Array.isArray(trava.body) || !trava.body[0]) return res.status(409).json({ erro: 'nao_editavel', detalhe: 'Este documento mudou de situação. Abra de novo.' });
-      travado = true;
-      const idCb = await E.contaPrincipal(cli, idSL).catch(() => null);
-      const r = await E.lancar(credSL(), cli, Object.assign({}, dados, { id_superlogica: idSL, id_fornecedor: f.id, nome_fornecedor: f.nome, id_contabanco: idCb }),
-        Buffer.from(L.arquivo_base64, 'base64'), L.nome_arquivo);
-      const fim = { atualizado_em: new Date().toISOString(), resultado: r };
-      if (r.ok) Object.assign(fim, { status: 'lancado', id_despesa: r.id_despesa, id_parcela: r.id_parcela, id_arquivo: r.id_arquivo, lancado_em: new Date().toISOString() });
-      else if (!r.incerto) Object.assign(fim, { status: 'rascunho', lancado_por: null });
-      await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + L.id, fim);
-      auditoria.evento(req, 'entrada_lancada', { id_superlogica: idSL, entrada: L.id, ok: r.ok, incerto: !!r.incerto, id_despesa: r.id_despesa || null, id_arquivo: r.id_arquivo || null,
-        valor: dados.valor, aceitos }, !r.ok);
-      console.log('[entrada] ' + (req.user && req.user.email ? req.user.email : req.authMode) + ' lançou documento ' + L.id + ' no condomínio ' + idSL + ': ' + (r.ok ? 'ok despesa ' + r.id_despesa : r.incerto ? 'incerto' : 'recusado'));
-      if (r.ok) return res.json({ ok: true, id_despesa: r.id_despesa, id_arquivo: r.id_arquivo, anexado: r.anexado, conferido: r.conferido, etiqueta: r.etiqueta });
-      if (r.incerto) return res.status(504).json({ erro: 'incerto', detalhe: 'O Superlógica não confirmou. Confira no Superlógica antes de tentar de novo.' });
-      return res.status(502).json({ erro: 'recusado', detalhe: r.msg });
-    } catch (e) {
-      // Depois da trava, erro inesperado pode ter gravado: o rascunho fica "incerto" e a tela avisa.
-      if (travado) {
-        console.warn('[entrada lancar] ' + (e && e.message));
-        auditoria.evento(req, 'entrada_lancada', { id_superlogica: idSL, entrada: L.id, ok: false, incerto: true, erro: String(e && e.message).slice(0, 120) }, true, 'lancamento_incerto');
-        if (!res.headersSent) res.status(504).json({ erro: 'incerto', detalhe: 'O lançamento não foi confirmado. Confira no Superlógica antes de tentar de novo.' });
-      } else erroInterno(res, 'lancar', e);
-    } finally { emCurso.delete(L.id); }
+      const r = await lancarUm(req, L, E2.escopo, [], 'lote');
+      resultados.push(Object.assign({ id: it.id, ok: r.st === 200, st: r.st }, r.j || {}, { alertas: undefined }));
+      if (r.st === 429 || r.st === 503 || r.st === 403) break; // limite, configuração ou carteira: para o lote
+    }
+    auditoria.evento(req, 'entrada_lote', { pedidos: itens.length, tentados: resultados.length, lancados: resultados.filter((x) => x.ok).length });
+    res.json({ resultados, pedidos: itens.length });
+  });
+
+  // POST /api/entrada/:id/pronto: condomínio fora da lista de lançamento direto: confere tudo de
+  // novo e marca o rascunho como conferido, pronto para lançar no Superlógica. Nada é gravado lá.
+  app.post('/api/entrada/:id/pronto', requireAuth, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const c = await carregar(req, res, 'ver'); if (!c) return;
+    if (c.linha.status !== 'rascunho') return res.status(409).json({ erro: 'nao_editavel', detalhe: 'Só rascunho pode ser marcado.' });
+    const dados = Object.assign({}, c.linha.dados);
+    try {
+      valoresDaLinha(dados);
+      const alertas = await conferirDados(dados, c.esc, c.linha.id);
+      const imp = alertas.filter((a) => a.nivel === 'impede');
+      dados.pronto = imp.length ? null : { por: quem(req), em: new Date().toISOString() };
+      const up = await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + c.linha.id + '&status=eq.rascunho&select=' + CAMPOS_LISTA, { dados, alertas, atualizado_em: new Date().toISOString() });
+      if (up.status !== 200 || !Array.isArray(up.body) || !up.body[0]) return res.status(409).json({ erro: 'nao_editavel', detalhe: 'O rascunho mudou. Abra de novo.' });
+      if (imp.length) return res.status(409).json({ erro: 'impede', detalhe: 'Falta corrigir: ' + imp.map((a) => a.texto).join(' '), item: paraTela(up.body[0], c.esc) });
+      auditoria.evento(req, 'entrada_rascunho_pronto', { id_superlogica: dados.id_superlogica, entrada: c.linha.id });
+      res.json({ item: paraTela(up.body[0], c.esc) });
+    } catch (e) { erroInterno(res, 'pronto', e); }
   });
 }
 
