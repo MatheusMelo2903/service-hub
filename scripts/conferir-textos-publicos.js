@@ -5,8 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const { compactarJs, compactarHtml } = require('../servico/ofuscar');
 
-const PROIBIDO = /(anthropic|claude|assembly ?ai|sonnet|\bopus\b|haiku|openai|chatgpt|\bgpt\b|\bllm\b|intelig[eê]ncia artificial|prompt|max_tokens|machine learning|\bIA\b|\bI\.A\.)/g;
-const PROIBIDO_I = /(anthropic|claude|assembly ?ai|sonnet|\bopus\b|haiku|openai|chatgpt|\bgpt\b|\bllm\b|intelig[eê]ncia artificial|prompt|max_tokens|machine learning)/i;
+const PROIBIDO = /(anthropic|claude|assembly ?ai|sonnet|\bopus\b|haiku|openai|chatgpt|whisper|gemini|deepgram|\bgpt\b|\bllm\b|intelig[eê]ncia artificial|prompt|max_tokens|machine learning|\bIA\b|\bI\.A\.)/g;
+const PROIBIDO_I = /(anthropic|claude|assembly ?ai|sonnet|\bopus\b|haiku|openai|chatgpt|whisper|gemini|deepgram|\bgpt\b|\bllm\b|intelig[eê]ncia artificial|prompt|max_tokens|machine learning)/i;
 const PERMITIDO = [/access_token/i, /refresh_token/i, /AUTH_TOKEN/, /accessToken/, /autoRefreshToken/];
 
 (async () => {
