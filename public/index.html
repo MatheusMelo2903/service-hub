@@ -1878,6 +1878,18 @@
     <div class="panel" id="panel-condominio">
       <div id="banner-cond-condominio"></div>
 
+      <!-- T13: relatório mensal do síndico em PDF -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Relatório mensal do síndico (PDF)</span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="rel-mes" style="min-width:170px"></select>
+            <button class="btn btn-primary" id="rel-btn" onclick="relatorioSindicoBaixar()">Baixar PDF</button>
+          </div>
+        </div>
+        <div class="ficha-sub">Saldo do mês, saldo por conta, receitas e despesas, inadimplência, contas a pagar em 30 dias e alertas em aberto, tudo lido do Superlógica.</div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <span class="card-title">Buscar unidade em todos os condomínios</span>
@@ -4098,6 +4110,7 @@ async function deletarUsuario(userId, email) {
 <script src="/cobranca.js"></script>
 <script src="/atas.js"></script>
 <script src="/comunicados.js"></script>
+<script src="/relatorio.js"></script>
 
 <div id="prestacao-modal" class="prestacao-modal" style="display:none">
   <div class="prestacao-modal-overlay" onclick="prestacaoFecharModal()"></div>

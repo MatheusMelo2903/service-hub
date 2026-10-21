@@ -3811,6 +3811,67 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
   res.json({ ok: true, titulo, id_superlogica: Number(id), id_documento: r.id || null, publicado: r.publicado == null ? null : !['', '0'].includes(r.publicado) });
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// Relatório mensal do síndico (T13). GET /api/condominio/:id/relatorio-mensal?mes=AAAA-MM
+// (padrão: mês anterior, o último fechado). Só leitura no Superlógica; o PDF é montado no
+// navegador. Detalhes em superlogica/relatorio.js.
+// ─────────────────────────────────────────────────────────────────────────
+const slRelatorio = require('./superlogica/relatorio');
+const _cacheRelatorio = slModulo.consulta.criarCache(10 * 60 * 1000, 100, 90 * 1000);
+const _relatorioEmCurso = new Set(); // um relatório por condomínio de cada vez (cada um faz dezenas de leituras)
+app.get('/api/condominio/:idSuperlogica/relatorio-mensal', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  const hoje = _hojeBrasilia();
+  let ano = hoje.getFullYear(), mes = hoje.getMonth(); // mês anterior
+  if (mes === 0) { ano--; mes = 12; }
+  const m = String(req.query.mes || '').match(/^(\d{4})-(\d{2})$/);
+  if (req.query.mes && !m) return res.status(400).json({ erro: 'mes_invalido', detalhe: 'Mês inválido.' });
+  if (m) {
+    ano = +m[1]; mes = +m[2];
+    const alvo = new Date(ano, mes - 1, 1);
+    if (mes < 1 || mes > 12 || ano < 2000 || alvo > hoje) return res.status(400).json({ erro: 'mes_invalido', detalhe: 'Escolha um mês que já começou.' });
+  }
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  try {
+    let cfg = { saldo_minimo: null };
+    try { if (SUPABASE_SERVICE_ROLE_KEY && SUPABASE_URL) cfg = await _lerConfigAlertas(id); } catch (e) { cfg = { saldo_minimo: null }; }
+    const cli = clienteSL();
+    const chave = 'rel:' + id + ':' + ano + '-' + mes + ':' + hoje.toISOString().slice(0, 10) + ':' + cfg.saldo_minimo;
+    if (_relatorioEmCurso.has(id)) return res.status(429).json({ erro: 'em_andamento', detalhe: 'Já existe um relatório deste condomínio sendo montado. Aguarde alguns segundos.' });
+    _relatorioEmCurso.add(id);
+    let dados, cadastro;
+    try {
+      [dados, cadastro] = await Promise.all([
+        // resultado com parte faltando não fica em cache (o próximo clique tenta de novo)
+        _cacheRelatorio.pegar(chave, async () => {
+          const d0 = await slRelatorio.montarRelatorio(cli, id, { ano, mes }, hoje, cfg);
+          if (d0.falhas.length) { const e = new Error('parcial'); e.parcial = d0; throw e; }
+          return d0;
+        }).catch((e) => { if (e && e.parcial) return e.parcial; throw e; }),
+        slModulo.buscarCadastro(cli, id).catch(() => null),
+      ]);
+    } finally { _relatorioEmCurso.delete(id); }
+    // Alertas marcados como resolvidos não entram no relatório.
+    let alertasAbertos = dados.alertas;
+    if (Array.isArray(alertasAbertos) && alertasAbertos.length && SUPABASE_SERVICE_ROLE_KEY && SUPABASE_URL) {
+      try {
+        const est = await _lerEstadoAlertas(id, alertasAbertos.map((a) => a.chave));
+        alertasAbertos = alertasAbertos.filter((a) => !(est.get(a.chave) && est.get(a.chave).status === 'resolvido'));
+      } catch (e) { /* sem estado: mostra todos */ }
+    }
+    res.json(Object.assign({}, dados, {
+      alertas: alertasAbertos ? alertasAbertos.map((a) => ({ tipo: a.tipo, titulo: a.titulo })) : null,
+      condominio: cadastro ? { nome: cadastro.nome, cnpj: cadastro.cnpj, endereco: cadastro.endereco && cadastro.endereco.completo, sindico: cadastro.sindico && cadastro.sindico.nome } : { nome: '', cnpj: '', endereco: '', sindico: '' },
+      id_superlogica: Number(id), gerado_em: new Date().toISOString(),
+    }));
+  } catch (e) {
+    console.warn('[relatorio-mensal] ' + id + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível montar o relatório agora. Tente de novo em alguns minutos.' });
+  }
+});
+
 // Agenda: 1 minuto depois de subir e depois todo dia às 6h de Brasília (9h UTC).
 function _agendarSyncDiario() {
   const agora = new Date();
