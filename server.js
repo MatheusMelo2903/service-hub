@@ -336,6 +336,12 @@ async function condominioDaBase(id) {
 const auditoria = require('./servico/auditoria').criarAuditoria({ banco: supabaseAdminRequest, perfilDe, temAcao });
 app.use('/api', auditoria.middleware);
 const processar = require('./servico/processar');
+// T42: nome dos modelos num lugar só (servico/modelos.js) e custo de cada chamada (servico/custo.js).
+const modelos = require('./servico/modelos');
+const custo = require('./servico/custo');
+// Marcador do modelo da ata dentro do motor: vira modelos.modelo('ata') (ou o modelo de teste
+// interno) na hora da chamada. Antes da T42 o motor usava o nome antigo como marcador.
+const MODELO_DA_ATA = 'modelo_da_ata';
 const audioMod = require('./servico/audio');
 const ataMensagem = require('./servico/ata-mensagem');
 const permRegras = require('./servico/permissoes');
@@ -550,6 +556,9 @@ audioMod.criarRotasAudio(app, { requireAuth, express, banco: supabaseAdminReques
   auditar: (req, acao, det, susp) => auditoria.evento(req, acao, det, susp) });
 require('./servico/rotas-seguranca').criarRotasSeguranca(app, { requireAuth, express, banco: supabaseAdminRequest, perfilDe, temAcao, auditoria,
   lerPerfil, esquecerPerfil, esquecerBloqueios, usoRecente: require('./servico/modelo').usoRecente });
+// T42: registro do custo de cada chamada (tabela api_uso, só com o banco configurado) e o painel do dono.
+if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) custo.configurar({ banco: supabaseAdminRequest });
+require('./servico/rotas-custo').criarRotasCusto(app, { requireAuth, banco: supabaseAdminRequest, auditoria });
 
 // ─────────────────────────────────────────────────────────────────────────
 // Engine de geração de ata — Sonnet 4.6 primário + Opus 4.7 último recurso CONDICIONAL.
@@ -916,7 +925,7 @@ async function lerDocumentoEscaneado(doc, chamarApoio) {
     { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: doc.pdfBase64.replace(/\s+/g, '') } },
     { type: 'text', text: 'Transcreva o texto deste documento conforme as regras.' }
   ];
-  const r = await chamarApoio('claude-sonnet-4-6', 16000, PROMPT_LEITURA_DOC_ESCANEADO, content);
+  const r = await chamarApoio(MODELO_DA_ATA, 16000, PROMPT_LEITURA_DOC_ESCANEADO, content);
   if (r && r.raw && r.raw.stop_reason === 'max_tokens') doc.truncado = true; // leitura cortada: avisa
   return (r && r.ok && r.texto) ? r.texto.trim() : '';
 }
@@ -948,7 +957,7 @@ function montarBlocoDocumentos(docs) {
 // documento. Falha aberta: qualquer erro devolve '' e a geração segue sem a lista.
 async function conferirTranscricaoComDocumentos(transcricao, blocoDocs, chamarApoio) {
   const msg = blocoDocs + '\n\n=== TRANSCRIÇÃO DA ASSEMBLEIA ===\n' + transcricao + '\n\nListe as divergências conforme as regras.';
-  const r = await chamarApoio('claude-sonnet-4-6', 4000, PROMPT_CONFERENCIA_DOCS, msg);
+  const r = await chamarApoio(MODELO_DA_ATA, 4000, PROMPT_CONFERENCIA_DOCS, msg);
   if (!r || !r.ok || !r.texto) return '';
   const linhas = r.texto.split('\n').map((l) => l.trim()).filter((l) => /^DIVERGENCIA\s*\|/i.test(l));
   return linhas.slice(0, 80).join('\n');
@@ -1676,7 +1685,7 @@ async function consolidarNomesProprios(ataTxt, transcricao, chamar) {
     if (pendentesLLM.length) {
       try {
         const payload = _evidenciasParaLLM(pendentesLLM, transcricao);
-        const r = await chamar('claude-sonnet-4-6', 1500, PROMPT_CONSOLIDACAO_NOME, JSON.stringify(payload));
+        const r = await chamar(MODELO_DA_ATA, 1500, PROMPT_CONSOLIDACAO_NOME, JSON.stringify(payload));
         const arr = JSON.parse(String((r && r.texto) || '').replace(/```(?:json)?\s*|\s*```/g, '').trim());
         for (const dec of (Array.isArray(arr) ? arr : [])) {
           const p = pendentesLLM[dec.id];
@@ -1709,7 +1718,7 @@ async function auditarBlocoCompletude(ata, bloco, i, n, chamar, extraSys) {
   // Cache só quando há mais de um bloco (o system se repete entre eles).
   const sys = PROMPT_AUDITORIA_BLOCO + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '') + (extraSys ? '\n\n---\n\n' + extraSys : '');
   const msg = '=== ATA GERADA (completa) ===\n' + ata + '\n\n=== TRECHO ' + i + ' DE ' + n + ' DA TRANSCRIÇÃO ===\n' + bloco + '\n\nListe as lacunas DESTE trecho conforme as regras.';
-  const r = await chamar('claude-sonnet-4-6', 8000, sys, msg, n > 1);
+  const r = await chamar(MODELO_DA_ATA, 8000, sys, msg, n > 1);
   return (r.ok && r.texto) ? r.texto.trim() : '';
 }
 
@@ -2176,7 +2185,11 @@ function validarAta(resposta) {
 // cacheSystem (T01, revisão): cache_control só onde o MESMO system se repete na geração (as
 // auditorias de bloco 2 e 3). Gravar cache custa 1,25x o input; em chamada de prefixo único é
 // prejuízo, então ali o system segue como string simples, igual ao de antes.
-function chamarAnthropicAta(modelo, maxTokens, system, userMessage, cacheSystem) {
+// ctxCusto (T42, opcional): { funcao, usuario, condominio } para o registro de custo, que nunca
+// atrasa nem derruba a chamada (custo.registrar volta na hora e não lança erro).
+function chamarAnthropicAta(modeloPedido, maxTokens, system, userMessage, cacheSystem, ctxCusto) {
+  // Marcador que escapou do motor da ata vira o modelo da ata (nunca vai para a API como nome).
+  const modelo = modeloPedido === MODELO_DA_ATA ? modelos.modelo('ata') : modeloPedido;
   return new Promise((resolve) => {
     const body = JSON.stringify({
       model: modelo,
@@ -2219,6 +2232,8 @@ function chamarAnthropicAta(modelo, maxTokens, system, userMessage, cacheSystem)
         const d = Buffer.concat(chunks).toString('utf8');
         try {
           const j = JSON.parse(d);
+          // T42: custo da chamada (volta na hora; falha vira só log).
+          if (j && j.usage) custo.registrar({ funcao: (ctxCusto && ctxCusto.funcao) || 'atas', modelo, usage: j.usage, usuario: ctxCusto && ctxCusto.usuario, condominio: ctxCusto && ctxCusto.condominio, ok: resp.statusCode === 200, status: resp.statusCode });
           // Telemetria de cache (só contagem de token, nunca conteúdo).
           if (j && j.usage) {
             console.log('[ATA cache] modelo=' + modelo +
@@ -2278,12 +2293,14 @@ const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 7;
 // nem dispara retry. Retry (1x, Sonnet) só se a API não retornar texto. Sem Opus.
 // Modelo da ata: ATA_MODELO no ambiente (padrão claude-sonnet-5-5, decisão 21/10 03h05; 4.6 só para teste interno). Teste comparativo pode trocar por
 // geração (só pela chave interna). O uso de tokens de cada geração fica em uso_tokens.
-const ATA_MODELO_PADRAO = process.env.ATA_MODELO || 'claude-sonnet-5-5';
+// T42: padrão em servico/modelos.js (função ata; ATA_MODELO continua valendo), lido a cada geração.
 const ATA_MODELOS_PERMITIDOS = ['claude-sonnet-4-6', 'claude-sonnet-5-5'];
 async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia, opcoes) {
-  const modeloSonnet = (opcoes && ATA_MODELOS_PERMITIDOS.includes(opcoes.modelo)) ? opcoes.modelo : ATA_MODELO_PADRAO;
+  const modeloSonnet = (opcoes && ATA_MODELOS_PERMITIDOS.includes(opcoes.modelo)) ? opcoes.modelo : modelos.modelo('ata');
+  // T42: quem gerou e de qual condomínio, só para o registro de custo.
+  const ctxCusto = { funcao: 'atas', usuario: opcoes && opcoes.usuario, condominio: opcoes && opcoes.condominio };
   const usoTokens = { entrada: 0, saida: 0, cache_lido: 0, cache_criado: 0, por_modelo: {} };
-  const trocaModelo = (m) => (m === 'claude-sonnet-4-6' ? modeloSonnet : m);
+  const trocaModelo = (m) => (m === MODELO_DA_ATA ? modeloSonnet : m);
   const somarUso = (m, r) => {
     const u = r && r.raw && r.raw.usage;
     if (!u) return r;
@@ -2316,7 +2333,7 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
       throw new Error('TETO_CHAMADAS: teto de ' + MAX_CHAMADAS_ANTHROPIC_POR_ATA + ' chamadas à API por geração atingido; abortado para não gerar custo');
     }
     const m = trocaModelo(modelo);
-    return chamarAnthropicAta(m, maxTokens, sys, msg, cacheSystem).then((r) => somarUso(m, r));
+    return chamarAnthropicAta(m, maxTokens, sys, msg, cacheSystem, ctxCusto).then((r) => somarUso(m, r));
   };
 
   // ─── DOCUMENTOS DA ASSEMBLEIA (T01) ───────────────────────────────────────
@@ -2342,7 +2359,7 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
       throw new Error('TETO_APOIO: teto de ' + MAX_CHAMADAS_APOIO_POR_ATA + ' chamadas de apoio por geração atingido');
     }
     const m = trocaModelo(modelo);
-    return chamarAnthropicAta(m, maxTokens, sys, msg).then((r) => somarUso(m, r));
+    return chamarAnthropicAta(m, maxTokens, sys, msg, false, ctxCusto).then((r) => somarUso(m, r));
   };
   async function prepararDocumentos() {
     if (!documentos.length) return;
@@ -2457,12 +2474,12 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
       numGapsDet = gapsDet.length;
       const gapList = [lacunas, gapsDet.join('\n')].filter(Boolean).join('\n').trim();
       if (gapList.length > 0) {
-        const inserida = await inserirLacunasNaAta(texto, gapList, 'claude-sonnet-4-6', chamar, extraSysDocs);
+        const inserida = await inserirLacunasNaAta(texto, gapList, MODELO_DA_ATA, chamar, extraSysDocs);
         if (aceitaInsercao(inserida)) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
         else {
           // inserção Sonnet quebrou OU tentou condensar → mantém original e tenta OPUS (último recurso).
           etapa = inserida ? 'insercao_sonnet_condensou_usou_original' : 'insercao_sonnet_quebrou_usou_original';
-          const opus = await inserirLacunasNaAta(texto, gapList, 'claude-opus-4-7', chamar, extraSysDocs);
+          const opus = await inserirLacunasNaAta(texto, gapList, modelos.modelo('ata_ultimo_recurso'), chamar, extraSysDocs);
           if (aceitaInsercao(opus)) { ataFinal = opus; etapa = 'insercao_opus'; usouOpus = true; }
         }
       }
@@ -2559,7 +2576,7 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
     };
     return concluir({
       ata: ataFinal,
-      modelo_usado: (usouOpus ? modelo_usado + ' + opus (inserção)' : modelo_usado).replace('claude-sonnet-4-6', modeloSonnet),
+      modelo_usado: (usouOpus ? modelo_usado + ' + opus (inserção)' : modelo_usado).replace(MODELO_DA_ATA, modeloSonnet),
       uso_tokens: usoTokens,
       tentativas, auditoria: etapa, avisos: consol.avisoSkip ? vFinal.avisos.concat([consol.avisoSkip]) : vFinal.avisos,
       gate: g.gate,
@@ -2581,20 +2598,20 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
     // T01: prepara os documentos da assembleia ANTES da geração (leitura de escaneado e
     // conferência transcrição x documento). Falha aberta: problema aqui nunca impede a ata.
     await prepararDocumentos();
-    let r = await chamar('claude-sonnet-4-6', 32000, system, mensagemGeracao);
-    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 32000, status: r.status, erro: r.erro || null });
+    let r = await chamar(MODELO_DA_ATA, 32000, system, mensagemGeracao);
+    tentativas.push({ modelo: MODELO_DA_ATA, max_tokens: 32000, status: r.status, erro: r.erro || null });
     if (r.ok && r.texto && r.texto.trim()) {
       tentativas[0].validacao = validarAta(r.texto);
-      return await entregarAta(r.texto, 'claude-sonnet-4-6', 0);
+      return await entregarAta(r.texto, MODELO_DA_ATA, 0);
     }
 
     // Só chega aqui se a API NÃO retornou texto na 1a. UM único retry Sonnet.
     console.warn('[engine-ata] Tentativa 1 sem texto (' + (r.erro || 'status ' + r.status) + '). Fazendo 1 retry Sonnet (SEM Opus).');
-    r = await chamar('claude-sonnet-4-6', 32000, system, mensagemGeracao);
-    tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 32000, status: r.status, erro: r.erro || null });
+    r = await chamar(MODELO_DA_ATA, 32000, system, mensagemGeracao);
+    tentativas.push({ modelo: MODELO_DA_ATA, max_tokens: 32000, status: r.status, erro: r.erro || null });
     if (r.ok && r.texto && r.texto.trim()) {
       tentativas[1].validacao = validarAta(r.texto);
-      return await entregarAta(r.texto, 'claude-sonnet-4-6', 1);
+      return await entregarAta(r.texto, MODELO_DA_ATA, 1);
     }
 
     // 2 falhas REAIS de geração (API sem texto). Sem cascata Opus. Devolve erro.
@@ -2688,7 +2705,7 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '36mb' }), async 
     if (!SUPABASE_SERVICE_ROLE_KEY) return null;
     try { return (await podeUsarSuperlogica(userId)) ? idSL : null; } catch (e) { return null; }
   };
-  podeConferir().then((idConf) => gerarAtaJob(jobId, userMessage, docsNorm.docs, idConf, { modelo: req.authMode === 'internal' ? b.modelo_teste : undefined })).catch((e) => {
+  podeConferir().then((idConf) => gerarAtaJob(jobId, userMessage, docsNorm.docs, idConf, { modelo: req.authMode === 'internal' ? b.modelo_teste : undefined, usuario: userId, condominio: idSL })).catch((e) => {
     console.error('[ata] erro fora do job:', e && e.message);
     const j = atasJobs.get(jobId);
     if (j && j.status === 'processing') { j.status = 'error'; j.erro = { httpStatus: 500, erro: 'erro_inesperado' }; }
@@ -4385,7 +4402,7 @@ app.post('/api/comunicados/rascunho', requireAuth, express.json({ limit: '50kb' 
   if (!(await exigirEscritaSuperlogica(req, res))) return;
   const msg = 'Tipo: ' + tipo + '\nCondomínio: ' + String(b.condominio || '[a confirmar]').slice(0, 150) +
     (b.unidade ? '\nUnidade: ' + String(b.unidade).slice(0, 60) : '') + '\nAssunto: ' + assunto + '\nDetalhes informados: ' + (detalhes || '(nenhum)');
-  const r = await chamarAnthropicAta(ATA_MODELO_PADRAO, 2000, PROMPT_COMUNICADO, msg);
+  const r = await chamarAnthropicAta(modelos.modelo('comunicado'), 2000, PROMPT_COMUNICADO, msg, false, { funcao: 'comunicados', usuario: req.user && req.user.sub, condominio: b.id_superlogica });
   if (!r.ok) return res.status(502).json({ erro: 'falha_processamento', detalhe: 'Não foi possível gerar o texto agora.' });
   let j = null;
   try { j = JSON.parse(String(r.texto).replace(/```(?:json)?\s*|\s*```/g, '').trim()); } catch (e) { j = null; }
@@ -5183,5 +5200,7 @@ if (require.main === module) {
 module.exports = {
   corrigirPlaceholdersDeliberacao, valoresCanonicos, mencoesMonetarias,
   extrairNomesCandidatos, reunirEvidencia, decidirPorCodigo, aplicarConsolidacao, existeLiteral,
-  gateDeSaida, validarMarcadoresConferir
+  gateDeSaida, validarMarcadoresConferir,
+  chamarAnthropicAta, // T42: teste de que o registro de custo não derruba a chamada
+  inserirLacunasNaAta, validarAta, // T42: teste do modelo da inserção de último recurso
 };

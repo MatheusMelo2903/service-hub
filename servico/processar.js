@@ -3,9 +3,8 @@
 // conferida e no formato que a tela usa; nunca o texto bruto do serviço.
 
 const { chamarModelo, extrairJson } = require('./modelo');
-
-const MODELO_RAPIDO = 'claude-haiku-4-5';
-const MODELO_PADRAO = 'claude-sonnet-4-6';
+// T42: nome dos modelos só em servico/modelos.js (cada função troca por variável de ambiente).
+const modelos = require('./modelos');
 
 const MIMES_IMAGEM = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const B64_MAX = 10 * 1024 * 1024; // base64 de até ~7,5 MB de arquivo
@@ -124,7 +123,7 @@ const TIPOS_REUNIAO = ['AGO', 'AGE', 'Reuniao de Diretoria', 'Reuniao de Morador
 async function processarEdital(corpo, usuario) {
   const bloco = blocoArquivo(corpo && corpo.arquivo);
   if (!bloco) return { status: 400, corpo: { erro: 'arquivo_invalido', detalhe: 'Envie o edital em PDF ou imagem (até 7 MB).' } };
-  const r = await chamarModelo({ modelo: MODELO_RAPIDO, maxTokens: 800, system: EDITAL_SYSTEM_PROMPT, cache: true, rotulo: 'edital', usuario,
+  const r = await chamarModelo({ modelo: modelos.modelo('edital'), maxTokens: 800, system: EDITAL_SYSTEM_PROMPT, cache: true, rotulo: 'edital', usuario,
     content: [bloco, { type: 'text', text: 'Extraia os 5 campos do edital acima em JSON puro, conforme as regras do sistema.' }] });
   if (!r.ok) return erroPadrao(r);
   const j = extrairJson(r.texto);
@@ -152,7 +151,7 @@ async function processarMedidor(corpo, usuario) {
   // Na releitura, a leitura anterior e a média da unidade (vindas da conferência) ajudam a
   // desempatar algarismo ambíguo. Só números; qualquer outra coisa é ignorada.
   const ctx = reforco ? textoContexto(corpo.contexto) : '';
-  const r = await chamarModelo({ modelo: cfg.modelo, esforco: cfg.esforco, maxTokens: cfg.maxTokens, rotulo: reforco ? 'medidor_reforco' : 'medidor', usuario,
+  const r = await chamarModelo({ modelo: modelos.modelo(reforco ? 'medidor_reforco' : 'medidor'), esforco: cfg.esforco, maxTokens: cfg.maxTokens, rotulo: reforco ? 'medidor_reforco' : 'medidor', usuario,
     content: [bloco, { type: 'text', text: MEDIDOR_PEDIDO + (ctx ? '\n' + ctx : '') }] });
   if (!r.ok) return erroPadrao(r);
   return { status: 200, corpo: Object.assign(lerRespostaMedidor(r.texto), { reforco, com_referencia: !!ctx }) };
@@ -189,8 +188,9 @@ const _esf = (v, padrao) => (v === undefined ? padrao : (['low', 'medium', 'high
 // sonnet 5.5 no esforço baixo (65% exato, cerca de R$ 3,10 por 100 fotos); a foto marcada na
 // conferência é relida com sonnet 5.5 no esforço padrão e com a leitura anterior da unidade como
 // referência. Conjunto: cerca de 78% exato, R$ 5,10 por 100 fotos, nenhum erro sem suspeita.
-const MEDIDOR_PRIMEIRA = { modelo: process.env.MEDIDOR_MODELO || 'claude-sonnet-5-5', esforco: _esf(process.env.MEDIDOR_ESFORCO, 'low'), maxTokens: 6000 };
-const MEDIDOR_REFORCO = { modelo: process.env.MEDIDOR_MODELO_REFORCO || 'claude-sonnet-5-5', esforco: _esf(process.env.MEDIDOR_ESFORCO_REFORCO, undefined), maxTokens: 6000 };
+// Modelo: servico/modelos.js (medidor e medidor_reforco), lido na hora da chamada.
+const MEDIDOR_PRIMEIRA = { esforco: _esf(process.env.MEDIDOR_ESFORCO, 'low'), maxTokens: 6000 };
+const MEDIDOR_REFORCO = { esforco: _esf(process.env.MEDIDOR_ESFORCO_REFORCO, undefined), maxTokens: 6000 };
 const MEDIDOR_PEDIDO = [
   'Foto de medidor de água ou gás de condomínio, tirada pelo leiturista. Leia o mostrador de rolos (números), não os ponteiros dos relógios pequenos.',
   'A foto pode estar girada ou de cabeça para baixo: gire mentalmente até os números ficarem em pé antes de ler. Confira se 6, 8, 9 e 0 não foram trocados.',
@@ -278,7 +278,7 @@ function lerLinhasUnidades(texto, cortado) {
 async function processarUnidades(corpo, usuario) {
   const content = montarConteudoUnidades(corpo);
   if (!content) return { status: 400, corpo: { erro: 'parte_invalida', detalhe: 'Parte do documento inválida ou grande demais.' } };
-  const r = await chamarModelo({ modelo: MODELO_PADRAO, maxTokens: 24000, system: NORMALIZAR_SYSTEM_PROMPT, cache: true, rotulo: 'unidades', usuario, content });
+  const r = await chamarModelo({ modelo: modelos.modelo('unidades'), esforco: modelos.esforco('unidades'), maxTokens: 24000, system: NORMALIZAR_SYSTEM_PROMPT, cache: true, rotulo: 'unidades', usuario, content });
   if (!r.ok) return erroPadrao(r);
   return { status: 200, corpo: lerLinhasUnidades(r.texto, r.cortado) };
 }
@@ -286,7 +286,7 @@ async function processarUnidades(corpo, usuario) {
 // ---------- Documento financeiro (T33, entrada de documentos) ----------
 // Só para PDF ou foto sem texto (escaneado). O resultado passa pelas mesmas conferências do
 // texto (dígitos da linha digitável e do CNPJ) em financeiro/entrada.js.
-const DOCFIN_MODELO = () => process.env.ENTRADA_MODELO || 'claude-sonnet-5-5';
+const DOCFIN_MODELO = () => modelos.modelo('entrada_documento');
 const DOCFIN_ESFORCO = () => _esf(process.env.ENTRADA_ESFORCO, 'low');
 const DOCFIN_PEDIDO = [
   'Documento de contas a pagar de condomínio (boleto, nota fiscal, guia de imposto, fatura de concessionária ou comprovante).',

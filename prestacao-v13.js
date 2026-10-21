@@ -31,7 +31,9 @@ const crypto = require('crypto');
 const express = require('express');
 const { criarCliente, puxarDadosPrestacao, MAX_MESES } = require('./superlogica-dados');
 
-const MODELO = process.env.PRESTACAO_MODELO || 'claude-sonnet-4-6';
+// T42: modelo em servico/modelos.js (função prestacao; PRESTACAO_MODELO continua valendo).
+const modelos = require('./servico/modelos');
+const custo = require('./servico/custo');
 const TAMANHO_MAX = 50 * 1024 * 1024;
 const MAX_ITENS_PROMPT = 60;     // itens por rubrica enviados à IA (do maior pro menor)
 // O prompt pede 260; aceita até 300 porque o teste com o Bosque (272 rubricas)
@@ -331,12 +333,15 @@ function dividirEmLotes(entrada) {
   }));
 }
 
-async function chamarLote(apiKey, lote) {
+async function chamarLote(apiKey, lote, ctx) {
+  const modelo = (ctx && ctx.modelo) || modelos.modelo('prestacao');
   const instrucao = lote.escrever_receitas
     ? 'Este lote também traz receitas_nomes (só nomes que precisam de grafia arrumada) e receita_insight.'
     : 'Neste lote NÃO escreva receitas_nomes nem receita_insight.';
+  const esforco = ctx && ctx.esforco !== undefined ? ctx.esforco : modelos.esforco('prestacao');
   const corpo = JSON.stringify({
-    model: MODELO,
+    model: modelo,
+    ...(esforco ? { output_config: { effort: esforco } } : {}),
     max_tokens: 12000,
     // Prompt de sistema (regras + exemplo do Buritis, uns 8 mil tokens) em cache:
     // os lotes que começam depois do primeiro leem do cache a 10% do preço.
@@ -358,6 +363,8 @@ async function chamarLote(apiKey, lote) {
       await new Promise((ok) => setTimeout(ok, 20000));
       continue;
     }
+    // T42: custo de cada lote (volta na hora; nunca derruba a geração).
+    if (r.json && r.json.usage) custo.registrar({ funcao: 'prestacao', modelo, usage: r.json.usage, usuario: ctx && ctx.usuario, condominio: ctx && ctx.condominio, ok: r.status === 200, status: r.status });
     if (r.status !== 200 || !r.json) return { ok: false, motivo: 'api_' + (r.status || r.erro) };
     const texto = ((r.json.content || []).find((b) => b.type === 'text') || {}).text || '';
     const comp = extrairJson(texto);
@@ -367,14 +374,14 @@ async function chamarLote(apiKey, lote) {
   return { ok: false, motivo: 'api_429' };
 }
 
-async function curarComClaude(apiKey, dados, observacoes) {
+async function curarComClaude(apiKey, dados, observacoes, ctx) {
   const lotes = dividirEmLotes(entradaParaIA(dados, observacoes));
   const resultados = new Array(lotes.length);
   let proximo = 0;
   async function trabalhador() {
     while (proximo < lotes.length) {
       const i = proximo++;
-      try { resultados[i] = await chamarLote(apiKey, lotes[i]); } catch (e) { resultados[i] = { ok: false, motivo: 'excecao' }; }
+      try { resultados[i] = await chamarLote(apiKey, lotes[i], ctx); } catch (e) { resultados[i] = { ok: false, motivo: 'excecao' }; }
     }
   }
   await Promise.all(Array.from({ length: Math.min(LOTES_SIMULTANEOS, lotes.length) }, trabalhador));
@@ -548,7 +555,7 @@ module.exports = function registrarPrestacaoV13(app, {
     if (ANTHROPIC_KEY && dados.modo === 'detalhado') {
       etapa('escrevendo a composição de cada despesa');
       try {
-        const c = await curarComClaude(ANTHROPIC_KEY, dados, observacoes);
+        const c = await curarComClaude(ANTHROPIC_KEY, dados, observacoes, { usuario: req && req.user && req.user.sub, condominio: (fonteSL && fonteSL.idCondominio) || (condBase && condBase.id) });
         uso = c.uso || null;
         if (c.ok) {
           const s = sanearComposicao(c.comp, dados);
@@ -710,6 +717,7 @@ module.exports = function registrarPrestacaoV13(app, {
       observacoes,
       podeAjustar: pa,
       fonteSL: { idCondominio: idCond, inicio, fim, nome, fantasia: nome },
+      req, // T42: só para registrar quem gerou no custo
     }).catch((e) => {
       const j = jobs.get(jobId);
       if (j && j.status === 'processing') {
@@ -770,4 +778,4 @@ module.exports = function registrarPrestacaoV13(app, {
 };
 
 // Exportados para teste.
-module.exports._interno = { entradaParaIA, sanearComposicao, valoresCitados, extrairJson, semTravessao, dividirEmLotes, SYSTEM_PROMPT };
+module.exports._interno = { curarComClaude, entradaParaIA, sanearComposicao, valoresCitados, extrairJson, semTravessao, dividirEmLotes, SYSTEM_PROMPT };
