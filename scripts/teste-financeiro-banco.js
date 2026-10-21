@@ -85,7 +85,8 @@ const DESPESAS = [
     assert.strictEqual(C.dataCnab('31022026'), null);
     assert.strictEqual(C.dataCnab('00000000'), null);
     assert.strictEqual(C.fmtBRL(123456), 'R$ 1.234,56');
-    assert.strictEqual(C.centavos('12.345'), 1234500);
+    assert.strictEqual(C.centavos('1.234.567'), 123456700);
+    assert.strictEqual(C.centavos('10.000'), 1000);
     assert.strictEqual(C.centavos('12.34'), 1234);
   });
   await ok('codigo de barras e linha digitavel ida e volta', () => {
@@ -228,6 +229,8 @@ const DESPESAS = [
     assert.strictEqual(ruim.conferencia.diferenca_centavos, -1);
     assert.throws(() => E.paraOFX(ruim), /extrato_nao_fecha/);
     assert(E.paraOFX(ruim, { permitirSemFechar: true }).includes('<TRNAMT>9.99'));
+    assert.throws(() => E.paraItensT35(ruim), /extrato_nao_fecha/);
+    assert.throws(() => E.paraConciliacao(ruim), /extrato_nao_fecha/);
     const conflito = E.normalizarExtratoSicoob({ transacoes: [{ tipo: 'C', valor: '-5.00', data: '2026-10-01' }, { valor: '7.00', data: '2026-10-01' }] });
     assert.strictEqual(conflito.itens.length, 1, 'crédito negativo ignorado');
     assert(conflito.avisos.some((a) => /crédito com valor negativo/.test(a)) && conflito.avisos.some((a) => /deduzido/.test(a)));
@@ -399,6 +402,17 @@ const DESPESAS = [
     assert(soValor.resultados[0].achados.some((x) => x.tipo === 'sem_codigo_no_sistema'));
     // Rejeitado com código de outro boleto não consome despesa nem acusa baixa errada.
     const rej = { ...mk({ segmento: 'J', codigo_barras: CB4, valor_pago_centavos: 10000, data_efetiva: '2026-10-10' }), efetivado: false, rejeitado: true, ocorrencias: [{ codigo: '01', texto: 'Saldo insuficiente' }] };
+    // Tentativa rejeitada e depois paga do mesmo boleto, nas duas ordens: a paga fica com a despesa.
+    const pago = mk({ segmento: 'J', codigo_barras: CB4, valor_pago_centavos: 10000, data_efetiva: '2026-10-11' });
+    const rejMesmo = { ...pago, efetivado: false, rejeitado: true, ocorrencias: [{ codigo: '01', texto: 'Saldo insuficiente' }] };
+    const despCb = [{ ...desp[0], id_parcela_pdes: '80', st_codigobarras_pdes: CB4, dt_liquidacao_pdes: '10/11/2026' }, { ...desp[0], id_parcela_pdes: '90', dt_liquidacao_pdes: '' }];
+    [[rejMesmo, pago], [pago, rejMesmo]].forEach((ordem) => {
+      const c = R.conferirPagamentos(ordem, despCb);
+      const rp = c.resultados.find((r) => r.situacao !== 'rejeitado');
+      assert.strictEqual(rp.situacao, 'confere');
+      assert.strictEqual(rp.despesa.id_parcela, 80);
+      assert.strictEqual(c.resultados.find((r) => r.situacao === 'rejeitado').achados.length, 0);
+    });
     const cr = R.conferirPagamentos([rej], [{ ...desp[0], st_codigobarras_pdes: CB2 }]);
     assert.strictEqual(cr.resultados[0].achados.length, 0);
     assert.strictEqual(cr.resultados[0].despesa, null);

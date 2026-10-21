@@ -11,7 +11,7 @@ function centavos(v) {
   let s = String(v).trim().replace(/\s|R\$/g, '');
   if (!s) return null;
   if (/,\d{1,2}$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
-  else if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, ''); // 12.345 = doze mil (milhar sem centavos)
+  else if (/^-?\d{1,3}(\.\d{3}){2,}$/.test(s)) s = s.replace(/\./g, ''); // 1.234.567 só pode ser milhar; 10.000 fica decimal (ambíguo)
   else s = s.replace(/,/g, '');
   if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
   const n = Number(s);

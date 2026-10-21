@@ -188,7 +188,10 @@ function conferirPagamentos(retornoOuLista, despesas, opcoes) {
   const casou = new Map(); // índice do pagamento -> { idx, como } | { ambiguo, como }
   const cnpjCond = C.soDigitos(o.cnpjCondominio) || null;
   const livres = (fn) => desp.map((d, i) => [d, i]).filter(([d, i]) => !usadas.has(i) && fn(d));
-  const pendentes = (fn) => pags.map((p, i) => [p, i]).filter(([p, i]) => !casou.has(i) && fn(p));
+  // Em cada fase os efetivados casam antes dos não efetivados (uma tentativa rejeitada que vem antes
+  // da paga no arquivo não pode tomar a despesa da paga).
+  const pendentes = (fn) => pags.map((p, i) => [p, i]).filter(([p, i]) => !casou.has(i) && fn(p))
+    .sort((x, y) => (y[0].efetivado ? 1 : 0) - (x[0].efetivado ? 1 : 0) || x[1] - y[1]);
 
   // Fase 1: código de barras.
   for (const [p, i] of pendentes((x) => !!x.codigo_barras)) {

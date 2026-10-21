@@ -127,7 +127,13 @@ function lerExtratoCnab240(texto) {
 const sinal = (cent, dc) => (cent === null ? null : dc === 'D' ? -cent : cent);
 
 // ── Conversões ────────────────────────────────────────────────────────────
-function paraConciliacao(ext, { idCondominio, idConta, origem } = {}) {
+function exigirFechado(ext, permitirSemFechar) {
+  const conf = ext.conferencia || conferirSaldos(ext);
+  if (conf.fecha === false && !permitirSemFechar) throw new Error('extrato_nao_fecha');
+}
+
+function paraConciliacao(ext, { idCondominio, idConta, origem, permitirSemFechar } = {}) {
+  exigirFechado(ext, permitirSemFechar);
   return ext.itens.map((i) => ({
     origem: origem || 'banco',
     id_banco: i.id,
@@ -145,7 +151,8 @@ function paraConciliacao(ext, { idCondominio, idConta, origem } = {}) {
 // Formato do OFX lido pela conciliação da T35 (public/conciliacao-casar.js, branch feat/financeiro-conciliacao):
 //   { data, valor (centavos com sinal), fitid, descricao, tipo ('CREDIT'|'DEBIT'), numero }
 // Assim o extrato da API entra no mesmo casamento que o OFX enviado pela tela.
-function paraItensT35(ext) {
+function paraItensT35(ext, { permitirSemFechar } = {}) {
+  exigirFechado(ext, permitirSemFechar);
   return ext.itens.map((i) => ({
     data: i.data,
     valor: i.tipo === 'D' ? -i.centavos : i.centavos,
