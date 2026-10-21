@@ -104,14 +104,17 @@ function enxugarAuditoria(lista) {
   return out;
 }
 
-// GET de uma lista. null = corpo que não é lista (estouro do Superlógica); erro HTTP sobe.
+// GET de uma lista. null = corpo que não é JSON (estouro de memória do Superlógica vem como HTML
+// com HTTP 200: o cliente devolve null). JSON que não é lista (mensagem de erro) é falha, sem quebrar.
+const MAX_QUEBRAS = 40; // teto de quebras de janela por cálculo (protege o Superlógica)
 async function getLista(cliente, fila, action, params) {
   const j = await fila(() => cliente.get(action, params));
   if (Array.isArray(j)) return j;
   if (j && Array.isArray(j.data)) return j.data;
-  return null;
+  if (j === null || j === undefined) return null;
+  const e = new Error('resposta_sem_lista'); e.status = 'sem lista'; throw e;
 }
-// Lê uma janela de datas; se o Superlógica estourar, quebra ao meio até 1 dia.
+// Lê uma janela de datas; se o Superlógica estourar, quebra ao meio até 1 dia (no máximo MAX_QUEBRAS por cálculo).
 async function janela(cliente, fila, action, base, ini, fim, falhas) {
   let lista = null;
   try { lista = await getLista(cliente, fila, action, Object.assign({}, base, { dtInicio: sl(ini), dtFim: sl(fim) })); } catch (e) {
@@ -119,7 +122,8 @@ async function janela(cliente, fila, action, base, ini, fim, falhas) {
     return [];
   }
   if (lista) return lista;
-  if (ini >= fim) { falhas.push(action + ' ' + ini + ' (resposta inválida)'); return []; }
+  falhas.quebras = (falhas.quebras || 0) + 1;
+  if (ini >= fim || falhas.quebras > MAX_QUEBRAS) { falhas.push(action + ' ' + ini + ' a ' + fim + ' (resposta inválida)'); return []; }
   const meio = U.maisDias(ini, Math.floor(U.dias(ini, fim) / 2));
   const a = await janela(cliente, fila, action, base, ini, meio, falhas);
   const b = await janela(cliente, fila, action, base, U.maisDias(meio, 1), fim, falhas);
@@ -264,6 +268,16 @@ async function preBalancete(cliente, fila, idCondominio, comp, hoje) {
   return r;
 }
 
+// Alerta R2 cita a despesa do outro condomínio (nome, número, valor): para quem tem carteira,
+// fica só o aviso, sem os dados de fora. Os outros alertas só citam o próprio condomínio.
+function semOutroCondominio(a) {
+  if (a.regra !== 'R2') return a;
+  const o = Object.assign({}, a);
+  delete o.relacionados;
+  o.detalhe = 'O mesmo código de barras ou nota aparece em outro condomínio. Peça ao gestor para conferir o outro lançamento.';
+  return o;
+}
+
 // ── estado do servidor ────────────────────────────────────────────────────
 // opcoes: { cliente: () => cliente do Superlógica, hoje: () => 'AAAA-MM-DD', log }
 function criarPainel(opcoes) {
@@ -288,17 +302,26 @@ function criarPainel(opcoes) {
     return andamento;
   }
   const vencida = (b) => !b || Date.now() - Date.parse(b.gerado_em) > TTL_BASE || b.hoje !== hoje();
-  // Devolve a base pronta ou null (ainda calculando). forcar: no máximo um recálculo a cada 2 minutos.
+  // Devolve a base pronta ou null (ainda calculando). forcar: recalcula em segundo plano, no máximo
+  // uma vez a cada 5 minutos, sem apagar a base atual (ninguém fica sem tela enquanto recalcula).
+  const doDia = () => (base && base.hoje === hoje() ? base : null);
   async function obterBase(forcar) {
-    if (forcar && !andamento && Date.now() - forcadoEm > 120000) { forcadoEm = Date.now(); base = null; }
+    if (forcar && !andamento && base && Date.now() - forcadoEm > 300000 && Date.now() - Date.parse(base.gerado_em) > 60000) {
+      forcadoEm = Date.now();
+      recalcular();
+      return base;
+    }
     if (!vencida(base)) return base;
     const p = recalcular();
     const tempo = new Promise((ok) => setTimeout(() => ok(null), ESPERA_ROTA));
     const r = await Promise.race([p.catch(() => 'erro'), tempo]);
-    if (r === 'erro') { const e = new Error('falha_superlogica'); e.status = 502; throw e; }
+    if (r === 'erro') {
+      if (doDia()) return doDia(); // falhou o recálculo: fica a base anterior do mesmo dia
+      const e = new Error('falha_superlogica'); e.status = 502; throw e;
+    }
     if (r) return r;
     // Enquanto recalcula, a base anterior do mesmo dia continua valendo (a tela avisa a hora).
-    return base && base.hoje === hoje() ? base : null;
+    return doDia();
   }
   const situacao = () => ({ calculando: !!andamento, desde: andamento ? iniciado : null, ultimo_erro: ultimoErro });
 
@@ -317,12 +340,16 @@ function criarPainel(opcoes) {
 
   return {
     obterBase, situacao, recalcular,
-    alertasDoCondominio(b, id) {
+    // restrito: quem só vê a própria carteira não recebe dados do outro condomínio do alerta R2.
+    alertasDoCondominio(b, id, restrito) {
       const c = b.condominios.get(String(id));
+      let alertas = b.porCondominio.get(String(id)) || [];
+      if (restrito) alertas = alertas.map(semOutroCondominio);
       return { condominio: String(id), nome: c ? c.nome : '', analista: (b.analistas && b.analistas.get(String(id))) || '',
-        gerado_em: b.gerado_em, periodo: b.periodo, alertas: b.porCondominio.get(String(id)) || [], falhas: b.falhas };
+        gerado_em: b.gerado_em, periodo: b.periodo, alertas, falhas: b.falhas };
     },
-    resumo(b, ids) { return { gerado_em: b.gerado_em, periodo: b.periodo, totais: b.totais, falhas: b.falhas, condominios: resumoDe(b, ids) }; },
+    // ids null = todos (GESTOR): só então vão os totais da base inteira.
+    resumo(b, ids, completo) { return { gerado_em: b.gerado_em, periodo: b.periodo, totais: completo ? b.totais : undefined, falhas: b.falhas, condominios: resumoDe(b, ids) }; },
     preBalancete: preBalanceteCache,
   };
 }
@@ -337,7 +364,7 @@ function temFinanceiro(perfil, acao) {
 }
 
 module.exports = {
-  criarPainel, temFinanceiro, competencia, linkLancamento,
+  criarPainel, temFinanceiro, competencia, linkLancamento, semOutroCondominio,
   // para teste
   enxugarDespesa, enxugarAuditoria, resumoDe, montarPreBalancete, quinzenas, ultimosDiasUteis, inicioMesesAtras, criarFila, janela,
 };

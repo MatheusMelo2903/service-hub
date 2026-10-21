@@ -43,6 +43,30 @@ function t(nome, cond) { if (cond) ok++; else { falhas++; console.log('FALHOU: '
   const r2 = await P.janela(cli2, P.criarFila(2), 'despesas/index', {}, '2026-09-01', '2026-09-02', f2);
   t('erro vira falha registrada', r2.length === 0 && f2.length === 1);
 
+  // JSON que não é lista é falha e não quebra a janela; quebras têm teto
+  let n3 = 0;
+  const f3 = [];
+  const r3 = await P.janela({ get: async () => { n3++; return { status: 500, msg: 'erro' }; } }, P.criarFila(2), 'despesas/index', {}, '2025-01-01', '2026-04-30', f3);
+  t('json de erro não quebra', r3.length === 0 && n3 === 1 && f3.length === 1);
+  let n4 = 0;
+  const f4 = [];
+  await P.janela({ get: async () => { n4++; return null; } }, P.criarFila(2), 'despesas/index', {}, '2025-01-01', '2026-04-30', f4);
+  t('teto de quebras', n4 <= 85 && f4.length >= 1);
+
+  // R2 sem dados do outro condomínio para quem tem carteira
+  const r2a = P.semOutroCondominio({ regra: 'R2', detalhe: 'Outro: CONDOMINIO X despesa 9', relacionados: ['9'] });
+  t('R2 restrito', !r2a.relacionados && !/CONDOMINIO X/.test(r2a.detalhe));
+  const r5a = { regra: 'R5', detalhe: 'x' };
+  t('outros intactos', P.semOutroCondominio(r5a) === r5a);
+
+  // Atualizar não apaga a base de todos
+  let calls = 0;
+  const painel = P.criarPainel({ cliente: () => ({ get: async () => { calls++; return []; } }), hoje: () => '2026-10-21', log: () => {} });
+  const b1 = await painel.obterBase(false);
+  const antes = calls;
+  const b2 = await painel.obterBase(true);
+  t('forçar logo depois devolve a mesma base sem reler', b1 && b2 === b1 && calls === antes);
+
   // Fila respeita o limite
   let ativos = 0, pico = 0;
   const fila = P.criarFila(2);

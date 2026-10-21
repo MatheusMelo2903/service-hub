@@ -26,3 +26,11 @@ Achado: auditoria/index com idCondominio traz também as linhas de arquivo de to
 
 ## Validar (Matheus)
 Abrir Financeiro com a Carteira A, conferir 3 alertas de alta do primeiro condomínio no Superlógica pelo link e gerar o pré balancete de setembro do Casablanca.
+
+## Revisão 1 (testes/T31/revisao-1.md): 0 GRAVE, 4 MÉDIOS corrigidos
+1. Carteira com falha fechada também em alertas, pré balancete e boletos (_exigirEscopoFinanceiro: erro ao ler a carteira dá 503; fora dela, 403), além do _exigirCarteira de sempre.
+2. Alerta R2 para quem tem carteira sai sem o outro condomínio (sem relacionados e com texto genérico); o GESTOR vê completo. Totais da base inteira só para quem vê todos.
+3. Janela só quebra quando o corpo não é JSON (estouro); JSON de erro vira falha; teto de 40 quebras por cálculo.
+4. Atualizar não apaga a base de ninguém: recalcula em segundo plano no máximo a cada 5 minutos (e nunca no primeiro minuto da base); recálculo que falha mantém a base do mesmo dia.
+Menores que ficaram: perfil lido mais de uma vez por requisição; pedidos de pré balancete em meses diferentes entram na mesma fila; R6 do pré balancete olha só o que segue pendente hoje (vencida no mês e paga depois não aparece); sem filtro por analista (a coluna existe); lista de carteiras do GESTOR depende do perfil carregado ao abrir a aba.
+Teste depois da correção: 38 testes sem rede ok; real: base 82 condomínios, forçar logo depois não relê, alertas 136 (52), pré balancete Victoria Bay 09/2026 (54 pendências, 16,6 s).

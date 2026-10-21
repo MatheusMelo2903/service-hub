@@ -3809,6 +3809,7 @@ app.get('/api/financeiro/boletos/:idSuperlogica', requireAuth, async (req, res) 
   if (!(await _exigirFinanceiro(req, res, 'ver'))) return;
   if (!(await exigirLeituraSuperlogica(req, res))) return;
   if (!(await _exigirCarteira(req, res, id))) return;
+  if (!(await _exigirEscopoFinanceiro(req, res, id))) return;
   const chave = id + '|' + competencia;
   if (req.query.forcar === '1') _cacheBoletos.limpar(chave);
   try {
@@ -3853,6 +3854,20 @@ async function _escopoFinanceiro(req) {
   if (!r.carteiras.length) return new Set();
   return new Set(r.ids_superlogica.map(String));
 }
+// Carteira nas rotas de um condomínio, com falha fechada (erro ao ler a carteira recusa).
+// Devolve { escopo } (null = vê todos) ou null se já respondeu 403 ou 503.
+async function _exigirEscopoFinanceiro(req, res, id) {
+  let escopo;
+  try { escopo = await _escopoFinanceiro(req); } catch (e) {
+    res.status(503).json({ erro: 'carteira_indisponivel', detalhe: 'Não foi possível conferir sua carteira agora.' });
+    return null;
+  }
+  if (escopo && !escopo.has(String(id))) {
+    res.status(403).json({ erro: 'fora_da_carteira', detalhe: 'Esse condomínio não está na sua carteira.' });
+    return null;
+  }
+  return { escopo };
+}
 function _respostaCalculando(res) {
   return res.status(202).json(Object.assign({ calculando: true, detalhe: 'Os alertas estão sendo calculados. A tela tenta de novo sozinha.' }, _painelFin.situacao()));
 }
@@ -3882,7 +3897,7 @@ app.get('/api/financeiro/resumo', requireAuth, async (req, res) => {
   try {
     const base = await _painelFin.obterBase(req.query.forcar === '1');
     if (!base) return _respostaCalculando(res);
-    res.json(Object.assign(_painelFin.resumo(base, ids), { recalculando: _painelFin.situacao().calculando }));
+    res.json(Object.assign(_painelFin.resumo(base, ids, escopo === null), { recalculando: _painelFin.situacao().calculando }));
   } catch (e) {
     console.warn('[financeiro] resumo falhou: ' + (e && e.message));
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível calcular os alertas agora. Tente de novo em alguns minutos.' });
@@ -3898,10 +3913,12 @@ app.get('/api/financeiro/condominio/:idSuperlogica/alertas', requireAuth, async 
   if (!(await _exigirFinanceiro(req, res, 'ver'))) return;
   if (!(await exigirLeituraSuperlogica(req, res))) return;
   if (!(await _exigirCarteira(req, res, id))) return;
+  const acesso = await _exigirEscopoFinanceiro(req, res, id);
+  if (!acesso) return;
   try {
     const base = await _painelFin.obterBase(req.query.forcar === '1');
     if (!base) return _respostaCalculando(res);
-    res.json(Object.assign(_painelFin.alertasDoCondominio(base, id), { recalculando: _painelFin.situacao().calculando }));
+    res.json(Object.assign(_painelFin.alertasDoCondominio(base, id, acesso.escopo !== null), { recalculando: _painelFin.situacao().calculando }));
   } catch (e) {
     console.warn('[financeiro] alertas ' + id + ' falhou: ' + (e && e.message));
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível calcular os alertas agora. Tente de novo em alguns minutos.' });
@@ -3921,6 +3938,7 @@ app.get('/api/financeiro/condominio/:idSuperlogica/pre-balancete', requireAuth, 
   if (!(await _exigirFinanceiro(req, res, 'pre_balancete'))) return;
   if (!(await exigirLeituraSuperlogica(req, res))) return;
   if (!(await _exigirCarteira(req, res, id))) return;
+  if (!(await _exigirEscopoFinanceiro(req, res, id))) return;
   try {
     res.json(await _painelFin.preBalancete(id, competencia, req.query.forcar === '1'));
   } catch (e) {
