@@ -162,10 +162,10 @@ function cobAbrirAcordo(idSL, k) {
 
 function cobTextoArea(texto) {
   return '<textarea readonly rows="4" style="width:100%;margin-top:6px;font-family:var(--mono);font-size:12px">' + cobEsc(texto) + '</textarea>'
-    + '<button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;margin-top:4px" onclick="cobCopiar(this)">Copiar texto</button>';
+    + '<div><button class="btn btn-ghost cob-copiar" style="font-size:11px;padding:4px 10px;margin-top:4px">Copiar texto</button></div>';
 }
 function cobCopiar(btn) {
-  var ta = btn.previousElementSibling;
+  var ta = btn.parentNode.previousElementSibling;
   if (!ta) return;
   ta.select();
   try { navigator.clipboard.writeText(ta.value).then(function () { toast('Texto copiado.', 'ok'); }, function () { document.execCommand('copy'); toast('Texto copiado.', 'ok'); }); }
@@ -217,6 +217,8 @@ async function cobSegundaVia(idSL, k, btn) {
 document.addEventListener('click', function (ev) {
   var b = ev.target.closest && ev.target.closest('.cob-ver');
   if (b) { cobVerUnidades(b.dataset.id); return; }
+  var cp = ev.target.closest && ev.target.closest('.cob-copiar');
+  if (cp) { cobCopiar(cp); return; }
   var a = ev.target.closest && ev.target.closest('.cob-acao');
   if (!a) return;
   var det = document.getElementById('cob-unidades');
