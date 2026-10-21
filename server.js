@@ -271,6 +271,7 @@ function requireAuth(req, res, next) {
 // assim as rotas explícitas abaixo controlam o que aparece em cada caminho
 // T17: arquivos do sistema entregues sem comentários e compactados (preparados ao ligar).
 const ofuscar = require('./servico/ofuscar');
+ofuscar.registrar(path.join(__dirname, 'public'));
 app.use(ofuscar.middleware);
 app.use(express.static(path.join(__dirname, 'public'), { index: false }));
 
@@ -2272,9 +2273,9 @@ const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 7;
 // Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
 // PRIMEIRA passada Sonnet que retornar texto; a validação é só aviso, nunca bloqueia
 // nem dispara retry. Retry (1x, Sonnet) só se a API não retornar texto. Sem Opus.
-// Modelo da ata: ATA_MODELO no ambiente (padrão o atual). Teste comparativo pode trocar por
+// Modelo da ata: ATA_MODELO no ambiente (padrão claude-sonnet-5-5, decisão 21/10 03h05; 4.6 só para teste interno). Teste comparativo pode trocar por
 // geração (só pela chave interna). O uso de tokens de cada geração fica em uso_tokens.
-const ATA_MODELO_PADRAO = process.env.ATA_MODELO || 'claude-sonnet-4-6';
+const ATA_MODELO_PADRAO = process.env.ATA_MODELO || 'claude-sonnet-5-5';
 const ATA_MODELOS_PERMITIDOS = ['claude-sonnet-4-6', 'claude-sonnet-5-5'];
 async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia, opcoes) {
   const modeloSonnet = (opcoes && ATA_MODELOS_PERMITIDOS.includes(opcoes.modelo)) ? opcoes.modelo : ATA_MODELO_PADRAO;
@@ -2741,8 +2742,14 @@ function requireServiceRoleKey(req, res, next) {
 // Nao confia no JWT pra isso: o role do JWT so atualiza no proximo refresh de sessao.
 async function lerPerfil(id) {
   if (!id) return null;
-  const r = await supabaseAdminRequest('GET',
+  let r = await supabaseAdminRequest('GET',
     `/rest/v1/profiles?id=eq.${encodeURIComponent(id)}&select=id,email,role,pode_convidar,permissoes,concede`);
+  // Reserva: sem a coluna concede (migration 013 ainda não aplicada) lê sem ela, concede vazio.
+  if (r.status === 400) {
+    r = await supabaseAdminRequest('GET',
+      `/rest/v1/profiles?id=eq.${encodeURIComponent(id)}&select=id,email,role,pode_convidar,permissoes`);
+    if (r.status === 200 && Array.isArray(r.body) && r.body[0]) r.body[0].concede = {};
+  }
   return (r.status === 200 && Array.isArray(r.body) && r.body[0]) ? r.body[0] : null;
 }
 
@@ -2937,6 +2944,8 @@ app.post('/api/admin/usuarios/convidar',
     if (role !== 'OPERACIONAL' && inv.body?.id) {
       await supabaseAdminRequest('PATCH', `/rest/v1/profiles?id=eq.${inv.body.id}`, { role });
     }
+    const convidouDono = req.authMode === 'internal' || permRegras.ehDono(req.gestor);
+    auditoria.evento(req, 'usuario_convidado', { alvo: inv.body?.id || null, email_alvo: String(email).slice(0, 120), role }, !convidouDono, convidouDono ? null : 'convidou_usuario');
     res.status(201).json({ ok: true, user: { id: inv.body?.id, email: inv.body?.email, role } });
   });
 
@@ -2986,8 +2995,7 @@ app.put('/api/admin/usuarios/:id/role',
     }
     // Rebaixar pra OPERACIONAL tira junto o direito de convidar.
     const patch = role === 'OPERACIONAL' ? { role, pode_convidar: false } : { role };
-    _cachePerfilSL.delete(req.params.id);
-    carteiraT18.esquecer(req.params.id);
+    esquecerPerfil(req.params.id);
     const r = await supabaseAdminRequest('PATCH',
       `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`,
       patch);
@@ -3101,7 +3109,8 @@ app.delete('/api/admin/usuarios/:id',
       auditoria.evento(req, 'exclusao_negada', { alvo: id, email_alvo: alvo.email }, true, 'tentou_liberar_acesso_restrito');
       return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Você não pode remover esse usuário.' });
     }
-    auditoria.evento(req, 'usuario_excluido', { alvo: id, email_alvo: alvo.email });
+    const exclusorDono = req.authMode === 'internal' || permRegras.ehDono(req.gestor);
+    auditoria.evento(req, 'usuario_excluido', { alvo: id, email_alvo: alvo.email }, !exclusorDono, exclusorDono ? null : 'removeu_usuario');
     _cachePerfilSL.delete(id);
     carteiraT18.esquecer(id);
     const r = await supabaseAdminRequest('DELETE', `/auth/v1/admin/users/${encodeURIComponent(id)}`);
@@ -4630,6 +4639,7 @@ function enviarPagina(res, nome) {
   semCacheHtml(res);
   const pronta = ofuscar.pagina(nome);
   if (pronta) { res.type('html'); return res.end(pronta); }
+  if (ofuscar.aguardando('/' + nome)) { res.set('Retry-After', '5'); return res.status(503).type('html').end('<p>Sistema iniciando. Recarregue em alguns segundos.</p>'); }
   res.sendFile(path.join(__dirname, 'public', nome));
 }
 app.get('/', (req, res) => enviarPagina(res, 'landing.html'));

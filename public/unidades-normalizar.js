@@ -262,7 +262,7 @@ function linhasDeItens(lista) {
 }
 
 // Um pedido ao servidor por parte.
-async function chamarIaNormalizar(parte) {
+async function chamarNormalizarParte(parte) {
   const resp = await apiAuthFetch('/api/processar/unidades', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -283,7 +283,7 @@ async function rodarPartesNormalizar(partes, aoAvancar) {
   async function trabalhador() {
     while (prox < partes.length) {
       const i = prox++;
-      try { res[i] = await chamarIaNormalizar(partes[i]); }
+      try { res[i] = await chamarNormalizarParte(partes[i]); }
       catch (e) { res[i] = { erro: e.message || String(e) }; }
       feitas++;
       if (aoAvancar) aoAvancar(feitas, partes.length);
@@ -378,6 +378,11 @@ function motivosLinhaNormalizada(m) {
 
 async function processarDocNormalizar(file) {
   const status = document.getElementById('normalizar-status');
+  // Revisão 2: o servidor exige a ação importar_unidades.normalizar; avisa antes de enviar.
+  if (typeof temPermissao === 'function' && !temPermissao('importar_unidades', 'normalizar')) {
+    if (status) status.textContent = 'Seu usuário não tem a permissão para transformar documentos. Peça ao administrador.';
+    return;
+  }
   const progressWrap = document.getElementById('normalizar-progress-wrap');
   const progressBar = document.getElementById('normalizar-progress-bar');
   const geracao = ++_normalizarGeracao;

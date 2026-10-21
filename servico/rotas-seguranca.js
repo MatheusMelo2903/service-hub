@@ -15,9 +15,12 @@ function criarRotasSeguranca(app, d) {
   // T21: mesma regra das permissões (servico/permissoes.js): dono em todos menos nele mesmo;
   // os outros só em quem eles podem editar (nunca GESTOR, dono, protegidos ou eles mesmos).
   const regras = require('./permissoes');
+  // Revisão 2: trocar senha e bloquear ficam só com o dono (um gerente que troca a senha
+  // de um operacional entraria como ele e usaria o que o dono deu a essa pessoa).
   async function podeControlar(req, alvo) {
     if (req.authMode === 'internal') return true;
     const p = await lerPerfil(req.user && req.user.sub);
+    if (!regras.ehDono(p)) return false;
     return regras.podeEditarAlvo(p, alvo, false).ok;
   }
 
@@ -65,6 +68,11 @@ function criarRotasSeguranca(app, d) {
     const n = await exigirNivel(req, res); if (!n) return;
     const t = await transcricaoVisivel(req, n, req.params.id);
     if (!t) return res.status(404).json({ erro: 'nao_encontrada' });
+    // Revisão 2: o texto só para o dono ou para quem tem transcrição livre.
+    if (n !== 'dono' && !temAcao(await perfilDe(req), 'atas', 'transcricao_livre')) {
+      auditoria.evento(req, 'transcricao_texto_negado', { transcricao_id: t.id, de: t.email }, true, 'acesso_negado');
+      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não pode ler o texto das transcrições.' });
+    }
     auditoria.evento(req, 'transcricao_lida_na_seguranca', { transcricao_id: t.id, de: t.email });
     res.set('Cache-Control', 'no-store').json({ id: t.id, email: t.email, condominio: t.condominio_nome, criado_em: t.criado_em, apagada: !!t.apagada_em, texto: t.apagada_em ? '' : (t.texto || '') });
   });
@@ -99,7 +107,7 @@ function criarRotasSeguranca(app, d) {
       tentou_liberar_acesso_restrito: 'Tentou dar ou tirar um acesso restrito', volume_alto: 'Volume de processamento acima do normal',
       acesso_liberado: 'Liberou ou tirou acesso de outra pessoa', liberou_transcricao_livre: 'Liberou a transcrição livre para outra pessoa',
       caminho_antigo_fechado: 'Tentou gerar prestação pelo caminho desativado', transcricao_de_outro_condominio: 'Tentou usar transcrição de outro condomínio',
-      usuario_bloqueado: 'Usuário bloqueado tentou entrar',
+      usuario_bloqueado: 'Usuário bloqueado tentou entrar', removeu_usuario: 'Removeu um usuário', convidou_usuario: 'Convidou um usuário',
     };
     const resumo = (s) => {
       const d = s.detalhe || {};

@@ -86,7 +86,7 @@ async function segCarregarTranscricoes() {
         <div style="font-size:11px;color:var(--muted);font-family:var(--mono)">${_segEsc(t.email || '')} · ${_segData(t.criado_em)} · ${Number(t.caracteres || 0).toLocaleString('pt-BR')} caracteres · ${t.usada_em_ata ? 'virou ata' : 'sem ata'}${t.apagada_em ? ' · apagada' : ''}</div>
       </div>
       ${t.apagada_em ? '' : `<button class="btn btn-ghost" style="font-size:11px;padding:4px 8px" onclick="segVerTranscricao('${_segEsc(t.id)}')">Ver</button>
-      <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;color:var(--danger)" onclick="segApagarTranscricao('${_segEsc(t.id)}')">Apagar texto</button>`}
+      ${window.USER_DONO === true ? `<button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;color:var(--danger)" onclick="segApagarTranscricao('${_segEsc(t.id)}')">Apagar texto</button>` : ''}`}
     </div>`).join('');
   } catch (e) { box.innerHTML = '<div class="hint" style="color:var(--danger)">Falha ao carregar: ' + _segEsc(e.message) + '</div>'; }
 }

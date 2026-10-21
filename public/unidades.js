@@ -1355,7 +1355,11 @@ var RECONHECEDORES_PDF = [
 
 // Oferta de fallback de IA com aviso explicito do custo. So dispara com o ok do
 // usuario (confirm), nunca automatico.
-function fallbackIaPdf(file, motivo) {
+function ofertaProcessarPdf(file, motivo) {
+  if (typeof temPermissao === 'function' && !temPermissao('importar_unidades', 'normalizar')) {
+    alert(motivo + ' Seu usuário não tem a permissão para o modo avançado. Use a planilha padrão ou peça ao administrador.');
+    return;
+  }
   if (confirm(motivo + ' Posso processar o documento pelo modo avançado, que é mais lento. Continuar?')) {
     processarDocNormalizar(file);
   }
@@ -1371,7 +1375,7 @@ async function processarPdfUnidades(file) {
   try {
     paginas = await extrairItensPdf(file);
   } catch (e) {
-    fallbackIaPdf(file, 'Nao consegui abrir este PDF por codigo.');
+    ofertaProcessarPdf(file, 'Nao consegui abrir este PDF por codigo.');
     return;
   }
   for (var i = 0; i < RECONHECEDORES_PDF.length; i++) {
@@ -1383,18 +1387,18 @@ async function processarPdfUnidades(file) {
     try {
       contatos = inferirPapeis(r.extrair(paginas, ctx));
     } catch (e2) {
-      fallbackIaPdf(file, 'Reconheci o layout (' + r.nome + ') mas a leitura por codigo falhou.');
+      ofertaProcessarPdf(file, 'Reconheci o layout (' + r.nome + ') mas a leitura por codigo falhou.');
       return;
     }
     if (!contatos.length) {
-      fallbackIaPdf(file, 'Reconheci o layout (' + r.nome + ') mas nao extrai nenhum contato.');
+      ofertaProcessarPdf(file, 'Reconheci o layout (' + r.nome + ') mas nao extrai nenhum contato.');
       return;
     }
     abrirRevisao(contatos, file.name);
     toast(contatos.length + ' contatos lidos por codigo (' + r.nome + '). Revise os papeis antes de importar.', 'ok');
     return;
   }
-  fallbackIaPdf(file, 'Nao reconheci o layout deste PDF por codigo.');
+  ofertaProcessarPdf(file, 'Nao reconheci o layout deste PDF por codigo.');
 }
 
 // Converte uma linha de 26 colunas (saida do Normalizador IA) num contato, para

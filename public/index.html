@@ -3945,10 +3945,10 @@ function renderListaUsuarios() {
       ${(!isGestor && window.USER_ROLE === 'GESTOR' && _carteirasDisponivel) ? `<span style="font-size:10px;color:var(--muted);font-family:var(--mono)" title="Condomínios que o usuário vê">${(_carteirasPorUsuario[u.id] || []).length ? esc(nomesCarteiras(_carteirasPorUsuario[u.id]).join(', ')) : 'todos os condomínios'}</span>` : ''}
       ${isGestor
         ? '<button class="btn btn-ghost" disabled style="font-size:11px;padding:6px 10px;opacity:0.5;cursor:not-allowed" title="GESTOR tem permissões totais imutáveis">imutável</button>'
-        : `<button class="btn btn-ghost" onclick='abrirModalPermissoes(${JSON.stringify(u.id)})' style="font-size:11px;padding:6px 10px">Editar permissões</button>`}
-      ${(isGestor || isSelf || window.USER_ROLE !== 'GESTOR') ? '' : `<button class="btn btn-ghost" onclick='adminTrocarSenha(${JSON.stringify(u.id)}, ${JSON.stringify(u.email)})' style="font-size:11px;padding:6px 10px" title="Definir uma nova senha">Senha</button>
-      <button class="btn btn-ghost" onclick='adminBloquear(${JSON.stringify(u.id)}, ${JSON.stringify(u.email)}, ${u.bloqueado ? 'false' : 'true'})' style="font-size:11px;padding:6px 10px;color:${u.bloqueado ? 'var(--success)' : 'var(--warning)'}">${u.bloqueado ? 'Desbloquear' : 'Bloquear'}</button>`}
-      ${(isGestor || isSelf) ? '' : `<button class="btn btn-ghost" onclick='deletarUsuario(${JSON.stringify(u.id)}, ${JSON.stringify(u.email)})' style="font-size:11px;padding:6px 10px;color:var(--danger)" title="Remover usuário">✕</button>`}
+        : `<button class="btn btn-ghost" onclick='abrirModalPermissoes(${escHtml(JSON.stringify(u.id))})' style="font-size:11px;padding:6px 10px">Editar permissões</button>`}
+      ${(isGestor || isSelf || window.USER_DONO !== true) ? '' : `<button class="btn btn-ghost" onclick='adminTrocarSenha(${escHtml(JSON.stringify(u.id))}, ${escHtml(JSON.stringify(u.email))})' style="font-size:11px;padding:6px 10px" title="Definir uma nova senha">Senha</button>
+      <button class="btn btn-ghost" onclick='adminBloquear(${escHtml(JSON.stringify(u.id))}, ${escHtml(JSON.stringify(u.email))}, ${u.bloqueado ? 'false' : 'true'})' style="font-size:11px;padding:6px 10px;color:${u.bloqueado ? 'var(--success)' : 'var(--warning)'}">${u.bloqueado ? 'Desbloquear' : 'Bloquear'}</button>`}
+      ${(isGestor || isSelf) ? '' : `<button class="btn btn-ghost" onclick='deletarUsuario(${escHtml(JSON.stringify(u.id))}, ${escHtml(JSON.stringify(u.email))})' style="font-size:11px;padding:6px 10px;color:var(--danger)" title="Remover usuário">✕</button>`}
     </div>`;
   }).join('');
 }
