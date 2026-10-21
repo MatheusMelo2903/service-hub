@@ -15,7 +15,8 @@
 // })
 // ============================================================
 (function () {
-  var lista = null;        // [{ id, nome, id_superlogica }]
+  var lista = null;        // [{ id, nome, id_superlogica }] (já filtrada pela carteira)
+  var carteira = null;     // T09: { todas, carteiras, ids_superlogica, aviso } do usuário logado
   var promessa = null;
   var instancias = [];
 
@@ -37,9 +38,22 @@
     if (lista) return Promise.resolve(lista);
     if (promessa) return promessa;
     if (!window.AUTH_TOKEN || typeof supaFetch !== 'function') return Promise.resolve(null);
-    promessa = supaFetch('condominios?select=id,nome,id_superlogica&order=nome.asc')
-      .then(function (r) {
+    // T09: a carteira do usuário (Carteira A, B...) limita a lista; GESTOR e quem não
+    // tem carteira veem todos. Se a consulta da carteira falhar, mostra todos.
+    var pCarteira = (typeof apiAuthFetch === 'function')
+      ? apiAuthFetch('/api/carteiras/minha').then(function (r) { return r.ok ? r.json() : { todas: true }; }).catch(function () { return { todas: true }; })
+      : Promise.resolve({ todas: true });
+    promessa = Promise.all([supaFetch('condominios?select=id,nome,id_superlogica&order=nome.asc'), pCarteira])
+      .then(function (res) {
+        var r = res[0];
+        carteira = res[1] || { todas: true };
+        if (Array.isArray(r) && carteira.todas === false && Array.isArray(carteira.ids_superlogica)) {
+          var permitidos = {};
+          carteira.ids_superlogica.forEach(function (x) { permitidos[String(x)] = 1; });
+          r = r.filter(function (c) { return c && permitidos[String(c.id_superlogica)]; });
+        }
         lista = (Array.isArray(r) && r.length) ? r : null;
+        try { window.dispatchEvent(new CustomEvent('carteira:carregada', { detail: carteira })); } catch (_) {}
         promessa = null;
         // Completa o código do Superlógica do ativo salvo antes (migração antiga sem código).
         var a = ativo();
@@ -136,6 +150,9 @@
       inst.marcado = filtrados.length ? 0 : -1;
       var a = ativo();
       var html = '';
+      if (carteira && carteira.todas === false && (carteira.carteiras || []).length) {
+        html += '<div class="cond-loading cs-carteira">Sua carteira: ' + esc(carteira.carteiras.map(function (x) { return x.nome; }).join(', ')) + '</div>';
+      }
       if (!Array.isArray(lista)) {
         html += '<div class="cond-loading">' + (window.AUTH_TOKEN ? 'Carregando condomínios...' : 'Entre no sistema para ver os condomínios.') + '</div>';
       } else if (!filtrados.length) {
@@ -224,6 +241,12 @@
     carregar: carregar,
     recarregar: function () { return carregar(true); },
     lista: function () { return lista; },
+    // T09: carteira do usuário. naCarteira(codigo) diz se o condomínio entra nas listas.
+    carteira: function () { return carteira; },
+    naCarteira: function (idSuperlogica) {
+      if (!carteira || carteira.todas !== false) return true;
+      return (carteira.ids_superlogica || []).some(function (x) { return String(x) === String(idSuperlogica); });
+    },
     buscarPorId: function (id) { return (lista || []).find(function (c) { return String(c.id) === String(id); }) || null; },
     definir: definir,
     semAcento: semAcento,

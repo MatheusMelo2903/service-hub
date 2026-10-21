@@ -3649,6 +3649,11 @@ const MODULOS_CATALOGO = {
 const ROLE_COR = { GESTOR: '#00D2FF', GERENTE: '#A78BFA', OPERACIONAL: '#8B95A8' };
 let _perfilEditando = null;
 let _usuariosCache = [];
+// T09: carteiras do Superlógica (grupos) e a carteira de cada usuário. Só o GESTOR edita.
+let _carteirasLista = null;      // [{ id, nome, tipo, gerente, quantidade }] ou null (não carregou)
+let _carteirasErro = '';
+let _carteirasPorUsuario = {};   // { userId: [ids] }
+let _carteirasDisponivel = false; // false: banco sem o campo (migration 008)
 
 // Quem pode gerenciar usuarios: GESTOR, ou GERENTE com convite liberado (so sobre OPERACIONAL).
 // O backend aplica a mesma regra; aqui e so pra mostrar ou esconder a tela.
@@ -3675,10 +3680,29 @@ async function carregarUsuarios() {
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
     _usuariosCache = Array.isArray(data) ? data : [];
+    if (window.USER_ROLE === 'GESTOR') await carregarCarteirasAdmin();
     renderListaUsuarios();
   } catch (e) {
     lista.innerHTML = '<div style="font-size:12px;color:var(--danger);font-family:var(--mono)">✕ Falha ao listar: ' + (e.message || '') + '</div>';
   }
+}
+
+async function carregarCarteirasAdmin() {
+  try {
+    const [rl, ru] = await Promise.all([apiAuthFetch('/api/carteiras'), apiAuthFetch('/api/admin/usuarios/carteiras')]);
+    const dl = await rl.json().catch(() => null);
+    const du = await ru.json().catch(() => null);
+    _carteirasLista = rl.ok && Array.isArray(dl) ? dl : null;
+    _carteirasErro = rl.ok ? '' : ((dl && dl.detalhe) || 'Não foi possível ler as carteiras.');
+    _carteirasDisponivel = !!(ru.ok && du && du.disponivel);
+    _carteirasPorUsuario = (du && du.carteiras) || {};
+  } catch (e) {
+    _carteirasLista = null; _carteirasErro = 'Não foi possível ler as carteiras.';
+  }
+}
+
+function nomesCarteiras(ids) {
+  return (ids || []).map(id => { const c = (_carteirasLista || []).find(x => x.id === id); return c ? c.nome : ('carteira ' + id); });
 }
 
 function renderListaUsuarios() {
@@ -3702,6 +3726,7 @@ function renderListaUsuarios() {
       <span style="display:inline-block;padding:3px 10px;background:${cor}20;color:${cor};border:1px solid ${cor}40;border-radius:12px;font-size:10px;font-weight:700;font-family:var(--mono);text-transform:uppercase;letter-spacing:0.05em">${esc(u.role)}</span>
       <span style="font-size:11px;color:var(--muted);font-family:var(--mono)">${visiveis}/${Object.keys(MODULOS_CATALOGO).length} módulos</span>
       ${u.pode_convidar ? '<span style="font-size:10px;color:var(--gs-blue);font-family:var(--mono)" title="Pode convidar usuários">✉</span>' : ''}
+      ${(!isGestor && window.USER_ROLE === 'GESTOR' && _carteirasDisponivel) ? `<span style="font-size:10px;color:var(--muted);font-family:var(--mono)" title="Condomínios que o usuário vê">${(_carteirasPorUsuario[u.id] || []).length ? esc(nomesCarteiras(_carteirasPorUsuario[u.id]).join(', ')) : 'todos os condomínios'}</span>` : ''}
       ${isGestor
         ? '<button class="btn btn-ghost" disabled style="font-size:11px;padding:6px 10px;opacity:0.5;cursor:not-allowed" title="GESTOR tem permissões totais imutáveis">imutável</button>'
         : `<button class="btn btn-ghost" onclick='abrirModalPermissoes(${JSON.stringify(u.id)})' style="font-size:11px;padding:6px 10px">Editar permissões</button>`}
@@ -3755,6 +3780,8 @@ function abrirModalPermissoes(userId) {
   if (!u) return;
   _perfilEditando = JSON.parse(JSON.stringify(u)); // clone deep
   _perfilEditando._roleOriginal = u.role;
+  _perfilEditando._carteirasOriginal = (_carteirasPorUsuario[u.id] || []).slice();
+  _perfilEditando.carteiras = (_carteirasPorUsuario[u.id] || []).slice();
   if (!_perfilEditando.permissoes) _perfilEditando.permissoes = {};
   document.getElementById('perms-titulo').textContent = `Permissões de ${u.email} (${u.role})`;
   document.getElementById('perms-erro').textContent = '';
@@ -3810,7 +3837,7 @@ function renderPermissoesForm(u) {
       <td style="padding:8px 10px">${checks || '<span style="font-size:10px;color:var(--muted);font-family:var(--mono)">—</span>'}</td>
     </tr>`;
   }).join('');
-  return cargo + podeConvidar + `<table style="width:100%;border-collapse:collapse">
+  return cargo + podeConvidar + renderCarteirasForm(u) + `<table style="width:100%;border-collapse:collapse">
     <thead><tr style="background:var(--bg3)">
       <th style="padding:9px 10px;text-align:left;font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Módulo</th>
       <th style="padding:9px 10px;text-align:center;font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Visível</th>
@@ -3819,6 +3846,21 @@ function renderPermissoesForm(u) {
     <tbody>${linhas}</tbody>
   </table>
   <div style="font-size:10px;color:var(--muted);font-family:var(--mono);margin-top:10px">Desmarcar "Visível" desabilita o módulo na sidebar — ações ficam ignoradas.</div>`;
+}
+
+// T09: carteiras que o usuário vê (só GESTOR edita; GESTOR vê todos e não tem carteira).
+function renderCarteirasForm(u) {
+  if (window.USER_ROLE !== 'GESTOR' || u._roleOriginal === 'GESTOR') return '';
+  const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const caixa = (conteudo) => `<div style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:14px">
+      <div style="font-size:12px;color:var(--text);margin-bottom:6px">Carteira <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">(sem nenhuma marcada, vê todos os condomínios)</span></div>${conteudo}</div>`;
+  if (!_carteirasDisponivel) return caixa('<div style="font-size:11px;color:var(--muted);font-family:var(--mono)">O banco deste ambiente ainda não tem o campo de carteira.</div>');
+  if (!_carteirasLista) return caixa('<div style="font-size:11px;color:var(--danger);font-family:var(--mono)">' + esc(_carteirasErro || 'Carteiras indisponíveis.') + '</div>');
+  const marc = new Set(u.carteiras || []);
+  return caixa(_carteirasLista.map(c => `<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);cursor:pointer;margin:3px 0">
+      <input type="checkbox" data-carteira="${c.id}" ${marc.has(c.id) ? 'checked' : ''}>
+      ${esc(c.nome)} <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">${esc(c.tipo === 'gerente' ? 'carteira' : c.tipo)}${c.gerente ? ' · ' + esc(c.gerente) : ''} · ${c.quantidade} condomínios</span>
+    </label>`).join(''));
 }
 
 // Listener delegado pra reagir ao toggle "visível" (re-renderiza pra habilitar/desabilitar checkboxes de ação)
@@ -3848,6 +3890,8 @@ function coletarPermissoesDoForm() {
     if (novas[m] && novas[m].visivel) novas[m].acoes.push(a);
   });
   _perfilEditando.permissoes = novas;
+  const cbsCart = document.querySelectorAll('[data-carteira]');
+  if (cbsCart.length) _perfilEditando.carteiras = Array.from(cbsCart).filter(cb => cb.checked).map(cb => Number(cb.dataset.carteira));
   const pc = document.getElementById('perm-pode-convidar');
   if (pc) _perfilEditando.pode_convidar = pc.checked;
   const sel = document.getElementById('perm-role');
@@ -3884,6 +3928,19 @@ async function salvarPermissoes() {
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.detalhe?.message || (typeof data.detalhe === 'string' ? data.detalhe : '') || data.erro || ('HTTP ' + resp.status));
+    // T09: carteira (só GESTOR, só se mudou)
+    const cartNova = (_perfilEditando.carteiras || []).slice().sort((a, b) => a - b);
+    const cartAntes = (_perfilEditando._carteirasOriginal || []).slice().sort((a, b) => a - b);
+    if (window.USER_ROLE === 'GESTOR' && _carteirasDisponivel && _carteirasLista && cartNova.join(',') !== cartAntes.join(',')) {
+      const rc = await apiAuthFetch(`/api/admin/usuarios/${encodeURIComponent(_perfilEditando.id)}/carteiras`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ carteiras: cartNova })
+      });
+      const dc = await rc.json().catch(() => ({}));
+      if (!rc.ok) throw new Error('Permissões salvas, mas a carteira não: ' + (dc.detalhe || dc.erro || ('HTTP ' + rc.status)));
+      _perfilEditando._carteirasOriginal = cartNova;
+    }
     fecharModalPermissoes();
     toast('✓ Permissões atualizadas', 'ok');
     carregarUsuarios();

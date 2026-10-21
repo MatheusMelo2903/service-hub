@@ -3368,6 +3368,98 @@ app.post('/api/condominio/:idSuperlogica/unidades/conferir', requireAuth, expres
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// Carteiras (T09): grupos de condomínios do Superlógica (Carteira A, Carteira B...).
+// O GESTOR vincula cada usuário a uma ou mais carteiras (profiles.carteiras). Quem tem
+// carteira vê no seletor e nas listas só os condomínios dela; GESTOR e quem não tem
+// carteira veem todos. É filtro de tela: não bloqueia chamada direta às rotas do Superlógica.
+// ─────────────────────────────────────────────────────────────────────────
+const _cacheCarteiras = slModulo.consulta.criarCache(10 * 60 * 1000, 2, 60 * 1000);
+function gruposCarteiras() {
+  return _cacheCarteiras.pegar('grupos', () => slModulo.carteiras.lerGrupos(clienteSL()));
+}
+// Carteiras de um ou de todos os perfis. Tolerante à coluna ainda não existir no banco
+// (migration 008 só no Supabase de teste): nesse caso todo mundo fica sem carteira.
+async function lerCarteirasPerfis(id) {
+  const filtro = id ? '&id=eq.' + encodeURIComponent(id) : '';
+  const r = await supabaseAdminRequest('GET', '/rest/v1/profiles?select=id,carteiras' + filtro);
+  if (r.status !== 200 || !Array.isArray(r.body)) return null;
+  const m = {};
+  r.body.forEach((p) => { m[p.id] = Array.isArray(p.carteiras) ? p.carteiras.map(Number).filter(Boolean) : []; });
+  return m;
+}
+
+// GET /api/carteiras — todos os grupos (para o GESTOR escolher na tela de usuários).
+app.get('/api/carteiras', requireAuth, requireGestor, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
+  try {
+    const g = await gruposCarteiras();
+    res.json(g.map((x) => ({ id: x.id, nome: x.nome, tipo: x.tipo, gerente: x.gerente, quantidade: x.quantidade })));
+  } catch (e) {
+    console.warn('[carteiras] falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler as carteiras no Superlógica agora.' });
+  }
+});
+
+// GET /api/carteiras/minha — o que o usuário logado deve ver no seletor e nas listas.
+// { todas: true } para GESTOR, acesso interno e quem não tem carteira.
+app.get('/api/carteiras/minha', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (req.authMode === 'internal' || !SUPABASE_SERVICE_ROLE_KEY) return res.json({ todas: true });
+  try {
+    const perfil = await lerPerfil(req.user && req.user.sub);
+    if (!perfil || perfil.role === 'GESTOR') return res.json({ todas: true });
+    const mapa = await lerCarteirasPerfis(perfil.id);
+    const minhas = (mapa && mapa[perfil.id]) || [];
+    if (!minhas.length) return res.json({ todas: true });
+    if (!superlogicaNativa()) return res.json({ todas: true, aviso: 'Carteira não aplicada: Superlógica não configurado neste ambiente.' });
+    const r = slModulo.carteiras.condominiosDasCarteiras(await gruposCarteiras(), minhas);
+    if (!r.carteiras.length) return res.json({ todas: true, aviso: 'Sua carteira não existe mais no Superlógica. Fale com o gestor.' });
+    res.json({ todas: false, carteiras: r.carteiras, ids_superlogica: r.ids_superlogica });
+  } catch (e) {
+    console.warn('[carteiras/minha] falhou: ' + (e && e.message));
+    res.json({ todas: true, aviso: 'Não foi possível ler sua carteira agora; mostrando todos os condomínios.' });
+  }
+});
+
+// GET /api/admin/usuarios/carteiras — carteiras de cada usuário (para a tela de usuários).
+app.get('/api/admin/usuarios/carteiras', requireAuth, requireGestor, requireServiceRoleKey, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const m = await lerCarteirasPerfis(null);
+  if (!m) return res.json({ disponivel: false, carteiras: {} });
+  res.json({ disponivel: true, carteiras: m });
+});
+
+// PUT /api/admin/usuarios/:id/carteiras  Body: { carteiras: [id_grupo, ...] } (vazio = vê todos)
+app.put('/api/admin/usuarios/:id/carteiras',
+  requireAuth, requireGestor, requireServiceRoleKey, validarIdUsuario, express.json({ limit: '10kb' }),
+  async (req, res) => {
+    const lista = req.body && req.body.carteiras;
+    if (!Array.isArray(lista) || lista.length > 20 || !lista.every((x) => Number.isInteger(x) && x > 0 && x < 1e9)) {
+      return res.status(400).json({ erro: 'carteiras_invalidas', detalhe: 'Envie uma lista de códigos de carteira (até 20).' });
+    }
+    const alvo = await lerPerfil(req.params.id);
+    if (!alvo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
+    if (alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_ve_tudo', detalhe: 'O GESTOR vê todos os condomínios; não tem carteira.' });
+    const unicas = Array.from(new Set(lista));
+    if (unicas.length) {
+      if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado' });
+      let grupos;
+      try { grupos = await gruposCarteiras(); } catch (e) {
+        return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível conferir as carteiras no Superlógica agora.' });
+      }
+      const validos = new Set(grupos.map((g) => g.id));
+      if (!unicas.every((x) => validos.has(x))) return res.status(400).json({ erro: 'carteira_inexistente', detalhe: 'Alguma carteira escolhida não existe no Superlógica.' });
+    }
+    const r = await supabaseAdminRequest('PATCH', `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`, { carteiras: unicas });
+    if (r.status !== 200) {
+      const semColuna = r.body && /carteiras/.test(JSON.stringify(r.body));
+      return res.status(semColuna ? 503 : 502).json({ erro: semColuna ? 'carteiras_nao_instaladas' : 'falha_salvar', detalhe: semColuna ? 'O banco deste ambiente ainda não tem o campo de carteira (migration 008).' : 'Não foi possível salvar.' });
+    }
+    res.json({ id: req.params.id, carteiras: unicas });
+  });
+
 // Agenda: 1 minuto depois de subir e depois todo dia às 6h de Brasília (9h UTC).
 function _agendarSyncDiario() {
   const agora = new Date();

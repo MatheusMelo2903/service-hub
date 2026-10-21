@@ -211,6 +211,13 @@ async function fichaBuscar(ev) {
   try {
     var r = await fichaGet('/api/unidades/busca?q=' + encodeURIComponent(q));
     if (seq !== fichaEstado.seqBusca) return; // chegou uma busca mais nova
+    // T09: quem tem carteira vê só os resultados dos condomínios da carteira.
+    if (window.CondSeletor && CondSeletor.naCarteira) {
+      if (CondSeletor.lista() === null) await CondSeletor.carregar();
+      var antes = r.itens.length;
+      r.itens = r.itens.filter(function (u) { return CondSeletor.naCarteira(u.id_superlogica); });
+      if (r.itens.length !== antes) r.quantidade = r.itens.length;
+    }
     if (!r.itens.length) { el.innerHTML = '<div class="ficha-sub">Nada encontrado para "' + fichaEsc(q) + '".</div>'; return; }
     el.innerHTML = '<div class="ficha-sub">' + r.quantidade + ' resultado' + (r.quantidade > 1 ? 's' : '') + (r.truncado ? ' (mostrando os primeiros)' : '') + '</div>'
       + '<table class="ficha-tab"><tr><th>Condomínio</th><th>Unidade</th><th>Proprietário</th><th>Contatos</th><th></th></tr>'
