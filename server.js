@@ -2999,6 +2999,7 @@ app.put('/api/admin/usuarios/:id/role',
     const r = await supabaseAdminRequest('PATCH',
       `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`,
       patch);
+    esquecerPerfil(req.params.id); // de novo depois de gravar (fecha a janela de cache antigo)
     res.status(r.status).json(r.body);
   });
 
@@ -3058,6 +3059,7 @@ app.put('/api/admin/usuarios/:id/permissoes',
     const r = await supabaseAdminRequest('PATCH',
       `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}${filtroExtra}`,
       patch);
+    esquecerPerfil(req.params.id); // de novo depois de gravar
     if (filtroExtra && r.status === 200 && Array.isArray(r.body) && r.body.length === 0) {
       return res.status(409).json({ erro: 'cargo_mudou', detalhe: 'O cargo desse usuário mudou. Atualize a lista e tente de novo.' });
     }
@@ -3111,9 +3113,8 @@ app.delete('/api/admin/usuarios/:id',
     }
     const exclusorDono = req.authMode === 'internal' || permRegras.ehDono(req.gestor);
     auditoria.evento(req, 'usuario_excluido', { alvo: id, email_alvo: alvo.email }, !exclusorDono, exclusorDono ? null : 'removeu_usuario');
-    _cachePerfilSL.delete(id);
-    carteiraT18.esquecer(id);
     const r = await supabaseAdminRequest('DELETE', `/auth/v1/admin/users/${encodeURIComponent(id)}`);
+    esquecerPerfil(id);
     res.status(r.status).json(r.body || { ok: true });
   });
 
@@ -3958,6 +3959,14 @@ app.put('/api/admin/usuarios/:id/carteiras',
     const alvo = await lerPerfil(req.params.id);
     if (!alvo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
     if (alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_ve_tudo', detalhe: 'O GESTOR vê todos os condomínios; não tem carteira.' });
+    // Revisão 3: carteira (lista vazia = vê todos) só o dono muda, nas mesmas regras da T21.
+    if (req.authMode !== 'internal') {
+      const editor = await lerPerfil(req.user && req.user.sub);
+      if (!permRegras.ehDono(editor) || !permRegras.podeEditarAlvo(editor, alvo, false).ok) {
+        auditoria.evento(req, 'carteira_negada', { alvo: req.params.id, email_alvo: alvo.email }, true, 'tentou_liberar_acesso_restrito');
+        return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Só o administrador principal muda a carteira das pessoas.' });
+      }
+    }
     const unicas = Array.from(new Set(lista));
     if (unicas.length) {
       if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado' });
@@ -3973,7 +3982,8 @@ app.put('/api/admin/usuarios/:id/carteiras',
       if (!unicas.every((x) => validos.has(x))) return res.status(400).json({ erro: 'carteira_inexistente', detalhe: 'Alguma carteira escolhida não existe no Superlógica.' });
     }
     const r = await supabaseAdminRequest('PATCH', `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`, { carteiras: unicas });
-    carteiraT18.esquecer(req.params.id);
+    esquecerPerfil(req.params.id);
+    if (r.status === 200) auditoria.evento(req, 'carteira_alterada', { alvo: req.params.id, email_alvo: alvo.email, carteiras: unicas });
     if (r.status !== 200) {
       const semColuna = r.body && /carteiras/.test(JSON.stringify(r.body));
       return res.status(semColuna ? 503 : 502).json({ erro: semColuna ? 'carteiras_nao_instaladas' : 'falha_salvar', detalhe: semColuna ? 'O banco deste ambiente ainda não tem o campo de carteira (migration 008).' : 'Não foi possível salvar.' });

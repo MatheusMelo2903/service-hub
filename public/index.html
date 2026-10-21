@@ -4090,7 +4090,7 @@ function renderConcedeForm(u) {
 
 // T09: carteiras que o usuário vê (só GESTOR edita; GESTOR vê todos e não tem carteira).
 function renderCarteirasForm(u) {
-  if (window.USER_ROLE !== 'GESTOR' || u._roleOriginal === 'GESTOR') return '';
+  if (window.USER_DONO !== true || u._roleOriginal === 'GESTOR') return '';
   const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const caixa = (conteudo) => `<div style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:14px">
       <div style="font-size:12px;color:var(--text);margin-bottom:6px">Carteira <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">(sem nenhuma marcada, vê todos os condomínios)</span></div>${conteudo}</div>`;

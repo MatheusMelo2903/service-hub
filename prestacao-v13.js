@@ -600,6 +600,7 @@ module.exports = function registrarPrestacaoV13(app, {
         return res.status(403).json({ erro: 'condominio_fora_da_base', detalhe: 'Esse condomínio não está na base do sistema.' });
       }
       condBase = { id: idCondQ, nome: cb.nome };
+      if (exigirCarteira && !(await exigirCarteira(req, res, String(idCondQ)))) return; // T18
     }
     const dono = donoDe(req);
     // Reserva a vaga ANTES de receber o corpo: sem isso, uploads em paralelo do
