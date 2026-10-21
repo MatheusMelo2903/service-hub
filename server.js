@@ -3393,13 +3393,116 @@ async function lerCarteirasPerfis(id) {
   return m;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Painel de cobrança (T11). Leitura no Superlógica com a regra de acesso de sempre;
+// a 2ª via só para GESTOR e GERENTE. Detalhes em superlogica/cobranca.js.
+// O navegador nunca escolhe o recebimento livremente: unidade e cobrança são
+// conferidas contra o painel lido aqui no servidor.
+// ─────────────────────────────────────────────────────────────────────────
+const slCobranca = require('./superlogica/cobranca');
+const _cachePainelCob = slModulo.consulta.criarCache(15 * 60 * 1000, 300, 120 * 1000);
+function _painelCobranca(id, forcar) {
+  const hoje = _hojeBrasilia();
+  const chave = 'cob:' + id + ':' + hoje.toISOString().slice(0, 10) + (forcar ? ':' + Date.now() : '');
+  return _cachePainelCob.pegar(chave, () => slCobranca.painelCondominio(clienteSL(), id, hoje));
+}
+function _dataISOparaDate(v) {
+  const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  return (d.getFullYear() === +m[1] && d.getMonth() === +m[2] - 1) ? d : null;
+}
+
+// GET /api/cobranca/condominio/:id[?forcar=1]
+app.get('/api/cobranca/condominio/:idSuperlogica', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  try {
+    res.json(await _painelCobranca(id, req.query.forcar === '1'));
+  } catch (e) {
+    console.warn('[cobranca] ' + id + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler a inadimplência deste condomínio agora.' });
+  }
+});
+
+// POST /api/cobranca/condominio/:id/simular { id_unidade, parcelas, entrada, primeira: AAAA-MM-DD }
+// Só simula (acordos/simularparcelas); nenhum acordo é criado.
+app.post('/api/cobranca/condominio/:idSuperlogica/simular', requireAuth, express.json({ limit: '5kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  const b = req.body || {};
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  const parcelas = parseInt(b.parcelas, 10);
+  const entrada = Number(b.entrada || 0);
+  const primeira = _dataISOparaDate(b.primeira);
+  const hoje = _hojeBrasilia();
+  if (!(parcelas >= 1 && parcelas <= 60)) return res.status(400).json({ erro: 'parcelas_invalidas', detalhe: 'Parcelas de 1 a 60.' });
+  if (!(entrada >= 0) || !isFinite(entrada)) return res.status(400).json({ erro: 'entrada_invalida', detalhe: 'Entrada inválida.' });
+  if (!primeira || primeira < hoje || (primeira - hoje) > 180 * 86400000) return res.status(400).json({ erro: 'data_invalida', detalhe: 'A primeira parcela deve ser entre hoje e 180 dias.' });
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  try {
+    const painel = await _painelCobranca(id, false);
+    const u = painel.unidades.find((x) => x.id_unidade === String(b.id_unidade || ''));
+    if (!u) return res.status(404).json({ erro: 'unidade_sem_atraso', detalhe: 'Essa unidade não está em atraso neste condomínio.' });
+    const recs = u.recebimentos.filter((r) => !r.acordo).map((r) => r.id);
+    if (!recs.length) return res.status(422).json({ erro: 'ja_em_acordo', detalhe: 'As cobranças dessa unidade já estão em acordo.' });
+    const sim = await slCobranca.simularAcordo(clienteSL(), id, u.id_unidade, recs, { parcelas, entrada, primeira }, hoje);
+    res.json(Object.assign({ unidade: u.unidade, responsavel: u.responsavel, cobrancas: recs.length }, sim));
+  } catch (e) {
+    console.warn('[cobranca-simular] ' + id + ' falhou: ' + (e && e.message));
+    if (e && e.status === 422) return res.status(422).json({ erro: e.message, detalhe: 'O Superlógica não montou a simulação para essa unidade. Confira no Superlógica.' });
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível simular agora. Tente de novo em alguns minutos.' });
+  }
+});
+
+// POST /api/cobranca/condominio/:id/segunda-via { id_unidade, id_recebimento, pagar_ate: AAAA-MM-DD }
+// Gera o link da 2ª via no Superlógica e devolve o texto pronto para WhatsApp. GESTOR e GERENTE.
+app.post('/api/cobranca/condominio/:idSuperlogica/segunda-via', requireAuth, express.json({ limit: '5kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  const b = req.body || {};
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  const hoje = _hojeBrasilia();
+  const pagarAte = _dataISOparaDate(b.pagar_ate);
+  if (!pagarAte || pagarAte < hoje || (pagarAte - hoje) > 30 * 86400000) return res.status(400).json({ erro: 'data_invalida', detalhe: 'A data de pagamento deve ser entre hoje e 30 dias.' });
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  if (req.authMode !== 'internal') {
+    let p = null;
+    try { p = await lerPerfil(req.user && req.user.sub); } catch (e) { p = null; }
+    if (!p || (p.role !== 'GESTOR' && p.role !== 'GERENTE')) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Só gestor ou gerente pode gerar a 2ª via.' });
+  }
+  try {
+    const painel = await _painelCobranca(id, false);
+    const u = painel.unidades.find((x) => x.id_unidade === String(b.id_unidade || ''));
+    const r = u && u.recebimentos.find((x) => x.id === String(b.id_recebimento || ''));
+    if (!r) return res.status(404).json({ erro: 'cobranca_nao_encontrada', detalhe: 'Essa cobrança não está em aberto para a unidade.' });
+    const m = r.vencimento.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    const link = await slCobranca.linkSegundaVia(clienteSL(), id, r, m[2] + '/' + m[1] + '/' + m[3], pagarAte);
+    const cad = await slModulo.buscarCadastro(clienteSL(), id).catch(() => null);
+    const nomeCond = cad ? (cad.nome_fantasia || cad.nome) : '';
+    const primeiroNome = (u.responsavel.split(' ')[0] || '').toLowerCase().replace(/^./, (c) => c.toUpperCase());
+    const ate = String(pagarAte.getDate()).padStart(2, '0') + '/' + String(pagarAte.getMonth() + 1).padStart(2, '0') + '/' + pagarAte.getFullYear();
+    const texto = 'Olá' + (primeiroNome ? ', ' + primeiroNome : '') + '. Segue o link da 2ª via do boleto'
+      + (nomeCond ? ' do ' + nomeCond : '') + ', unidade ' + u.unidade + ', com vencimento original em ' + r.vencimento
+      + ', atualizado para pagamento até ' + ate + ': ' + link;
+    console.log('[cobranca-2via] cond=' + id + ' unidade=' + u.id_unidade + ' recebimento=' + r.id + ' por=' + ((req.user && req.user.sub) || req.authMode));
+    res.json({ link, texto });
+  } catch (e) {
+    console.warn('[cobranca-2via] ' + id + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'O Superlógica não gerou o link agora. Confira se a 2ª via está liberada para esse boleto.' });
+  }
+});
+
 // GET /api/carteiras — todos os grupos (para o GESTOR escolher na tela de usuários).
 app.get('/api/carteiras', requireAuth, requireGestor, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
   try {
     const g = await gruposCarteiras();
-    res.json(g.map((x) => ({ id: x.id, nome: x.nome, tipo: x.tipo, gerente: x.gerente, quantidade: x.quantidade })));
+    // condominios: códigos de cada carteira (usado no painel de cobrança, T11)
+    res.json(g.map((x) => ({ id: x.id, nome: x.nome, tipo: x.tipo, gerente: x.gerente, quantidade: x.quantidade, condominios: x.condominios })));
   } catch (e) {
     console.warn('[carteiras] falhou: ' + (e && e.message));
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler as carteiras no Superlógica agora.' });
