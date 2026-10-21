@@ -4220,6 +4220,17 @@ app.get('/api/financeiro/sincronizacao', requireAuth, requireGestor, async (req,
   try { res.json(await financeiro.painel(_credFin())); } catch (e) { _finErro(res, e); }
 });
 
+// GET /api/financeiro/banco/status (T36) — só GESTOR. Diz se o conector do banco está ligado e o
+// nome das variáveis que faltam; nunca devolve valor de credencial e não chama o banco.
+const finBancoConector = require('./financeiro/banco/index');
+app.get('/api/financeiro/banco/status', requireAuth, requireGestor, (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try { res.json(finBancoConector.statusConector(process.env)); } catch (e) {
+    console.warn('[financeiro] status do banco falhou');
+    res.status(500).json({ erro: 'falha_status_banco' });
+  }
+});
+
 // GET /api/carteiras — todos os grupos (para o GESTOR escolher na tela de usuários).
 app.get('/api/carteiras', requireAuth, requireGestor, async (req, res) => {
   res.set('Cache-Control', 'no-store');
