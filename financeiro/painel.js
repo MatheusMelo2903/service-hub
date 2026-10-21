@@ -112,13 +112,13 @@ async function getLista(cliente, fila, action, params) {
   if (Array.isArray(j)) return j;
   if (j && Array.isArray(j.data)) return j.data;
   if (j === null || j === undefined) return null;
-  const e = new Error('resposta_sem_lista'); e.status = 'sem lista'; throw e;
+  const e = new Error('resposta_sem_lista'); e.motivo = 'resposta sem lista'; throw e;
 }
 // Lê uma janela de datas; se o Superlógica estourar, quebra ao meio até 1 dia (no máximo MAX_QUEBRAS por cálculo).
 async function janela(cliente, fila, action, base, ini, fim, falhas) {
   let lista = null;
   try { lista = await getLista(cliente, fila, action, Object.assign({}, base, { dtInicio: sl(ini), dtFim: sl(fim) })); } catch (e) {
-    falhas.push(action + ' ' + ini + ' a ' + fim + ' (' + (e && e.status ? 'http ' + e.status : 'sem resposta') + ')');
+    falhas.push(action + ' ' + ini + ' a ' + fim + ' (' + (e && e.motivo ? e.motivo : (e && e.status ? 'http ' + e.status : 'sem resposta')) + ')');
     return [];
   }
   if (lista) return lista;
@@ -295,7 +295,11 @@ function criarPainel(opcoes) {
     iniciado = new Date().toISOString();
     const dia = hoje();
     andamento = montarBase(opcoes.cliente(), fila, dia)
-      .then((b) => { base = b; ultimoErro = null; return b; })
+      .then((b) => {
+        // Superlógica fora do ar: cálculo sem nenhuma parcela e com falhas não substitui a base boa.
+        if (b.falhas.length && !b.totais.parcelas) { const e = new Error('base_vazia_com_falhas'); throw e; }
+        base = b; ultimoErro = null; return b;
+      })
       .catch((e) => { ultimoErro = new Date().toISOString(); log('[financeiro] base falhou: ' + (e && e.message)); throw e; })
       .finally(() => { andamento = null; });
     andamento.catch(() => {});
