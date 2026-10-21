@@ -24,8 +24,10 @@ const MAX_CHAMADAS_PADRAO = 4000;    // teto de chamadas ao Superlógica por ger
 const SIMULTANEAS = 2;
 const BLOCO_QUADRO = 80;             // limite do quadro da T35 por chamada
 const MAX_ITENS_CARTEIRA = 400;
-const MAX_ERROS = 800;
+const MAX_ERROS = 3000;
+const MAX_ERROS_USUARIO = 150;
 const MAX_FALHAS = 60;
+const INTERROMPIDA_MS = 90 * 60 * 1000; // geração agendada em andamento há mais que isso foi interrompida
 const FORA = new Set([...U.IDS_EXCLUIDOS, U.ID_TESTE]);
 const PESO = { alta: 3, media: 2, baixa: 1 };
 const ORDEM_TIPO = { sem_extrato: 1, conciliacao: 2, pre_balancete: 3, vencidas: 4, boletos: 5 };
@@ -90,19 +92,22 @@ async function emLotes(lista, n, fn) {
 function contasSemExtrato(linhas, limite) {
   const contas = [], falhas = [];
   for (const l of linhas || []) {
+    // Mesma regra do quadro da T35 (maior_atraso_extrato): conta de pouco movimento que não é a
+    // principal não conta atraso, salvo quando o condomínio não tem nenhuma conta movimentada.
+    const comExtrato = (l.contas || []).filter((k) => k.situacao === 'ok' && k.quadro);
+    const temMovimentada = comExtrato.some((k) => k.principal || !k.quadro.movimento_baixo);
     for (const k of l.contas || []) {
       const base = { id_condominio: String(l.id_condominio), condominio: txt(l.condominio, 100), conta: String(k.id),
         descricao: txt(k.descricao, 80), banco: txt(k.banco, 60), principal: !!k.principal };
       if (k.situacao === 'falha' || k.situacao === 'descartada') { falhas.push(base); continue; }
       if (k.situacao === 'ok' && k.quadro) {
-        // Mesma regra do quadro da T35: conta de pouco movimento que não é a principal não conta atraso.
-        if (k.quadro.movimento_baixo && !k.principal) continue;
+        if (temMovimentada && k.quadro.movimento_baixo && !k.principal) continue;
         const d = k.quadro.dias_sem_extrato;
         if (d == null || d < limite) continue;
         contas.push(Object.assign(base, { ultimo_extrato: k.quadro.ultimo_extrato, dias_uteis: d, gravidade: d >= 2 * limite ? 'alta' : 'media' }));
-      } else if (k.situacao === 'sem_extrato' && k.principal) {
-        // Conta principal sem nenhum extrato importado nos últimos 75 dias.
-        contas.push(Object.assign(base, { ultimo_extrato: null, dias_uteis: null, gravidade: 'alta' }));
+      } else if (k.situacao === 'sem_extrato') {
+        // Conta ativa sem nenhum extrato importado nos últimos 75 dias (a T35 conta todas): alta na principal.
+        contas.push(Object.assign(base, { ultimo_extrato: null, dias_uteis: null, gravidade: k.principal ? 'alta' : 'media' }));
       }
     }
   }
@@ -178,9 +183,11 @@ function itemVencidas(id, nome, alertas) {
     detalhe: 'Total ' + U.moeda(valor) + (maior ? '. A mais antiga venceu há ' + plural(maior, 'dia', 'dias') + '.' : '.'),
   };
 }
+// Conta sem nenhum extrato nos 75 dias (dias null) é o pior atraso.
+const diasOrdem = (i) => (i.tipo === 'sem_extrato' && i.dias == null ? 9999 : (i.dias || 0));
 function ordenarItens(l) {
   return l.sort((a, b) => PESO[b.gravidade] - PESO[a.gravidade] || (ORDEM_TIPO[a.tipo] || 9) - (ORDEM_TIPO[b.tipo] || 9)
-    || (b.dias || 0) - (a.dias || 0) || (b.valor || 0) - (a.valor || 0) || String(a.condominio).localeCompare(String(b.condominio)));
+    || diasOrdem(b) - diasOrdem(a) || (b.valor || 0) - (a.valor || 0) || String(a.condominio).localeCompare(String(b.condominio)));
 }
 function totais(itens) {
   const t = { itens: itens.length, alta: 0, media: 0, baixa: 0, por_tipo: {} };
@@ -233,7 +240,10 @@ function errosPorUsuario(listasAlertas, criadores, usuarios) {
     }
   }
   out.sort((a, b) => PESO[b.gravidade] - PESO[a.gravidade] || (Number(b.valor) || 0) - (Number(a.valor) || 0));
-  return { erros: out.slice(0, MAX_ERROS), sem_usuario: semUsuario, cortados: Math.max(0, out.length - MAX_ERROS) };
+  // Teto por usuário (os mais graves primeiro), para todo analista receber a lista dele.
+  const porUsuario = new Map();
+  const ficam = out.filter((e) => { const n = (porUsuario.get(e.id_usuario_sl) || 0) + 1; porUsuario.set(e.id_usuario_sl, n); return n <= MAX_ERROS_USUARIO; });
+  return { erros: ficam.slice(0, MAX_ERROS), sem_usuario: semUsuario, cortados: out.length - Math.min(ficam.length, MAX_ERROS) };
 }
 
 // ── geração do resumo do dia ──────────────────────────────────────────────
@@ -258,6 +268,21 @@ async function gerarResumo(deps, opcoes) {
   let base = null;
   try { base = await painel.recalcular(); } catch (e) { anotar('alertas das regras', e); }
   log('alertas prontos (' + cli.usadas() + ' chamadas)');
+
+  // Quem lançou: auditoria dos últimos dias úteis e de hoje, um dia por chamada (como a base da T31).
+  // Vem logo depois dos alertas para não ficar sem cota de chamadas no fim (revisão 1, M7).
+  const dias = finPainel.ultimosDiasUteis(hoje, opcoes.diasAuditoria || DIAS_AUDITORIA_ERROS).concat([hoje]);
+  const filaAud = finPainel.criarFila(SIMULTANEAS);
+  const linhasAud = [];
+  for (const d of dias) {
+    const f = [];
+    const l = await finPainel.janela(cli, filaAud, 'auditoria/index', { idCondominio: -1 }, d, d, f);
+    if (f.length) anotar('auditoria de ' + dataTexto(d), { motivo: f[0] });
+    linhasAud.push(...finPainel.enxugarAuditoria(l));
+  }
+  const quem = quemLancou(linhasAud);
+  const erros = base ? errosPorUsuario(base.porCondominio.values(), quem.criadores, quem.usuarios) : { erros: [], sem_usuario: 0, cortados: 0 };
+  log('auditoria pronta (' + cli.usadas() + ' chamadas)');
 
   // Condomínios: os das carteiras; sem filtro, também os que aparecem nas despesas.
   const ids = new Set();
@@ -297,19 +322,6 @@ async function gerarResumo(deps, opcoes) {
   }
   log('boletos prontos (' + cli.usadas() + ' chamadas)');
 
-  // Quem lançou: auditoria dos últimos dias úteis e de hoje, um dia por chamada (como a base da T31).
-  const dias = finPainel.ultimosDiasUteis(hoje, opcoes.diasAuditoria || DIAS_AUDITORIA_ERROS).concat([hoje]);
-  const filaAud = finPainel.criarFila(SIMULTANEAS);
-  const linhasAud = [];
-  for (const d of dias) {
-    const f = [];
-    const l = await finPainel.janela(cli, filaAud, 'auditoria/index', { idCondominio: -1 }, d, d, f);
-    if (f.length) anotar('auditoria de ' + dataTexto(d), { motivo: f[0] });
-    linhasAud.push(...finPainel.enxugarAuditoria(l));
-  }
-  const quem = quemLancou(linhasAud);
-  const erros = base ? errosPorUsuario(base.porCondominio.values(), quem.criadores, quem.usuarios) : { erros: [], sem_usuario: 0, cortados: 0 };
-  log('auditoria pronta (' + cli.usadas() + ' chamadas)');
 
   // Itens por condomínio.
   const porCond = new Map();
@@ -378,7 +390,11 @@ function criarAgendador(o) {
     if (a.hora < hora || a.hora >= ate || ultimo === a.dia) return false;
     ultimo = a.dia;
     if (!o.fimDeSemana && !ehDiaUtil(a.dia)) return false;
-    try { await o.executar(a.dia); } catch (e) { if (o.log) o.log('[avisos] geração agendada falhou: ' + (e && e.message)); }
+    try { await o.executar(a.dia); } catch (e) {
+      // Outra geração rodando ou banco fora do ar: tenta de novo no minuto seguinte (revisão 1, M2 e M3).
+      if (e && (e.codigo === 'andamento' || e.codigo === 'banco')) { ultimo = null; return false; }
+      if (o.log) o.log('[avisos] geração agendada falhou: ' + (e && e.message));
+    }
     return true;
   }
   return {
@@ -412,22 +428,39 @@ function criarServico(o) {
     const falta = esperaSobDemanda - (Date.now() - ultimaSobDemanda);
     if (origem === 'sob_demanda' && falta > 0) { const e = new Error('aguarde'); e.codigo = 'aguarde'; e.espera_s = Math.ceil(falta / 1000); throw e; }
     const dia = p.dia || hoje();
-    const id = crypto.randomUUID();
+    let id = crypto.randomUUID();
     rodando = { execucao: id, origem, dia, desde: new Date().toISOString() };
     const parametros = { carteiras: p.carteiras || null, limite_dias: limiteDias(p.limiteDias) };
-    let ok = false;
-    try { ok = await o.banco.inserir('fin_avisos_execucoes', { id, dia, origem, status: 'andamento', usuario: p.usuario || null, parametros }); } catch (e) { ok = false; }
-    if (!ok) {
-      rodando = null;
-      if (origem === 'agendado') { log('[avisos] geração agendada de ' + dia + ' já registrada ou banco indisponível; nada a fazer'); return null; }
-      const e = new Error('banco_indisponivel'); e.codigo = 'banco'; throw e;
+    const registrar = () => o.banco.inserir('fin_avisos_execucoes', { id, dia, origem, status: 'andamento', usuario: p.usuario || null, parametros }).catch(() => false);
+    let ok = await registrar();
+    if (!ok && origem === 'agendado') {
+      // O índice único do dia recusou (já registrada) ou o banco falhou: confere qual dos dois (revisão 1, M3 e M4).
+      let atual = null;
+      try {
+        const l = await o.banco.ler('fin_avisos_execucoes?select=id,status,iniciado_em&origem=eq.agendado&dia=eq.' + dia + '&limit=1');
+        atual = Array.isArray(l) ? (l[0] || false) : null;
+      } catch (e) { atual = null; }
+      if (atual && atual.status !== 'andamento') { rodando = null; log('[avisos] geração agendada de ' + dia + ' já registrada (' + atual.status + ')'); return null; }
+      if (atual && Date.now() - Date.parse(atual.iniciado_em) > INTERROMPIDA_MS) {
+        // Servidor reiniciou no meio da geração: esta retoma a mesma linha do dia (o índice único fica valendo).
+        try {
+          await o.banco.upsert('fin_avisos_execucoes', [{ id: atual.id, dia, origem, status: 'andamento', iniciado_em: new Date().toISOString(), parametros, resumo: { retomada: true } }], 'id');
+          id = atual.id; rodando.execucao = id; ok = true;
+        } catch (e) { ok = false; }
+      } else if (atual) {
+        rodando = null;
+        const e = new Error('geracao_em_andamento'); e.codigo = 'andamento'; throw e;
+      }
     }
+    if (!ok) { rodando = null; const e = new Error('banco_indisponivel'); e.codigo = 'banco'; throw e; }
     if (origem === 'sob_demanda') ultimaSobDemanda = Date.now();
     const promessa = (async () => {
       try {
         const r = await gerarResumo({ cliente: o.cliente(), grupos: o.grupos, hoje: dia, log: (m) => log('[avisos] ' + m) },
           { carteiras: p.carteiras, limiteDias: p.limiteDias, maxChamadas: o.maxChamadas });
-        await o.banco.upsert('fin_avisos', linhasParaGravar(r, origem), 'dia,chave');
+        let linhas = linhasParaGravar(r, origem);
+        if (r.geral.parcial) linhas = await mesclarParcial(dia, linhas);
+        await o.banco.upsert('fin_avisos', linhas, 'dia,chave');
         // Envio para fora: ponto de extensão desligado até o Matheus escolher o canal.
         const env = await envio.enviarResumo(r).catch(() => ({ enviado: false, motivo: 'falha' }));
         const g = r.geral;
@@ -442,6 +475,24 @@ function criarServico(o) {
     })();
     promessa.catch((e) => log('[avisos] geração ' + id + ' falhou: ' + (e && e.message)));
     return { execucao: id, promessa };
+  }
+
+  // Geração de só algumas carteiras não apaga a linha "geral" completa do dia (revisão 1, M5): mantém o
+  // resumo dela e só troca os erros e os usuários (que valem para todos). Sem conseguir ler, não grava a geral.
+  async function mesclarParcial(dia, linhas) {
+    let atual = null;
+    try { atual = (await lerDia(dia, ['geral']))[0] || false; } catch (e) { atual = null; }
+    if (atual === null) return linhas.filter((l) => l.chave !== 'geral');
+    if (!atual || !atual.conteudo || atual.conteudo.parcial) return linhas;
+    return linhas.map((l) => {
+      if (l.chave !== 'geral') return l;
+      const g = l.conteudo;
+      const conteudo = Object.assign({}, atual.conteudo, {
+        erros: g.erros, erros_sem_usuario: g.erros_sem_usuario, erros_cortados: g.erros_cortados, usuarios: g.usuarios,
+        ultima_parcial: { gerado_em: g.gerado_em, carteiras: g.carteiras_pedidas, condominios: g.condominios, chamadas: g.chamadas, falhas_total: g.falhas_total },
+      });
+      return { dia, chave: 'geral', origem: atual.origem || l.origem, gerado_em: atual.gerado_em || l.gerado_em, conteudo };
+    });
   }
 
   const diaOk = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ''));
@@ -461,10 +512,32 @@ function criarServico(o) {
     const l = await o.banco.ler(q);
     return Array.isArray(l) ? l : [];
   }
+  // Última linha de cada chave nos últimos 7 dias: carteira que não entrou na geração de hoje mostra a
+  // última que existir dela (revisão 1, M5). Primeiro lê só dia e chave; depois o conteúdo de cada dia.
+  async function lerRecentes(chaves) {
+    let q = 'fin_avisos?select=dia,chave&dia=gte.' + U.maisDias(hoje(), -7) + '&order=dia.desc&limit=500';
+    if (chaves) {
+      const okc = chaves.filter((c) => /^(geral|sem_carteira|carteira:[0-9]{1,9})$/.test(c));
+      if (!okc.length) return [];
+      q += '&chave=in.(' + okc.map((c) => encodeURIComponent('"' + c + '"')).join(',') + ')';
+    }
+    const l = await o.banco.ler(q);
+    const porDia = new Map(), vistas = new Set();
+    for (const x of Array.isArray(l) ? l : []) {
+      if (!diaOk(x.dia) || vistas.has(x.chave)) continue;
+      vistas.add(x.chave);
+      if (!porDia.has(x.dia)) porDia.set(x.dia, []);
+      porDia.get(x.dia).push(x.chave);
+    }
+    const out = [];
+    for (const [dia, cs] of porDia) (await lerDia(dia, cs)).forEach((x) => out.push(Object.assign({ dia }, x)));
+    return out;
+  }
   const execucoes = () => o.banco.ler('fin_avisos_execucoes?select=id,dia,origem,status,iniciado_em,terminado_em,parametros,resumo&order=iniciado_em.desc&limit=10');
   const vinculos = () => o.banco.ler('fin_usuarios_superlogica?select=id_usuario_sl,apelido,profile_id,carteira,atualizado_em&order=apelido.asc&limit=1000');
+  const vinculosDe = (profileId) => o.banco.ler('fin_usuarios_superlogica?select=id_usuario_sl,profile_id&profile_id=eq.' + encodeURIComponent(String(profileId || '')) + '&limit=100');
   const salvarVinculo = (v) => o.banco.upsert('fin_usuarios_superlogica', [v], 'id_usuario_sl');
-  return { iniciar, situacao: () => (rodando ? Object.assign({}, rodando) : null), ultimoDia, lerDia, execucoes, vinculos, salvarVinculo };
+  return { iniciar, situacao: () => (rodando ? Object.assign({}, rodando) : null), ultimoDia, lerDia, lerRecentes, execucoes, vinculos, vinculosDe, salvarVinculo };
 }
 
 // Para quem só vê a própria carteira: alerta de condomínio trocado (R2) sem os dados do outro condomínio.

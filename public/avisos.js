@@ -45,9 +45,11 @@
 
   async function carregar(forcar) {
     if (est.carregando || !window.AUTH_TOKEN || typeof apiAuthFetch !== 'function') return;
-    if (!forcar && Date.now() - est.ultimaCarga < 60000) return;
     var card = garantirCard();
     if (!card) return;
+    // Outro login na mesma aba: some com o card do anterior e carrega de novo na hora.
+    if (est.token !== window.AUTH_TOKEN) { est.token = window.AUTH_TOKEN; est.dados = null; card.style.display = 'none'; forcar = true; }
+    if (!forcar && Date.now() - est.ultimaCarga < 60000) return;
     est.carregando = true;
     try {
       var r = await apiAuthFetch('/api/avisos/meu-dia');
@@ -107,7 +109,8 @@
     return (t.alta || 0) + ' alta, ' + (t.media || 0) + ' média, ' + (t.baixa || 0) + ' baixa';
   }
   function blocoCarteira(c, chave) {
-    return '<div style="margin:14px 0 6px;font-size:13px;font-weight:600">' + esc(c.nome) + ' <span class="hint">(' + contagem(c.totais) + ')</span></div>' +
+    var antigo = c.dia && est.dados && c.dia !== est.dados.hoje ? ', resumo de ' + dataBR(c.dia) : '';
+    return '<div style="margin:14px 0 6px;font-size:13px;font-weight:600">' + esc(c.nome) + ' <span class="hint">(' + contagem(c.totais) + esc(antigo) + ')</span></div>' +
       listaItens(chave || ('c' + c.id), c.itens || []);
   }
   function quadroCarteiras(d) {
@@ -226,7 +229,7 @@
     m.innerHTML = '<div class="card" style="max-width:920px;width:100%"><div class="card-header" style="display:flex;align-items:center">' +
       '<span class="card-title" style="flex:1">Vínculos dos usuários do Superlógica</span><button class="btn btn-ghost" data-v="fechar">Fechar</button></div>' +
       '<div class="hint" style="margin-bottom:8px">Ligue cada usuário que lança despesas no Superlógica ao analista do Hub. O analista passa a ver no card os erros dos lançamentos dele. ' +
-      'A carteira serve para agrupar os erros de quem não entra no Hub. Os usuários aparecem aqui depois da primeira geração do resumo.</div>' +
+      'A carteira fica registrada para a sua referência. Os usuários aparecem aqui depois da primeira geração do resumo; só entram os erros das despesas lançadas nos últimos 5 dias úteis.</div>' +
       '<div id="avisos-vinc-corpo" class="hint">Carregando...</div></div>';
     document.body.appendChild(m);
     m.addEventListener('click', function (ev) {

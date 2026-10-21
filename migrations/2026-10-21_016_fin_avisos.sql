@@ -28,6 +28,7 @@ create table if not exists public.fin_avisos_execucoes (
   resumo        jsonb       not null default '{}'::jsonb
 );
 -- A geração agendada roda uma vez por dia (protege contra reinício do servidor no meio da manhã).
+-- Se o servidor reiniciar no meio, a próxima tentativa retoma a mesma linha (financeiro/avisos.js).
 create unique index if not exists fin_avisos_exec_agendado_uk on public.fin_avisos_execucoes (dia) where origem = 'agendado';
 create index if not exists fin_avisos_exec_dia_idx on public.fin_avisos_execucoes (iniciado_em desc);
 

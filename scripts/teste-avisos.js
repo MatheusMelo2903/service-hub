@@ -30,12 +30,16 @@ const quadro = [
 t('contas sem extrato: limite, pouco movimento, principal sem extrato e falha', () => {
   const r = A.contasSemExtrato(quadro, 2);
   const ids = r.contas.map((c) => c.conta);
-  assert.deepStrictEqual(ids.sort(), ['1', '5', '8']);
+  assert.deepStrictEqual(ids.sort(), ['1', '5', '6', '8']);
+  assert.strictEqual(r.contas.find((c) => c.conta === '6').gravidade, 'media', 'não principal sem extrato entra como média (T35)');
   assert.strictEqual(r.contas[0].conta, '5', 'principal sem extrato vem primeiro');
   assert.strictEqual(r.contas.find((c) => c.conta === '1').gravidade, 'alta'); // 4 >= 2x2
   assert.strictEqual(r.contas.find((c) => c.conta === '8').gravidade, 'media');
   assert.strictEqual(r.falhas.length, 1);
-  assert.deepStrictEqual(A.contasSemExtrato(quadro, 5).contas.map((c) => c.conta), ['5']);
+  assert.deepStrictEqual(A.contasSemExtrato(quadro, 5).contas.map((c) => c.conta), ['5', '6']);
+  // Sem nenhuma conta movimentada no condomínio, a de pouco movimento conta atraso (caminho alternativo da T35).
+  const so = [{ id_condominio: '30', condominio: 'C', contas: [{ id: '9', principal: false, situacao: 'ok', quadro: { ultimo_extrato: '2026-09-01', dias_sem_extrato: 30, movimento_baixo: true } }] }];
+  assert.deepStrictEqual(A.contasSemExtrato(so, 2).contas.map((c) => c.conta), ['9']);
 });
 t('limite configurável fica entre 1 e 30, padrão 2', () => {
   assert.strictEqual(A.limiteDias(undefined), 2);
@@ -205,11 +209,14 @@ function bancoFalso() {
       const [t, qs] = q.split('?');
       const p = new URLSearchParams(qs);
       let l = tab[t].slice();
-      if (p.get('chave') === 'eq.geral') l = l.filter((x) => x.chave === 'geral');
-      if (p.get('dia')) l = l.filter((x) => x.dia === p.get('dia').slice(3));
-      const inn = p.get('chave') && p.get('chave').startsWith('in.(') ? p.get('chave').slice(4, -1).split(',').map((s) => s.replace(/"/g, '')) : null;
-      if (inn) l = l.filter((x) => inn.includes(x.chave));
-      if (t === 'fin_avisos' && /order=dia.desc/.test(q)) l.sort((a, b) => (a.dia < b.dia ? 1 : -1));
+      for (const [k, v] of p) {
+        if (['select', 'order', 'limit'].includes(k)) continue;
+        if (v.startsWith('eq.')) l = l.filter((x) => String(x[k]) === v.slice(3));
+        else if (v.startsWith('neq.')) l = l.filter((x) => String(x[k]) !== v.slice(4));
+        else if (v.startsWith('gte.')) l = l.filter((x) => String(x[k]) >= v.slice(4));
+        else if (v.startsWith('in.(')) { const vals = v.slice(4, -1).split(',').map((z) => z.replace(/"/g, '')); l = l.filter((x) => vals.includes(String(x[k]))); }
+      }
+      if (/order=dia.desc/.test(q)) l.sort((a, b) => (a.dia < b.dia ? 1 : -1));
       return l;
     },
   };
@@ -238,7 +245,10 @@ function montarApp(banco, chamadas) {
     carteira: { escopo: async (req) => (ESCOPO[req.user.sub] ? { todas: false, carteiras: [{ id: 1, nome: 'Carteira A' }], ids: new Set([10]) } : { todas: true }) },
     gruposCarteiras: grupos, clienteSL: () => clienteFalso(chamadas), superlogicaNativa: () => true,
     supabaseUrl: 'https://x.supabase.co', supabaseChave: 'x',
-    supabaseAdminRequest: async () => ({ status: 200, body: Object.values(PERFIS) }),
+    supabaseAdminRequest: async (m, caminho) => {
+      const id = (String(caminho).match(/[?&]id=eq\.([^&]+)/) || [])[1];
+      return { status: 200, body: Object.values(PERFIS).filter((p) => !id || p.id === decodeURIComponent(id)) };
+    },
     env: { AVISOS_AGENDADOR: '0' }, log: () => {},
   });
   finBanco.criarBanco = original;
@@ -247,10 +257,11 @@ function montarApp(banco, chamadas) {
 
 t('rotas: quem vê o quê, geração só GESTOR e vínculos validados', async () => {
   const banco = bancoFalso();
-  const DIA = '2026-01-05';
+  const DIA = require('../financeiro/regras').util.maisDias(require('../financeiro/regras').util.hojeSP(), -1);
   banco.tab.fin_avisos.push(
     { dia: DIA, chave: 'geral', conteudo: { gerado_em: '2026-01-05T10:00:00Z', limite_dias: 2, usuarios: [{ id_usuario_sl: '501', usuario: 'ANA', lancamentos: 3 }, { id_usuario_sl: '502', usuario: 'BRUNO', lancamentos: 1 }],
       erros: [{ id_usuario_sl: '501', regra: 'R2', tipo: 'R2_CONDOMINIO_TROCADO', gravidade: 'alta', relacionados: ['outro 77'], detalhe: 'segredo do outro', id_condominio: '10' },
+        { id_usuario_sl: '501', regra: 'R5', tipo: 'R5_SEM_NOTA', gravidade: 'alta', id_condominio: '20', fornecedor: 'fora da carteira' },
         { id_usuario_sl: '502', regra: 'R1', tipo: 'R1_DOCUMENTO', gravidade: 'media', id_condominio: '20' }] } },
     { dia: DIA, chave: 'carteira:1', conteudo: { id: 1, nome: 'Carteira A', itens: [{ tipo: 'sem_extrato', gravidade: 'alta', id_condominio: '10' }, { tipo: 'vencidas', gravidade: 'media', id_condominio: '99' }], totais: {} } },
     { dia: DIA, chave: 'carteira:2', conteudo: { id: 2, nome: 'Carteira B', itens: [{ tipo: 'boletos', gravidade: 'media', id_condominio: '20' }], totais: {} } });
@@ -280,7 +291,7 @@ t('rotas: quem vê o quê, geração só GESTOR e vínculos validados', async ()
     const g = (await pedir(UID.g, 'GET', '/api/avisos/meu-dia')).j;
     assert.strictEqual(g.gestor, true);
     assert.strictEqual(g.carteiras.length, 2);
-    assert.strictEqual(g.erros.length, 2);
+    assert.strictEqual(g.erros.length, 3);
     assert.ok(Array.isArray(g.vinculos));
 
     // Geração sob demanda.
@@ -337,6 +348,49 @@ t('serviço: uma geração por vez e a agendada só uma vez por dia', async () =
   assert.strictEqual(await s.iniciar({ origem: 'agendado' }), null, 'agendada repetida no mesmo dia não roda');
   assert.strictEqual(banco.tab.fin_avisos_execucoes.filter((x) => x.origem === 'agendado').length, 1);
   assert.ok(banco.tab.fin_avisos.some((x) => x.chave === 'sem_carteira'));
+});
+t('agendador: outra geração rodando ou banco fora do ar tenta de novo no minuto seguinte', async () => {
+  let n = 0;
+  const ag = A.criarAgendador({ agora: () => ({ dia: '2026-10-21', hora: 7, minuto: 1 }), executar: async () => {
+    n++; if (n === 1) { const e = new Error('x'); e.codigo = 'andamento'; throw e; } if (n === 2) { const e = new Error('y'); e.codigo = 'banco'; throw e; } } });
+  assert.strictEqual(await ag.verificar(), false);
+  assert.strictEqual(await ag.verificar(), false);
+  assert.strictEqual(await ag.verificar(), true);
+  assert.strictEqual(await ag.verificar(), false);
+  assert.strictEqual(n, 3);
+});
+t('serviço: retoma a agendada interrompida e recusa a recente; parcial não apaga a geral completa', async () => {
+  const banco = bancoFalso();
+  const s = A.criarServico({ banco, cliente: () => clienteFalso([]), grupos, log: () => {}, hoje: () => '2026-10-21', esperaSobDemanda: 0 });
+  banco.tab.fin_avisos_execucoes.push({ id: 'velha', dia: '2026-10-21', origem: 'agendado', status: 'andamento', iniciado_em: new Date(Date.now() - 3 * 3600e3).toISOString() });
+  const r = await s.iniciar({ origem: 'agendado' });
+  assert.strictEqual(r.execucao, 'velha');
+  await r.promessa;
+  assert.strictEqual(banco.tab.fin_avisos_execucoes.length, 1);
+  assert.strictEqual(banco.tab.fin_avisos_execucoes[0].status, 'ok');
+  const completa = banco.tab.fin_avisos.find((x) => x.chave === 'geral');
+  assert.strictEqual(completa.conteudo.parcial, false);
+  const p = await s.iniciar({ origem: 'teste', carteiras: [2] });
+  await p.promessa;
+  const geral = banco.tab.fin_avisos.find((x) => x.chave === 'geral');
+  assert.strictEqual(geral.conteudo.parcial, false, 'a parcial não troca o resumo completo');
+  assert.deepStrictEqual(geral.conteudo.ultima_parcial.carteiras, [2]);
+  const b2 = bancoFalso();
+  b2.tab.fin_avisos_execucoes.push({ id: 'recente', dia: '2026-10-21', origem: 'agendado', status: 'andamento', iniciado_em: new Date().toISOString() });
+  const s2 = A.criarServico({ banco: b2, cliente: () => clienteFalso([]), grupos, log: () => {}, hoje: () => '2026-10-21' });
+  await assert.rejects(s2.iniciar({ origem: 'agendado' }), (e) => e.codigo === 'andamento');
+  const b3 = bancoFalso();
+  b3.inserir = async () => false; b3.ler = async () => { throw new Error('supabase_ler_500'); };
+  const s3 = A.criarServico({ banco: b3, cliente: () => clienteFalso([]), grupos, log: () => {}, hoje: () => '2026-10-21' });
+  await assert.rejects(s3.iniciar({ origem: 'agendado' }), (e) => e.codigo === 'banco');
+});
+t('erros: teto por usuário', () => {
+  const crit = new Map(), us = new Map([['1', { id_usuario_sl: '1', usuario: 'A' }]]);
+  const lista = [];
+  for (let i = 0; i < 200; i++) { crit.set(String(i), { id_usuario_sl: '1', usuario: 'A', quando: '' }); lista.push({ regra: 'R5', tipo: 'R5_SEM_NOTA', gravidade: 'media', id_despesa: String(i), id_parcela: String(i) }); }
+  const r = A.errosPorUsuario([lista], crit, us);
+  assert.strictEqual(r.erros.length, 150);
+  assert.strictEqual(r.cortados, 50);
 });
 t('banco dos avisos recusa o Supabase de produção', () => {
   assert.throws(() => finBanco.criarBanco({ url: 'https://mtucxdfepkwsfnqpfydb.supabase.co', chave: 'x' }), /supabase_nao_permitido/);

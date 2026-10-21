@@ -25,7 +25,8 @@ const PESO = { alta: 3, media: 2, baixa: 1 };
 function filtrarCarteira(c, ids) {
   if (!ids) return c;
   const itens = (c.itens || []).filter((i) => ids.has(Number(i.id_condominio)));
-  return Object.assign({}, c, { itens, totais: avisos.totais(itens) });
+  // Totais só mudam quando algum item saiu (senão valem os da carteira inteira, sem o corte de itens).
+  return itens.length === (c.itens || []).length ? c : Object.assign({}, c, { itens, totais: avisos.totais(itens) });
 }
 const ordemCarteira = (a, b) => ((b.totais && b.totais.alta) || 0) - ((a.totais && a.totais.alta) || 0) || String(a.nome).localeCompare(String(b.nome));
 
@@ -71,7 +72,7 @@ function registrar(d) {
     if (!gestor) {
       try {
         esc = await d.carteira.escopo(req);
-        const vs = await servico.vinculos();
+        const vs = await servico.vinculosDe(perfil.id);
         meus = (Array.isArray(vs) ? vs : []).filter((v) => v.profile_id && v.profile_id === perfil.id).map((v) => String(v.id_usuario_sl));
       } catch (e) {
         return res.status(503).json({ erro: 'avisos_indisponiveis', detalhe: 'Não foi possível conferir sua carteira agora.' });
@@ -80,27 +81,32 @@ function registrar(d) {
     const minhas = gestor ? null : (esc && !esc.todas ? (esc.carteiras || []).map((c) => Number(c.id)).filter(Boolean) : []);
     if (!gestor && !minhas.length && !meus.length) return nada();
     try {
-      const dia = await servico.ultimoDia();
+      // Última versão de cada chave (até 7 dias): carteira fora da geração de hoje mostra a última dela.
+      const linhas = await servico.lerRecentes(gestor ? null : ['geral'].concat(minhas.map((c) => 'carteira:' + c)));
+      const lGeral = linhas.find((l) => l.chave === 'geral');
+      const dia = lGeral ? lGeral.dia : (linhas[0] ? linhas[0].dia : null);
       const resp = { mostrar: true, gestor, hoje: U.hojeSP(), dia, carteiras: [], erros: [] };
       if (gestor) resp.gerando = servico.situacao();
-      if (!dia) return res.json(resp);
-      const linhas = await servico.lerDia(dia, gestor ? null : ['geral'].concat(minhas.map((c) => 'carteira:' + c)));
-      const geral = (linhas.find((l) => l.chave === 'geral') || {}).conteudo || {};
+      if (!linhas.length) return res.json(resp);
+      const geral = (lGeral && lGeral.conteudo) || {};
       resp.gerado_em = geral.gerado_em || null;
       resp.limite_dias = geral.limite_dias || avisos.LIMITE_DIAS_PADRAO;
       resp.competencias = geral.competencias || null;
-      let carteiras = linhas.filter((l) => /^carteira:/.test(l.chave)).map((l) => l.conteudo).filter(Boolean);
+      let carteiras = linhas.filter((l) => /^carteira:/.test(l.chave) && l.conteudo).map((l) => Object.assign({}, l.conteudo, { dia: l.dia }));
       let erros = Array.isArray(geral.erros) ? geral.erros : [];
       if (gestor) {
         const sem = linhas.find((l) => l.chave === 'sem_carteira');
-        resp.sem_carteira = sem ? sem.conteudo : null;
+        resp.sem_carteira = sem && sem.conteudo ? Object.assign({}, sem.conteudo, { dia: sem.dia }) : null;
         resp.meta = { parcial: !!geral.parcial, condominios: geral.condominios, contas_sem_extrato: geral.contas_sem_extrato, chamadas: geral.chamadas,
           chamadas_recusadas: geral.chamadas_recusadas, duracao_s: geral.duracao_s, falhas_total: geral.falhas_total, falhas: geral.falhas || [],
           erros_sem_usuario: geral.erros_sem_usuario, erros_cortados: geral.erros_cortados, auditoria_dias: geral.auditoria_dias };
         resp.vinculos = await servico.vinculos().catch(() => []);
       } else {
         carteiras = carteiras.filter((c) => minhas.includes(Number(c.id))).map((c) => filtrarCarteira(c, esc && esc.ids ? esc.ids : null));
-        erros = erros.filter((e) => meus.includes(String(e.id_usuario_sl))).map(avisos.semOutroCondominio);
+        // Só os erros dele e, quando tem carteira, só dos condomínios dela (revisão 1, M1: mesma regra da T18).
+        const daCarteira = esc && !esc.todas && esc.ids ? esc.ids : null;
+        erros = erros.filter((e) => meus.includes(String(e.id_usuario_sl)) && (!daCarteira || daCarteira.has(Number(e.id_condominio))))
+          .map(avisos.semOutroCondominio);
       }
       resp.carteiras = carteiras.sort(ordemCarteira);
       resp.erros = erros.sort((a, b) => (PESO[b.gravidade] || 0) - (PESO[a.gravidade] || 0) || (Number(b.valor) || 0) - (Number(a.valor) || 0));
@@ -172,9 +178,7 @@ function registrar(d) {
     return r.body.map((p) => ({ id: p.id, nome: txt(p.nome, 80), email: txt(p.email, 120), role: p.role, carteiras: Array.isArray(p.carteiras) ? p.carteiras.map(Number) : [] }));
   }
   async function usuariosVistos() {
-    const dia = await servico.ultimoDia();
-    if (!dia) return [];
-    const l = await servico.lerDia(dia, ['geral']);
+    const l = await servico.lerRecentes(['geral']);
     return (l[0] && l[0].conteudo && Array.isArray(l[0].conteudo.usuarios)) ? l[0].conteudo.usuarios : [];
   }
 
@@ -221,8 +225,9 @@ function registrar(d) {
     const carteira = vazio(b.carteira) ? null : b.carteira;
     try {
       if (profileId) {
-        const perfis = await listarPerfis();
-        if (!perfis.some((p) => String(p.id).toLowerCase() === profileId)) return res.status(400).json({ erro: 'analista_nao_encontrado', detalhe: 'Esse analista não existe no Hub.' });
+        const r = await d.supabaseAdminRequest('GET', '/rest/v1/profiles?select=id&id=eq.' + encodeURIComponent(profileId));
+        if (r.status !== 200 || !Array.isArray(r.body)) throw new Error('perfis_indisponiveis');
+        if (!r.body.length) return res.status(400).json({ erro: 'analista_nao_encontrado', detalhe: 'Esse analista não existe no Hub.' });
       }
       if (carteira) {
         let grupos;
