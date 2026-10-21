@@ -336,7 +336,7 @@ async function extrairTexto(buf, maxPaginas) {
       resolve(v);
     };
     try {
-      filho = spawn(process.execPath, [path.join(__dirname, 'entrada-pdf-worker.js'), String(maxPaginas || 6)], { stdio: ['pipe', 'pipe', 'ignore'], env: process.env });
+      filho = spawn(process.execPath, [path.join(__dirname, 'entrada-pdf-worker.js'), String(maxPaginas || 6)], { stdio: ['pipe', 'pipe', 'ignore'], env: { PATH: process.env.PATH || '', NODE_PATH: process.env.NODE_PATH || '', NODE_ENV: process.env.NODE_ENV || '' } }); // sem os segredos do servidor
     } catch (e) { fim = true; _pdfEmCurso--; return resolve(null); }
     relogio = setTimeout(() => acabar(null), PDF_TEMPO_MS);
     let medindo = false;
