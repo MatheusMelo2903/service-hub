@@ -298,36 +298,64 @@ function textoUtil(texto) { return (String(texto || '').match(/[A-Za-zÀ-ú]{3,}
 function ehPdf(buf) { return Buffer.isBuffer(buf) && buf.length > 100 && buf.slice(0, 1024).toString('latin1').includes('%PDF-'); }
 function hashDe(buf) { return crypto.createHash('sha256').update(buf).digest('hex'); }
 // Texto das primeiras páginas, em ordem de leitura (quebra de linha quando muda a altura).
-// Roda numa thread separada com memória e tempo limitados: PDF malicioso (fluxo que expande
-// para gigabytes, laço sem fim) só derruba a thread. Devolve null se não deu para abrir (aí a
-// leitura interna decide).
-const { Worker } = require('worker_threads');
+// Roda num processo separado (financeiro/entrada-pdf-worker.js): o pai mede a memória dele a
+// cada 100 ms e mata se passar de 400 MB ou de 15 s. Assim nem os buffers que o leitor cria ao
+// descomprimir (fora do limite do V8) derrubam o servidor. No máximo 2 de cada vez; os outros
+// esperam. Devolve null se não deu (aí a leitura interna decide).
+const { spawn, execFile } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 const PDF_TEMPO_MS = 15000;
-const PDF_MEMORIA_MB = 256;
+const PDF_MEMORIA_BYTES = 400 * 1024 * 1024;
+const PDF_MAX_SIMULTANEOS = 2;
 let _pdfEmCurso = 0;
-const PDF_MAX_SIMULTANEOS = 3;
+// Memória residente do processo filho, em bytes (Linux pelo /proc; outros sistemas pelo ps).
+function memoriaDe(pid) {
+  return new Promise((ok) => {
+    fs.readFile('/proc/' + pid + '/statm', 'utf8', (e, t) => {
+      if (!e) return ok(Number(String(t).split(' ')[1]) * 4096 || 0);
+      execFile('ps', ['-o', 'rss=', '-p', String(pid)], { timeout: 2000 }, (e2, out) => ok(e2 ? 0 : (Number(String(out).trim()) || 0) * 1024));
+    });
+  });
+}
 async function extrairTexto(buf, maxPaginas) {
-  // No máximo 3 threads ao mesmo tempo; os outros esperam a vez (até 60 s).
   for (let t = 0; _pdfEmCurso >= PDF_MAX_SIMULTANEOS; t++) {
-    if (t > 300) return null;
+    if (t > 300) return null; // 60 s esperando a vez
     await new Promise((ok) => setTimeout(ok, 200));
   }
   _pdfEmCurso++;
   return new Promise((resolve) => {
-    let fim = false;
-    const acabar = (v) => { if (fim) return; fim = true; _pdfEmCurso--; clearTimeout(rel); try { w.terminate(); } catch (e) { /* nada */ } resolve(v); };
-    let w;
+    let fim = false, filho = null, relogio = null, vigia = null;
+    const partes = [];
+    let tamanho = 0;
+    const acabar = (v) => {
+      if (fim) return;
+      fim = true; _pdfEmCurso--;
+      clearTimeout(relogio); clearInterval(vigia);
+      try { if (filho && filho.exitCode === null) filho.kill('SIGKILL'); } catch (e) { /* nada */ }
+      resolve(v);
+    };
     try {
-      w = new Worker(path.join(__dirname, 'entrada-pdf-worker.js'), {
-        workerData: { buf, maxPaginas: maxPaginas || 6 },
-        resourceLimits: { maxOldGenerationSizeMb: PDF_MEMORIA_MB, maxYoungGenerationSizeMb: 64 },
-      });
+      filho = spawn(process.execPath, [path.join(__dirname, 'entrada-pdf-worker.js'), String(maxPaginas || 6)], { stdio: ['pipe', 'pipe', 'ignore'], env: process.env });
     } catch (e) { fim = true; _pdfEmCurso--; return resolve(null); }
-    const rel = setTimeout(() => acabar(null), PDF_TEMPO_MS);
-    w.on('message', (m) => acabar(m && m.ok ? { texto: String(m.texto || ''), paginas: m.paginas } : null));
-    w.on('error', () => acabar(null));
-    w.on('exit', () => acabar(null));
+    relogio = setTimeout(() => acabar(null), PDF_TEMPO_MS);
+    let medindo = false;
+    vigia = setInterval(async () => {
+      if (medindo || fim) return;
+      medindo = true;
+      const m = await memoriaDe(filho.pid);
+      medindo = false;
+      if (m > PDF_MEMORIA_BYTES) acabar(null);
+    }, 100);
+    filho.stdout.on('data', (c) => { tamanho += c.length; if (tamanho > 2 * 1024 * 1024) return acabar(null); partes.push(c); });
+    filho.on('error', () => acabar(null));
+    filho.on('close', () => {
+      let m = null;
+      try { m = JSON.parse(Buffer.concat(partes).toString('utf8')); } catch (e) { m = null; }
+      acabar(m && m.ok ? { texto: String(m.texto || ''), paginas: m.paginas } : null);
+    });
+    filho.stdin.on('error', () => acabar(null));
+    filho.stdin.end(buf);
   });
 }
 

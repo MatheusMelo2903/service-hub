@@ -1,18 +1,22 @@
-// T33: extração do texto do PDF numa thread separada, com memória limitada e tempo máximo
-// (financeiro/entrada.js, extrairTexto). PDF malicioso não trava nem derruba o servidor.
-const { parentPort, workerData } = require('worker_threads');
-
-(async () => {
+// T33: extração do texto do PDF num PROCESSO separado (financeiro/entrada.js, extrairTexto).
+// Recebe o PDF pela entrada padrão e devolve { ok, texto, paginas } em JSON pela saída padrão.
+// O processo pai mede a memória deste processo e o mata se passar do teto ou do tempo: PDF
+// malicioso (fluxo que expande para gigabytes) não derruba o servidor.
+const partes = [];
+process.stdin.on('data', (c) => partes.push(c));
+process.stdin.on('end', async () => {
+  const maxPaginas = Math.max(1, Math.min(20, Number(process.argv[2]) || 6));
   let lib;
   const avisoOrig = console.warn, logOrig = console.log;
   console.warn = () => {}; console.log = () => {};
   try { lib = require('pdfjs-dist/legacy/build/pdf.js'); } catch (e) { lib = null; } finally { console.warn = avisoOrig; console.log = logOrig; }
-  if (!lib) return parentPort.postMessage({ ok: false });
+  const sair = (o) => { process.stdout.write(JSON.stringify(o), () => process.exit(0)); };
+  if (!lib) return sair({ ok: false });
   let doc;
   try {
-    doc = await lib.getDocument({ data: new Uint8Array(workerData.buf), disableFontFace: true, isEvalSupported: false, useSystemFonts: false, verbosity: 0, stopAtErrors: false }).promise;
+    doc = await lib.getDocument({ data: new Uint8Array(Buffer.concat(partes)), disableFontFace: true, isEvalSupported: false, useSystemFonts: false, verbosity: 0, stopAtErrors: false }).promise;
     let txt = '';
-    const n = Math.min(doc.numPages, workerData.maxPaginas || 6);
+    const n = Math.min(doc.numPages, maxPaginas);
     for (let i = 1; i <= n; i++) {
       const p = await doc.getPage(i);
       const c = await p.getTextContent();
@@ -26,8 +30,8 @@ const { parentPort, workerData } = require('worker_threads');
       txt += '\n';
       if (txt.length > 200000) break;
     }
-    parentPort.postMessage({ ok: true, texto: txt, paginas: doc.numPages });
+    sair({ ok: true, texto: txt, paginas: doc.numPages });
   } catch (e) {
-    parentPort.postMessage({ ok: false });
-  } finally { try { if (doc) doc.destroy(); } catch (e) { /* nada */ } }
-})();
+    sair({ ok: false });
+  }
+});

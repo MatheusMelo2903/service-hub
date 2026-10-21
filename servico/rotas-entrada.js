@@ -98,7 +98,10 @@ function criarRotasEntrada(app, d) {
   });
 
   // POST /api/entrada/ler { arquivo: { nome, base64 } } — um PDF por chamada; vira rascunho.
-  app.post('/api/entrada/ler', requireAuth, async (req, res, next) => { if (await exigir(req, res, 'ver')) next(); }, express.json({ limit: '15mb' }), async (req, res) => {
+  app.post('/api/entrada/ler', requireAuth, async (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    try { if (await exigir(req, res, 'ver')) next(); } catch (e) { erroInterno(res, 'ler', e); }
+  }, express.json({ limit: '15mb' }), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const a = req.body && req.body.arquivo;
     if (!a || typeof a.base64 !== 'string' || a.base64.length > Math.ceil(E.MAX_PDF_BYTES / 3) * 4 + 8) return res.status(400).json({ erro: 'arquivo_invalido', detalhe: 'Envie um PDF de até 10 MB.' });
