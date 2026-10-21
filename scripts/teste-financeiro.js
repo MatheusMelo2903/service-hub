@@ -55,10 +55,26 @@ const ok = (nome, fn) => Promise.resolve().then(fn).then(() => { n++; console.lo
     assert(M.auditoriaRelevante({ st_texto_aud: 'Parcela#331232 da despesa#302692 liquidada.' }));
     assert(!M.auditoriaRelevante({ st_texto_aud: 'Nova receita 1 no valor R$ 2,00 para cobrança 3' }));
     assert(!M.auditoriaRelevante({ st_texto_aud: '[SUDO] Arquivo(1_2_3.RET) processado com sucesso' }));
+    assert(!M.auditoriaRelevante({ st_texto_aud: 'Despesa#5 criada.' }));
+    assert(!M.auditoriaRelevante({ st_texto_aud: 'Adicionado extrato#9. Conta bancária Conta Principal (1-2),  em 10/20/2026' }));
+    assert(M.auditoriaRelevante({ st_texto_aud: 'Excluído extrato#9. Conta bancária Conta Principal (1-2),  em 10/20/2026' }));
+    assert(!M.auditoriaRelevante({ st_texto_aud: 'Importante: Conta bancária Conta Principal 635 alterada. ST_PROXIMONN_CB de 1 para 2' }));
+    assert(M.auditoriaRelevante({ st_texto_aud: 'Importante: Conta bancária Conta Principal 635 alterada. ST_TOKEN_CB de 1 para 2' }));
+    assert(M.auditoriaRelevante({ st_texto_aud: 'Arquivo#1 removido da despesa#2.' }));
     const a = M.auditoria({ id_auditoria_aud: '5', dt_data_aud: '10/20/2026 17:52:25', st_texto_aud: 'Parcela#331232 da despesa#302692 liquidada.', st_fantasia_cond: ' CASA  BLANCA ' }, new Map([['CASA BLANCA', 136]]));
     assert.strictEqual(a.id_parcela, 331232);
     assert.strictEqual(a.id_despesa, 302692);
     assert.strictEqual(a.id_condominio, 136);
+  });
+  await ok('auditoria: texto mascarado', () => {
+    const m = M.mascararTexto;
+    assert.strictEqual(m('Importante: Conta bancária Conta Principal 635 alterada. ST_TOKEN_CB de abc123 para xyz789'), 'Importante: Conta bancária Conta Principal 635 alterada. Campos: ST_TOKEN_CB');
+    assert.strictEqual(m('Adicionado extrato#9. Conta bancária Conta Principal (3007-4 - 000037407-5),  em 10/20/2026'), 'Adicionado extrato#9. Conta bancária Conta Principal (...),  em 10/20/2026');
+    assert(!m('fornecedor CPF 123.456.789-01 e CNPJ 07.707.650/0001-10 conta 0000374075').match(/\d{8}|\d{3}\.\d{3}/));
+    assert.strictEqual(m('Parcela#331232 da despesa#302692 liquidada. Valor R$ 1.234,56 venc. 10/01/2026'), 'Parcela#331232 da despesa#302692 liquidada. Valor R$ 1.234,56 venc. 10/01/2026');
+    const a = M.auditoria({ id_auditoria_aud: '1', dt_data_aud: '10/20/2026 10:00:00', st_texto_aud: 'Arquivo#12345678 vinculado a despesa#87654321.' }, new Map());
+    assert.strictEqual(a.id_arquivo, 12345678);
+    assert.strictEqual(a.id_despesa, 87654321);
   });
   await ok('banco recusa projeto que nao e o de teste', () => {
     assert.throws(() => criarBanco({ url: 'https://mtucxdfepkwsfnqpfydb.supabase.co', chave: 'k' }), /supabase_nao_permitido/);

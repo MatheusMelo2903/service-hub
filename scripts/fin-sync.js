@@ -34,8 +34,16 @@ async function main() {
     if (!/^[0-9a-f-]{36}$/.test(retomar)) { console.log('execucao invalida'); process.exit(2); }
     const { criarBanco } = require(path.join(__dirname, '..', 'financeiro', 'banco'));
     const banco = criarBanco({ url: cred.supabaseUrl, chave: cred.supabaseChave });
-    const feitas = await banco.ler('fin_sync_log?select=tipo,janela_inicio,janela_fim,id_condominio&status=eq.ok&execucao=eq.' + retomar + '&limit=100000');
-    opcoes.pular = new Set(feitas.map((f) => [f.tipo, f.janela_inicio, f.janela_fim, f.id_condominio || ''].join('|')));
+    // --retomar-tipos a,b: pula só as janelas feitas destes tipos (os outros rodam de novo)
+    const soTipos = arg('retomar-tipos', '') ? arg('retomar-tipos').split(',') : null;
+    const feitas = [];
+    for (let off = 0; off < 200000; off += 1000) { // o PostgREST devolve no máximo 1000 por vez
+      const pg = await banco.ler('fin_sync_log?select=tipo,janela_inicio,janela_fim,id_condominio&status=eq.ok&execucao=eq.' + retomar + '&order=id&limit=1000&offset=' + off);
+      feitas.push(...pg);
+      if (pg.length < 1000) break;
+    }
+    opcoes.pular = new Set(feitas.filter((f) => !soTipos || soTipos.includes(f.tipo))
+      .map((f) => [f.tipo, f.janela_inicio, f.janela_fim, f.id_condominio || ''].join('|')));
     console.log('retomando: ' + opcoes.pular.size + ' janelas ja feitas serao puladas');
   }
   const log = (m) => console.log(new Date().toISOString().slice(11, 19) + ' ' + m);

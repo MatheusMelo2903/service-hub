@@ -169,20 +169,44 @@ function cobranca(c) {
 
 // Auditoria: só o que é do financeiro de despesas (cobrança, receita e push ficam fora).
 const AUD_FIN = /despesa|parcela|arquivo|apropria[cç][aã]o|extrato|fornecedor|conta banc[aá]ria|cheque|transfer[eê]ncia/i;
-// Fora: push, arquivo de retorno de cobrança (.RET) e arquivos do PJBank.
-const AUD_FORA = /notifica[cç][aãõo]+e?s? de push|fila de push|agendamento de envio de push|PJBank do condom[ií]nio|\.RET\b|arquivo retorno/i;
+// Fora: push, arquivo de retorno de cobrança (.RET) e arquivos do PJBank; e, para caber no
+// banco (cerca de 2 mil linhas por dia a menos), a criação de despesa, parcela e apropriação
+// (já vem da própria despesa) e o "Adicionado extrato" (a data do extrato sai do caixa).
+const AUD_FORA = /notifica[cç][aãõo]+e?s? de push|fila de push|agendamento de envio de push|PJBank do condom[ií]nio|\.RET\b|arquivo retorno|adicionado extrato|^despesa\s*#?\s*\d+\s+criada|^parcela\s*#?\s*\d+\s+da despesa\s*#?\s*\d+\s+criada|^apropria[cç][aã]o\s+#?\d+\s+da despesa\s+#?\d+\s+inserida/i;
 function auditoriaRelevante(a) {
   const t = String((a && a.st_texto_aud) || '');
-  return AUD_FIN.test(t) && !AUD_FORA.test(t);
+  if (!AUD_FIN.test(t) || AUD_FORA.test(t)) return false;
+  // conta alterada só no "próximo nosso número" (acontece a cada boleto): ruído
+  const campos = t.match(/\b(?:ST|FL|NM|DT|VL|ID)_[A-Z0-9_]+\b/gi) || [];
+  if (/conta banc[aá]ria.*alterad/i.test(t) && campos.length && campos.every((c) => /^ST_PROXIMONN_CB$/i.test(c))) return false;
+  return true;
+}
+// Texto guardado sem CPF, CNPJ, agência, conta ou valor de campo alterado em conta
+// bancária (pode ser token). Os ids de despesa, parcela e arquivo saem antes, do original.
+function mascararTexto(t) {
+  let s = String(t || '');
+  // "Conta bancária X alterada. ST_TOKEN_CB de A para B": fica só o nome dos campos.
+  const alt = s.match(/^(.*?conta banc[aá]ria.*?alterad[ao]\.?)/i);
+  if (alt) {
+    const campos = [...new Set((s.slice(alt[1].length).match(/\b(?:ST|FL|NM|DT|VL|ID)_[A-Z0-9_]+\b/gi) || []).map((c) => c.toUpperCase()))];
+    s = alt[1] + (campos.length ? ' Campos: ' + campos.join(', ') : '');
+  }
+  return s
+    .replace(/\d{3}\.\d{3}\.\d{3}-\d{2}/g, '[cpf]')
+    .replace(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/g, '[cnpj]')
+    .replace(/\((?=[^)]*\d)[\d\s.\/-]+\)/g, '(...)')
+    .replace(/\d[\d.\/-]{7,}\d/g, (m) => (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(m) || m.replace(/\D/g, '').length < 8 ? m : '[num]'));
 }
 function idDoTexto(t, re) {
   const m = t.match(re);
   return m ? int(m[1]) : null;
 }
-// fantasiaParaCond: Map nome fantasia (maiúsculo, sem espaço sobrando) -> id_condominio.
+const chaveFantasia = (s) => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
+// fantasiaParaCond: Map nome fantasia (chaveFantasia) -> id_condominio, ou 0 quando o
+// nome é de mais de um cadastro. O sync decide o que fazer com nome ambíguo ou desconhecido.
 function auditoria(a, fantasiaParaCond) {
   const t = String(a.st_texto_aud || '');
-  const fant = String(a.st_fantasia_cond || '').trim().toUpperCase().replace(/\s+/g, ' ');
+  const fant = chaveFantasia(a.st_fantasia_cond);
   return {
     id_auditoria: int(a.id_auditoria_aud),
     dt_data: dataHoraISO(a.dt_data_aud),
@@ -191,11 +215,11 @@ function auditoria(a, fantasiaParaCond) {
     sistema: t.startsWith('[SUDO]'),
     id_condominio: fant ? fantasiaParaCond.get(fant) || null : null,
     condominio_texto: txt(a.st_fantasia_cond, 200),
-    texto: txt(t, 1000),
+    texto: txt(mascararTexto(t), 1000),
     id_despesa: idDoTexto(t, /despesa\s*#?\s*(\d+)/i),
     id_parcela: idDoTexto(t, /parcela\s*#?\s*(\d+)/i),
     id_arquivo: idDoTexto(t, /arquivo\s*#\s*(\d+)/i),
   };
 }
 
-module.exports = { condominio, conta, despesa, parcela, anexos, movimentos, cobranca, auditoria, auditoriaRelevante, cnpj };
+module.exports = { condominio, conta, despesa, parcela, anexos, movimentos, cobranca, auditoria, auditoriaRelevante, cnpj, mascararTexto, chaveFantasia };

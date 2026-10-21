@@ -9,6 +9,7 @@ const M = require('./mapear');
 
 const TIPOS = ['contas', 'despesas_liquidadas', 'despesas_pendentes', 'movimentos', 'cobrancas', 'auditoria'];
 const NAO_CONDOMINIO = /\bVIRTUAL SERVICE\b/i;
+const POR_CONDOMINIO = new Set(['cobrancas', 'movimentos']); // janelas por condomínio
 const MAX_PAGINAS = 400;
 const MAX_DIAS = 400;
 
@@ -16,6 +17,15 @@ function listaDe(j) {
   if (Array.isArray(j)) return j;
   if (j && Array.isArray(j.data)) return j.data;
   return null;
+}
+
+// Junta o período já sincronizado com o novo só quando eles se tocam ou se sobrepõem.
+// Com buraco no meio, fica o período mais recente (para não dizer que o buraco foi copiado).
+function juntarPeriodo(antDe, antAte, de, ate) {
+  if (!antDe || !antAte) return { de, ate };
+  const toca = de <= U.somaDias(antAte, 1) && ate >= U.somaDias(antDe, -1);
+  if (toca) return { de: antDe < de ? antDe : de, ate: antAte > ate ? antAte : ate };
+  return ate > antAte ? { de, ate } : { de: antDe, ate: antAte };
 }
 
 async function emParalelo(itens, n, fn) {
@@ -112,16 +122,33 @@ function criarSync({ cliente, banco, log = () => {}, origem = 'script', usuario 
     let lista = todos.filter((c) => String(c.fl_ativo_cond || '1') !== '0').map(M.condominio)
       .filter((c) => c.id_condominio > 0 && !fora.has(c.id_condominio));
     if (idUnico) lista = lista.filter((c) => c.id_condominio === idUnico);
+    // Nome fantasia -> código; 0 quando o nome é de mais de um cadastro.
+    // nomesFora: nomes dos cadastros excluídos e da Virtual Service (a auditoria só traz o nome).
     const fantasia = new Map();
+    const nomesFora = new Set();
     todos.forEach((c) => {
-      const f = String(c.st_fantasia_cond || '').trim().toUpperCase().replace(/\s+/g, ' ');
-      if (f) fantasia.set(f, Number(c.id_condominio_cond));
+      const id = Number(c.id_condominio_cond);
+      [c.st_fantasia_cond, c.st_nome_cond].map(M.chaveFantasia).filter(Boolean).forEach((f, i) => {
+        if (fora.has(id)) nomesFora.add(f);
+        if (i === 0) fantasia.set(f, fantasia.has(f) && fantasia.get(f) !== id ? 0 : id);
+      });
     });
-    return { lista, fora, fantasia };
+    return { lista, fora, fantasia, nomesFora };
+  }
+
+  // Falha antes do fim (lista de condomínios, banco): registra o fim com o erro e repassa.
+  async function rodar(opcoes) {
+    const t0 = Date.now();
+    try { return await rodarInterno(opcoes); } catch (e) {
+      if (!['periodo_invalido', 'periodo_longo', 'condominio_excluido'].includes(e && e.message)) {
+        await banco.inserir('fin_sync_log', { execucao, origem, usuario, tipo: 'execucao', janela_inicio: opcoes.inicio, janela_fim: opcoes.fim, id_condominio: opcoes.idCondominio ? Number(opcoes.idCondominio) : null, status: 'fim', duracao_ms: Date.now() - t0, erro: 'falhou: ' + String((e && e.message) || e).slice(0, 200) }).catch(() => false);
+      }
+      throw e;
+    }
   }
 
   // opcoes: { inicio, fim (AAAA-MM-DD), tipos[], idCondominio, listarCondominios, pular (Set) }
-  async function rodar(opcoes) {
+  async function rodarInterno(opcoes) {
     const { inicio, fim, listarCondominios, pular } = opcoes;
     const tipos = (opcoes.tipos && opcoes.tipos.length ? opcoes.tipos : TIPOS).filter((t) => TIPOS.includes(t));
     const idUnico = opcoes.idCondominio ? Number(opcoes.idCondominio) : null;
@@ -155,8 +182,16 @@ function criarSync({ cliente, banco, log = () => {}, origem = 'script', usuario 
     }, null);
 
     // Despesas: a mesma resposta alimenta despesas, parcelas e anexos.
+    // despesaParaCond e despesaFora ajudam a auditoria (linhas sem nome de condomínio).
+    const despesaParaCond = new Map();
+    const despesaFora = new Set();
     async function gravarDespesas(l) {
-      const ok = l.filter((d) => valido(Number(d.id_condominio_cond)) && Number(d.id_parcela_pdes) > 0);
+      l.forEach((d) => {
+        const idd = Number(d.id_despesa_des), idc = Number(d.id_condominio_cond);
+        if (!(idd > 0)) return;
+        if (conds.fora.has(idc)) despesaFora.add(idd); else if (idc > 0) despesaParaCond.set(idd, idc);
+      });
+      const ok = l.filter((d) => valido(Number(d.id_condominio_cond)) && Number(d.id_parcela_pdes) > 0 && Number(d.id_despesa_des) > 0);
       const m = marca();
       await banco.upsert('fin_despesas', ok.map((d) => ({ ...M.despesa(d), ...m })), 'id_despesa');
       const g = await banco.upsert('fin_parcelas', ok.map((d) => ({ ...M.parcela(d), ...m })), 'id_parcela');
@@ -170,26 +205,41 @@ function criarSync({ cliente, banco, log = () => {}, origem = 'script', usuario 
           { idCondominio: cid, status: 'liquidadas', comStatus: 'liquidadas', filtrarpor: 'liquidacao' }, a, b, 50)), pular);
       }
     }
+    // Pendentes: também os 12 meses antes do início (vencida sem baixa antiga continua aberta).
     if (tipos.includes('despesas_pendentes')) {
-      for (const [a, b] of U.janelasMes(inicio, fim)) {
+      for (const [a, b] of U.janelasMes(U.somaDias(inicio, -365), fim)) {
         await janela('despesas_pendentes', a, b, idUnico, async () => gravarDespesas(await buscarJanela('despesas/index',
           { idCondominio: cid, comStatus: 'pendentes' }, a, b, 50)), pular);
       }
     }
 
+    // Caixa: por condomínio, mês e CONTA (sem idContaBancaria o Superlógica traz só a conta
+    // principal; no -1 não há garantia de trazer todas). Só contas ativas dos condomínios válidos.
     if (tipos.includes('movimentos')) {
-      for (const [a, b] of U.janelasMes(inicio, fim)) {
-        await janela('movimentos', a, b, idUnico, async () => {
-          if (!contasOk) throw new Error('contas_indisponiveis');
-          const l = await buscarJanela('caixa/index', { idCondominio: cid }, a, b, 50);
-          // Conta fora da lista de ativas fica sem condomínio; conta de cadastro excluído sai.
-          const linhas = M.movimentos(l, contaParaCond)
-            .filter((x) => x.dt_data >= a && x.dt_data <= b && !contaFora.has(x.id_conta)
-              && (x.id_condominio ? valido(x.id_condominio) : !idUnico))
-            .map((x) => ({ ...x, ...marca() }));
-          return { itens: l.length, gravados: await banco.upsert('fin_movimentos', linhas, 'chave') };
+      const contasPorCond = new Map();
+      contaParaCond.forEach((idc, idConta) => {
+        if (!contasPorCond.has(idc)) contasPorCond.set(idc, []);
+        contasPorCond.get(idc).push(idConta);
+      });
+      const trabalhos = [];
+      conds.lista.forEach((c) => U.janelasMes(inicio, fim).forEach(([a, b]) => trabalhos.push([c.id_condominio, a, b])));
+      if (!contasOk) trabalhos.length = 0;
+      if (!contasOk) await janela('movimentos', inicio, fim, idUnico, async () => { throw new Error('contas_indisponiveis'); }, null);
+      await emParalelo(trabalhos, 4, async ([idc, a, b]) => {
+        await janela('movimentos', a, b, idc, async () => {
+          let itens = 0;
+          const linhas = [];
+          for (const idConta of contasPorCond.get(idc) || []) {
+            const l = await buscarJanela('caixa/index', { idCondominio: idc, idContaBancaria: idConta }, a, b, 50);
+            itens += l.length;
+            // descarta linha de outra conta (resposta fora do pedido) e fora da janela
+            M.movimentos(l, contaParaCond)
+              .filter((x) => x.id_conta === idConta && x.dt_data >= a && x.dt_data <= b)
+              .forEach((x) => linhas.push({ ...x, id_condominio: idc, ...marca() }));
+          }
+          return { itens, gravados: await banco.upsert('fin_movimentos', linhas, 'chave') };
         }, pular);
-      }
+      });
     }
 
     // Cobranças: por condomínio e mês, paginado (no -1 o Superlógica estoura a memória).
@@ -218,9 +268,27 @@ function criarSync({ cliente, banco, log = () => {}, origem = 'script', usuario 
       await emParalelo(U.janelasDias(inicio, fim, 1), 2, async ([a, b]) => {
         await janela('auditoria', a, b, idUnico, async () => {
           const l = await buscarJanela('auditoria/index', { idCondominio: '-1' }, a, b, 100);
-          const linhas = l.filter(M.auditoriaRelevante).map((x) => M.auditoria(x, conds.fantasia))
-            .filter((x) => x.id_auditoria && x.dt_data && !(x.id_condominio && conds.fora.has(x.id_condominio))
-              && (!idUnico || x.id_condominio === idUnico));
+          const linhas = [];
+          l.filter(M.auditoriaRelevante).forEach((bruta) => {
+            const x = M.auditoria(bruta, conds.fantasia);
+            if (!x.id_auditoria || !x.dt_data) return;
+            const nome = M.chaveFantasia(bruta.st_fantasia_cond);
+            if (nome) {
+              // nome de cadastro excluído ou da Virtual Service: fora; nome desconhecido
+              // (cadastro inativo ou fora da lista): fora, porque não dá para saber de quem é
+              if (conds.nomesFora.has(nome) || NAO_CONDOMINIO.test(nome)) return;
+              if (!conds.fantasia.has(nome)) {
+                resumo.nomes_desconhecidos = resumo.nomes_desconhecidos || {};
+                resumo.nomes_desconhecidos[nome] = (resumo.nomes_desconhecidos[nome] || 0) + 1;
+                return;
+              }
+            }
+            if (x.id_despesa && despesaFora.has(x.id_despesa)) return;
+            if (!x.id_condominio && x.id_despesa && despesaParaCond.has(x.id_despesa)) x.id_condominio = despesaParaCond.get(x.id_despesa);
+            if (x.id_condominio && conds.fora.has(x.id_condominio)) return;
+            if (idUnico && x.id_condominio !== idUnico) return;
+            linhas.push(x);
+          });
           return { itens: l.length, gravados: await banco.upsert('fin_auditoria_sl', linhas, 'id_auditoria') };
         }, pular);
       });
@@ -228,7 +296,7 @@ function criarSync({ cliente, banco, log = () => {}, origem = 'script', usuario 
 
     await gravarDatasCondominios(conds.lista, tipos, inicio, fim, idUnico);
     resumo.duracao_s = Math.round((Date.now() - t0) / 1000);
-    await banco.inserir('fin_sync_log', { execucao, origem, usuario, tipo: 'execucao', janela_inicio: inicio, janela_fim: fim, id_condominio: idUnico, status: 'fim', itens: resumo.janelas_ok, gravados: resumo.janelas_erro, duracao_ms: Date.now() - t0 }).catch(() => false);
+    await banco.inserir('fin_sync_log', { execucao, origem, usuario, tipo: 'execucao', janela_inicio: inicio, janela_fim: fim, id_condominio: idUnico, status: 'fim', itens: resumo.janelas_ok + resumo.janelas_erro, duracao_ms: Date.now() - t0, erro: resumo.janelas_erro ? resumo.janelas_erro + ' janelas com erro' : null }).catch(() => false);
     log('fim: ' + JSON.stringify({ ...resumo, erros: resumo.erros.slice(0, 20) }));
     return resumo;
   }
@@ -253,21 +321,22 @@ function criarSync({ cliente, banco, log = () => {}, origem = 'script', usuario 
         if (!r) return;
         const pc = r.porCond.get(c.id_condominio);
         // tipos da carteira inteira (-1) valem para todos; cobranças valem por condomínio
-        const ok = t === 'cobrancas' ? !!pc && pc.ok === pc.total : r.ok === r.total;
+        const ok = POR_CONDOMINIO.has(t) ? !!pc && pc.ok === pc.total : r.ok === r.total;
         if (ok) {
           const antT = st[t] || {};
-          st[t] = { em, de: antT.de && antT.de < inicio ? antT.de : inicio, ate: antT.ate && antT.ate > fim ? antT.ate : fim };
+          st[t] = { em, ...juntarPeriodo(antT.de, antT.ate, inicio, fim) };
           algum = true;
         } else todos = false;
       });
-      const de = ant.sincronizado_de && ant.sincronizado_de < inicio ? ant.sincronizado_de : inicio;
-      const ate = ant.sincronizado_ate && ant.sincronizado_ate > fim ? ant.sincronizado_ate : fim;
+      // O período do condomínio só anda quando todos os tipos rodaram e deram certo.
+      const completo = algum && todos && TIPOS.every((t) => tipos.includes(t));
+      const p = completo ? juntarPeriodo(ant.sincronizado_de, ant.sincronizado_ate, inicio, fim) : { de: ant.sincronizado_de || null, ate: ant.sincronizado_ate || null };
       return {
         ...c,
         sync_tipos: st,
         ultima_sincronizacao: algum ? em : (ant.ultima_sincronizacao || null),
-        sincronizado_de: todos && algum ? de : (ant.sincronizado_de || null),
-        sincronizado_ate: todos && algum ? ate : (ant.sincronizado_ate || null),
+        sincronizado_de: p.de,
+        sincronizado_ate: p.ate,
         atualizado_em: em,
       };
     });
