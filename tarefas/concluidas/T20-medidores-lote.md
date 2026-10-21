@@ -18,8 +18,8 @@ Nenhum texto de tela cita IA nem fornecedor (scripts/conferir-textos-publicos.js
 scripts/teste-consumo-lote.js: 44 ok.
 Local com as variáveis do dev: 4 fotos (3 geradas e 1 real com dois medidores) lidas certo; 999 TESTE HUB casada pela etiqueta; condomínio 2 só leitura com as suspeitas certas; lançamento no 2 recusado 423; no 167 unidade 41565: leitura 123,45 lançada com foto (arquivo 656808) e conferida, repetição sem substituir recusada 409, troca para 123,5 com PUT conferida.
 
-## Modelo (pedido do Matheus 21/10, acerto acima de custo)
-Comparação com 61 fotos reais de água e gás (EXECUCAO/testes/T20/modelos.md). Primeira leitura com sonnet 5.5 (cerca de 70% exato contra 40% do modelo anterior), foto de 800 px; foto marcada na conferência é relida com opus 5.5. Custo estimado R$ 7,20 por 100 fotos; opção mais barata pelas variáveis (cerca de R$ 4). Nenhuma leitura errada passou sem suspeita.
+## Modelo (pedidos do Matheus 21/10: mais assertivo, depois acima de 70% e mais barato)
+Comparação com 61 fotos reais de água e gás (EXECUCAO/testes/T20/modelos.md). Primeira leitura com sonnet 5.5 esforço baixo, foto de 800 px; foto marcada na conferência é relida uma vez com sonnet 5.5 padrão e a leitura anterior da unidade como referência (linha vem desmarcada, com aviso). Cerca de 78 a 81% exato (antes 40%), R$ 5,10 por 100 fotos, nenhum erro sem suspeita.
 
 ## Para o Matheus
 Apagar no 167: leitura de água de outubro/2026 da unidade 41565 (123,5) e o arquivo 656808.

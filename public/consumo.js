@@ -168,7 +168,7 @@
         it.conf = o;
         if (!it.escolhida) it.id_unidade = o.id_unidade || null;
         // Marca para lançar só o que não tem suspeita; com suspeita, quem decide é o leiturista.
-        if (!antes || antes.suspeitas.length !== o.suspeitas.length) it.lancar = !o.suspeitas.length && !!o.id_unidade && o.leitura != null;
+        if (!antes || antes.suspeitas.length !== o.suspeitas.length) it.lancar = !o.suspeitas.length && !!o.id_unidade && o.leitura != null && !it.comReferencia;
       });
     } catch (e) { toast('Falha de conexão ao conferir.', 'err'); }
     render();
@@ -193,13 +193,16 @@
         try {
           const r = await apiAuthFetch('/api/processar/medidor', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ arquivo: { mime: 'image/jpeg', base64: it.b64 }, reforco: true }),
+            body: JSON.stringify({ arquivo: { mime: 'image/jpeg', base64: it.b64 }, reforco: true,
+              contexto: it.conf && it.conf.anterior != null ? { anterior: it.conf.anterior, media: it.conf.media } : undefined }),
           });
           const d = await lerJson(r);
           if (r.ok && !it.editada) {
             if (d.leitura && d.leitura !== 'ilegível') it.leitura = String(d.leitura);
             if (!it.escolhida && d.unidade && !it.unidadeTxt) { it.unidadeTxt = d.unidade; it.blocoTxt = d.bloco || it.blocoTxt; }
             if (d.varios_medidores) it.varios = true;
+            // Lida com a leitura anterior como referência: o leiturista confere a foto antes de lançar.
+            if (d.com_referencia) it.comReferencia = true;
           }
         } catch (e) { /* fica a primeira leitura */ }
         it.reforcado = true; it.status = 'lida'; it.conf = null;
@@ -232,7 +235,7 @@
         : (it.erro ? '<span class="consumo-chip err">' + esc(it.erro) + '</span>' : '') +
           o.suspeitas.map((s) => '<span class="consumo-chip warn">' + esc(s.texto) + '</span>').join('') +
           (o.avisos || []).map((a) => '<span class="consumo-chip">' + esc(a) + '</span>').join('') +
-          (it.reforcado ? '<span class="consumo-chip">Foto lida duas vezes</span>' : '') +
+          (it.reforcado ? '<span class="consumo-chip' + (it.comReferencia ? ' warn' : '') + '">' + (it.comReferencia ? 'Foto lida de novo com a leitura anterior como referência: confira a foto antes de marcar' : 'Foto lida duas vezes') + '</span>' : '') +
           (!o.suspeitas.length && !it.erro && it.conf ? '<span class="consumo-chip ok">Sem suspeita</span>' : '');
       // Mês seguinte já lançado: o servidor sempre recusa, então nem deixa marcar.
       const bloqueada = o.suspeitas.some((s) => s.codigo === 'mes_seguinte_lancado');

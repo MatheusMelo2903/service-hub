@@ -147,11 +147,31 @@ async function processarMedidor(corpo, usuario) {
   if (!bloco) return { status: 400, corpo: { erro: 'arquivo_invalido', detalhe: 'Envie a foto do medidor (JPG, PNG ou WEBP).' } };
   // Segunda leitura (reforco): só para foto que a conferência marcou (ilegível, menor que a
   // anterior ou salto), com a configuração mais cuidadosa.
-  const cfg = corpo.reforco === true ? MEDIDOR_REFORCO : MEDIDOR_PRIMEIRA;
-  const r = await chamarModelo({ modelo: cfg.modelo, esforco: cfg.esforco, maxTokens: cfg.maxTokens, rotulo: corpo.reforco === true ? 'medidor_reforco' : 'medidor', usuario,
-    content: [bloco, { type: 'text', text: MEDIDOR_PEDIDO }] });
+  const reforco = corpo.reforco === true;
+  const cfg = reforco ? MEDIDOR_REFORCO : MEDIDOR_PRIMEIRA;
+  // Na releitura, a leitura anterior e a média da unidade (vindas da conferência) ajudam a
+  // desempatar algarismo ambíguo. Só números; qualquer outra coisa é ignorada.
+  const ctx = reforco ? textoContexto(corpo.contexto) : '';
+  const r = await chamarModelo({ modelo: cfg.modelo, esforco: cfg.esforco, maxTokens: cfg.maxTokens, rotulo: reforco ? 'medidor_reforco' : 'medidor', usuario,
+    content: [bloco, { type: 'text', text: MEDIDOR_PEDIDO + (ctx ? '\n' + ctx : '') }] });
   if (!r.ok) return erroPadrao(r);
-  return { status: 200, corpo: Object.assign(lerRespostaMedidor(r.texto), { reforco: corpo.reforco === true }) };
+  return { status: 200, corpo: Object.assign(lerRespostaMedidor(r.texto), { reforco, com_referencia: !!ctx }) };
+}
+
+function numeroContexto(v) {
+  if (v == null || v === '' || typeof v === 'boolean') return null;
+  const n = typeof v === 'number' ? v : Number(String(v == null ? '' : v).replace(',', '.'));
+  return isFinite(n) && n >= 0 && n < 1e9 && String(v).length <= 20 ? Math.round(n * 1000) / 1000 : null;
+}
+function textoContexto(c) {
+  if (!c || typeof c !== 'object') return '';
+  const ant = numeroContexto(c.anterior);
+  if (ant == null) return '';
+  const med = numeroContexto(c.media);
+  const f = (n) => String(n).replace('.', ',');
+  return 'Conferência: a leitura do mês anterior deste medidor foi ' + f(ant) + (med ? ' e o consumo médio é de ' + f(Math.round(med * 100) / 100) + ' por mês' : '') + '. ' +
+    'Use isso SÓ para desempatar algarismo ambíguo na foto (6 ou 8, 1 ou 7, 3 ou 8, rolo girando, foto borrada). Não copie a leitura anterior: o número tem de ser o que a foto mostra. ' +
+    'Se a foto mostra com clareza um número diferente do esperado, responda o que a foto mostra. Se não der para ler, legivel false.';
 }
 
 // T20: além da leitura, a unidade e o bloco escritos na foto (etiqueta, placa ou caneta) e o
@@ -165,12 +185,12 @@ async function processarMedidor(corpo, usuario) {
 // Variáveis: MEDIDOR_MODELO e MEDIDOR_ESFORCO (primeira), MEDIDOR_MODELO_REFORCO e
 // MEDIDOR_ESFORCO_REFORCO (segunda); esforço vazio = padrão do modelo.
 const _esf = (v, padrao) => (v === undefined ? padrao : (['low', 'medium', 'high'].includes(v) ? v : undefined));
-// Padrão (pedido do Matheus 21/10: acerto acima de custo): primeira leitura sonnet 5.5 no esforço
-// padrão (70% exato, nenhum erro sem suspeita, cerca de R$ 4,90 por 100 fotos); releitura da
-// foto marcada com opus 5.5 (72% no total, cerca de R$ 7,20 por 100). Mais barato: MEDIDOR_ESFORCO=low
-// (65%, R$ 3,10) e MEDIDOR_MODELO_REFORCO=claude-sonnet-5-5.
-const MEDIDOR_PRIMEIRA = { modelo: process.env.MEDIDOR_MODELO || 'claude-sonnet-5-5', esforco: _esf(process.env.MEDIDOR_ESFORCO, undefined), maxTokens: 6000 };
-const MEDIDOR_REFORCO = { modelo: process.env.MEDIDOR_MODELO_REFORCO || 'claude-opus-5-5', esforco: _esf(process.env.MEDIDOR_ESFORCO_REFORCO, undefined), maxTokens: 6000 };
+// Padrão (comparação de 21/10 com 61 fotos reais, testes/T20/modelos.md): primeira leitura com
+// sonnet 5.5 no esforço baixo (65% exato, cerca de R$ 3,10 por 100 fotos); a foto marcada na
+// conferência é relida com sonnet 5.5 no esforço padrão e com a leitura anterior da unidade como
+// referência. Conjunto: cerca de 78% exato, R$ 5,10 por 100 fotos, nenhum erro sem suspeita.
+const MEDIDOR_PRIMEIRA = { modelo: process.env.MEDIDOR_MODELO || 'claude-sonnet-5-5', esforco: _esf(process.env.MEDIDOR_ESFORCO, 'low'), maxTokens: 6000 };
+const MEDIDOR_REFORCO = { modelo: process.env.MEDIDOR_MODELO_REFORCO || 'claude-sonnet-5-5', esforco: _esf(process.env.MEDIDOR_ESFORCO_REFORCO, undefined), maxTokens: 6000 };
 const MEDIDOR_PEDIDO = [
   'Foto de medidor de água ou gás de condomínio, tirada pelo leiturista. Leia o mostrador de rolos (números), não os ponteiros dos relógios pequenos.',
   'A foto pode estar girada ou de cabeça para baixo: gire mentalmente até os números ficarem em pé antes de ler. Confira se 6, 8, 9 e 0 não foram trocados.',
@@ -263,4 +283,4 @@ async function processarUnidades(corpo, usuario) {
   return { status: 200, corpo: lerLinhasUnidades(r.texto, r.cortado) };
 }
 
-module.exports = { processarEdital, processarMedidor, lerRespostaMedidor, processarUnidades, lerLinhasUnidades, montarConteudoUnidades, blocoArquivo };
+module.exports = { processarEdital, processarMedidor, lerRespostaMedidor, textoContexto, processarUnidades, lerLinhasUnidades, montarConteudoUnidades, blocoArquivo };
