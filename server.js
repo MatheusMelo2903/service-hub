@@ -3795,6 +3795,29 @@ function _dataISOparaDate(v) {
   return (d.getFullYear() === +m[1] && d.getMonth() === +m[2] - 1) ? d : null;
 }
 
+// GET /api/financeiro/boletos/:id?competencia=AAAA-MM[&forcar=1]  (T27, só leitura)
+// Conferência dos boletos do mês contra os 3 meses anteriores, antes de enviar.
+const finBoletos = require('./financeiro/boletos');
+const _cacheBoletos = slModulo.consulta.criarCache(5 * 60 * 1000, 50, 120000);
+app.get('/api/financeiro/boletos/:idSuperlogica', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (finBoletos.NAO_CONDOMINIOS.has(id)) return res.status(400).json({ erro: 'nao_condominio', detalhe: 'Esse cadastro não é um condomínio.' });
+  const competencia = String(req.query.competencia || '');
+  if (!finBoletos.competenciaValida(competencia)) return res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Informe a competência no formato AAAA-MM.' });
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  if (!(await _exigirCarteira(req, res, id))) return;
+  const chave = id + '|' + competencia;
+  if (req.query.forcar === '1') _cacheBoletos.limpar(chave);
+  try {
+    res.json(await _cacheBoletos.pegar(chave, () => finBoletos.conferirBoletos(clienteSL(), id, competencia)));
+  } catch (e) {
+    console.warn('[boletos] ' + id + ' ' + competencia + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler os boletos deste condomínio agora.' });
+  }
+});
+
 // GET /api/cobranca/condominio/:id[?forcar=1]
 app.get('/api/cobranca/condominio/:idSuperlogica', requireAuth, async (req, res) => {
   res.set('Cache-Control', 'no-store');
