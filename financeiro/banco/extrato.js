@@ -54,13 +54,14 @@ function normalizarExtratoSicoob(resposta) {
   const lista = (raiz && (raiz.transacoes || raiz.lancamentos || raiz.movimentos)) || (Array.isArray(raiz) ? raiz : []);
   const avisos = [];
   const itens = [];
+  let deduzidos = 0;
   lista.forEach((t, i) => {
     const bruto = C.centavos(primeiro(t, ['valor', 'valorLancamento', 'vlLancamento']));
     const td = tipoDe(primeiro(t, ['tipo', 'tipoLancamento', 'natureza', 'creditoDebito']), bruto);
     const tipo = td.tipo;
     const data = C.dataQualquer(primeiro(t, ['data', 'dataLancamento', 'dataMovimento', 'dataLote']), { formatoBR: true });
     if (bruto === null || !tipo || !data) { avisos.push('transação ' + (i + 1) + ' ' + (td.aviso || 'sem valor, tipo ou data') + '; ignorada'); return; }
-    if (td.aviso) avisos.push('transação ' + (i + 1) + ': ' + td.aviso);
+    if (td.aviso) { avisos.push('transação ' + (i + 1) + ': ' + td.aviso); deduzidos++; }
     const descricao = limpa([primeiro(t, ['descricao', 'historico', 'descricaoHistorico']), primeiro(t, ['descInfComplementar', 'complemento', 'informacaoComplementar'])].filter(Boolean).join(' '), 200);
     const documento = limpa(primeiro(t, ['numeroDocumento', 'documento', 'nrDocumento']), 40);
     itens.push({ data, tipo, centavos: Math.abs(bruto), descricao, documento, seq: i });
@@ -70,6 +71,7 @@ function normalizarExtratoSicoob(resposta) {
     saldoAtualCentavos: C.centavos(primeiro(raiz, ['saldoAtual', 'saldoFinal'])),
     itens: comIds(itens, 'sicoob_api'),
     avisos,
+    tiposDeduzidos: deduzidos,
   };
   ext.conferencia = conferirSaldos(ext);
   if (ext.conferencia.fecha === false) ext.avisos.push('saldo anterior mais créditos menos débitos não fecha com o saldo atual');
@@ -130,6 +132,8 @@ const sinal = (cent, dc) => (cent === null ? null : dc === 'D' ? -cent : cent);
 function exigirFechado(ext, permitirSemFechar) {
   const conf = ext.conferencia || conferirSaldos(ext);
   if (conf.fecha === false && !permitirSemFechar) throw new Error('extrato_nao_fecha');
+  // Tipo deduzido pelo sinal sem saldo para conferir: não dá para saber se um débito virou crédito.
+  if (conf.fecha === null && ext.tiposDeduzidos && !permitirSemFechar) throw new Error('extrato_sem_conferencia');
 }
 
 function paraConciliacao(ext, { idCondominio, idConta, origem, permitirSemFechar } = {}) {
@@ -172,8 +176,7 @@ const valOfx = (cent) => (cent < 0 ? '-' : '') + (Math.abs(cent) / 100).toFixed(
 // Recusa extrato cujo saldo não fecha (salvo permitirSemFechar), para não importar extrato quebrado.
 function paraOFX(ext, { banco = '756', agencia = '', conta = '', tipoConta = 'CHECKING', geradoEm, dataSaldo, permitirSemFechar } = {}) {
   if (!ext.itens.length) throw new Error('extrato_vazio');
-  const conf = ext.conferencia || conferirSaldos(ext);
-  if (conf.fecha === false && !permitirSemFechar) throw new Error('extrato_nao_fecha');
+  exigirFechado(ext, permitirSemFechar);
   const datas = ext.itens.map((i) => i.data).sort();
   const agora = geradoEm || new Date().toISOString().slice(0, 10);
   const trn = ext.itens.map((i) => [

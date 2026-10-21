@@ -231,6 +231,9 @@ const DESPESAS = [
     assert(E.paraOFX(ruim, { permitirSemFechar: true }).includes('<TRNAMT>9.99'));
     assert.throws(() => E.paraItensT35(ruim), /extrato_nao_fecha/);
     assert.throws(() => E.paraConciliacao(ruim), /extrato_nao_fecha/);
+    const semSaldo = E.normalizarExtratoSicoob({ transacoes: [{ valor: '7.00', data: '2026-10-01' }] });
+    ['paraOFX', 'paraItensT35', 'paraConciliacao'].forEach((f) => assert.throws(() => E[f](semSaldo), /extrato_sem_conferencia/));
+    assert.strictEqual(E.paraItensT35(semSaldo, { permitirSemFechar: true }).length, 1);
     const conflito = E.normalizarExtratoSicoob({ transacoes: [{ tipo: 'C', valor: '-5.00', data: '2026-10-01' }, { valor: '7.00', data: '2026-10-01' }] });
     assert.strictEqual(conflito.itens.length, 1, 'crédito negativo ignorado');
     assert(conflito.avisos.some((a) => /crédito com valor negativo/.test(a)) && conflito.avisos.some((a) => /deduzido/.test(a)));
@@ -412,6 +415,14 @@ const DESPESAS = [
       assert.strictEqual(rp.situacao, 'confere');
       assert.strictEqual(rp.despesa.id_parcela, 80);
       assert.strictEqual(c.resultados.find((r) => r.situacao === 'rejeitado').achados.length, 0);
+    });
+    // Boleto da parcela 80 rejeitado e a conta paga por TED com seu número 80: a TED fica com a 80.
+    const tedPaga = mk({ segmento: 'A', codigo_barras: null, valor_pago_centavos: 10000, data_efetiva: '2026-10-11', seu_numero: '80' });
+    [[rejMesmo, tedPaga], [tedPaga, rejMesmo]].forEach((ordem) => {
+      const c = R.conferirPagamentos(ordem, despCb);
+      const rt = c.resultados.find((r) => r.segmento === 'A');
+      assert.strictEqual(rt.despesa.id_parcela, 80);
+      assert.strictEqual(c.resultados.find((r) => r.situacao === 'rejeitado').despesa, null);
     });
     const cr = R.conferirPagamentos([rej], [{ ...desp[0], st_codigobarras_pdes: CB2 }]);
     assert.strictEqual(cr.resultados[0].achados.length, 0);

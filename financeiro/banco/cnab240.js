@@ -193,37 +193,43 @@ function conferirPagamentos(retornoOuLista, despesas, opcoes) {
   const pendentes = (fn) => pags.map((p, i) => [p, i]).filter(([p, i]) => !casou.has(i) && fn(p))
     .sort((x, y) => (y[0].efetivado ? 1 : 0) - (x[0].efetivado ? 1 : 0) || x[1] - y[1]);
 
-  // Fase 1: código de barras.
-  for (const [p, i] of pendentes((x) => !!x.codigo_barras)) {
-    let iguais = livres((d) => d.codigo_barras === p.codigo_barras);
-    if (iguais.length > 1) {
-      const mesmoValor = iguais.filter(([d]) => d.valor_centavos === p.valor_pago_centavos || d.valor_centavos === p.valor_titulo_centavos);
-      if (mesmoValor.length === 1) iguais = mesmoValor;
+  // Todas as fases primeiro com os efetivados; depois fases 1 e 2 com os não efetivados. Assim uma
+  // tentativa rejeitada nunca toma a despesa de um pagamento efetivado, em nenhuma fase.
+  const fases = (grupo) => {
+    // Fase 1: código de barras.
+    for (const [p, i] of pendentes((x) => !!x.efetivado === grupo && !!x.codigo_barras)) {
+      let iguais = livres((d) => d.codigo_barras === p.codigo_barras);
+      if (iguais.length > 1) {
+        const mesmoValor = iguais.filter(([d]) => d.valor_centavos === p.valor_pago_centavos || d.valor_centavos === p.valor_titulo_centavos);
+        if (mesmoValor.length === 1) iguais = mesmoValor;
+      }
+      if (iguais.length === 1) { usadas.add(iguais[0][1]); casou.set(i, { idx: iguais[0][1], como: 'codigo_barras' }); }
+      else if (iguais.length > 1) casou.set(i, { ambiguo: iguais.map(([d]) => d.id_parcela), como: 'codigo_barras' });
     }
-    if (iguais.length === 1) { usadas.add(iguais[0][1]); casou.set(i, { idx: iguais[0][1], como: 'codigo_barras' }); }
-    else if (iguais.length > 1) casou.set(i, { ambiguo: iguais.map(([d]) => d.id_parcela), como: 'codigo_barras' });
-  }
-  // Fase 2: seu número inteiramente numérico.
-  for (const [p, i] of pendentes((x) => /^\d+$/.test(String(x.seu_numero || '').trim()))) {
-    const sn = String(p.seu_numero).trim().replace(/^0+/, '');
-    if (!sn) continue;
-    let iguais = livres((d) => String(d.id_parcela) === sn);
-    let como = 'seu_numero_parcela';
-    if (!iguais.length) { iguais = livres((d) => String(d.id_despesa) === sn); como = 'seu_numero_despesa'; }
-    if (iguais.length === 1) { usadas.add(iguais[0][1]); casou.set(i, { idx: iguais[0][1], como }); }
-    else if (iguais.length > 1) casou.set(i, { ambiguo: iguais.map(([d]) => d.id_parcela), como });
-  }
-  // Fase 3: valor e data, só efetivados.
-  for (const [p, i] of pendentes((x) => x.efetivado)) {
-    const cands = livres((d) => {
-      if (d.valor_centavos === null) return false;
-      if (d.valor_centavos !== p.valor_pago_centavos && d.valor_centavos !== p.valor_titulo_centavos) return false;
-      const dist = C.diasEntre(d.liquidacao || d.vencimento, p.data_efetiva);
-      return dist !== null && Math.abs(dist) <= o.toleranciaDias;
-    });
-    if (cands.length === 1) { usadas.add(cands[0][1]); casou.set(i, { idx: cands[0][1], como: 'valor_e_data' }); }
-    else if (cands.length > 1) casou.set(i, { ambiguo: cands.map(([d]) => d.id_parcela), como: 'valor_e_data' });
-  }
+    // Fase 2: seu número inteiramente numérico.
+    for (const [p, i] of pendentes((x) => !!x.efetivado === grupo && /^\d+$/.test(String(x.seu_numero || '').trim()))) {
+      const sn = String(p.seu_numero).trim().replace(/^0+/, '');
+      if (!sn) continue;
+      let iguais = livres((d) => String(d.id_parcela) === sn);
+      let como = 'seu_numero_parcela';
+      if (!iguais.length) { iguais = livres((d) => String(d.id_despesa) === sn); como = 'seu_numero_despesa'; }
+      if (iguais.length === 1) { usadas.add(iguais[0][1]); casou.set(i, { idx: iguais[0][1], como }); }
+      else if (iguais.length > 1) casou.set(i, { ambiguo: iguais.map(([d]) => d.id_parcela), como });
+    }
+    // Fase 3: valor e data, só efetivados.
+    if (grupo) for (const [p, i] of pendentes((x) => x.efetivado)) {
+      const cands = livres((d) => {
+        if (d.valor_centavos === null) return false;
+        if (d.valor_centavos !== p.valor_pago_centavos && d.valor_centavos !== p.valor_titulo_centavos) return false;
+        const dist = C.diasEntre(d.liquidacao || d.vencimento, p.data_efetiva);
+        return dist !== null && Math.abs(dist) <= o.toleranciaDias;
+      });
+      if (cands.length === 1) { usadas.add(cands[0][1]); casou.set(i, { idx: cands[0][1], como: 'valor_e_data' }); }
+      else if (cands.length > 1) casou.set(i, { ambiguo: cands.map(([d]) => d.id_parcela), como: 'valor_e_data' });
+    }
+  };
+  fases(true);
+  fases(false);
 
   const resultados = pags.map((p, i) => {
     const ref = refPagamento(p);
