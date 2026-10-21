@@ -9,6 +9,7 @@
 //     dos meses anteriores e variação); alerta de alta forte e de queda forte por unidade.
 // Cada alerta tem chave estável e detalhe.resumo (texto pronto para a tela).
 
+const crypto = require('crypto');
 const POR_PAGINA = 50;
 const doisDig = (n) => String(n).padStart(2, '0');
 const dataSL = (d) => doisDig(d.getMonth() + 1) + '/' + doisDig(d.getDate()) + '/' + d.getFullYear();
@@ -26,15 +27,15 @@ const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'o
 
 // Pagamentos que normalmente não têm nota fiscal (folha, encargos, impostos, tarifas):
 // ficam fora do alerta de nota fiscal. Comparação sem acento na descrição da conta.
-const SEM_NF = /(salari|ferias|13o|13º|decimo|adiantamento|inss|fgts|darf|irrf|\biss\b|\bpis\b|cofins|csll|rescis|vale.?transporte|vale.?alimenta|cesta basica|tarifa|juros|multa|imposto|iof|pro.?labore|contribuicao sindical|seguro|taxa de lixo|iptu|devolu|reembolso|transferencia|aplicacao|resgate)/;
+const SEM_NF = /(salari|ferias|13o|13º|decimo|adiantamento|inss|fgts|darf|irrf|\biss\b|\bpis\b|cofins|csll|rescis|vale.?transporte|vale.?alimenta|vale.?refeic|cesta basica|tarifa|juros|multa|imposto|iof|pro.?labore|contribuicao (sindical|assistencial|confederativa)|encargos sociais|gratificac|hora extra|\bgps\b|esocial|pensao|seguro|taxa de lixo|iptu|devolu|reembolso|transferencia|aplicacao financeira|resgate)/;
 
 // Manutenções periódicas. prazo_dias: prazo de referência (usual de mercado; a periodicidade
 // real depende do contrato e da legislação municipal, por isso aparece no texto do alerta).
 const MANUTENCOES = [
   { tipo: 'dedetizacao', nome: 'Dedetização', re: /(dedetiz|desinsetiz|descupiniz|desratiz|controle de pragas)/, prazo_dias: 180 },
   { tipo: 'extintores', nome: 'Recarga de extintores', re: /extintor/, prazo_dias: 365 },
-  { tipo: 'caixa_dagua', nome: "Limpeza de caixa d'água", re: /(caixa d.?agua|reservatorio)/, prazo_dias: 180 },
-  { tipo: 'elevador', nome: 'Manutenção de elevador', re: /elevador/, prazo_dias: 45 },
+  { tipo: 'caixa_dagua', nome: "Limpeza de caixa d'água", re: /((limpeza|higieniz|lavagem|manutencao)[^,]{0,30}(caixa d(e |.)?agua|reservatorio)|(caixa d(e |.)?agua|reservatorio)[^,]{0,30}(limpeza|higieniz|lavagem))/, prazo_dias: 180 },
+  { tipo: 'elevador', nome: 'Manutenção de elevador', re: /(manutencao|contrato|conservacao)[^,]{0,30}elevador/, prazo_dias: 45 },
 ];
 const TOLERANCIA_DIAS = 15;
 
@@ -50,6 +51,7 @@ async function paginas(cliente, rota, params, max) {
     if (!Array.isArray(j) || !j.length) break;
     j.forEach((x) => out.push(x));
     if (j.length < POR_PAGINA) break;
+    if (pg === max) out.cortado = true; // há mais páginas: quem chamou avisa em falhas
   }
   return out;
 }
@@ -65,11 +67,23 @@ async function emParalelo(itens, n, fn) {
 async function pagasUltimosMeses(cliente, id, h) {
   const meses = [];
   for (let k = 18; k >= 0; k--) meses.push(new Date(h.getFullYear(), h.getMonth() - k, 1));
-  const res = await emParalelo(meses, 4, (ini) => {
+  const res = await emParalelo(meses, 2, (ini) => {
     const fim = new Date(ini.getFullYear(), ini.getMonth() + 1, 0);
     return paginas(cliente, 'despesas/index', { idCondominio: id, comStatus: 'liquidadas', filtrarpor: 'liquidacao', dtInicio: dataSL(ini), dtFim: dataSL(fim > h ? h : fim) }, 12);
   });
-  return [].concat(...res).filter((d) => String(d.fl_liquidado_pdes) === '1');
+  const cortado = res.some((r) => r.cortado);
+  // Guarda só o que as regras usam (o histórico inteiro pesaria na memória do servidor).
+  const enxuto = [].concat(...res).filter((d) => String(d.fl_liquidado_pdes) === '1').map((d) => {
+    const apro = Array.isArray(d.apropriacao) ? d.apropriacao : [];
+    return {
+      id: String(d.id_parcela_pdes || d.id_despesa_des || ''),
+      dt_liquidacao_pdes: d.dt_liquidacao_pdes, vl_valor_pdes: d.vl_valor_pdes, st_nome_con: limpar(d.st_nome_con),
+      conta: apro.map((a) => limpar(a.st_descricao_cont)).filter(Boolean).join(', '),
+      texto: textoDespesa(d), nf: temNotaFiscal(d),
+    };
+  });
+  enxuto.cortado = cortado;
+  return enxuto;
 }
 
 function textoDespesa(d) {
@@ -80,37 +94,36 @@ function textoDespesa(d) {
 }
 function temNotaFiscal(d) {
   return (Array.isArray(d.arquivos) ? d.arquivos : []).some((a) =>
-    !limpar(a.fl_excluido_arq) && (
+    String(a.fl_excluido_arq) !== '1' && (
       /doc\.?\s*fiscal/i.test(a.st_nomeabreviadoetiqueta_eti || '') ||
       (Array.isArray(a.etiquetas) ? a.etiquetas : []).some((e) => /doc\.?\s*fiscal/i.test(e.st_nomeabreviadoetiqueta_eti || ''))));
 }
 
+// Pagamentos do mês atual e dos dois meses anteriores (meses inteiros: o número de um mês não
+// muda com o passar dos dias). A chave leva um resumo das parcelas: entrou pagamento novo sem
+// nota no mesmo mês, o alerta volta mesmo que o anterior tenha sido marcado resolvido.
 function alertasNotaFiscal(pagas, h) {
-  const desde = new Date(h); desde.setDate(h.getDate() - 60);
+  const desde = new Date(h.getFullYear(), h.getMonth() - 2, 1);
   const porMes = new Map();
   pagas.forEach((d) => {
     const dl = dataDe(d.dt_liquidacao_pdes);
     if (!dl || dl < desde || dl > h) return;
-    const apro = Array.isArray(d.apropriacao) ? d.apropriacao : [];
-    const descConta = semAcento(apro.map((a) => a.st_descricao_cont).join(' '));
-    if (SEM_NF.test(descConta) || temNotaFiscal(d)) return;
+    if (SEM_NF.test(semAcento(d.conta)) || d.nf) return;
     const k = dl.getFullYear() + doisDig(dl.getMonth() + 1);
     if (!porMes.has(k)) porMes.set(k, []);
-    porMes.get(k).push({
-      fornecedor: limpar(d.st_nome_con) || 'fornecedor', pago_em: br(dl), valor: cent(num(d.vl_valor_pdes)),
-      descricao: apro.map((a) => limpar(a.st_descricao_cont)).filter(Boolean).join(', '),
-    });
+    porMes.get(k).push({ id: d.id, fornecedor: d.st_nome_con || 'fornecedor', pago_em: br(dl), valor: cent(num(d.vl_valor_pdes)), descricao: d.conta });
   });
   return [...porMes].map(([k, itens]) => {
     itens.sort((a, b) => b.valor - a.valor);
     const total = cent(itens.reduce((s, x) => s + x.valor, 0));
     const mes = MESES[+k.slice(4) - 1] + '/' + k.slice(0, 4);
+    const assinatura = crypto.createHash('sha1').update(itens.map((x) => x.id).sort().join(',')).digest('hex').slice(0, 10);
     return {
-      chave: 'semnf:' + k,
+      chave: 'semnf:' + k + ':' + assinatura,
       tipo: 'sem_nota_fiscal',
       titulo: itens.length + ' pagamento' + (itens.length > 1 ? 's' : '') + ' de ' + mes + ' sem nota fiscal anexada',
       detalhe: {
-        mes, quantidade: itens.length, total, itens: itens.slice(0, 30),
+        mes, quantidade: itens.length, total, itens: itens.slice(0, 30).map((x) => ({ fornecedor: x.fornecedor, pago_em: x.pago_em, valor: x.valor, descricao: x.descricao })),
         resumo: brl(total) + ' · ' + itens.slice(0, 3).map((x) => x.fornecedor + ' ' + brl(x.valor)).join(' · ') + (itens.length > 3 ? ' · e mais ' + (itens.length - 3) : ''),
       },
     };
@@ -122,7 +135,7 @@ function alertasManutencao(pagas, h) {
   MANUTENCOES.forEach((m) => {
     let ultima = null, ultimaD = null;
     pagas.forEach((d) => {
-      if (!m.re.test(textoDespesa(d))) return;
+      if (!m.re.test(d.texto)) return;
       const dl = dataDe(d.dt_liquidacao_pdes);
       if (dl && (!ultima || dl > ultima)) { ultima = dl; ultimaD = d; }
     });
@@ -136,8 +149,8 @@ function alertasManutencao(pagas, h) {
       titulo: m.nome + ' sem pagamento há ' + dias + ' dias',
       detalhe: {
         manutencao: m.nome, ultimo_pagamento: br(ultima), dias, prazo_referencia_dias: m.prazo_dias,
-        fornecedor: limpar(ultimaD.st_nome_con), valor: cent(num(ultimaD.vl_valor_pdes)),
-        resumo: 'último pagamento ' + br(ultima) + (limpar(ultimaD.st_nome_con) ? ' (' + limpar(ultimaD.st_nome_con) + ')' : '')
+        fornecedor: ultimaD.st_nome_con, valor: cent(num(ultimaD.vl_valor_pdes)),
+        resumo: 'último pagamento ' + br(ultima) + (ultimaD.st_nome_con ? ' (' + ultimaD.st_nome_con + ')' : '')
           + '; referência: a cada ' + (meses >= 2 ? meses + ' meses' : m.prazo_dias + ' dias') + ', conferir o contrato',
       },
     });
@@ -148,8 +161,13 @@ function alertasManutencao(pagas, h) {
 async function alertasConsumo(cliente, id, h) {
   const out = [];
   for (const tipo of [1, 2]) {
-    const j = await cliente.get('consumo/index', { tipoLeitura: tipo, idCondominio: id, posicaoEm: dataSL(h) });
+    // consumo/index devolve todas as unidades de uma vez (medido: 765 unidades sem paginação).
+    // Erro 4xx = condomínio sem esse tipo de leitura: não é falha.
+    let j = [];
+    try { j = await cliente.get('consumo/index', { tipoLeitura: tipo, idCondominio: id, posicaoEm: dataSL(h) }); }
+    catch (e) { if (e && e.status >= 400 && e.status < 500) j = []; else throw e; }
     (Array.isArray(j) ? j : []).forEach((u) => {
+      if (!u || !u.id_unidade_uni) return;
       const lt = u.leituras || {};
       const c = lt.consumo || {};
       if (String(c.status) === '-1' || c.consumo_atual === undefined) return;
@@ -168,7 +186,7 @@ async function alertasConsumo(cliente, id, h) {
         detalhe: {
           unidade: uni, tipo_leitura: tipo, mes: MESES[+ref.slice(4) - 1] + '/' + ref.slice(0, 4),
           consumo: atual, media: Math.round(media * 1000) / 1000, variacao_pct: varp, meses_media: num(c.meses),
-          resumo: 'mês ' + fmt(atual) + ' contra média de ' + fmt(media) + ' (' + (varp > 0 ? '+' : '') + String(varp).replace('.', ',') + '%)'
+          resumo: 'mês ' + fmt(atual) + ' contra média de ' + fmt(media) + ' (' + (varp > 0 ? 'alta' : 'queda') + ' de ' + String(Math.abs(varp)).replace('.', ',') + '%)'
             + (alta ? '; possível vazamento ou leitura errada' : '; possível medidor parado ou leitura errada'),
         },
       });
@@ -177,25 +195,41 @@ async function alertasConsumo(cliente, id, h) {
   return out;
 }
 
-// Cache do histórico de 19 meses por condomínio (muda pouco no dia).
-const _cacheHist = new Map();
-async function calcularOperacionais(cliente, id, hoje) {
+// Cache do histórico de 19 meses por condomínio (muda pouco no dia). Guarda a leitura em
+// andamento: duas abas abertas não leem o histórico duas vezes.
+const _cacheHist = new Map(); // chave -> { ate, p }
+function historico(cliente, id, h, forcar) {
+  const chave = id + ':' + dataSL(h);
+  const c = _cacheHist.get(chave);
+  if (c && (c.ate > Date.now() || c.andamento) && !(forcar && !c.andamento)) return c.p;
+  const p = pagasUltimosMeses(cliente, id, h);
+  const reg = { ate: 0, p, andamento: true };
+  _cacheHist.set(chave, reg);
+  p.then(() => { reg.andamento = false; reg.ate = Date.now() + 3 * 3600 * 1000; },
+         () => { if (_cacheHist.get(chave) === reg) _cacheHist.delete(chave); });
+  if (_cacheHist.size > 200) _cacheHist.delete(_cacheHist.keys().next().value);
+  return p;
+}
+
+// tetoMs: passado o tempo, devolve o que tiver (o histórico continua lendo em segundo plano e
+// fica no cache para a próxima abertura); os alertas da T05 não esperam por ele.
+async function calcularOperacionais(cliente, id, hoje, { forcar = false, tetoMs = 25000 } = {}) {
   const h = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
   const falhas = [];
-  const chave = id + ':' + dataSL(h);
-  let pagas = null;
-  const c = _cacheHist.get(chave);
-  if (c && c.ate > Date.now()) pagas = c.v;
-  else {
-    try {
-      pagas = await pagasUltimosMeses(cliente, id, h);
-      _cacheHist.set(chave, { ate: Date.now() + 3 * 3600 * 1000, v: pagas });
-      if (_cacheHist.size > 200) _cacheHist.delete(_cacheHist.keys().next().value);
-    } catch (e) { falhas.push('histórico de pagamentos (nota fiscal e manutenções)'); }
-  }
-  let consumo = [];
-  try { consumo = await alertasConsumo(cliente, id, h); } catch (e) { falhas.push('consumo'); }
-  const alertas = [].concat(pagas ? alertasNotaFiscal(pagas, h) : [], pagas ? alertasManutencao(pagas, h) : [], consumo);
+  const ESGOTOU = {};
+  let timer;
+  const teto = new Promise((ok) => { timer = setTimeout(() => ok(ESGOTOU), tetoMs); });
+  const [pagas, consumo] = await Promise.all([
+    Promise.race([historico(cliente, id, h, forcar).catch(() => null), teto]),
+    Promise.race([alertasConsumo(cliente, id, h).catch(() => null), teto]),
+  ]);
+  clearTimeout(timer);
+  if (pagas === ESGOTOU) falhas.push('histórico de pagamentos ainda carregando (nota fiscal e manutenções); atualize em instantes');
+  else if (pagas === null) falhas.push('histórico de pagamentos (nota fiscal e manutenções)');
+  else if (pagas.cortado) falhas.push('histórico de pagamentos cortado (mês com despesas demais)');
+  if (consumo === ESGOTOU || consumo === null) falhas.push('consumo');
+  const ok = Array.isArray(pagas);
+  const alertas = [].concat(ok ? alertasNotaFiscal(pagas, h) : [], ok ? alertasManutencao(pagas, h) : [], Array.isArray(consumo) ? consumo : []);
   return { alertas, falhas };
 }
 
