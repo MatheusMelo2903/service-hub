@@ -47,7 +47,49 @@ function goToMapping() {
   setTabByName('tab-mapeamento');
 }
 
-function validateAndPreview() {
+// ============================================================
+// CHECAGEM NO SUPERLÓGICA ANTES DO ENVIO (T05)
+// Duplicata (mesmo fornecedor, valor, vencimento e documento, já lançada no Superlógica ou
+// repetida na planilha) e fornecedor que não existe. Linha com problema fica bloqueada.
+// ============================================================
+async function despesasVerificarNoSuperlogica(linhas) {
+  const cond = getCondominioAtivo();
+  if (!cond || !cond.id_superlogica) throw new Error('Selecione um condomínio com código do Superlógica');
+  const r = await apiAuthFetch('/api/despesas/verificar', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id_superlogica: cond.id_superlogica,
+      linhas: linhas.map(l => ({ linha: l._row, fornecedor_id: l.ID_CONTATO_CON, vencimento: l.DT_VENCIMENTO_PDES, valor: l.VL_VALOR_PDES, documento: l.ST_DOCUMENTO_DES || '' })),
+    }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+  return j;
+}
+
+// Marca nas linhas o resultado da checagem. Devolve quantas ficaram bloqueadas.
+function despesasAplicarChecagem(rows, chk) {
+  const porLinha = new Map(rows.map(r => [r._row, r]));
+  let bloqueadas = 0;
+  const add = (r, msg) => { if (!r._erros.includes(msg)) r._erros.push(msg); };
+  (chk.duplicadas || []).forEach(d => {
+    const r = porLinha.get(d.linha); if (!r) return;
+    add(r, d.origem === 'planilha'
+      ? 'Repetida na planilha (igual à linha ' + d.igual_a_linha + ')'
+      : 'Já lançada no Superlógica (despesa ' + (d.id_despesa || '') + ', venc. ' + d.vencimento + (d.paga ? ', paga' : '') + ')');
+    if (r._valido) bloqueadas++;
+    r._valido = false;
+  });
+  (chk.fornecedor_inexistente || []).forEach(f => {
+    const r = porLinha.get(f.linha); if (!r) return;
+    add(r, 'Fornecedor ' + f.fornecedor_id + ' não existe no Superlógica');
+    if (r._valido) bloqueadas++;
+    r._valido = false;
+  });
+  return bloqueadas;
+}
+
+async function validateAndPreview() {
   const headers = state.despesas.headers;
   const rows = state.despesas.raw;
 
@@ -76,7 +118,7 @@ function validateAndPreview() {
     });
 
     // Validações
-    if (!obj.ID_CONTATO_CON || isNaN(Number(obj.ID_CONTATO_CON)))
+    if (!/^[1-9][0-9]{0,9}$/.test(obj.ID_CONTATO_CON || ''))
       obj._erros.push('ID fornecedor inválido');
 
     if (!obj.DT_VENCIMENTO_PDES) {
@@ -104,6 +146,19 @@ function validateAndPreview() {
     obj._valido = obj._erros.length === 0;
     return obj;
   });
+
+  // T05: confere no Superlógica as linhas que passaram na validação local
+  const paraChecar = validated.filter(r => r._valido);
+  if (paraChecar.length) {
+    try {
+      toast('Conferindo duplicatas e fornecedores no Superlógica...', 'info');
+      const chk = await despesasVerificarNoSuperlogica(paraChecar);
+      despesasAplicarChecagem(validated, chk);
+    } catch (e) {
+      toast('Não foi possível conferir no Superlógica: ' + e.message + '. O envio fica travado até conferir.', 'err');
+      paraChecar.forEach(r => { r._erros.push('Não conferido no Superlógica'); r._valido = false; });
+    }
+  }
 
   state.despesas.validated = validated;
 
@@ -136,17 +191,19 @@ function renderValidatedTable(rows, filter) {
     <th>Conta</th><th>Descrição</th><th>Status</th>
   </tr>`;
 
+  // Conteúdo da planilha vai escapado (planilha de terceiro não pode injetar HTML).
+  const e = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   filtered.forEach(r => {
     const badge = r._valido
       ? '<span class="badge badge-ok">✓ ok</span>'
-      : `<span class="badge badge-err">✕ ${r._erros.join('; ')}</span>`;
+      : `<span class="badge badge-err">✕ ${e(r._erros.join('; '))}</span>`;
     html += `<tr>
-      <td>${r._row}</td>
-      <td class="${!r.ID_CONTATO_CON ? 'field-err' : ''}">${r.ID_CONTATO_CON || '—'}</td>
-      <td class="${r._erros.some(e=>e.includes('Data')) ? 'field-err' : ''}">${r.DT_VENCIMENTO_PDES || '—'}</td>
-      <td class="${r._erros.some(e=>e.includes('Valor')) ? 'field-err' : ''}">${r.VL_VALOR_PDES ? 'R$ ' + r.VL_VALOR_PDES : '—'}</td>
-      <td class="${!r.ST_CONTA_CONT ? 'field-warn' : ''}">${r.ST_CONTA_CONT || '—'}</td>
-      <td>${r.ST_DESCRICAO || '—'}</td>
+      <td>${e(r._row)}</td>
+      <td class="${!r.ID_CONTATO_CON ? 'field-err' : ''}">${e(r.ID_CONTATO_CON || '—')}</td>
+      <td class="${r._erros.some(x=>x.includes('Data')) ? 'field-err' : ''}">${e(r.DT_VENCIMENTO_PDES || '—')}</td>
+      <td class="${r._erros.some(x=>x.includes('Valor')) ? 'field-err' : ''}">${r.VL_VALOR_PDES ? 'R$ ' + e(r.VL_VALOR_PDES) : '—'}</td>
+      <td class="${!r.ST_CONTA_CONT ? 'field-warn' : ''}">${e(r.ST_CONTA_CONT || '—')}</td>
+      <td>${e(r.ST_DESCRICAO || '—')}</td>
       <td>${badge}</td>
     </tr>`;
   });
@@ -182,6 +239,26 @@ async function enviarDespesas() {
 
   const btn = document.getElementById('btn-enviar');
   btn.disabled = true;
+  btn.textContent = '⏳ Conferindo...';
+  // T05: confere de novo logo antes de enviar (alguém pode ter lançado nesse meio tempo).
+  // Qualquer duplicata ou fornecedor inexistente TRAVA o envio inteiro.
+  try {
+    const chk = await despesasVerificarNoSuperlogica(validos);
+    if (!chk.pode_enviar) {
+      const n = despesasAplicarChecagem(state.despesas.validated, chk);
+      renderValidatedTable(state.despesas.validated, 'todos');
+      const okAgora = state.despesas.validated.filter(r => r._valido).length;
+      document.getElementById('env-ok').textContent = okAgora;
+      document.getElementById('env-err').textContent = state.despesas.validated.length - okAgora;
+      btn.disabled = false; btn.textContent = '↑ Enviar para Superlógica';
+      toast('Envio travado: ' + n + ' linha(s) duplicada(s) ou com fornecedor inexistente. Revise e envie de novo.', 'err');
+      return;
+    }
+  } catch (e) {
+    btn.disabled = false; btn.textContent = '↑ Enviar para Superlógica';
+    toast('Envio travado: não foi possível conferir duplicatas no Superlógica (' + e.message + ').', 'err');
+    return;
+  }
   btn.textContent = '⏳ Enviando...';
   // Trava a troca de condomínio durante o envio (condTrocaBloqueada)
   window._enviandoDespesas = true;
@@ -212,6 +289,7 @@ async function enviarDespesas() {
 
       if (row.ST_NOME_CON) body.set('ST_NOME_CON', row.ST_NOME_CON);
       if (row.ST_DESCRICAO) body.set('DESPESA_APROPRIACAO[0][ST_DESCRICAO_CONT]', row.ST_DESCRICAO);
+      if (row.ST_DOCUMENTO_DES) body.set('ST_DOCUMENTO_DES', row.ST_DOCUMENTO_DES);
 
       const res = await apiPost('/despesas/', body.toString());
       if (res.ok) {

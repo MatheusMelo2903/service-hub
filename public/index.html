@@ -1162,6 +1162,22 @@
         </div>
       </div>
 
+      <!-- T05: alertas do condomínio ativo (contas a vencer, saldo baixo, recorrentes não lançadas) -->
+      <div class="card" id="alertas-card" style="margin-bottom:20px">
+        <div class="card-header">
+          <span class="card-title">Alertas do condomínio</span>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label style="font-size:11px;font-family:var(--mono);color:var(--muted);display:flex;align-items:center;gap:6px">Saldo mínimo R$
+              <input type="text" id="alertas-saldo-min" inputmode="decimal" placeholder="desligado" autocomplete="off" style="width:110px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--mono);font-size:12px">
+            </label>
+            <button class="btn btn-ghost" style="font-size:11px;padding:5px 10px" onclick="alertasSalvarSaldo()">Salvar limite</button>
+            <label style="font-size:11px;font-family:var(--mono);color:var(--muted);display:flex;align-items:center;gap:4px"><input type="checkbox" id="alertas-ver-todos" onchange="alertasDashAbrir('estado')"> ver resolvidos</label>
+            <button class="btn btn-ghost" style="font-size:11px;padding:5px 10px" onclick="alertasDashAbrir(true)">Atualizar</button>
+          </div>
+        </div>
+        <div id="alertas-lista" style="display:flex;flex-direction:column;gap:6px"><div style="font-size:12px;color:var(--muted);font-family:var(--mono)">Selecione um condomínio para ver os alertas.</div></div>
+      </div>
+
       <div class="dash-grid">
         <div class="card">
           <div class="card-header">
@@ -2260,6 +2276,7 @@ const CAMPOS_DESPESA = [
   { key: 'VL_VALOR_PDES',      label: 'Valor (R$)',          required: true },
   { key: 'ST_CONTA_CONT',      label: 'Conta plano (ex: 2.1)', required: true },
   { key: 'ST_DESCRICAO',       label: 'Descrição',           required: false },
+  { key: 'ST_DOCUMENTO_DES',   label: 'Documento (nº da nota)', required: false },
 ];
 
 const CAMPOS_UNIDADE = [
@@ -2478,6 +2495,9 @@ function showPanel(name) {
   }
   if (name === 'condominio') {
     if (typeof condominioFichaAbrir === 'function') condominioFichaAbrir();
+  }
+  if (name === 'dashboard') {
+    if (typeof alertasDashAbrir === 'function') alertasDashAbrir();
   }
 }
 

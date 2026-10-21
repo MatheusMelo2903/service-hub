@@ -3127,6 +3127,165 @@ app.get('/api/unidades/busca', requireAuth, async (req, res) => {
   }
 });
 
+
+// ─────────────────────────────────────────────────────────────────────────
+// Despesas e alertas (T05). Leitura no Superlógica com a mesma regra de acesso das rotas
+// acima; estado dos alertas (visto, resolvido) e o limite de saldo ficam nas tabelas
+// alertas e alertas_config (Supabase, só via service_role). Detalhes em superlogica/alertas.js.
+// ─────────────────────────────────────────────────────────────────────────
+const slAlertas = require('./superlogica/alertas');
+const _cacheAlertas = slModulo.consulta.criarCache(5 * 60 * 1000, 300, 60 * 1000);
+const _verificandoCond = new Set();
+
+// Mudar estado de alerta ou o limite de saldo: só GESTOR e GERENTE (ver alertas segue a regra
+// de leitura do Superlógica).
+async function exigirGestaoAlertas(req, res) {
+  if (req.authMode === 'internal') return true;
+  let p = null;
+  try { p = await lerPerfil(req.user && req.user.sub); } catch (e) { p = null; }
+  if (p && (p.role === 'GESTOR' || p.role === 'GERENTE')) return true;
+  res.status(403).json({ erro: 'acesso_negado', detalhe: 'Só gestor ou gerente pode alterar alertas.' });
+  return false;
+}
+// Lê o estado guardado SÓ das chaves calculadas agora (a tabela cresce com o tempo).
+async function _lerEstadoAlertas(id, chaves) {
+  const mapa = new Map();
+  for (let i = 0; i < chaves.length; i += 80) {
+    const lote = chaves.slice(i, i + 80).map((c) => '"' + c.replace(/["\\]/g, '') + '"').join(',');
+    const r = await supabaseAdminRequest('GET', '/rest/v1/alertas?id_superlogica=eq.' + id + '&chave=in.(' + encodeURIComponent(lote) + ')&select=id,chave,status');
+    if (r.status !== 200) throw new Error('alertas_' + r.status);
+    (r.body || []).forEach((a) => mapa.set(a.chave, a));
+  }
+  return mapa;
+}
+
+function _hojeBrasilia() {
+  const agora = new Date(Date.now() - 3 * 3600 * 1000);
+  return new Date(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate());
+}
+function _usuarioId(req) {
+  const u = req.user && req.user.sub;
+  return /^[0-9a-f-]{36}$/i.test(String(u || '')) ? u : null;
+}
+
+// POST /api/despesas/verificar { id_superlogica, linhas: [{ linha, fornecedor_id, vencimento MM/DD/AAAA, valor, documento }] }
+// Antes de enviar a planilha: duplicata no Superlógica (ou dentro da planilha) e fornecedor inexistente.
+app.post('/api/despesas/verificar', requireAuth, express.json({ limit: '1mb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String((req.body && req.body.id_superlogica) || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  const norm = slAlertas.normalizarLinhas(req.body && req.body.linhas);
+  if (norm.erro) return res.status(400).json({ erro: 'linhas_invalidas', detalhe: norm.erro });
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  // Uma verificação por condomínio de cada vez (cada uma pode fazer dezenas de leituras).
+  if (_verificandoCond.has(id)) return res.status(429).json({ erro: 'em_andamento', detalhe: 'Já existe uma conferência deste condomínio em andamento. Aguarde alguns segundos.' });
+  _verificandoCond.add(id);
+  try {
+    const r = await slAlertas.verificarImportacao(clienteSL(), id, norm.linhas);
+    res.json(r);
+  } catch (e) {
+    if (e && e.cortada) return res.status(422).json({ erro: 'muitas_despesas_no_dia', detalhe: 'Há despesas demais num mesmo vencimento para conferir com segurança. Nada foi enviado; lance esse dia direto no Superlógica.' });
+    console.warn('[despesas-verificar] ' + id + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível conferir as despesas no Superlógica agora. Nada foi enviado. Tente de novo em alguns minutos.' });
+  } finally { _verificandoCond.delete(id); }
+});
+
+async function _lerConfigAlertas(id) {
+  const r = await supabaseAdminRequest('GET', '/rest/v1/alertas_config?id_superlogica=eq.' + id + '&select=saldo_minimo');
+  if (r.status !== 200) throw new Error('config_' + r.status);
+  return (Array.isArray(r.body) && r.body[0]) || { saldo_minimo: null };
+}
+
+// GET /api/condominio/:id/alertas[?todos=1] — calcula no Superlógica, registra os novos e devolve
+// com o estado de cada um. Sem todos=1, os resolvidos ficam de fora.
+app.get('/api/condominio/:idSuperlogica/alertas', requireAuth, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) return res.status(503).json({ erro: 'service_role_nao_configurada' });
+  try {
+    const cfg = await _lerConfigAlertas(id);
+    const hoje = _hojeBrasilia();
+    // forcar=1 (botão Atualizar) recalcula sem cache; resultado com falha de leitura não fica em cache.
+    const chaveCache = 'alertas:' + id + ':' + hoje.toISOString().slice(0, 10) + ':' + cfg.saldo_minimo;
+    let calc;
+    if (req.query.forcar === '1') calc = await slAlertas.calcularAlertas(clienteSL(), id, hoje, cfg);
+    else {
+      calc = await _cacheAlertas.pegar(chaveCache, async () => {
+        const c = await slAlertas.calcularAlertas(clienteSL(), id, hoje, cfg);
+        if (c.falhas.length) { const e = new Error('parcial'); e.parcial = c; throw e; }
+        return c;
+      }).catch((e) => { if (e && e.parcial) return e.parcial; throw e; });
+    }
+    const chaves = calc.alertas.map((a) => a.chave);
+    const porChave = chaves.length ? await _lerEstadoAlertas(id, chaves) : new Map();
+    const novos = calc.alertas.filter((a) => !porChave.has(a.chave));
+    if (novos.length) {
+      const linha = (a) => ({ id_superlogica: Number(id), chave: a.chave, tipo: a.tipo, titulo: a.titulo.slice(0, 300), detalhe: a.detalhe });
+      const ins = await supabaseAdminRequest('POST', '/rest/v1/alertas', novos.map(linha));
+      if (ins.status === 201 && Array.isArray(ins.body)) ins.body.forEach((a) => porChave.set(a.chave, a));
+      else if (ins.status === 409) {
+        // corrida com outra aba: um por um, ignorando o que já existe, e relê
+        for (const a of novos) { await supabaseAdminRequest('POST', '/rest/v1/alertas', [linha(a)]); }
+        const de2 = await _lerEstadoAlertas(id, novos.map((a) => a.chave));
+        de2.forEach((v, k) => porChave.set(k, v));
+      } else throw new Error('insert_' + ins.status);
+    }
+    const todos = req.query.todos === '1';
+    const lista = calc.alertas.map((a) => {
+      const g = porChave.get(a.chave) || {};
+      return { id: g.id || null, chave: a.chave, tipo: a.tipo, titulo: a.titulo, detalhe: a.detalhe, status: g.status || 'novo' };
+    }).filter((a) => todos || a.status !== 'resolvido');
+    const ordem = { novo: 0, visto: 1, resolvido: 2 };
+    lista.sort((a, b) => (ordem[a.status] - ordem[b.status]) || a.tipo.localeCompare(b.tipo));
+    res.json({ id_superlogica: Number(id), gerado_em: new Date().toISOString(), saldo_minimo: calc.saldo_minimo, falhas: calc.falhas, alertas: lista });
+  } catch (e) {
+    console.warn('[alertas] ' + id + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_alertas', detalhe: 'Não foi possível montar os alertas agora. Tente de novo em alguns minutos.' });
+  }
+});
+
+// PATCH /api/alertas/:alertaId { status: 'novo'|'visto'|'resolvido' }
+app.patch('/api/alertas/:alertaId', requireAuth, express.json({ limit: '10kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const aid = String(req.params.alertaId || '');
+  if (!/^[0-9a-f-]{36}$/i.test(aid)) return res.status(400).json({ erro: 'id_invalido' });
+  const status = String((req.body && req.body.status) || '');
+  if (!['novo', 'visto', 'resolvido'].includes(status)) return res.status(400).json({ erro: 'status_invalido', detalhe: 'Use novo, visto ou resolvido.' });
+  if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) return res.status(503).json({ erro: 'service_role_nao_configurada' });
+  if (!(await exigirGestaoAlertas(req, res))) return;
+  if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) return res.status(503).json({ erro: 'service_role_nao_configurada' });
+  const r = await supabaseAdminRequest('PATCH', '/rest/v1/alertas?id=eq.' + aid, { status, atualizado_em: new Date().toISOString(), atualizado_por: _usuarioId(req) });
+  if (r.status !== 200 || !Array.isArray(r.body) || !r.body.length) return res.status(r.status === 200 ? 404 : 502).json({ erro: 'falha_atualizar', detalhe: 'Não foi possível atualizar o alerta.' });
+  res.json({ id: aid, status: r.body[0].status });
+});
+
+// PUT /api/condominio/:id/alertas/config { saldo_minimo } — null ou 0 desliga o alerta de saldo.
+app.put('/api/condominio/:idSuperlogica/alertas/config', requireAuth, express.json({ limit: '10kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  const bruto = req.body ? req.body.saldo_minimo : null;
+  let saldo = null;
+  if (bruto !== null && bruto !== undefined && bruto !== '') {
+    saldo = Number(String(bruto).replace(',', '.'));
+    if (!isFinite(saldo) || saldo < 0 || saldo > 1e9) return res.status(400).json({ erro: 'valor_invalido', detalhe: 'Informe um valor entre 0 e 1 bilhão.' });
+    saldo = Math.round(saldo * 100) / 100;
+    if (saldo === 0) saldo = null;
+  }
+  if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) return res.status(503).json({ erro: 'service_role_nao_configurada' });
+  if (!(await exigirGestaoAlertas(req, res))) return;
+  if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) return res.status(503).json({ erro: 'service_role_nao_configurada' });
+  const corpo = { saldo_minimo: saldo, atualizado_em: new Date().toISOString(), atualizado_por: _usuarioId(req) };
+  let r = await supabaseAdminRequest('PATCH', '/rest/v1/alertas_config?id_superlogica=eq.' + id, corpo);
+  if (r.status === 200 && Array.isArray(r.body) && !r.body.length) {
+    r = await supabaseAdminRequest('POST', '/rest/v1/alertas_config', Object.assign({ id_superlogica: Number(id) }, corpo));
+  }
+  if (r.status !== 200 && r.status !== 201) return res.status(502).json({ erro: 'falha_salvar', detalhe: 'Não foi possível salvar o limite.' });
+  res.json({ id_superlogica: Number(id), saldo_minimo: saldo });
+});
+
 // Agenda: 1 minuto depois de subir e depois todo dia às 6h de Brasília (9h UTC).
 function _agendarSyncDiario() {
   const agora = new Date();
