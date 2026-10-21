@@ -3841,18 +3841,11 @@ async function _exigirFinanceiro(req, res, acao) {
 }
 // Condomínios que quem chama pode ver: null = todos (GESTOR, acesso interno, sem carteira).
 // Erro ao ler a carteira recusa (não libera tudo).
+// Mesma regra da carteira do servidor (T18): GESTOR e todas_carteiras veem todos.
 async function _escopoFinanceiro(req) {
-  if (req.authMode === 'internal') return null;
-  const perfil = await lerPerfil(req.user && req.user.sub);
-  if (!perfil) throw new Error('perfil_ausente');
-  if (perfil.role === 'GESTOR') return null;
-  const mapa = await lerCarteirasPerfis(perfil.id);
-  if (!mapa) { if (lerCarteirasPerfis.semColuna) return null; throw new Error('carteira_indisponivel'); }
-  const minhas = mapa[perfil.id] || [];
-  if (!minhas.length) return null;
-  const r = slModulo.carteiras.condominiosDasCarteiras(await gruposCarteiras(), minhas);
-  if (!r.carteiras.length) return new Set();
-  return new Set(r.ids_superlogica.map(String));
+  const esc = await carteiraT18.escopo(req);
+  if (esc.todas) return null;
+  return new Set((esc.ids_superlogica || []).map(String));
 }
 // Carteira nas rotas de um condomínio, com falha fechada (erro ao ler a carteira recusa).
 // Devolve { escopo } (null = vê todos) ou null se já respondeu 403 ou 503.
