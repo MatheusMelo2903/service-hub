@@ -185,7 +185,8 @@
     var th = 'style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border2)"';
     var td = 'style="padding:6px 8px;font-size:12px;border-bottom:1px solid var(--border)"';
     var html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>'
-      + '<th ' + th + '>Condomínio</th><th ' + th + '>Analista</th><th ' + th + '>Alta</th><th ' + th + '>Média</th><th ' + th + '>Baixa</th><th ' + th + '>Valor em alta</th><th ' + th + '>Principais</th></tr></thead><tbody>';
+      + '<th ' + th + '>Condomínio</th><th ' + th + '>Analista</th><th ' + th + '>Alta</th><th ' + th + '>Média</th><th ' + th + '>Baixa</th><th ' + th + '>Valor em alta</th><th ' + th + '>Principais</th>'
+      + (fechamentoLigado() ? '<th ' + th + '>Fechamento</th>' : '') + '</tr></thead><tbody>';
     lista.forEach(function (c) {
       var tipos = Object.keys(c.por_tipo || {}).map(function (k) { return c.por_tipo[k]; })
         .sort(function (a, b) { return b.alta - a.alta || b.total - a.total; }).slice(0, 3)
@@ -198,13 +199,18 @@
         + '<td ' + td + '><span style="color:' + (g.media ? 'var(--warning)' : 'var(--muted)') + '">' + (g.media || 0) + '</span></td>'
         + '<td ' + td + '><span style="color:var(--muted)">' + (g.baixa || 0) + '</span></td>'
         + '<td ' + td + '>' + (c.valor_alta ? brl(c.valor_alta) : '') + '</td>'
-        + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">' + tipos + '</td></tr>';
+        + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">' + tipos + '</td>'
+        + (fechamentoLigado() ? '<td ' + td + ' data-fin-fech="' + esc(c.id_condominio) + '"></td>' : '') + '</tr>';
     });
     el.innerHTML = html + '</tbody></table></div>';
     el.querySelectorAll('tr[data-fin-cond]').forEach(function (tr) {
       tr.addEventListener('click', function () { finAbrirCondominio(tr.getAttribute('data-fin-cond'), tr.getAttribute('data-fin-nome')); });
     });
+    // T38: coluna Fechamento (public/financeiro-fechamento.js preenche).
+    if (fechamentoLigado()) window.finFechamentoQuadro(el, lista, document.getElementById('fin-carteira') ? document.getElementById('fin-carteira').value : '');
   }
+  // T38: Fechamento do mês (public/financeiro-fechamento.js). Só para quem gera o pré balancete.
+  function fechamentoLigado() { return podePre() && typeof window.finFechamentoQuadro === 'function' && typeof window.finFechamentoPode === 'function' && window.finFechamentoPode(); }
 
   // 6. Detalhe do condomínio: abas Alertas e Pré balancete.
   var TH = 'style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border2)"';
@@ -217,7 +223,7 @@
     if (!/^\d+$/.test(String(id || ''))) return;
     est.cond = { id: String(id), nome: nome || '' };
     est.alertas = null;
-    est.aba = aba === 'pre' && podePre() ? 'pre' : 'alertas';
+    est.aba = aba === 'pre' && podePre() ? 'pre' : (aba === 'fechamento' && fechamentoLigado() ? 'fechamento' : 'alertas');
     var card = document.getElementById('fin-detalhe');
     card.style.display = '';
     montarDetalhe();
@@ -230,14 +236,17 @@
     var card = document.getElementById('fin-detalhe');
     var c = est.cond;
     card.innerHTML = '<div class="card-header" style="flex-wrap:wrap;gap:8px"><span class="card-title">' + esc(c.nome || ('Código ' + c.id)) + ' <span style="color:var(--muted);font-family:var(--mono);font-size:12px">' + esc(c.id) + '</span></span>'
-      + '<div style="display:flex;gap:6px;flex-wrap:wrap">' + botaoAba('alertas', 'Alertas') + (podePre() ? botaoAba('pre', 'Pré balancete') : '') + '</div></div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap">' + botaoAba('alertas', 'Alertas') + (podePre() ? botaoAba('pre', 'Pré balancete') : '')
+      + (fechamentoLigado() ? botaoAba('fechamento', 'Fechamento do mês') : '') + '</div></div>'
       + '<div id="fin-aba-conteudo"></div>';
     card.querySelectorAll('[data-fin-aba]').forEach(function (b) {
       b.addEventListener('click', function () { est.aba = b.getAttribute('data-fin-aba'); montarDetalhe(); });
     });
     // T37: Boletos do mês e Conciliação saíram daqui e ficam nos itens próprios do menu.
     if (est.aba === 'pre' && podePre()) abaPre();
-    else { est.aba = 'alertas'; abaAlertas(); }
+    else if (est.aba === 'fechamento' && fechamentoLigado()) {
+      window.finFechamentoAba(document.getElementById('fin-aba-conteudo'), est.cond, function (aba, mes) { est.aba = aba; est.mesPre = mes || null; montarDetalhe(); });
+    } else { est.aba = 'alertas'; abaAlertas(); }
   }
 
   // 6a. Alertas.
@@ -369,13 +378,17 @@
   function abaPre() {
     var el = document.getElementById('fin-aba-conteudo');
     el.innerHTML = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
-      + '<label style="font-size:12px">Mês <input type="month" id="fin-pre-mes" value="' + mesISO(-1) + '" max="' + mesISO(0) + '" style="width:auto"></label>'
+      + '<label style="font-size:12px">Mês <input type="month" id="fin-pre-mes" value="' + (est.mesPre || mesISO(-1)) + '" max="' + mesISO(0) + '" style="width:auto"></label>'
       + '<button class="btn btn-primary" id="fin-pre-gerar" style="font-size:12px;padding:6px 14px">Pré balancete</button>'
       + '<button class="btn btn-ghost" id="fin-pre-atualizar" style="font-size:12px;padding:6px 12px" title="Lê de novo no Superlógica">Atualizar</button></div>'
       + '<div class="hint" style="margin-bottom:8px">Mostra o que impede fechar o mês: pagas sem comprovante ou sem nota, vencidas sem baixa, lançadas depois do vencimento e mexidas suspeitas. Itens de gravidade baixa ficam só para conferir.</div>'
       + '<div id="fin-pre-info" class="ficha-sub" style="margin-bottom:8px"></div><div id="fin-pre-lista"></div>';
     document.getElementById('fin-pre-gerar').addEventListener('click', function () { gerarPre(false); });
     document.getElementById('fin-pre-atualizar').addEventListener('click', function () { gerarPre(true); });
+    // T38: vindo do Fechamento do mês, já abre o mês escolhido lá.
+    var auto = est.mesPre;
+    est.mesPre = null;
+    if (auto) gerarPre(false);
   }
   async function gerarPre(forcar) {
     var c = est.cond;
@@ -421,5 +434,7 @@
       html += '</details>';
     });
     el.innerHTML = html;
+    // T38: conferência dos anexos do mês (public/financeiro-fechamento.js).
+    if (typeof window.finAnexosPre === 'function') window.finAnexosPre(el, est.cond, j.competencia);
   }
 })();

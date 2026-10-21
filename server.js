@@ -4703,6 +4703,26 @@ require('./servico/rotas-entrada').criarRotasEntrada(app, {
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// Fechamento do mês e conferência dos anexos (T38), dentro do item Financeiro: rotas em
+// servico/rotas-fechamento.js. Só GET no Superlógica; marca de conferido só no banco de teste.
+// ─────────────────────────────────────────────────────────────────────────
+const _forcarBolFech = new Map();
+require('./servico/rotas-fechamento').criarRotasFechamento(app, {
+  requireAuth, express, exigirFinanceiro: _exigirFinanceiro, exigirModuloItem: _exigirModuloItem, exigirLeituraSuperlogica,
+  exigirCarteira: _exigirCarteira, exigirEscopoFinanceiro: _exigirEscopoFinanceiro, escopoFinanceiro: _escopoFinanceiro, gruposCarteiras,
+  clienteSL, credSL: _credSL, painelFin: _painelFin, conciliacao: _conciliacao,
+  boletos: (id, comp, forcar) => {
+    const chave = id + '|' + comp;
+    // Atualizar relê os boletos no máximo uma vez por minuto para o mesmo condomínio e mês.
+    if (forcar && Date.now() - (_forcarBolFech.get(chave) || 0) > 60000) { _forcarBolFech.set(chave, Date.now()); _cacheBoletos.limpar(chave); }
+    if (_forcarBolFech.size > 500) _forcarBolFech.delete(_forcarBolFech.keys().next().value);
+    return _cacheBoletos.pegar(chave, () => finBoletos.conferirBoletos(clienteSL(), id, comp));
+  },
+  dentroDoLimite, auditoria, processar, linkDe: finPainel.linkLancamento,
+  supabase: { url: SUPABASE_URL, chave: SUPABASE_SERVICE_ROLE_KEY },
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // Relatório mensal do síndico (T13). GET /api/condominio/:id/relatorio-mensal?mes=AAAA-MM
 // (padrão: mês anterior, o último fechado). Só leitura no Superlógica; o PDF é montado no
 // navegador. Detalhes em superlogica/relatorio.js.
