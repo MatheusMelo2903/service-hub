@@ -104,7 +104,7 @@
     var el = document.getElementById('fin-anexos-lista');
     var cab = j.pode_fechar
       ? '<div style="padding:8px 12px;border-radius:8px;background:rgba(45,174,114,0.10);color:var(--success);font-weight:600;margin-bottom:8px">Nenhum anexo para conferir.' + (s.so_informativo ? ' ' + s.so_informativo + ' observação(ões) só informativa(s).' : '') + '</div>'
-      : '<div style="padding:8px 12px;border-radius:8px;background:rgba(224,58,58,0.08);color:var(--danger);font-weight:600;margin-bottom:8px">' + (s.para_conferir || 0) + ' achado(s) para conferir em ' + (s.despesas_com_achado || 0) + ' despesa(s).' + (j.cortado ? ' O mês tem despesas demais: a conferência ficou incompleta.' : '') + '</div>';
+      : '<div style="padding:8px 12px;border-radius:8px;background:rgba(224,58,58,0.08);color:var(--danger);font-weight:600;margin-bottom:8px">' + (s.para_conferir || 0) + ' achado(s) para conferir em ' + (s.despesas_para_conferir || s.despesas_com_achado || 0) + ' despesa(s).' + (j.cortado ? ' O mês tem despesas demais: a conferência ficou incompleta.' : '') + '</div>';
     var html = cab;
     var lista = j.despesas || [];
     if (lista.length) {

@@ -16,6 +16,7 @@ const ITENS_MARCAVEIS = ['pre_balancete', 'boletos', 'anexos'];
 const dataBR = (iso) => { const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; };
 const brl = (v) => 'R$ ' + (Math.round(Number(v || 0) * 100) / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 function maisDias(iso, n) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function diasUteisEntre(a, b) { let n = 0; for (let d = maisDias(a, 1); d <= b; d = maisDias(d, 1)) if (!fimSemana(d)) n++; return n; }
 const fimSemana = (iso) => { const w = new Date(iso + 'T12:00:00Z').getUTCDay(); return w === 0 || w === 6; };
 
 // Último dia útil (segunda a sexta) que já precisa ter extrato: o último do mês; no mês corrente,
@@ -65,6 +66,8 @@ function aplicarMarca(it, marca, pendenciasAgora, chavesAgora) {
 }
 
 const falhou = (x) => !x || x.erro;
+const NOME_BOLETO = { valor_fora_padrao: 'valor fora do padrão', sem_boleto: 'unidade sem boleto', boleto_em_dobro: 'boleto em dobro', leitura_faltando: 'leitura faltando',
+  leitura_zerada: 'leitura zerada', rateio_sumiu: 'rateio que sumiu', rateio_apareceu: 'rateio novo', parcela_repetida: 'parcela repetida' };
 
 function itemConciliacao(conc) {
   const it = item('conciliacao', 'Conciliação do mês com diferença zero', { painel: 'conciliacao', rotulo: 'Abrir a Conciliação' });
@@ -106,6 +109,9 @@ function itemExtrato(conc, alvo) {
     }
     if (ult >= alvo) return;
     if (poucoMov) avisos.push('conta ' + k.descricao + ' de pouco movimento, último extrato ' + dataBR(ult));
+    // Conta que não é a principal, com até 2 dias úteis de diferença: pode ser só falta de movimento
+    // nos últimos dias (o extrato não traz linha em dia sem lançamento). Fica como aviso.
+    else if (!k.principal && diasUteisEntre(ult, alvo) <= 2) avisos.push('conta ' + k.descricao + ': último lançamento no extrato em ' + dataBR(ult) + ' (confira se faltou importar ou se não houve movimento)');
     else travas.push('conta ' + k.descricao + ': extrato só até ' + dataBR(ult));
   });
   if (!contas.length) { it.trava = 'Nenhuma conta bancária encontrada para este condomínio.'; return it; }
@@ -132,7 +138,7 @@ function itemBoletos(bol, marca) {
   const r = bol.resumo || {};
   if (!r.boletos) { it.trava = 'Nenhum boleto com vencimento no mês encontrado.'; it.pode_marcar = true; aplicarMarca(it, marca, 0, []); return it; }
   if (!r.alertas) it.situacao = 'ok';
-  else it.trava = r.alertas + ' ponto(s) para conferir nos boletos (' + Object.keys(r.alertas_por_tipo || {}).map((k) => k.replace(/_/g, ' ') + ' ' + r.alertas_por_tipo[k]).join(', ') + ').';
+  else it.trava = r.alertas + ' ponto(s) para conferir nos boletos (' + Object.keys(r.alertas_por_tipo || {}).map((k) => (NOME_BOLETO[k] || k.replace(/_/g, ' ')) + ' ' + r.alertas_por_tipo[k]).join(', ') + ').';
   it.detalhe = r.boletos + ' boleto(s) em ' + (r.unidades_com_boleto || 0) + ' unidade(s), total ' + brl(r.valor_total) + '.';
   aplicarMarca(it, marca, r.alertas || 0, chavesPendencias('boletos', bol));
   return it;
@@ -153,7 +159,7 @@ function itemAnexos(anx, marca) {
   if (r.pode_fechar && !s.escaneados_nao_lidos && !r.sem_cnpj_cadastro) it.situacao = 'ok';
   else {
     const partes = [];
-    if (s.para_conferir) partes.push(s.para_conferir + ' achado(s) em ' + s.despesas_com_achado + ' despesa(s)');
+    if (s.para_conferir) partes.push(s.para_conferir + ' achado(s) em ' + (s.despesas_para_conferir || s.despesas_com_achado) + ' despesa(s)');
     if (s.falhas) partes.push(s.falhas + ' anexo(s) que não deu para baixar ou ler (atualize para tentar de novo)');
     if (s.escaneados_nao_lidos) partes.push(s.escaneados_nao_lidos + ' escaneado(s) sem leitura para conferir à mão');
     if (r.sem_cnpj_cadastro) partes.push('cadastro do condomínio sem CNPJ no Superlógica (pagador e tomador não conferidos)');

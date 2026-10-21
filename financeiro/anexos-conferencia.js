@@ -217,7 +217,7 @@ function montarResultado({ idCond, comp, itens, despesas, cnpjCond, outros, nome
   despesas.forEach((d) => { const k = String(d.id_despesa_des); if (!porDesp.has(k)) porDesp.set(k, { parcelas: [], itens: [] }); porDesp.get(k).parcelas.push(d); });
   itens.forEach((it) => { const g = porDesp.get(String(it.idDesp)); if (g) g.itens.push(it); });
   const resumo = { despesas: porDesp.size, sem_anexo: 0, anexos: 0, lidos_texto: 0, lidos_interna: 0, escaneados_nao_lidos: 0, outros_formatos: 0, falhas: 0,
-    despesas_com_achado: 0, achados: 0, para_conferir: 0, so_informativo: 0, por_tipo: {} };
+    despesas_com_achado: 0, despesas_para_conferir: 0, achados: 0, para_conferir: 0, so_informativo: 0, por_tipo: {} };
   const lista = [];
   const escaneados = [];
   porDesp.forEach((g, idDesp) => {
@@ -248,11 +248,13 @@ function montarResultado({ idCond, comp, itens, despesas, cnpjCond, outros, nome
       // CNPJ de outro condomínio: guarda os nomes à parte (quem só vê a própria carteira recebe sem eles).
       const outro = a.tipo === 'cnpj_outro_condominio';
       // Datas do motivo em DD/MM/AAAA (tela sem hífen); para quem tem carteira, CNPJ de outro condomínio sai do texto.
-      const motivo = String(a.motivo || '').replace(/(\d{4})-(\d{2})-(\d{2})/g, '$3/$2/$1').slice(0, 300);
+      const motivo = String(a.motivo || '').replace(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2})?(?:Z|[+-]\d{2}(?::?\d{2})?)?/g, '$3/$2/$1 $4h$5')
+        .replace(/(\d{4})-(\d{2})-(\d{2})/g, '$3/$2/$1').slice(0, 300);
       const restrito = motivo.replace(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/g, (m) => (outros && outros.has(m.replace(/\D/g, '')) ? '[CNPJ de outro condomínio]' : m));
       return { tipo: a.tipo, titulo: def.titulo, gravidade: def.gravidade, motivo, motivo_restrito: restrito !== motivo ? restrito : undefined, arquivo: a.arquivo, leitura: a.leitura || '', outro_condominio: outro || undefined };
     });
     resumo.despesas_com_achado++;
+    if (tela.some((a) => a.gravidade !== 'baixa')) resumo.despesas_para_conferir++;
     const peso = { alta: 3, media: 2, baixa: 1 };
     tela.sort((x, y) => peso[y.gravidade] - peso[x.gravidade]);
     lista.push({ id_despesa: idDesp, fornecedor: String(p0.st_nome_con || '').slice(0, 120), documento: String(p0.st_documento_des || '').slice(0, 40),

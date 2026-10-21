@@ -50,6 +50,14 @@ t('conta de pouco movimento atrasada só avisa', () => {
   const it = itemDe(F.montarFechamento(e), 'extrato');
   assert.strictEqual(it.situacao, 'ok'); assert.ok(/pouco movimento/.test(it.detalhe));
 });
+t('conta que não é a principal com 2 dias úteis de diferença só avisa', () => {
+  const e = base(); e.conc.contas.push(contaOk({ id: '3', descricao: 'Fundo', principal: false, quadro: { ultimo_extrato: '2026-09-28', diferenca_saldo: 0, movimento_baixo: false } }));
+  let it = itemDe(F.montarFechamento(e), 'extrato');
+  assert.strictEqual(it.situacao, 'ok'); assert.ok(/não houve movimento/.test(it.detalhe));
+  e.conc.contas[2].quadro.ultimo_extrato = '2026-09-25';
+  it = itemDe(F.montarFechamento(e), 'extrato');
+  assert.strictEqual(it.situacao, 'pendente');
+});
 t('conta principal sem extrato no mês trava', () => {
   const e = base(); e.conc.contas[0] = { id: '1', descricao: 'Sicoob', principal: true, situacao: 'sem_extrato' };
   assert.strictEqual(itemDe(F.montarFechamento(e), 'extrato').situacao, 'pendente');
