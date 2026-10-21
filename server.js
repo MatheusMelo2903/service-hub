@@ -4265,6 +4265,12 @@ app.get('/api/financeiro/banco/status', requireAuth, requireGestor, (req, res) =
   }
 });
 
+// Avisos do financeiro (T39): card "Seu dia", resumo da manhã às 7h e vínculos. Rotas em financeiro/avisos-rotas.js.
+require('./financeiro/avisos-rotas').registrar({
+  app, express, requireAuth, requireGestor, lerPerfil, carteira: carteiraT18, gruposCarteiras, clienteSL, superlogicaNativa,
+  supabaseUrl: SUPABASE_URL, supabaseChave: SUPABASE_SERVICE_ROLE_KEY, supabaseAdminRequest, env: process.env,
+});
+
 // GET /api/carteiras — todos os grupos (para o GESTOR escolher na tela de usuários).
 app.get('/api/carteiras', requireAuth, requireGestor, async (req, res) => {
   res.set('Cache-Control', 'no-store');
