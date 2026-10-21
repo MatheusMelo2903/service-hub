@@ -114,6 +114,8 @@ function partesPhp(nome) {
 // Pedaço de nome que cita condomínio (sem olhar sinais: id_condominio_cond, idCondominio,
 // condominioatual, ID.CONDOMINIO.COND...). Na dúvida conta como condomínio (fechado).
 const citaCondominio = (p) => String(p).replace(/[^a-z0-9]/g, '').includes('condominio');
+// Prefixos de nome de bandeira (nome base já em minúsculas, como partesPhp devolve).
+const BANDEIRA = /^(somente|exibir|com|apenas|mostrar|incluir|fl_|flag)/;
 
 // Condomínios citados numa chamada ao proxy.
 //  explicitos: ids inteiros puros; todos: -1 ou 0 (lista geral); invalidos: nomes ou valores
@@ -129,6 +131,15 @@ function idsCondominio(rota, pares) {
     if (ehCondominios && partes[0] === 'id') idxCond.push(0);
     if (!idxCond.length) continue;
     const ultimo = partes.length - 1;
+    // Bandeira (somenteCondominiosAtivos, exibirCondominiosInativos...): nome simples, sem
+    // colchetes, que cita condomínio só no nome base e começa por um prefixo de bandeira.
+    // Com valor exatamente "0" ou "1" não é código de condomínio; qualquer outro valor recusa.
+    if (ultimo === 0 && BANDEIRA.test(partes[0])) {
+      const vb = typeof v === 'string' ? v : String(v == null ? '' : v);
+      if (vb === '0' || vb === '1') continue;
+      out.invalidos.push(String(k));
+      continue;
+    }
     // condomínio com [] ou [0] depois (lista de condomínios) ou mais de um pedaço citando: recusa
     if (idxCond.some((i) => i !== ultimo) || idxCond.length > 1) { out.invalidos.push(String(k)); continue; }
     const valor = typeof v === 'string' ? v : String(v == null ? '' : v);

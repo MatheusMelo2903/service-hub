@@ -454,8 +454,11 @@ app.use('/api/superlogica', requireAuth, async (req, res) => {
   if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) return res.status(405).json({ erro: 'metodo_nao_permitido' });
   const alvo = new URL(SUPERLOGICA_API_BASE + req.url);
   const headers = { app_token: SUPERLOGICA_APP_TOKEN, access_token: SUPERLOGICA_ACCESS_TOKEN };
-  if (req.headers['content-type']) headers['content-type'] = req.headers['content-type'];
-  if (req.headers['content-length']) headers['content-length'] = req.headers['content-length'];
+  // GET e DELETE saem sem corpo (ver o fim desta rota): sem content-length nem content-type,
+  // senão o Superlógica espera um corpo que nunca chega e o pedido fica pendurado.
+  const semCorpo = req.method === 'GET' || req.method === 'DELETE';
+  if (!semCorpo && req.headers['content-type']) headers['content-type'] = req.headers['content-type'];
+  if (!semCorpo && req.headers['content-length']) headers['content-length'] = req.headers['content-length'];
   const pr = https.request({ hostname: alvo.hostname, path: alvo.pathname + alvo.search, method: req.method, headers, timeout: 120000 }, (r) => {
     const ct = String(r.headers['content-type'] || '');
     const status = r.statusCode || 502;
@@ -502,7 +505,7 @@ app.use('/api/superlogica', requireAuth, async (req, res) => {
   pr.on('timeout', () => { pr.destroy(); if (!res.headersSent) res.status(504).json({ erro: 'timeout_superlogica' }); });
   pr.on('error', (e) => { if (!res.headersSent) res.status(502).json({ erro: 'falha_superlogica', detalhe: e.message }); });
   req.on('aborted', () => pr.destroy());
-  if (req.method === 'GET' || req.method === 'DELETE') pr.end(); else req.pipe(pr);
+  if (semCorpo) pr.end(); else req.pipe(pr);
 });
 
 // ─────────────────────────────────────────────────────────────────────────
