@@ -195,7 +195,7 @@
         return '<div style="font-size:11px;color:var(--muted);margin-left:18px">' + esc([x.condominio, x.fornecedor, x.documento ? 'doc ' + x.documento : '', brl(x.valor), dataBR(x.vencimento), x.id_despesa ? 'despesa ' + x.id_despesa : '', x.liquidada ? 'paga' : '', x.nome_arquivo || ''].filter(Boolean).join(' · ')) + '</div>';
       }).join('');
       var marca = a.nivel === 'grave' && editavel ? '<input type="checkbox" class="ent-aceite" value="' + esc(a.codigo) + '" style="margin-right:6px">' : '';
-      return '<div style="margin:4px 0"><label style="font-size:12px;color:' + (COR[a.nivel] || 'var(--text)') + '">' + marca + esc(a.texto) + (a.nivel === 'grave' && editavel ? ' (marque se conferiu)' : '') + '</label>' + itens + '</div>';
+      return '<div style="margin:4px 0"><label style="font-size:12px;color:' + (COR[a.nivel] || 'var(--text)') + '">' + marca + esc(a.texto) + (a.quantidade ? ' (' + esc(a.quantidade) + ')' : '') + (a.nivel === 'grave' && editavel ? ' (marque se conferiu)' : '') + '</label>' + itens + '</div>';
     }).join('');
     var cnpjs = (d.cnpjs || []).map(function (c) { return esc(c.cnpj) + ' (' + esc(c.papel === 'pagador' ? 'pagador ou tomador' : c.papel === 'beneficiario' ? 'beneficiário ou emitente' : 'sem rótulo') + (c.condominio ? ', condomínio' : '') + ')'; }).join('<br>');
     var res = it.resultado || {};
