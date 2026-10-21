@@ -8,9 +8,9 @@ const PADRAO = {
   ata: 'claude-sonnet-5-5',                // geração, auditoria, inserção, nomes e documentos da ata (T19)
   ata_ultimo_recurso: 'claude-opus-4-7',   // inserção das lacunas quando a primeira tentativa quebra
   comunicado: 'claude-sonnet-5-5',         // rascunho de comunicado e multa
-  edital: 'claude-haiku-4-5',              // dados do edital da assembleia
-  unidades: 'claude-sonnet-4-6',           // normalizar unidades e moradores
-  prestacao: 'claude-sonnet-4-6',          // composição das despesas da prestação de contas
+  edital: 'claude-haiku-5-5',              // dados do edital (T42: 60/60 igual ao haiku 4.5, 7x mais barato)
+  unidades: 'claude-sonnet-5-5',           // normalizar unidades (T42: esforço baixo, campos iguais ou melhores, 18% mais barato)
+  prestacao: 'claude-sonnet-5-5',          // composição da prestação (T42: esforço baixo, menos descarte, 27 a 57% mais barato)
   medidor: 'claude-sonnet-5-5',            // primeira leitura da foto do medidor (T20)
   medidor_reforco: 'claude-sonnet-5-5',    // releitura da foto marcada (T20)
   entrada_documento: 'claude-sonnet-5-5',  // documento escaneado da entrada de documentos (T33)
@@ -39,7 +39,7 @@ function modelo(funcao) {
 
 // Esforço (nos modelos que pensam antes de responder): ESFORCO_<FUNCAO> = low, medium ou high;
 // vazio ou outro valor = padrão do modelo. Só as funções listadas aqui leem a variável.
-const ESFORCO_PADRAO = { unidades: undefined, prestacao: undefined };
+const ESFORCO_PADRAO = { unidades: 'low', prestacao: 'low' };
 function esforco(funcao) {
   if (!Object.prototype.hasOwnProperty.call(ESFORCO_PADRAO, funcao)) return undefined;
   const v = String(process.env['ESFORCO_' + funcao.toUpperCase()] || '').trim();
