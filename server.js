@@ -273,23 +273,63 @@ app.get('/api/config', (req, res) => {
 // Liberado pra GESTOR e pra quem tem pelo menos um modulo alem do Dashboard (perfil
 // lido do banco, cache curto pra nao pesar em importacao em lote).
 // ─────────────────────────────────────────────────────────────────────────
-const _cachePerfilSL = new Map(); // userId -> { ok, ate }
-async function podeUsarSuperlogica(userId) {
+const _cachePerfilSL = new Map(); // userId -> { ok, chaves, ate }
+async function acessoSuperlogica(userId) {
   const c = _cachePerfilSL.get(userId);
-  if (c && c.ate > Date.now()) return c.ok;
+  if (c && c.ate > Date.now()) return c;
   const p = await lerPerfil(userId);
   const ok = !!(p && (p.role === 'GESTOR' || Object.entries(p.permissoes || {}).some(([m, v]) => m !== 'dashboard' && v && v.visivel === true)));
-  _cachePerfilSL.set(userId, { ok, ate: Date.now() + 60 * 1000 });
-  return ok;
+  const v = { ok, chaves: temVerChaves(p), ate: Date.now() + 60 * 1000 };
+  _cachePerfilSL.set(userId, v);
+  return v;
+}
+async function podeUsarSuperlogica(userId) {
+  return (await acessoSuperlogica(userId)).ok;
+}
+
+// Chaves internas do Superlógica (tokens de cobrança, credenciais e chaves PJ, senhas) que
+// alguns endpoints devolvem, como o condominios/get. Só quem tem a ação
+// configuracoes.ver_chaves recebe o valor; para os outros o proxy troca por asteriscos.
+// A ação não vem com o cargo: é dada a uma pessoa e só quem já tem pode liberar para outra.
+function temVerChaves(perfil) {
+  const c = perfil && perfil.permissoes && perfil.permissoes.configuracoes;
+  return !!(c && c.visivel === true && Array.isArray(c.acoes) && c.acoes.includes('ver_chaves'));
+}
+// Para dar ou tirar a ação vale a presença na lista, mesmo com o módulo escondido.
+function listaTemVerChaves(permissoes) {
+  const c = permissoes && permissoes.configuracoes;
+  return !!(c && Array.isArray(c.acoes) && c.acoes.includes('ver_chaves'));
+}
+// Palavra forte em qualquer ponto do nome; palavra curta só no começo de um pedaço do nome.
+const RE_CONTEM_SENSIVEL = /(token|credencial|senha|password|passwd|secret|segredo|accesskey|apikey|privatekey)/i;
+const RE_SEG_SENSIVEL = /^(chave|key|certificado|private|hash)/i;
+function campoSensivel(k) {
+  const s = String(k);
+  if (RE_CONTEM_SENSIVEL.test(s.replace(/[_.\-\s]/g, ''))) return true;
+  return s.replace(/([a-z0-9])([A-Z])/g, '$1_$2').split(/[_.\-\s]+/).some((p) => RE_SEG_SENSIVEL.test(p));
+}
+function mascararSensiveis(v, prof) {
+  prof = prof || 0;
+  if (v == null || typeof v !== 'object') return v;
+  if (prof > 20) return null; // nada da API tem essa profundidade; na dúvida, não repassa
+  if (Array.isArray(v)) return v.map((x) => mascararSensiveis(x, prof + 1));
+  const o = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (campoSensivel(k)) o[k] = (x == null || x === '') ? x : '********';
+    else o[k] = mascararSensiveis(x, prof + 1);
+  }
+  return o;
 }
 
 app.use('/api/superlogica', requireAuth, async (req, res) => {
   if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'Chaves do Superlógica não configuradas no servidor.' });
   if (!SUPABASE_SERVICE_ROLE_KEY) return res.status(503).json({ erro: 'service_role_nao_configurada' });
+  let verChaves = req.authMode === 'internal';
   if (req.authMode !== 'internal') {
-    let ok = false;
-    try { ok = await podeUsarSuperlogica(req.user && req.user.sub); } catch (e) { ok = false; }
-    if (!ok) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso aos módulos do Superlógica.' });
+    let ac = null;
+    try { ac = await acessoSuperlogica(req.user && req.user.sub); } catch (e) { ac = null; }
+    if (!ac || !ac.ok) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso aos módulos do Superlógica.' });
+    verChaves = ac.chaves === true;
   }
   // So repassa a API condor (nada de outros caminhos do host)
   if (!/^\/v2\/condor\/[A-Za-z0-9_\/.-]*(\?.*)?$/.test(req.url) || req.url.includes('..')) {
@@ -301,9 +341,47 @@ app.use('/api/superlogica', requireAuth, async (req, res) => {
   if (req.headers['content-type']) headers['content-type'] = req.headers['content-type'];
   if (req.headers['content-length']) headers['content-length'] = req.headers['content-length'];
   const pr = https.request({ hostname: alvo.hostname, path: alvo.pathname + alvo.search, method: req.method, headers, timeout: 120000 }, (r) => {
-    res.status(r.statusCode || 502);
-    if (r.headers['content-type']) res.setHeader('Content-Type', r.headers['content-type']);
-    r.pipe(res);
+    const ct = String(r.headers['content-type'] || '');
+    const status = r.statusCode || 502;
+    const bloquear = (erro, detalhe) => {
+      res.removeHeader('Content-Type');
+      res.removeHeader('Content-Disposition');
+      res.status(erro === 'download_bloqueado' ? 403 : 502).json({ erro, detalhe });
+    };
+    // Quem vê as chaves, e PDF ou imagem para qualquer um, passa direto.
+    if (verChaves || /^application\/pdf|^image\//i.test(ct)) {
+      res.status(status);
+      if (ct) res.setHeader('Content-Type', ct);
+      if (r.headers['content-disposition']) res.setHeader('Content-Disposition', r.headers['content-disposition']);
+      r.on('error', () => res.end());
+      return r.pipe(res);
+    }
+    // O resto é lido inteiro para trocar as chaves internas por asteriscos.
+    const partes = [];
+    r.on('data', (c) => partes.push(c));
+    r.on('error', () => { if (!res.headersSent) res.status(502).json({ erro: 'falha_superlogica' }); else res.end(); });
+    r.on('end', () => {
+      const bruto = Buffer.concat(partes);
+      const txt = bruto.toString('utf8').replace(/^\uFEFF/, '');
+      let json;
+      if (/^\s*[{\[]/.test(txt)) { try { json = JSON.parse(txt); } catch (e) { json = undefined; } }
+      if (json !== undefined) {
+        res.status(status);
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        return res.end(JSON.stringify(mascararSensiveis(json)));
+      }
+      // Arquivo que não é PDF nem imagem (planilha, zip): não dá para conferir por dentro.
+      if (/zip|vnd\.|octet-stream|excel|spreadsheet/i.test(ct) || bruto.includes(0)) {
+        return bloquear('download_bloqueado', 'Esse tipo de arquivo do Superlógica só sai para quem vê as chaves.');
+      }
+      // Texto: só repassa se não houver nome de campo sensível com valor.
+      if (/(token|credencial|chave|accesskey|senha|password|secret|apikey)\w*\s*["']?\s*[:=]/i.test(txt)) {
+        return bloquear('resposta_bloqueada', 'A resposta do Superlógica tinha dados internos e foi bloqueada.');
+      }
+      res.status(status);
+      if (ct) res.setHeader('Content-Type', ct);
+      res.end(bruto);
+    });
   });
   pr.on('timeout', () => { pr.destroy(); if (!res.headersSent) res.status(504).json({ erro: 'timeout_superlogica' }); });
   pr.on('error', (e) => { if (!res.headersSent) res.status(502).json({ erro: 'falha_superlogica', detalhe: e.message }); });
@@ -2729,6 +2807,7 @@ app.put('/api/admin/usuarios/:id/role',
     if (alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_imutavel', detalhe: 'O cargo do GESTOR não muda pelo sistema.' });
     // Rebaixar pra OPERACIONAL tira junto o direito de convidar.
     const patch = role === 'OPERACIONAL' ? { role, pode_convidar: false } : { role };
+    _cachePerfilSL.delete(req.params.id);
     const r = await supabaseAdminRequest('PATCH',
       `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`,
       patch);
@@ -2751,6 +2830,12 @@ app.put('/api/admin/usuarios/:id/permissoes',
     const alvo = await lerPerfil(req.params.id);
     if (!alvo) return res.status(404).json({ erro: 'usuario_nao_encontrado' });
     if (alvo.role === 'GESTOR') return res.status(400).json({ erro: 'gestor_imutavel', detalhe: 'As permissões do GESTOR não mudam pelo sistema.' });
+    // Ver chaves do Superlógica: só quem já tem pode dar ou tirar (o cargo GESTOR não basta).
+    if (req.authMode !== 'internal' && listaTemVerChaves(permissoes) !== listaTemVerChaves(alvo.permissoes)
+        && !listaTemVerChaves(req.gestor && req.gestor.permissoes)) {
+      return res.status(403).json({ erro: 'acima_do_limite', detalhe: 'Só quem vê as chaves do Superlógica pode dar ou tirar esse acesso (inclusive escondendo Configurações).' });
+    }
+    _cachePerfilSL.delete(req.params.id);
     const patch = { permissoes };
     // Filtro extra pro GERENTE: o PATCH so aplica se o alvo ainda for OPERACIONAL na hora
     // da escrita (fecha a janela entre a leitura e a gravacao).
@@ -2797,6 +2882,7 @@ app.delete('/api/admin/usuarios/:id',
     if (req.gestor.role === 'GERENTE' && alvo.role !== 'OPERACIONAL') {
       return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Gerente só remove OPERACIONAL.' });
     }
+    _cachePerfilSL.delete(id);
     const r = await supabaseAdminRequest('DELETE', `/auth/v1/admin/users/${encodeURIComponent(id)}`);
     res.status(r.status).json(r.body || { ok: true });
   });

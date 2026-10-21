@@ -3791,8 +3791,11 @@ const MODULOS_CATALOGO = {
   atas:               { label: 'Atas Condominiais',   acoes: ['ver', 'gerar', 'edital'] },
   leitura_consumo:    { label: 'Leitura de Consumo',  acoes: ['ver', 'ler'] },
   tarefas:            { label: 'Tarefas',             acoes: ['ver'] },
-  configuracoes:      { label: 'Configurações',       acoes: ['ver', 'editar', 'convidar'] }
+  configuracoes:      { label: 'Configurações',       acoes: ['ver', 'editar', 'convidar', 'ver_chaves'] }
 };
+
+// Ações que nem o cargo GESTOR libera sozinho: só quem já tem pode dar ou tirar (T15).
+const ACOES_RESTRITAS_PERM = ['ver_chaves'];
 
 const ROLE_COR = { GESTOR: '#00D2FF', GERENTE: '#A78BFA', OPERACIONAL: '#8B95A8' };
 let _perfilEditando = null;
@@ -3951,7 +3954,10 @@ function renderPermissoesForm(u) {
   // GERENTE so libera o que ele mesmo tem (o backend confere de novo ao salvar)
   const limite = souGestor ? null : (window.USER_PERMS || {});
   const tenhoModulo = (m) => !limite || !!(limite[m] && limite[m].visivel);
-  const tenhoAcao = (m, a) => !limite || (tenhoModulo(m) && (limite[m].acoes || []).includes(a));
+  // Ações que nem o cargo GESTOR libera sozinho: só quem tem pode dar ou tirar (o servidor confere).
+  const ACOES_RESTRITAS = ACOES_RESTRITAS_PERM;
+  const tenhoRestrita = (m, a) => { const meu = (window.USER_PERMS || {})[m]; return !!(meu && (meu.acoes || []).includes(a)); };
+  const tenhoAcao = (m, a) => ACOES_RESTRITAS.includes(a) ? tenhoRestrita(m, a) : (!limite || (tenhoModulo(m) && (limite[m].acoes || []).includes(a)));
   const cargo = (souGestor && u._roleOriginal !== 'GESTOR')
     ? `<div style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:10px">
          <label style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text)">
@@ -3973,7 +3979,7 @@ function renderPermissoesForm(u) {
     const atual = u.permissoes[modulo] || { visivel: false, acoes: [] };
     const checks = def.acoes.map(a => {
       const c = (atual.acoes || []).includes(a);
-      const travada = !atual.visivel || (!c && !tenhoAcao(modulo, a));
+      const travada = !atual.visivel || (!c && !tenhoAcao(modulo, a)) || (ACOES_RESTRITAS.includes(a) && !tenhoAcao(modulo, a));
       return `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;font-size:11px;font-family:var(--mono);color:var(--text);cursor:pointer">
         <input type="checkbox" data-modulo="${modulo}" data-acao="${a}" ${c ? 'checked' : ''} ${travada ? 'disabled' : ''}> ${esc(a.replace(/_/g, ' '))}
       </label>`;
@@ -4036,9 +4042,10 @@ function coletarPermissoesDoForm() {
     if (cb.checked && novas[m]) novas[m].visivel = true;
   });
   document.querySelectorAll('[data-modulo][data-acao]').forEach(cb => {
-    if (!cb.checked || cb.disabled) return;
     const m = cb.dataset.modulo;
     const a = cb.dataset.acao;
+    // Ação restrita travada continua como estava (quem não tem não dá nem tira).
+    if (!cb.checked || (cb.disabled && !ACOES_RESTRITAS_PERM.includes(a))) return;
     if (novas[m] && novas[m].visivel) novas[m].acoes.push(a);
   });
   _perfilEditando.permissoes = novas;
