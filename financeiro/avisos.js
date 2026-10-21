@@ -106,8 +106,9 @@ function contasSemExtrato(linhas, limite) {
         if (d == null || d < limite) continue;
         contas.push(Object.assign(base, { ultimo_extrato: k.quadro.ultimo_extrato, dias_uteis: d, gravidade: d >= 2 * limite ? 'alta' : 'media' }));
       } else if (k.situacao === 'sem_extrato') {
-        // Conta ativa sem nenhum extrato importado nos últimos 75 dias (a T35 conta todas): alta na principal.
-        contas.push(Object.assign(base, { ultimo_extrato: null, dias_uteis: null, gravidade: k.principal ? 'alta' : 'media' }));
+        // Conta ativa sem nenhum extrato importado nos últimos 75 dias (a T35 conta todas): alta na principal;
+        // nas outras (poupança e fundos que a equipe não importa) fica baixa, no fim da lista (teste real de 21/10).
+        contas.push(Object.assign(base, { ultimo_extrato: null, dias_uteis: null, gravidade: k.principal ? 'alta' : 'baixa' }));
       }
     }
   }

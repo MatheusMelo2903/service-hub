@@ -31,7 +31,7 @@ t('contas sem extrato: limite, pouco movimento, principal sem extrato e falha', 
   const r = A.contasSemExtrato(quadro, 2);
   const ids = r.contas.map((c) => c.conta);
   assert.deepStrictEqual(ids.sort(), ['1', '5', '6', '8']);
-  assert.strictEqual(r.contas.find((c) => c.conta === '6').gravidade, 'media', 'não principal sem extrato entra como média (T35)');
+  assert.strictEqual(r.contas.find((c) => c.conta === '6').gravidade, 'baixa', 'não principal sem extrato entra como baixa (T35 conta, mas fica no fim)');
   assert.strictEqual(r.contas[0].conta, '5', 'principal sem extrato vem primeiro');
   assert.strictEqual(r.contas.find((c) => c.conta === '1').gravidade, 'alta'); // 4 >= 2x2
   assert.strictEqual(r.contas.find((c) => c.conta === '8').gravidade, 'media');
