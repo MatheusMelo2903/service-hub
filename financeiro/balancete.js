@@ -522,17 +522,18 @@ async function pedirGeracao({ base, appToken, accessToken }, idCondominio, comp,
   if (ultimo) throw Object.assign(new Error('geracao_em_andamento'), { codigo: 'em_andamento', desde: new Date(ultimo).toISOString() });
   if (ultimaGeracao && ultimaGeracao.comp !== c.chave && agora - ultimaGeracao.em < TRAVA_MES_MS) throw Object.assign(new Error('outro_mes_gerando'), { codigo: 'outro_mes_gerando' });
   pedidosGeracao.set(chave, agora);
+  const anterior = ultimaGeracao;
+  ultimaGeracao = { comp: c.chave, em: agora }; // marcado antes de qualquer espera: dois meses não ajustam juntos
   // Caminho C: com a seleção pessoal (usuario:N), troca o mês dos itens antes de gerar.
   const sel = selecaoGeracao();
   let ajuste = null;
   if (sel.ID_RELATORIOSELECAO_RLSU) {
-    if (!cliente) { pedidosGeracao.delete(chave); throw Object.assign(new Error('sem_cliente'), { codigo: 'selecao' }); }
+    if (!cliente) { pedidosGeracao.delete(chave); ultimaGeracao = anterior; throw Object.assign(new Error('sem_cliente'), { codigo: 'selecao' }); }
     const dono = /^\d{1,9}$/.test(String(process.env.BALANCETE_SELECAO_DONO || '')) ? String(process.env.BALANCETE_SELECAO_DONO) : '89';
     try {
-      ajuste = await selecaoMes.ajustarSelecaoParaMes({ cred: { base, appToken, accessToken }, cliente, idUsuario: dono, idSelecao: sel.ID_RELATORIOSELECAO_RLSU, competencia: c.chave });
-    } catch (e) { pedidosGeracao.delete(chave); throw Object.assign(new Error('ajuste_selecao: ' + e.message), { codigo: 'selecao' }); }
+      ajuste = await selecaoMes.ajustarSelecaoParaMes({ cred: { base, appToken, accessToken }, cliente, idUsuario: dono, idSelecao: sel.ID_RELATORIOSELECAO_RLSU, competencia: c.chave, log: console.log });
+    } catch (e) { pedidosGeracao.delete(chave); ultimaGeracao = anterior; throw Object.assign(new Error('ajuste_selecao: ' + e.message), { codigo: 'selecao' }); }
   }
-  ultimaGeracao = { comp: c.chave, em: agora };
   const q = Object.assign({ ID_CONDOMINIO_COND: id }, selecaoGeracao(), {
     DT_PADRAO_REL: String(c.mes).padStart(2, '0') + '/01/' + c.ano, NAO_PULAR_PAGINA_ENTRE_RELATORIOS: '0', NAO_EXIBIR_LINK_ANEXOS: '0', render: 'pdf', getId: '1',
   });

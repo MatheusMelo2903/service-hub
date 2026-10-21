@@ -20,8 +20,8 @@ function mesesAntes({ ano, mes }, n) { const t = ano * 12 + (mes - 1) - n; retur
 
 // Troca o valor de um parâmetro na URL do item sem mexer nos outros (nem na ordem nem na codificação).
 function trocarParam(url, nome, valor) {
-  const re = new RegExp('([?&])' + nome.replace(/[[\]]/g, '\\$&') + '=[^&]*');
-  if (!re.test(url)) { const e = new Error('parametro_ausente_' + nome); e.codigo = 'item_inesperado'; throw e; }
+  const re = new RegExp('([?&])' + nome.replace(/[[\]]/g, '\\$&') + '=[^&]*', 'g');
+  if (!new RegExp(re.source).test(url)) { const e = new Error('parametro_ausente_' + nome); e.codigo = 'item_inesperado'; throw e; }
   return url.replace(re, '$1' + nome + '=' + encodeURIComponent(valor));
 }
 const codigoDe = (url) => (/\/id\/(\d{3}[A-Z])\b/.exec(String(url || '')) || [])[1] || '';
@@ -90,29 +90,50 @@ function postar({ base, appToken, accessToken }, caminho, corpo) {
   });
 }
 
+// Campos que o código sabe mandar de volta. Item com outro campo preenchido: não grava (perderia o campo).
+const CAMPOS_ITEM = ['id_relatoriousuarioselecao_rlsui', 'id_relatorioselecao_rlsu', 'st_url_rlsui', 'st_titulotexto_rlsui', 'st_subtitulotexto_rlsui', 'st_texto_rlsui', 'id_modeloorigem_rlsui', 'nm_ordenacao_rlsui'];
+const decodificar = (s) => { try { return decodeURIComponent(String(s || '')); } catch (e) { return String(s || ''); } };
+// Confere a releitura: mesmos itens, ordem, ids e todos os campos; a URL tem de ser a esperada.
+function mesmaSelecao(depois, antes, urls) {
+  return depois.titulo === antes.titulo && depois.itens.length === antes.itens.length && depois.itens.every((d, i) => {
+    const a = antes.itens[i];
+    return CAMPOS_ITEM.every((c) => (c === 'st_url_rlsui' ? decodificar(d[c]) === decodificar(urls[i]) : String(d[c] == null ? '' : d[c]) === String(a[c] == null ? '' : a[c])));
+  });
+}
+async function gravarEConferir(cred, cliente, sel, urls, postarFn, idUsuario, idSelecao) {
+  let r;
+  try { r = await (postarFn || postar)(cred, 'relatorioselecaousuario/post', montarCorpo(sel, urls)); } catch (e) { r = { http: 0 }; }
+  const item = r && (Array.isArray(r.json) ? r.json[0] : r.json);
+  const aceitou = r && r.http === 200 && item && String(item.status || '200') === '200';
+  // Mesmo sem resposta (tempo esgotado), o Superlógica pode ter gravado: relê sempre.
+  let depois = null;
+  try { depois = await lerSelecao(cliente, idUsuario, idSelecao); } catch (e) { depois = null; }
+  return { aceitou, ok: !!depois && mesmaSelecao(depois, sel, urls) };
+}
+
 // Ajusta a seleção para a competência. Devolve { mudou, itens_alterados }. Se já está no mês, não grava.
-// Depois de gravar, lê de novo e confere: mesmos itens, mesma ordem, mesmos textos; só as URLs previstas mudaram.
-async function ajustarSelecaoParaMes({ cred, cliente, idUsuario, idSelecao, competencia, postarFn }) {
+// Guarda a seleção lida antes; se a gravação falhar ou a releitura vier diferente, regrava a original.
+async function ajustarSelecaoParaMes({ cred, cliente, idUsuario, idSelecao, competencia, postarFn, log }) {
   const m = /^(\d{4})-(\d{2})$/.exec(String(competencia || ''));
   if (!m) { const e = new Error('competencia_invalida'); e.codigo = 'competencia'; throw e; }
   const comp = { ano: Number(m[1]), mes: Number(m[2]) };
   const sel = await lerSelecao(cliente, idUsuario, idSelecao);
   if (!TITULO_PERMITIDO.test(sel.titulo)) { const e = new Error('selecao_nao_permitida'); e.codigo = 'selecao'; throw e; }
-  const urls = sel.itens.map((it) => urlParaMes(String(it.st_url_rlsui || ''), comp));
-  const alterados = sel.itens.map((it, i) => (urls[i] !== String(it.st_url_rlsui || '') ? i : -1)).filter((i) => i >= 0);
+  const desconhecido = sel.itens.find((it) => Object.keys(it).some((k) => !CAMPOS_ITEM.includes(k) && it[k] != null && String(it[k]) !== ''));
+  if (desconhecido) { const e = new Error('campo_desconhecido_no_item'); e.codigo = 'item_inesperado'; throw e; }
+  const originais = sel.itens.map((it) => String(it.st_url_rlsui || ''));
+  const urls = originais.map((u) => urlParaMes(u, comp));
+  const alterados = urls.map((u, i) => (u !== originais[i] ? i : -1)).filter((i) => i >= 0);
   if (!alterados.length) return { mudou: false, itens_alterados: 0 };
-  const r = await (postarFn || postar)(cred, 'relatorioselecaousuario/post', montarCorpo(sel, urls));
-  const item = Array.isArray(r.json) ? r.json[0] : r.json;
-  if (r.http !== 200 || !item || String(item.status || '200') !== '200') { const e = new Error('gravacao_recusada_http_' + r.http); e.codigo = 'gravacao'; throw e; }
-  const depois = await lerSelecao(cliente, idUsuario, idSelecao);
-  const igual = depois.itens.length === sel.itens.length && depois.itens.every((d, i) => {
-    const a = sel.itens[i];
-    return String(d.id_relatoriousuarioselecao_rlsui) === String(a.id_relatoriousuarioselecao_rlsui) && String(d.nm_ordenacao_rlsui) === String(a.nm_ordenacao_rlsui)
-      && (d.st_texto_rlsui || '') === (a.st_texto_rlsui || '') && (d.st_titulotexto_rlsui || '') === (a.st_titulotexto_rlsui || '')
-      && decodeURIComponent(String(d.st_url_rlsui)) === decodeURIComponent(urls[i]);
-  });
-  if (!igual) { const e = new Error('conferencia_da_gravacao_falhou'); e.codigo = 'gravacao_diferente'; throw e; }
-  return { mudou: true, itens_alterados: alterados.length };
+  const g = await gravarEConferir(cred, cliente, sel, urls, postarFn, idUsuario, idSelecao);
+  if (log) log('[escrita-superlogica] selecao_nova usuario=' + idUsuario + ' selecao=' + idSelecao + ' para=' + competencia + ' itens=' + alterados.length + ' aceitou=' + g.aceitou + ' conferida=' + g.ok);
+  if (g.ok) return { mudou: true, itens_alterados: alterados.length };
+  // Desfaz: regrava a seleção como estava e confere.
+  const volta = await gravarEConferir(cred, cliente, sel, originais, postarFn, idUsuario, idSelecao);
+  if (log) log('[escrita-superlogica] selecao_nova desfeita usuario=' + idUsuario + ' selecao=' + idSelecao + ' conferida=' + volta.ok);
+  const e = new Error(volta.ok ? 'gravacao_falhou_desfeita' : 'gravacao_falhou_sem_desfazer');
+  e.codigo = 'gravacao_diferente';
+  throw e;
 }
 
-module.exports = { urlParaMes, trocarParam, codigoDe, lerSelecao, montarCorpo, ajustarSelecaoParaMes, TITULO_PERMITIDO };
+module.exports = { urlParaMes, trocarParam, codigoDe, lerSelecao, montarCorpo, ajustarSelecaoParaMes, mesmaSelecao, TITULO_PERMITIDO, CAMPOS_ITEM };

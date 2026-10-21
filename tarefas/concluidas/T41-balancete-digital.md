@@ -24,11 +24,14 @@
 
 ## Caminho C (decisão do Matheus 21/10 15h37)
 financeiro/balancete-selecao.js: antes de cada geração, o Hub lê a seleção NOVA (GET relatorioselecaousuario/index com
-comItems=1), troca só o mês dos itens 037F, 037E, 061B (extrato e simulação), 061A (1º ao último dia) e a primeira coluna
-do 011A (11 meses antes), grava pelo mesmo caminho da tela (relatorioselecaousuario/post) e lê de novo para provar que
+comItems=1), troca só o mês dos itens 037F, 037E, 061B (extrato e simulação), 061A (1º ao último dia), a primeira coluna
+do 011A (11 meses antes) e a posição de 003A e 002B (último dia do mês; na seleção da Web é "Fechamento"), grava pelo mesmo caminho da tela (relatorioselecaousuario/post) e lê de novo para provar que
 só esses parâmetros mudaram. Recusa qualquer seleção sem "NOVA teste Hub" no título (as seleções do condomínio nunca são
 tocadas). Dono da seleção: BALANCETE_SELECAO_DONO (padrão 89). Enquanto um mês está sendo gerado (6 minutos), outro mês
-não é pedido. Testado com o token do Hub: ajuste para 08/2026 e volta para 09/2026, conferido.
+não é pedido (trava marcada antes de qualquer espera). Guarda a seleção antes de gravar e, se a gravação falhar ou a
+releitura vier diferente, regrava a original. A seleção fica no último mês gerado (quem abrir no Superlógica vê esse mês).
+Testado com o token do Hub: ajuste para 08/2026 e volta para 09/2026; 900A de agosto do Victoria Bay gerado pelo Hub
+(647766): 115 de 115 comprovantes, 35 itens, todos os meses certos; só a carta com %administradora.nome%.
 
 ## Medidas reais (Victoria Bay, setembro de 2026)
 900A de 585 páginas e 231 MB: download em cerca de 8 s, leitura em 47 s com 775 MB de memória no Mac; conferência

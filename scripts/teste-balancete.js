@@ -74,15 +74,16 @@ t('061B vai para o mês', dec(S.urlParaMes(U.b, m9)).includes('MES=selecionar&ME
 t('061A do dia 1 ao último', dec(S.urlParaMes(U.a, { ano: 2026, mes: 2 })).includes('PERIODO_INICIO=02/01/2026&PERIODO_FIM=02/28/2026'));
 t('011A 11 meses antes', dec(S.urlParaMes(U.o, m9)).includes('REALIZADO=selecionar&REALIZADO_INICIO=10/01/2025') && dec(S.urlParaMes(U.o, m1)).includes('REALIZADO_INICIO=02/01/2026'));
 t('003A posição no último dia', dec(S.urlParaMes(U.p, m9)).includes('POSICAOEM=selecionar&POSICAOEM_DATA=09/30/2026&VENCIMENTO=0'));
+t('parâmetro repetido troca todos', (S.urlParaMes(H + '037F?PERIODO=0&PERIODO_INICIO=&PERIODO_INICIO=x', m9).match(/PERIODO_INICIO=09%2F01%2F2026/g) || []).length === 2);
 t('capa não muda', S.urlParaMes(U.c, m9) === U.c);
 t('idempotente', S.urlParaMes(S.urlParaMes(U.f, m9), m9) === S.urlParaMes(U.f, m9));
 let semParam = false; try { S.urlParaMes(H + '037F?ORIENTACAO=0', m9); } catch (e) { semParam = e.codigo === 'item_inesperado'; }
 t('item sem o parâmetro recusa', semParam);
 function selFalsa(titulo, urls) { return [{ id_relatorioselecao_rlsu: '1', id_usuario_usu: '89', st_tituloselecao_rlsu: titulo, items: urls.map((u, i) => ({ id_relatoriousuarioselecao_rlsui: String(i + 1), nm_ordenacao_rlsui: String(i), st_url_rlsui: u, st_texto_rlsui: i === 0 ? '<p>carta</p>' : '', st_titulotexto_rlsui: 'T' + i })) }]; }
 function clienteFalso(titulo, gravar) {
-  let atual = selFalsa(titulo, [U.c, U.f, U.b, U.a, U.o]);
+  let atual = selFalsa(titulo, [U.c, U.f, U.b, U.a, U.o]); let posts = 0;
   return { get: async () => atual, gravou: () => atual, postar: async (cred, cam, corpo) => {
-    const p = new URLSearchParams(corpo); const n = atual[0].items.map((it, i) => Object.assign({}, it, { st_url_rlsui: gravar === 'errado' && i === 0 ? it.st_url_rlsui + '&X=1' : p.get('RELATORIO_SELECAO[' + i + '][ST_URL_RLSUI]') }));
+    posts++; const p = new URLSearchParams(corpo); const n = atual[0].items.map((it, i) => Object.assign({}, it, { st_url_rlsui: gravar === 'errado' && posts === 1 && i === 0 ? it.st_url_rlsui + '&X=1' : p.get('RELATORIO_SELECAO[' + i + '][ST_URL_RLSUI]') }));
     atual = [Object.assign({}, atual[0], { items: n })]; return { http: 200, json: { status: '200', data: { selecao: '1' } } }; } };
 }
 const cf = clienteFalso('Prestação de contas na Web NOVA teste Hub');
@@ -94,7 +95,9 @@ P(S.ajustarSelecaoParaMes({ cred: {}, cliente: cf, idUsuario: 89, idSelecao: 1, 
 const cw = clienteFalso('Prestação de contas na Web');
 P(S.ajustarSelecaoParaMes({ cred: {}, cliente: cw, idUsuario: 89, idSelecao: 1, competencia: '2026-09', postarFn: cw.postar }).then(() => t('seleção da equipe recusa', false), (e) => t('seleção da equipe recusa', e.message === 'selecao_nao_permitida')));
 const ce = clienteFalso('NOVA teste Hub', 'errado');
-P(S.ajustarSelecaoParaMes({ cred: {}, cliente: ce, idUsuario: 89, idSelecao: 1, competencia: '2026-09', postarFn: ce.postar }).then(() => t('gravação diferente acusa', false), (e) => t('gravação diferente acusa', e.codigo === 'gravacao_diferente')));
+P(S.ajustarSelecaoParaMes({ cred: {}, cliente: ce, idUsuario: 89, idSelecao: 1, competencia: '2026-09', postarFn: ce.postar }).then(() => t('gravação diferente acusa', false), (e) => t('gravação diferente acusa e desfaz', e.codigo === 'gravacao_diferente' && e.message === 'gravacao_falhou_desfeita' && ce.gravou()[0].items[1].st_url_rlsui === U.f)));
+const cx = clienteFalso('NOVA teste Hub'); const sx = selFalsa('NOVA teste Hub', [U.f]); sx[0].items[0].st_outro_campo = 'x'; cx.get = async () => sx;
+P(S.ajustarSelecaoParaMes({ cred: {}, cliente: cx, idUsuario: 89, idSelecao: 1, competencia: '2026-09', postarFn: async () => { throw new Error('não devia gravar'); } }).then(() => t('campo desconhecido recusa', false), (e) => t('campo desconhecido recusa', e.message === 'campo_desconhecido_no_item')));
 
 // ── 2. liberação da geração ──
 delete process.env.BALANCETE_GERACAO_LIBERADA;
