@@ -66,6 +66,7 @@ function lerRetornoPagamento(texto) {
       };
       if (!out.arquivo.retorno) avisos.push('o arquivo é de remessa (enviado ao banco), não de retorno; nada nele confirma pagamento');
     } else if (tipo === '1') {
+      if (lote) avisos.push('lote ' + lote.numero + ' sem trailer antes do lote seguinte');
       lote = { numero: campo(r, 4, 7), operacao: campo(r, 9, 9), servico: campo(r, 10, 11), forma: campo(r, 12, 13), forma_texto: FORMAS[campo(r, 12, 13)] || null, versao: campo(r, 14, 16).trim(), registros: 0, soma_centavos: 0, trailer: null };
       out.lotes.push(lote);
     } else if (tipo === '3') {
@@ -79,7 +80,7 @@ function lerRetornoPagamento(texto) {
           nosso_numero: txt(campo(r, 135, 154)) || null, data_real: C.dataCnab(campo(r, 155, 162)), valor_real_centavos: C.centavosCnab(campo(r, 163, 177)),
           codigo_barras: null, ocorrencias: ocorrencias(campo(r, 231, 240)) };
         fechar(p); out.pagamentos.push(p); ultimo = p; lote.soma_centavos += p.valor_centavos || 0;
-      } else if (seg === 'J' && campo(r, 18, 19) === '52') {
+      } else if (seg === 'J' && campo(r, 18, 19) === '52' && !C.codigoBarrasValido(C.soDigitos(campo(r, 18, 61)))) {
         const alvo = ultimo && ultimo.segmento === 'J' && ultimo.lote === lote.numero ? ultimo : null;
         if (!alvo) { avisos.push('linha ' + n + ' J52 sem segmento J antes'); return; }
         alvo.pagador_doc = C.soDigitos(campo(r, 21, 35)) || null;
@@ -127,6 +128,9 @@ function lerRetornoPagamento(texto) {
     }
   });
   if (!out.arquivo) erros.push('arquivo sem header (não parece CNAB 240)');
+  if (lote) avisos.push('lote ' + lote.numero + ' sem trailer');
+  // Remessa não confirma nada: nenhum pagamento conta como efetivado, agendado ou rejeitado.
+  if (!out.arquivo || !out.arquivo.retorno) out.pagamentos.forEach((p) => { p.efetivado = false; p.agendado = false; p.rejeitado = false; });
   return out;
 }
 
@@ -138,7 +142,7 @@ function ajustarDoc(p, k, tipoInsc) {
   if (/^0+$/.test(p[k])) p[k] = null;
 }
 
-// Situação final: efetivado só com ocorrência 00 e arquivo de retorno.
+// Situação pela ocorrência (00 efetivado); arquivo de remessa é zerado no fim da leitura.
 function fechar(p) {
   const cods = p.ocorrencias.map((o) => o.codigo);
   p.efetivado = cods.includes('00');
@@ -166,88 +170,90 @@ function despesaParaConferir(d) {
     valor_centavos: C.centavos(bruto ? d.vl_valor_pdes : d.valor),
     vencimento: C.dataQualquer(bruto ? d.dt_vencimento_pdes : d.dt_vencimento),
     liquidacao: C.dataQualquer(bruto ? d.dt_liquidacao_pdes : d.dt_liquidacao),
-    liquidada: bruto ? (String(d.fl_liquidado_pdes) === '1' || !!C.dataQualquer(d.dt_liquidacao_pdes)) : !!(d.liquidada || d.dt_liquidacao),
+    liquidada: bruto ? (String(d.fl_liquidado_pdes) === '1' || !!C.dataQualquer(d.dt_liquidacao_pdes)) : (d.liquidada === true || /^(1|true|sim)$/i.test(String(d.liquidada || '')) || (d.liquidada === undefined && !!d.dt_liquidacao)),
     codigo_barras: cb,
   };
 }
 
 // conferirPagamentos(retorno ou lista de pagamentos, despesas, { toleranciaDias, cnpjCondominio })
-// Casa primeiro pelo código de barras (forte), depois por seu número igual ao id da parcela ou
-// da despesa, e por fim por valor exato com data em até toleranciaDias (fraco; só se for único).
+// Casamento em fases sobre TODOS os pagamentos (a ordem do arquivo não muda o resultado):
+//   1) código de barras igual; 2) seu número só numérico igual ao id da parcela (ou, se não houver,
+//   ao id da despesa); 3) só para efetivados: valor exato e data em até toleranciaDias, se for único.
+// Não efetivados só casam pelas fases 1 e 2, para não acusar baixa errada em despesa de outro boleto.
 function conferirPagamentos(retornoOuLista, despesas, opcoes) {
   const o = { toleranciaDias: 5, ...(opcoes || {}) };
   const pags = Array.isArray(retornoOuLista) ? retornoOuLista : (retornoOuLista && retornoOuLista.pagamentos) || [];
   const desp = (despesas || []).map(despesaParaConferir);
   const usadas = new Set();
-  const resultados = [];
+  const casou = new Map(); // índice do pagamento -> { idx, como } | { ambiguo, como }
   const cnpjCond = C.soDigitos(o.cnpjCondominio) || null;
+  const livres = (fn) => desp.map((d, i) => [d, i]).filter(([d, i]) => !usadas.has(i) && fn(d));
+  const pendentes = (fn) => pags.map((p, i) => [p, i]).filter(([p, i]) => !casou.has(i) && fn(p));
 
-  const efetivos = pags.filter((p) => p.efetivado);
-  const outros = pags.filter((p) => !p.efetivado);
-
-  const achar = (p) => {
-    if (p.codigo_barras) {
-      const iguais = desp.filter((d, i) => !usadas.has(i) && d.codigo_barras === p.codigo_barras);
-      if (iguais.length === 1) return { idx: desp.indexOf(iguais[0]), como: 'codigo_barras' };
-      if (iguais.length > 1) {
-        const perto = iguais.filter((d) => d.valor_centavos === p.valor_pago_centavos);
-        const escolha = perto.length === 1 ? perto[0] : null;
-        if (escolha) return { idx: desp.indexOf(escolha), como: 'codigo_barras' };
-        return { ambiguo: iguais.map((d) => d.id_parcela), como: 'codigo_barras' };
-      }
+  // Fase 1: código de barras.
+  for (const [p, i] of pendentes((x) => !!x.codigo_barras)) {
+    let iguais = livres((d) => d.codigo_barras === p.codigo_barras);
+    if (iguais.length > 1) {
+      const mesmoValor = iguais.filter(([d]) => d.valor_centavos === p.valor_pago_centavos || d.valor_centavos === p.valor_titulo_centavos);
+      if (mesmoValor.length === 1) iguais = mesmoValor;
     }
-    const sn = C.soDigitos(p.seu_numero).replace(/^0+/, '');
-    if (sn) {
-      const porId = desp.filter((d, i) => !usadas.has(i) && (String(d.id_parcela) === sn || String(d.id_despesa) === sn));
-      if (porId.length === 1) return { idx: desp.indexOf(porId[0]), como: 'seu_numero' };
-    }
-    const dataRef = p.data_efetiva;
-    const candidatos = desp.filter((d, i) => {
-      if (usadas.has(i) || d.valor_centavos === null) return false;
+    if (iguais.length === 1) { usadas.add(iguais[0][1]); casou.set(i, { idx: iguais[0][1], como: 'codigo_barras' }); }
+    else if (iguais.length > 1) casou.set(i, { ambiguo: iguais.map(([d]) => d.id_parcela), como: 'codigo_barras' });
+  }
+  // Fase 2: seu número inteiramente numérico.
+  for (const [p, i] of pendentes((x) => /^\d+$/.test(String(x.seu_numero || '').trim()))) {
+    const sn = String(p.seu_numero).trim().replace(/^0+/, '');
+    if (!sn) continue;
+    let iguais = livres((d) => String(d.id_parcela) === sn);
+    let como = 'seu_numero_parcela';
+    if (!iguais.length) { iguais = livres((d) => String(d.id_despesa) === sn); como = 'seu_numero_despesa'; }
+    if (iguais.length === 1) { usadas.add(iguais[0][1]); casou.set(i, { idx: iguais[0][1], como }); }
+    else if (iguais.length > 1) casou.set(i, { ambiguo: iguais.map(([d]) => d.id_parcela), como });
+  }
+  // Fase 3: valor e data, só efetivados.
+  for (const [p, i] of pendentes((x) => x.efetivado)) {
+    const cands = livres((d) => {
+      if (d.valor_centavos === null) return false;
       if (d.valor_centavos !== p.valor_pago_centavos && d.valor_centavos !== p.valor_titulo_centavos) return false;
-      const dd = d.liquidacao || d.vencimento;
-      const dist = C.diasEntre(dd, dataRef);
+      const dist = C.diasEntre(d.liquidacao || d.vencimento, p.data_efetiva);
       return dist !== null && Math.abs(dist) <= o.toleranciaDias;
     });
-    if (candidatos.length === 1) return { idx: desp.indexOf(candidatos[0]), como: 'valor_e_data' };
-    if (candidatos.length > 1) return { ambiguo: candidatos.map((d) => d.id_parcela), como: 'valor_e_data' };
-    return null;
-  };
+    if (cands.length === 1) { usadas.add(cands[0][1]); casou.set(i, { idx: cands[0][1], como: 'valor_e_data' }); }
+    else if (cands.length > 1) casou.set(i, { ambiguo: cands.map(([d]) => d.id_parcela), como: 'valor_e_data' });
+  }
 
-  // Fortes primeiro, para o casamento fraco não roubar uma despesa que tem código de barras certo.
-  const ordem = efetivos.slice().sort((a, b) => (b.codigo_barras ? 1 : 0) - (a.codigo_barras ? 1 : 0));
-  for (const p of ordem) {
+  const resultados = pags.map((p, i) => {
     const ref = refPagamento(p);
-    const a = achar(p);
-    if (!a) { resultados.push({ ...ref, situacao: 'pago_sem_despesa', gravidade: 'alta', detalhe: 'Pago no banco e sem despesa correspondente no sistema.' }); continue; }
-    if (a.ambiguo) { resultados.push({ ...ref, situacao: 'ambiguo', gravidade: 'media', casou_por: a.como, parcelas_candidatas: a.ambiguo, detalhe: 'Mais de uma despesa possível; conferir à mão.' }); continue; }
-    usadas.add(a.idx);
+    const a = casou.get(i) || null;
+    if (!p.efetivado) {
+      const d = a && !a.ambiguo ? desp[a.idx] : null;
+      const situacao = p.agendado ? 'agendado' : p.rejeitado ? 'rejeitado' : 'pendente';
+      const achados = [];
+      if (d && d.liquidada && situacao !== 'agendado') achados.push({ tipo: 'baixa_sem_pagamento', detalhe: 'Despesa baixada no sistema, mas o banco não efetivou (' + (p.ocorrencias.map((x) => x.texto).join('; ') || 'sem ocorrência') + ').' });
+      return { ...ref, situacao, gravidade: achados.length ? 'alta' : null, casou_por: a ? a.como : null, despesa: d, achados };
+    }
+    if (!a) return { ...ref, situacao: 'pago_sem_despesa', gravidade: 'alta', achados: [], detalhe: 'Pago no banco e sem despesa correspondente no sistema.' };
+    if (a.ambiguo) return { ...ref, situacao: 'ambiguo', gravidade: 'media', casou_por: a.como, parcelas_candidatas: a.ambiguo, achados: [], detalhe: 'Mais de uma despesa possível; conferir à mão.' };
     const d = desp[a.idx];
     const achados = [];
     const dif = (p.valor_pago_centavos || 0) - (d.valor_centavos || 0);
-    if (d.valor_centavos !== null && dif !== 0) {
+    if (d.valor_centavos === null) achados.push({ tipo: 'sem_valor_no_sistema', detalhe: 'Despesa sem valor lançado.' });
+    else if (dif !== 0) {
       achados.push({ tipo: dif > 0 ? 'pago_a_maior' : 'pago_a_menor', diferenca_centavos: dif,
         detalhe: dif > 0 ? 'Banco pagou ' + C.fmtBRL(dif) + ' a mais que o lançado (juros ou multa não registrados).' : 'Banco pagou ' + C.fmtBRL(-dif) + ' a menos que o lançado (desconto ou pagamento parcial).' });
     }
     if (!d.liquidada) achados.push({ tipo: 'sem_baixa', detalhe: 'Pago no banco em ' + p.data_efetiva + ' e sem baixa no sistema.' });
     else if (d.liquidacao && p.data_efetiva && d.liquidacao !== p.data_efetiva) achados.push({ tipo: 'data_baixa_diferente', dias: C.diasEntre(p.data_efetiva, d.liquidacao), detalhe: 'Baixa no sistema em ' + d.liquidacao + ', pagamento real em ' + p.data_efetiva + '.' });
-    if (a.como !== 'codigo_barras' && p.codigo_barras && d.codigo_barras && p.codigo_barras !== d.codigo_barras) achados.push({ tipo: 'codigo_barras_diferente', detalhe: 'Código de barras pago é diferente do lançado na despesa (boleto trocado ou de outro condomínio).' });
+    if (a.como !== 'codigo_barras' && p.codigo_barras) {
+      if (d.codigo_barras && p.codigo_barras !== d.codigo_barras) achados.push({ tipo: 'codigo_barras_diferente', detalhe: 'Código de barras pago é diferente do lançado na despesa (boleto trocado ou de outro condomínio).' });
+      else if (!d.codigo_barras) achados.push({ tipo: 'sem_codigo_no_sistema', detalhe: 'Pago com código de barras e a despesa não tem código lançado; casou só por ' + (a.como === 'valor_e_data' ? 'valor e data' : 'seu número') + '.' });
+    }
     if (p.beneficiario_doc && d.fornecedor_doc && p.beneficiario_doc !== d.fornecedor_doc) achados.push({ tipo: 'beneficiario_diferente', detalhe: 'CNPJ do beneficiário no banco diferente do fornecedor da despesa.' });
     if (cnpjCond && p.pagador_doc && p.pagador_doc !== cnpjCond) achados.push({ tipo: 'pagador_diferente', detalhe: 'CNPJ do pagador no banco diferente do condomínio.' });
     const grave = achados.some((x) => ['codigo_barras_diferente', 'beneficiario_diferente', 'pagador_diferente', 'pago_a_menor'].includes(x.tipo));
-    resultados.push({ ...ref, situacao: achados.length ? 'divergente' : 'confere', gravidade: achados.length ? (grave ? 'alta' : 'media') : null, casou_por: a.como, despesa: d, achados });
-  }
-  // Não efetivados: se o sistema deu baixa, a baixa está errada.
-  for (const p of outros) {
-    const ref = refPagamento(p);
-    const a = achar(p);
-    const d = a && !a.ambiguo ? desp[a.idx] : null;
-    if (d) usadas.add(a.idx);
-    const situacao = p.agendado ? 'agendado' : p.rejeitado ? 'rejeitado' : 'pendente';
-    const achados = [];
-    if (d && d.liquidada && situacao !== 'agendado') achados.push({ tipo: 'baixa_sem_pagamento', detalhe: 'Despesa baixada no sistema, mas o banco não efetivou (' + (p.ocorrencias.map((x) => x.texto).join('; ') || 'sem ocorrência') + ').' });
-    resultados.push({ ...ref, situacao, gravidade: achados.length ? 'alta' : null, despesa: d, achados });
-  }
+    return { ...ref, situacao: achados.length ? 'divergente' : 'confere', gravidade: achados.length ? (grave ? 'alta' : 'media') : null, casou_por: a.como, despesa: d, achados };
+  });
+  const efetivos = pags.filter((p) => p.efetivado);
   const resumo = { pagamentos: pags.length, efetivados: efetivos.length, confere: 0, divergente: 0, pago_sem_despesa: 0, ambiguo: 0, agendado: 0, rejeitado: 0, pendente: 0, total_pago_centavos: efetivos.reduce((s, p) => s + (p.valor_pago_centavos || 0), 0) };
   resultados.forEach((r) => { resumo[r.situacao] = (resumo[r.situacao] || 0) + 1; });
   resumo.despesas_sem_pagamento_no_arquivo = desp.length - usadas.size;

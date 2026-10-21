@@ -85,6 +85,8 @@ const DESPESAS = [
     assert.strictEqual(C.dataCnab('31022026'), null);
     assert.strictEqual(C.dataCnab('00000000'), null);
     assert.strictEqual(C.fmtBRL(123456), 'R$ 1.234,56');
+    assert.strictEqual(C.centavos('12.345'), 1234500);
+    assert.strictEqual(C.centavos('12.34'), 1234);
   });
   await ok('codigo de barras e linha digitavel ida e volta', () => {
     [CB1, CB2, CB3, CB4].forEach((cb) => {
@@ -126,6 +128,7 @@ const DESPESAS = [
     assert.strictEqual(cfg.ligado, true);
     assert(!vazou(JSON.stringify(cfg)));
     assert(!vazou(require('util').inspect(cfg)));
+    assert(!vazou(require('util').inspect(cfg, { showHidden: true, depth: 9 })));
     const st = S.status(envFalso); // pfx falso não abre
     assert.strictEqual(st.ligado, false);
     assert.strictEqual(st.problema, 'certificado_ou_senha_invalidos');
@@ -223,6 +226,11 @@ const DESPESAS = [
     const ruim = E.normalizarExtratoSicoob({ saldoAnterior: '0', saldoAtual: '10', transacoes: [{ tipo: 'C', valor: '9.99', data: '2026-10-01' }] });
     assert.strictEqual(ruim.conferencia.fecha, false);
     assert.strictEqual(ruim.conferencia.diferenca_centavos, -1);
+    assert.throws(() => E.paraOFX(ruim), /extrato_nao_fecha/);
+    assert(E.paraOFX(ruim, { permitirSemFechar: true }).includes('<TRNAMT>9.99'));
+    const conflito = E.normalizarExtratoSicoob({ transacoes: [{ tipo: 'C', valor: '-5.00', data: '2026-10-01' }, { valor: '7.00', data: '2026-10-01' }] });
+    assert.strictEqual(conflito.itens.length, 1, 'crédito negativo ignorado');
+    assert(conflito.avisos.some((a) => /crédito com valor negativo/.test(a)) && conflito.avisos.some((a) => /deduzido/.test(a)));
   });
   await ok('extrato para conciliacao e para OFX ida e volta', () => {
     const ext = E.normalizarExtratoSicoob(RESP);
@@ -324,7 +332,7 @@ const DESPESAS = [
     const r4 = por('J', CB4);
     assert.strictEqual(r4.situacao, 'pago_sem_despesa');
     const ra = por('A');
-    assert.strictEqual(ra.casou_por, 'seu_numero');
+    assert.strictEqual(ra.casou_por, 'seu_numero_parcela');
     assert.strictEqual(ra.achados[0].tipo, 'sem_baixa');
     const ro = por('O');
     assert.strictEqual(ro.situacao, 'confere');
@@ -353,6 +361,47 @@ const DESPESAS = [
     // Formato fin_parcelas também serve.
     const fin = [{ id_parcela: 9001, id_despesa: 501, id_condominio: 167, valor: 1530, dt_vencimento: '2026-10-10', dt_liquidacao: '2026-10-13', liquidada: true, codigo_barras: CB1 }];
     assert.strictEqual(R.conferirPagamentos([p], fin).resultados[0].situacao, 'confere');
+  });
+
+  await ok('revisao 1: casamento independe da ordem e seu numero so numerico', () => {
+    const mk = (o) => ({ efetivado: true, agendado: false, rejeitado: false, ocorrencias: [{ codigo: '00', texto: 'ok' }], valor_titulo_centavos: null, ...o });
+    const boletoDesconhecido = mk({ segmento: 'J', codigo_barras: CB4, valor_pago_centavos: 10000, data_efetiva: '2026-10-10', seu_numero: null });
+    const ted = mk({ segmento: 'A', codigo_barras: null, valor_pago_centavos: 10000, data_efetiva: '2026-10-10', seu_numero: '55' });
+    const desp = [{ id_despesa_des: '700', id_parcela_pdes: '55', vl_valor_pdes: '100.00', dt_vencimento_pdes: '10/10/2026', dt_liquidacao_pdes: '10/10/2026', st_codigobarras_pdes: '' }];
+    [[boletoDesconhecido, ted], [ted, boletoDesconhecido]].forEach((ordem) => {
+      const c = R.conferirPagamentos(ordem, desp);
+      const rt = c.resultados.find((r) => r.segmento === 'A');
+      const rb = c.resultados.find((r) => r.segmento === 'J');
+      assert.strictEqual(rt.situacao, 'confere');
+      assert.strictEqual(rb.situacao, 'pago_sem_despesa');
+    });
+    // Texto livre no seu número não casa por id.
+    const nf = mk({ segmento: 'A', valor_pago_centavos: 1, data_efetiva: '2026-01-01', seu_numero: 'NF 700' });
+    assert.strictEqual(R.conferirPagamentos([nf], desp).resultados[0].situacao, 'pago_sem_despesa');
+    // Seu número que bate com duas parcelas: ambíguo.
+    const dois = [{ ...desp[0], id_parcela_pdes: '55' }, { ...desp[0], id_despesa_des: '701', id_parcela_pdes: '55' }];
+    assert.strictEqual(R.conferirPagamentos([mk({ segmento: 'A', valor_pago_centavos: 1, data_efetiva: '2026-01-01', seu_numero: '55' })], dois).resultados[0].situacao, 'ambiguo');
+    // Pago com código e despesa sem código: não confere sozinho.
+    const soValor = R.conferirPagamentos([mk({ segmento: 'J', codigo_barras: CB4, valor_pago_centavos: 10000, data_efetiva: '2026-10-10' })], [{ ...desp[0], id_parcela_pdes: '1' }]);
+    assert.strictEqual(soValor.resultados[0].situacao, 'divergente');
+    assert(soValor.resultados[0].achados.some((x) => x.tipo === 'sem_codigo_no_sistema'));
+    // Rejeitado com código de outro boleto não consome despesa nem acusa baixa errada.
+    const rej = { ...mk({ segmento: 'J', codigo_barras: CB4, valor_pago_centavos: 10000, data_efetiva: '2026-10-10' }), efetivado: false, rejeitado: true, ocorrencias: [{ codigo: '01', texto: 'Saldo insuficiente' }] };
+    const cr = R.conferirPagamentos([rej], [{ ...desp[0], st_codigobarras_pdes: CB2 }]);
+    assert.strictEqual(cr.resultados[0].achados.length, 0);
+    assert.strictEqual(cr.resultados[0].despesa, null);
+  });
+  await ok('revisao 1: remessa nao conta como paga e J com codigo iniciado em 52', () => {
+    const remessa = R.lerRetornoPagamento(TXT.replace(/^(.{142})2/, '$11'));
+    assert(remessa.pagamentos.every((p) => !p.efetivado && !p.rejeitado && !p.agendado));
+    const cb52 = boleto('520', 1234, 777, '1');
+    const linhas = TXT.split('\r\n');
+    linhas[2] = linhas[2].slice(0, 17) + cb52 + linhas[2].slice(61);
+    const r = R.lerRetornoPagamento(linhas.join('\r\n'));
+    assert.strictEqual(r.pagamentos[0].codigo_barras, cb52);
+    assert(!r.avisos.some((a) => /J52 sem segmento J/.test(a)));
+    const semTrailer = R.lerRetornoPagamento(linhas.filter((l, i) => i !== 6).join('\r\n'));
+    assert(semTrailer.avisos.some((a) => /sem trailer/.test(a)));
   });
 
   // ── DDA ──

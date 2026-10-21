@@ -25,6 +25,8 @@ const ROTAS = {
   dda: { escopos: ['openid', 'pagamentos_consulta'], caminho: () => '/pagamentos/v3/boletos', query: (p) => ({ dataInicial: p.dataInicial, dataFinal: p.dataFinal }) },
 };
 
+const SEGREDOS = new WeakMap();
+
 class ErroBanco extends Error {
   constructor(codigo, status) { super(codigo); this.codigo = codigo; if (status) this.status = status; }
 }
@@ -38,15 +40,16 @@ function lerConfig(env) {
   try { pfx = Buffer.from(String(e.SICOOB_CERT_PFX_BASE64).replace(/\s+/g, ''), 'base64'); } catch (_) { pfx = null; }
   if (!pfx || pfx.length < 100) return { ligado: false, faltando: [], problema: 'certificado_ilegivel' };
   const cfg = { ligado: true, faltando: [] };
-  // Segredos ficam fora da enumeração para não sair num JSON.stringify ou console.log por engano.
-  Object.defineProperty(cfg, 'segredo', { enumerable: false, value: Object.freeze({ clientId: String(e.SICOOB_CLIENT_ID).trim(), pfx, senha: String(e.SICOOB_CERT_SENHA) }) });
+  // Segredos ficam num WeakMap fora do objeto: não saem em JSON.stringify nem em util.inspect (nem com showHidden).
+  SEGREDOS.set(cfg, Object.freeze({ clientId: String(e.SICOOB_CLIENT_ID).trim(), pfx, senha: String(e.SICOOB_CERT_SENHA) }));
   return cfg;
 }
 
 // Confere, sem rede, se o certificado abre com a senha. Nunca devolve detalhe do erro.
 function certificadoAbre(cfg) {
   if (!cfg || !cfg.ligado) return false;
-  try { tls.createSecureContext({ pfx: cfg.segredo.pfx, passphrase: cfg.segredo.senha }); return true; } catch (_) { return false; }
+  const sg = SEGREDOS.get(cfg);
+  try { tls.createSecureContext({ pfx: sg.pfx, passphrase: sg.senha }); return true; } catch (_) { return false; }
 }
 
 function status(env) {
@@ -57,20 +60,33 @@ function status(env) {
     r.certificado_abre = certificadoAbre(cfg);
     if (!r.certificado_abre) { r.ligado = false; r.problema = 'certificado_ou_senha_invalidos'; }
   }
-  r.mensagem = r.ligado ? 'Conector do banco configurado.' : 'Conector do banco desligado: falta a liberação do banco (ver o que o banco precisa liberar).';
+  r.mensagem = r.ligado ? 'Conector do banco configurado.'
+    : r.problema ? 'Conector do banco desligado: o certificado configurado não abriu (arquivo ou senha). Conferir o certificado no ambiente.'
+      : 'Conector do banco desligado: falta a liberação do banco (ver o que o banco precisa liberar).';
   return r;
 }
 
 // Transporte padrão: HTTPS com o certificado do cliente (mTLS). Responde { status, corpo }.
 function transporteHttps({ host, metodo, caminho, cabecalhos, corpo, pfx, senha, timeoutMs }) {
+  const limite = timeoutMs || 20000;
   return new Promise((resolve, reject) => {
-    const r = https.request({ hostname: host, port: 443, path: caminho, method: metodo, headers: cabecalhos, pfx, passphrase: senha, timeout: timeoutMs || 20000, minVersion: 'TLSv1.2' }, (res) => {
+    let fim = false;
+    const terminar = (erro, valor) => { if (fim) return; fim = true; clearTimeout(relogio); if (erro) reject(erro); else resolve(valor); };
+    const r = https.request({ hostname: host, port: 443, path: caminho, method: metodo, headers: cabecalhos, pfx, passphrase: senha, timeout: limite, minVersion: 'TLSv1.2' }, (res) => {
       const partes = []; let tam = 0;
-      res.on('data', (c) => { tam += c.length; if (tam > 20 * 1024 * 1024) { r.destroy(); return; } partes.push(c); });
-      res.on('end', () => resolve({ status: res.statusCode, corpo: Buffer.concat(partes).toString('utf8') }));
+      res.on('data', (c) => {
+        tam += c.length;
+        if (tam > 20 * 1024 * 1024) { terminar(new ErroBanco('banco_resposta_grande')); r.destroy(); return; }
+        partes.push(c);
+      });
+      res.on('end', () => terminar(null, { status: res.statusCode, corpo: Buffer.concat(partes).toString('utf8') }));
+      res.on('error', () => terminar(new ErroBanco('banco_sem_conexao')));
+      res.on('aborted', () => terminar(new ErroBanco('banco_sem_conexao')));
     });
-    r.on('timeout', () => r.destroy(new ErroBanco('banco_tempo_esgotado')));
-    r.on('error', (e) => reject(e instanceof ErroBanco ? e : new ErroBanco('banco_sem_conexao')));
+    // Tempo total máximo (o timeout do socket só conta inatividade).
+    const relogio = setTimeout(() => { terminar(new ErroBanco('banco_tempo_esgotado')); r.destroy(); }, limite * 2);
+    r.on('timeout', () => { terminar(new ErroBanco('banco_tempo_esgotado')); r.destroy(); });
+    r.on('error', () => terminar(new ErroBanco('banco_sem_conexao')));
     if (corpo) r.write(corpo);
     r.end();
   });
@@ -111,7 +127,7 @@ function criarClienteSicoob(opcoes) {
   async function chamar(host, metodo, caminho, cabecalhos, corpo) {
     if (!HOSTS_PERMITIDOS.includes(host)) throw new ErroBanco('host_nao_permitido');
     if (metodo !== 'GET' && !(metodo === 'POST' && host === HOST_AUTH && caminho === CAMINHO_TOKEN)) throw new ErroBanco('metodo_nao_permitido');
-    const s = cfg.segredo;
+    const s = SEGREDOS.get(cfg);
     return transporte({ host, metodo, caminho, cabecalhos, corpo, pfx: s.pfx, senha: s.senha });
   }
 
@@ -120,7 +136,7 @@ function criarClienteSicoob(opcoes) {
     const chave = escopos.slice().sort().join(' ');
     const t = tokens.get(chave);
     if (t && t.expira > agora() + 30000) return t.valor;
-    const corpo = new URLSearchParams({ grant_type: 'client_credentials', client_id: cfg.segredo.clientId, scope: chave }).toString();
+    const corpo = new URLSearchParams({ grant_type: 'client_credentials', client_id: SEGREDOS.get(cfg).clientId, scope: chave }).toString();
     let r;
     try {
       r = await chamar(HOST_AUTH, 'POST', CAMINHO_TOKEN, { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(corpo), Accept: 'application/json' }, corpo);
@@ -140,7 +156,7 @@ function criarClienteSicoob(opcoes) {
     const caminho = rota.caminho(params) + montarQuery(rota.query(params));
     let r;
     try {
-      r = await chamar(HOST_API, 'GET', caminho, { Authorization: 'Bearer ' + tok, client_id: cfg.segredo.clientId, Accept: 'application/json' });
+      r = await chamar(HOST_API, 'GET', caminho, { Authorization: 'Bearer ' + tok, client_id: SEGREDOS.get(cfg).clientId, Accept: 'application/json' });
     } catch (e) { throw e instanceof ErroBanco ? e : new ErroBanco('banco_sem_conexao'); }
     if (r.status === 401 || r.status === 403) { tokens.clear(); throw new ErroBanco('banco_acesso_negado', r.status); }
     if (r.status === 404) throw new ErroBanco('banco_nao_encontrado', 404);

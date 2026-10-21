@@ -18,12 +18,17 @@ function primeiro(o, nomes) {
   return undefined;
 }
 
+// Devolve { tipo, aviso }. Tipo explícito contra o sinal do valor: ignora (não chuta).
+// Sem tipo reconhecido: deduz pelo sinal e avisa.
 function tipoDe(t, valorCent) {
+  if (valorCent === null) return { tipo: null };
   const s = String(t || '').trim().toUpperCase();
-  if (/^(C|CREDITO|CRÉDITO|CREDIT)$/.test(s)) return 'C';
-  if (/^(D|DEBITO|DÉBITO|DEBIT)$/.test(s)) return 'D';
-  if (valorCent !== null && valorCent < 0) return 'D';
-  return valorCent === null ? null : 'C';
+  let tipo = null;
+  if (/^(C|CREDITO|CRÉDITO|CREDIT)$/.test(s)) tipo = 'C';
+  else if (/^(D|DEBITO|DÉBITO|DEBIT)$/.test(s)) tipo = 'D';
+  if (tipo === 'C' && valorCent < 0) return { tipo: null, aviso: 'crédito com valor negativo' };
+  if (tipo) return { tipo };
+  return { tipo: valorCent < 0 ? 'D' : 'C', aviso: 'tipo deduzido pelo sinal do valor' };
 }
 
 function idEstavel(partes) {
@@ -51,9 +56,11 @@ function normalizarExtratoSicoob(resposta) {
   const itens = [];
   lista.forEach((t, i) => {
     const bruto = C.centavos(primeiro(t, ['valor', 'valorLancamento', 'vlLancamento']));
-    const tipo = tipoDe(primeiro(t, ['tipo', 'tipoLancamento', 'natureza', 'creditoDebito']), bruto);
+    const td = tipoDe(primeiro(t, ['tipo', 'tipoLancamento', 'natureza', 'creditoDebito']), bruto);
+    const tipo = td.tipo;
     const data = C.dataQualquer(primeiro(t, ['data', 'dataLancamento', 'dataMovimento', 'dataLote']), { formatoBR: true });
-    if (bruto === null || !tipo || !data) { avisos.push('transação ' + (i + 1) + ' sem valor, tipo ou data; ignorada'); return; }
+    if (bruto === null || !tipo || !data) { avisos.push('transação ' + (i + 1) + ' ' + (td.aviso || 'sem valor, tipo ou data') + '; ignorada'); return; }
+    if (td.aviso) avisos.push('transação ' + (i + 1) + ': ' + td.aviso);
     const descricao = limpa([primeiro(t, ['descricao', 'historico', 'descricaoHistorico']), primeiro(t, ['descInfComplementar', 'complemento', 'informacaoComplementar'])].filter(Boolean).join(' '), 200);
     const documento = limpa(primeiro(t, ['numeroDocumento', 'documento', 'nrDocumento']), 40);
     itens.push({ data, tipo, centavos: Math.abs(bruto), descricao, documento, seq: i });
@@ -103,12 +110,17 @@ function lerExtratoCnab240(texto) {
     } else if (tipoReg === '5' && atual) {
       atual.saldoAtualCentavos = sinal(C.centavosCnab(r.slice(150, 168)), r[168]);
       atual.dataSaldoFinal = C.dataCnab(r.slice(142, 150));
+      atual.trailerDebitos = C.centavosCnab(r.slice(176, 194));
+      atual.trailerCreditos = C.centavosCnab(r.slice(194, 212));
     }
   });
   contas.forEach((c) => {
     c.itens = comIds(c.itens, 'cnab240');
     c.conferencia = conferirSaldos(c);
     c.avisos = c.conferencia.fecha === false ? ['saldo inicial mais créditos menos débitos não fecha com o saldo final'] : [];
+    if (c.trailerDebitos !== null && c.trailerDebitos !== undefined && c.trailerDebitos !== c.conferencia.debitos_centavos) c.avisos.push('soma de débitos do trailer diferente da soma dos lançamentos');
+    if (c.trailerCreditos !== null && c.trailerCreditos !== undefined && c.trailerCreditos !== c.conferencia.creditos_centavos) c.avisos.push('soma de créditos do trailer diferente da soma dos lançamentos');
+    delete c.trailerDebitos; delete c.trailerCreditos;
   });
   return { contas, avisos };
 }
@@ -136,8 +148,11 @@ const valOfx = (cent) => (cent < 0 ? '-' : '') + (Math.abs(cent) / 100).toFixed(
 
 // OFX 1.02 (SGML), o formato que os bancos entregam e o Superlógica importa.
 // agencia e conta só entram no arquivo gerado para a pessoa importar; nunca em log.
-function paraOFX(ext, { banco = '756', agencia = '', conta = '', tipoConta = 'CHECKING', geradoEm } = {}) {
+// Recusa extrato cujo saldo não fecha (salvo permitirSemFechar), para não importar extrato quebrado.
+function paraOFX(ext, { banco = '756', agencia = '', conta = '', tipoConta = 'CHECKING', geradoEm, dataSaldo, permitirSemFechar } = {}) {
   if (!ext.itens.length) throw new Error('extrato_vazio');
+  const conf = ext.conferencia || conferirSaldos(ext);
+  if (conf.fecha === false && !permitirSemFechar) throw new Error('extrato_nao_fecha');
   const datas = ext.itens.map((i) => i.data).sort();
   const agora = geradoEm || new Date().toISOString().slice(0, 10);
   const trn = ext.itens.map((i) => [
@@ -159,7 +174,7 @@ function paraOFX(ext, { banco = '756', agencia = '', conta = '', tipoConta = 'CH
     '<BANKTRANLIST>', '<DTSTART>' + dtOfx(datas[0]), '<DTEND>' + dtOfx(datas[datas.length - 1]),
     trn,
     '</BANKTRANLIST>',
-    saldo === null ? null : ['<LEDGERBAL>', '<BALAMT>' + valOfx(saldo), '<DTASOF>' + dtOfx(datas[datas.length - 1]), '</LEDGERBAL>'].join('\n'),
+    saldo === null ? null : ['<LEDGERBAL>', '<BALAMT>' + valOfx(saldo), '<DTASOF>' + dtOfx(dataSaldo || ext.dataSaldoFinal || datas[datas.length - 1]), '</LEDGERBAL>'].join('\n'),
     '</STMTRS>', '</STMTTRNRS>', '</BANKMSGSRSV1>', '</OFX>', '',
   ].filter((x) => x !== null).join('\n');
 }
