@@ -3653,7 +3653,8 @@ let _usuariosCache = [];
 let _carteirasLista = null;      // [{ id, nome, tipo, gerente, quantidade }] ou null (não carregou)
 let _carteirasErro = '';
 let _carteirasPorUsuario = {};   // { userId: [ids] }
-let _carteirasDisponivel = false; // false: banco sem o campo (migration 008)
+let _carteirasDisponivel = false; // false: banco sem o campo (migration 008) ou falha
+let _carteirasErroBanco = '';
 
 // Quem pode gerenciar usuarios: GESTOR, ou GERENTE com convite liberado (so sobre OPERACIONAL).
 // O backend aplica a mesma regra; aqui e so pra mostrar ou esconder a tela.
@@ -3680,8 +3681,9 @@ async function carregarUsuarios() {
     if (!resp.ok) throw new Error('HTTP ' + resp.status);
     const data = await resp.json();
     _usuariosCache = Array.isArray(data) ? data : [];
-    if (window.USER_ROLE === 'GESTOR') await carregarCarteirasAdmin();
     renderListaUsuarios();
+    // Carteiras chegam depois (dependem do Superlógica) e a lista é redesenhada.
+    if (window.USER_ROLE === 'GESTOR') carregarCarteirasAdmin().then(() => { if (_usuariosCache.length) renderListaUsuarios(); });
   } catch (e) {
     lista.innerHTML = '<div style="font-size:12px;color:var(--danger);font-family:var(--mono)">✕ Falha ao listar: ' + (e.message || '') + '</div>';
   }
@@ -3695,9 +3697,11 @@ async function carregarCarteirasAdmin() {
     _carteirasLista = rl.ok && Array.isArray(dl) ? dl : null;
     _carteirasErro = rl.ok ? '' : ((dl && dl.detalhe) || 'Não foi possível ler as carteiras.');
     _carteirasDisponivel = !!(ru.ok && du && du.disponivel);
+    _carteirasErroBanco = _carteirasDisponivel ? '' : ((du && du.motivo === 'sem_coluna') ? 'O banco deste ambiente ainda não tem o campo de carteira.' : 'Não foi possível ler as carteiras dos usuários agora.');
     _carteirasPorUsuario = (du && du.carteiras) || {};
   } catch (e) {
     _carteirasLista = null; _carteirasErro = 'Não foi possível ler as carteiras.';
+    _carteirasDisponivel = false; _carteirasPorUsuario = {};
   }
 }
 
@@ -3854,7 +3858,7 @@ function renderCarteirasForm(u) {
   const esc = (s) => String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const caixa = (conteudo) => `<div style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:14px">
       <div style="font-size:12px;color:var(--text);margin-bottom:6px">Carteira <span style="font-size:10px;color:var(--muted);font-family:var(--mono)">(sem nenhuma marcada, vê todos os condomínios)</span></div>${conteudo}</div>`;
-  if (!_carteirasDisponivel) return caixa('<div style="font-size:11px;color:var(--muted);font-family:var(--mono)">O banco deste ambiente ainda não tem o campo de carteira.</div>');
+  if (!_carteirasDisponivel) return caixa('<div style="font-size:11px;color:var(--muted);font-family:var(--mono)">' + esc(_carteirasErroBanco || 'Carteiras ainda carregando ou indisponíveis. Feche e abra de novo em alguns segundos.') + '</div>');
   if (!_carteirasLista) return caixa('<div style="font-size:11px;color:var(--danger);font-family:var(--mono)">' + esc(_carteirasErro || 'Carteiras indisponíveis.') + '</div>');
   const marc = new Set(u.carteiras || []);
   return caixa(_carteirasLista.map(c => `<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text);cursor:pointer;margin:3px 0">

@@ -3374,7 +3374,7 @@ app.post('/api/condominio/:idSuperlogica/unidades/conferir', requireAuth, expres
 // carteira vê no seletor e nas listas só os condomínios dela; GESTOR e quem não tem
 // carteira veem todos. É filtro de tela: não bloqueia chamada direta às rotas do Superlógica.
 // ─────────────────────────────────────────────────────────────────────────
-const _cacheCarteiras = slModulo.consulta.criarCache(10 * 60 * 1000, 2, 60 * 1000);
+const _cacheCarteiras = slModulo.consulta.criarCache(10 * 60 * 1000, 2, 15 * 1000);
 function gruposCarteiras() {
   return _cacheCarteiras.pegar('grupos', () => slModulo.carteiras.lerGrupos(clienteSL()));
 }
@@ -3383,7 +3383,11 @@ function gruposCarteiras() {
 async function lerCarteirasPerfis(id) {
   const filtro = id ? '&id=eq.' + encodeURIComponent(id) : '';
   const r = await supabaseAdminRequest('GET', '/rest/v1/profiles?select=id,carteiras' + filtro);
-  if (r.status !== 200 || !Array.isArray(r.body)) return null;
+  if (r.status !== 200 || !Array.isArray(r.body)) {
+    lerCarteirasPerfis.semColuna = r.status === 400 && /carteiras/.test(JSON.stringify(r.body || ''));
+    return null;
+  }
+  lerCarteirasPerfis.semColuna = false;
   const m = {};
   r.body.forEach((p) => { m[p.id] = Array.isArray(p.carteiras) ? p.carteiras.map(Number).filter(Boolean) : []; });
   return m;
@@ -3427,7 +3431,7 @@ app.get('/api/carteiras/minha', requireAuth, async (req, res) => {
 app.get('/api/admin/usuarios/carteiras', requireAuth, requireGestor, requireServiceRoleKey, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const m = await lerCarteirasPerfis(null);
-  if (!m) return res.json({ disponivel: false, carteiras: {} });
+  if (!m) return res.json({ disponivel: false, motivo: lerCarteirasPerfis.semColuna ? 'sem_coluna' : 'falha', carteiras: {} });
   res.json({ disponivel: true, carteiras: m });
 });
 
@@ -3446,7 +3450,11 @@ app.put('/api/admin/usuarios/:id/carteiras',
     if (unicas.length) {
       if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado' });
       let grupos;
-      try { grupos = await gruposCarteiras(); } catch (e) {
+      try {
+        grupos = await gruposCarteiras();
+        // Carteira criada no Superlógica depois do cache: lê de novo uma vez.
+        if (!unicas.every((x) => grupos.some((g) => g.id === x))) { _cacheCarteiras.limpar('grupos'); grupos = await gruposCarteiras(); }
+      } catch (e) {
         return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível conferir as carteiras no Superlógica agora.' });
       }
       const validos = new Set(grupos.map((g) => g.id));

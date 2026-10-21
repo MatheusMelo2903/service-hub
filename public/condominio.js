@@ -216,10 +216,11 @@ async function fichaBuscar(ev) {
       if (CondSeletor.lista() === null) await CondSeletor.carregar();
       var antes = r.itens.length;
       r.itens = r.itens.filter(function (u) { return CondSeletor.naCarteira(u.id_superlogica); });
-      if (r.itens.length !== antes) r.quantidade = r.itens.length;
+      if (r.itens.length !== antes) { r.quantidade = r.itens.length; r.foraCarteira = antes - r.itens.length; }
     }
-    if (!r.itens.length) { el.innerHTML = '<div class="ficha-sub">Nada encontrado para "' + fichaEsc(q) + '".</div>'; return; }
-    el.innerHTML = '<div class="ficha-sub">' + r.quantidade + ' resultado' + (r.quantidade > 1 ? 's' : '') + (r.truncado ? ' (mostrando os primeiros)' : '') + '</div>'
+    var avisoCarteira = r.foraCarteira ? '<div class="ficha-sub">' + r.foraCarteira + ' resultado(s) de condomínios fora da sua carteira não aparecem.' + (r.truncado ? ' A busca foi cortada: refine o termo para achar mais da sua carteira.' : '') + '</div>' : '';
+    if (!r.itens.length) { el.innerHTML = '<div class="ficha-sub">Nada encontrado para "' + fichaEsc(q) + '".</div>' + avisoCarteira; return; }
+    el.innerHTML = '<div class="ficha-sub">' + r.quantidade + ' resultado' + (r.quantidade > 1 ? 's' : '') + (r.truncado ? ' (mostrando os primeiros)' : '') + '</div>' + avisoCarteira
       + '<table class="ficha-tab"><tr><th>Condomínio</th><th>Unidade</th><th>Proprietário</th><th>Contatos</th><th></th></tr>'
       + r.itens.map(function (u, i) {
         var hub = u.id_superlogica && window.CondSeletor ? (CondSeletor.lista() || []).find(function (c) { return String(c.id_superlogica) === String(u.id_superlogica); }) : null;
