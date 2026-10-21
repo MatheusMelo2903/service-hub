@@ -278,27 +278,35 @@ async function enviarDespesas() {
     progressBar.style.width = pct + '%';
 
     try {
+      // T05: campos conforme a documentação do POST despesas (os nomes antigos,
+      // DT_VENCIMENTO_PDES e DESPESA_APROPRIACAO, eram recusados com "Nenhuma parcela enviada"
+      // e o Superlógica respondia 206; a tela contava como enviado sem criar nada).
       const body = new URLSearchParams({
         ID_CONDOMINIO_COND: condId,
         ID_CONTATO_CON: row.ID_CONTATO_CON,
-        DT_VENCIMENTO_PDES: row.DT_VENCIMENTO_PDES,
-        VL_VALOR_PDES: row.VL_VALOR_PDES,
-        'DESPESA_APROPRIACAO[0][ST_CONTA_CONT]': row.ST_CONTA_CONT,
-        'DESPESA_APROPRIACAO[0][VL_VALOR_DES]': row.VL_VALOR_PDES,
+        DT_VENCIMENTOPRIMEIRAPARCELA: row.DT_VENCIMENTO_PDES,
+        ID_FORMA_PAG: '0',
+        'APROPRIACAO[0][ST_CONTA_CONT]': row.ST_CONTA_CONT,
+        'APROPRIACAO[0][VL_VALOR_PDES]': row.VL_VALOR_PDES,
       });
 
       if (row.ST_NOME_CON) body.set('ST_NOME_CON', row.ST_NOME_CON);
-      if (row.ST_DESCRICAO) body.set('DESPESA_APROPRIACAO[0][ST_DESCRICAO_CONT]', row.ST_DESCRICAO);
+      if (row.ST_DESCRICAO) body.set('APROPRIACAO[0][ST_COMPLEMENTO_APRO]', row.ST_DESCRICAO);
       if (row.ST_DOCUMENTO_DES) body.set('ST_DOCUMENTO_DES', row.ST_DOCUMENTO_DES);
 
       const res = await apiPost('/despesas/', body.toString());
-      if (res.ok) {
+      const txt = await res.text();
+      // Sucesso só quando o próprio corpo diz status 200 (o HTTP pode vir 200 ou 206 com erro dentro).
+      let item = null;
+      try { const j = JSON.parse(txt); item = Array.isArray(j) ? j[0] : j; } catch (_) { item = null; }
+      const criado = res.ok && item && String(item.status) === '200' && item.data && item.data.id_despesa_des;
+      if (criado) {
         ok++;
-        addLog(logDiv, `linha ${row._row}: enviado ✓`, 'ok');
+        addLog(logDiv, `linha ${row._row}: enviado ✓ (despesa ${item.data.id_despesa_des})`, 'ok');
       } else {
-        const txt = await res.text();
         err++;
-        addLog(logDiv, `linha ${row._row}: erro ${res.status} — ${txt.slice(0,80)}`, 'err');
+        const msg = item && item.msg ? String(item.msg) : txt.slice(0, 80);
+        addLog(logDiv, `linha ${row._row}: erro ${res.status}: ${msg.slice(0, 120)}`, 'err');
       }
     } catch(e) {
       err++;
