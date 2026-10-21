@@ -1,0 +1,36 @@
+// Teste unitário da conferência de participantes (T07). Dados sintéticos.
+const P = require('../../superlogica/pessoas');
+let ok = 0, fail = 0;
+const check = (n, c, d) => { if (c) { ok++; console.log('  PASS  ' + n); } else { fail++; console.log('  FAIL  ' + n + '  -> ' + d); } };
+const mapa = new Map();
+const add = (uni, bl, nomes) => [P.chaveUni(uni + bl), P.chaveUni(bl + uni), P.chaveUni(uni)].forEach((k) => { if (!mapa.has(k)) mapa.set(k, []); mapa.get(k).push({ rotulo: uni + ' ' + bl, nomes }); });
+add('203', 'J', ['KATIA REGINA SOUZA', 'Pedro Souza']);
+add('101', 'A', ['Joao da Silva']);
+const pessoas = { porUnidade: mapa, sindicos: ['Maria de Fatima Calandrine de Azevedo'] };
+
+let r = P.conferirParticipantes('Assumiu a presidência a condômina Sra. Kátia, da unidade J203, e o Sr. João (apartamento 101 bloco A) falou.', pessoas);
+check('Kátia J203 bate (acento e caixa)', r.itens.some((i) => /K.tia/.test(i.nome) && i.situacao === 'ok'), JSON.stringify(r.itens));
+check('João apto 101 bloco A bate', r.itens.some((i) => /Jo.o/.test(i.nome) && i.situacao === 'ok'), JSON.stringify(r.itens));
+r = P.conferirParticipantes('O Sr. Fernando, da unidade 203 J, questionou.', pessoas);
+check('nome que não mora na unidade = nome_nao_bate', r.divergentes.some((i) => i.situacao === 'nome_nao_bate'), JSON.stringify(r.itens));
+r = P.conferirParticipantes('A Sra. Kátia, da unidade 999, pediu a palavra.', pessoas);
+check('unidade inexistente = unidade_nao_encontrada', r.divergentes.some((i) => i.situacao === 'unidade_nao_encontrada'), JSON.stringify(r.itens));
+r = P.conferirParticipantes('A Sra. [Sra. a confirmar] da unidade 203 J falou.', pessoas);
+check('sem nome legível não entra', r.itens.length === 0, JSON.stringify(r.itens));
+let s = P.conferirSindico('Estiveram presentes a síndica Sra. Maria de Fátima Calandrine de Azevedo e outros.', pessoas);
+check('síndica bate', s && s.situacao === 'ok', JSON.stringify(s));
+s = P.conferirSindico('a síndica Sra. Rosana abriu.', pessoas);
+check('síndica diferente = nome_nao_bate', s && s.situacao === 'nome_nao_bate', JSON.stringify(s));
+add('305', 'B', ['CATIA MARIA LIMA']);
+r = P.conferirParticipantes('A Sra. Kátia, da unidade 305 B, votou.', pessoas);
+check('Kátia x CATIA = nome_parecido com o nome do cadastro', r.itens.some((i) => i.situacao === 'nome_parecido' && (i.nomes_cadastro || []).includes('CATIA MARIA LIMA')), JSON.stringify(r.itens));
+r = P.conferirParticipantes('O Sr. João, apartamento 101A e a Sra. Kátia, da unidade J203, falaram.', pessoas);
+check('"101A e a" não engole o "e" na unidade', r.itens.some((i) => /Jo.o/.test(i.nome) && i.situacao === 'ok'), JSON.stringify(r.itens));
+r = P.conferirParticipantes('A Sra. Ana reclamou do barulho da unidade 101 bloco A.', pessoas);
+check('unidade só citada longe do nome não liga à pessoa', r.itens.length === 0, JSON.stringify(r.itens));
+r = P.conferirParticipantes('A Condômina Kátia, da unidade 203 J, votou.', pessoas);
+check('Condômina com maiúscula e "203 J"', r.itens.some((i) => i.situacao === 'ok'), JSON.stringify(r.itens));
+r = P.conferirParticipantes('a condômina Sra. Kátia [sobrenome a confirmar], unidade J203, aceitou.', pessoas);
+check('marcador [sobrenome a confirmar] entre nome e unidade', r.itens.some((i) => i.situacao === 'ok'), JSON.stringify(r.itens));
+console.log('\n===== RESULTADO: ' + ok + ' PASS, ' + fail + ' FAIL =====');
+process.exit(fail ? 1 : 0);

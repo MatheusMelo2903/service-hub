@@ -109,4 +109,4 @@ async function buscarCadastro(cliente, idSuperlogica, { semCache = false } = {})
   return Object.assign({ cache: false }, dados);
 }
 
-module.exports = { buscarCadastro, montarCadastro, formatarDocumento, TTL_MS };
+module.exports = { buscarCadastro, montarCadastro, formatarDocumento, TTL_MS, vigente, RE_SINDICO, RE_SUBSINDICO };

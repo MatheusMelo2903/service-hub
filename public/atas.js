@@ -282,29 +282,7 @@ function importarTranscricao(event) {
 // ============================================================
 // ATAS CONDOMINIAIS
 // ============================================================
-let pautaCount = 1;
-
-function addPauta() {
-  pautaCount++;
-  const div = document.createElement('div');
-  div.className = 'pauta-item';
-  div.style.cssText = 'flex-wrap:wrap;gap:6px;align-items:flex-start';
-  div.innerHTML = `<input type="text" placeholder="Item de pauta ${pautaCount}" autocomplete="off" name="pauta-${pautaCount}-titulo"
-    style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
-    <label style="display:inline-flex;align-items:center;gap:5px;padding:8px 11px;background:var(--bg3);border:1px dashed var(--border2);border-radius:8px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--muted);white-space:nowrap;transition:all 0.15s" title="Anexar PDF">
-      📎 PDF
-      <input type="file" accept="application/pdf" style="display:none" onchange="anexarPdfPauta(this)">
-    </label>
-    <span class="pauta-pdf-nome" style="font-size:10px;font-family:var(--mono);color:var(--gs-blue);display:none;align-self:center"></span>
-    <button class="pauta-remove" onclick="removePauta(this)">×</button>`;
-  document.getElementById('pauta-list').appendChild(div);
-}
-
-function removePauta(btn) {
-  const items = document.querySelectorAll('.pauta-item');
-  if (items.length <= 1) { toast('Deve haver pelo menos um item de pauta', 'warn'); return; }
-  btn.closest('.pauta-item').remove();
-}
+// T07: a lista manual de itens de pauta saiu; a pauta vem do edital e da apresentação.
 
 async function extrairTextoPdf(arrayBuffer) {
   // Reusa o loader unico de pdf.js (mesma versao e CDN), com dedupe de chamadas
@@ -318,37 +296,6 @@ async function extrairTextoPdf(arrayBuffer) {
     texto += content.items.map(it => it.str).join(' ') + '\n';
   }
   return texto.trim();
-}
-
-function anexarPdfPauta(input) {
-  const file = input.files[0];
-  if (!file) return;
-  const item = input.closest('.pauta-item');
-  const nomeEl = item.querySelector('.pauta-pdf-nome');
-  const label = input.closest('label');
-
-  const reader = new FileReader();
-  reader.onload = async function(e) {
-    nomeEl.textContent = 'Lendo PDF...';
-    nomeEl.style.display = 'inline';
-    if (label) {
-      label.style.borderColor = 'var(--gs-blue)';
-      label.style.color = 'var(--gs-blue)';
-    }
-    try {
-      // Extrai texto do PDF no browser com pdf.js: sem IA
-      const textoPdf = await extrairTextoPdf(e.target.result);
-      input.dataset.pdfTexto = textoPdf;
-      nomeEl.textContent = '📎 ' + file.name;
-      nomeEl.title = textoPdf.slice(0, 300);
-      toast('PDF lido: ' + file.name + ' (' + textoPdf.length + ' caracteres)', 'ok');
-    } catch(err) {
-      input.dataset.pdfTexto = '[Falha ao ler PDF: ' + file.name + ']';
-      nomeEl.textContent = '📎 ' + file.name;
-      toast('PDF anexado (texto não extraído): ' + file.name, 'warn');
-    }
-  };
-  reader.readAsArrayBuffer(file);
 }
 
 // ============================================================
@@ -520,6 +467,8 @@ async function processarEditalFile(file) {
   // reanexação que falha perde de propósito o edital anterior, para nunca contaminar em silêncio.
   _editalDropzoneTexto = '';
   _editalDropzoneNome = '';
+  window._lendoEditalAta = true; // trava a troca de condomínio durante a leitura
+  try {
 
   // Validacoes basicas
   const accepted = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'];
@@ -629,15 +578,18 @@ async function processarEditalFile(file) {
     progressWrap.style.display = 'none';
     toast('Falha ao ler edital', 'err');
   }
+  } finally { window._lendoEditalAta = false; }
 }
 
 function aplicarCamposExtraidos(json) {
-  // Sobrescreve campos com o que a IA achou. User edita se errar.
+  // T07: nome e síndico vêm do cadastro do Superlógica; o edital só COMPLETA (data, tipo, local).
+  // Sem cadastro carregado (condomínio sem código ou Superlógica fora), o edital preenche como antes.
   const tipos = { 'AGO': 'AGO', 'AGE': 'AGE', 'Reuniao de Diretoria': 'Reunião de Diretoria', 'Reuniao de Moradores': 'Reunião de Moradores' };
-  if (json.condominio) document.getElementById('ata-cond').value = String(json.condominio);
+  const comCadastro = !!(_ataCadastro && _ataCadastro.ok);
+  if (json.condominio && !comCadastro) document.getElementById('ata-cond').value = String(json.condominio);
   if (json.data) document.getElementById('ata-data').value = String(json.data);
   if (json.tipo && tipos[json.tipo]) document.getElementById('ata-tipo').value = tipos[json.tipo];
-  if (json.sindico) document.getElementById('ata-sindico').value = String(json.sindico);
+  if (json.sindico && (!comCadastro || !document.getElementById('ata-sindico').value.trim())) document.getElementById('ata-sindico').value = String(json.sindico);
   if (json.local) document.getElementById('ata-local').value = String(json.local);
 }
 
@@ -656,16 +608,14 @@ function limparAta() {
   if (editalStatus) { editalStatus.textContent = ''; editalStatus.style.color = ''; }
   const editalProgress = document.getElementById('edital-progress-wrap');
   if (editalProgress) editalProgress.style.display = 'none';
-  document.getElementById('pauta-list').innerHTML = `<div class="pauta-item" style="flex-wrap:wrap;gap:6px;align-items:flex-start">
-    <input type="text" placeholder="ex: Aprovacao do balancete financeiro"
-      style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
-    <label style="display:inline-flex;align-items:center;gap:5px;padding:8px 11px;background:var(--bg3);border:1px dashed var(--border2);border-radius:8px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--muted);white-space:nowrap">
-      📎 PDF
-      <input type="file" accept="application/pdf" style="display:none" onchange="anexarPdfPauta(this)">
-    </label>
-    <span class="pauta-pdf-nome" style="font-size:10px;font-family:var(--mono);color:var(--gs-blue);display:none;align-self:center"></span>
-    <button class="pauta-remove" onclick="removePauta(this)">×</button>
-  </div>`;
+  ['ata-cnpj', 'ata-endereco'].forEach(function (k) { const el = document.getElementById(k); if (el) el.value = ''; });
+  // A ata gerada do condomínio anterior também sai (não pode ser baixada com o nome do novo).
+  _ataTextoGerado = '';
+  const conteudo = document.getElementById('ata-gerada-conteudo'); if (conteudo) conteudo.innerHTML = '';
+  const modalAta = document.getElementById('ata-gerada-modal'); if (modalAta) modalAta.style.display = 'none';
+  // O cabeçalho (nome, CNPJ, endereço, síndico) volta do cadastro do condomínio ativo.
+  _ataCadastro = null;
+  if (typeof ataCadastroCarregar === 'function') ataCadastroCarregar();
 }
 
 // ============================================================
@@ -733,6 +683,9 @@ async function gerarAtaIA() {
   const userMessage = [
     '=== DADOS DA REUNIÃO ===',
     `Condomínio: ${cond}`,
+    `CNPJ: ${(document.getElementById('ata-cnpj') || {}).value || '[a confirmar]'}`,
+    `Endereço: ${(document.getElementById('ata-endereco') || {}).value || '[a confirmar]'}`,
+    (_ataCadastro && _ataCadastro.ok ? '(Nome, CNPJ, endereço e síndico vêm do cadastro oficial do condomínio no Superlógica: use exatamente estes no cabeçalho.)' : ''),
     `Tipo: ${tipo}`,
     `Data: ${data}${dataExtenso !== data ? ' (' + dataExtenso + ')' : ''}`,
     `Síndico: ${sindico || '[a confirmar]'}`,
@@ -755,6 +708,7 @@ async function gerarAtaIA() {
   const btn = document.getElementById('btn-gerar-ata');
   const btnTextoOriginal = btn.textContent;
   btn.disabled = true;
+  window._gerandoAta = true; // trava a troca de condomínio até terminar (condTrocaBloqueada)
   const geracaoT0 = Date.now();
   btn.textContent = '⏳ Gerando ata... 0s';
   const progTimer = setInterval(() => {
@@ -773,6 +727,8 @@ async function gerarAtaIA() {
     // validação pós-geração; o payload final ({ ata, modelo_usado, ... }) é o mesmo.
     const corpoAta = JSON.stringify({
         userMessage,
+        // T07: código do condomínio para o servidor conferir os participantes no cadastro
+        id_superlogica: (_ataCadastro && _ataCadastro.ok) ? _ataCadastro.id : undefined,
         // T01: documentos da assembleia. Texto extraído aqui; escaneado vai como PDF (base64).
         documentos: _ataDocsApoio.filter(d => d.status === 'ok' || d.status === 'escaneado').map(d => (
           d.pdfBase64 ? { nome: d.nome, texto: '', pdf_base64: d.pdfBase64 } : { nome: d.nome, texto: d.texto }
@@ -851,6 +807,14 @@ async function gerarAtaIA() {
       payload.documentos.filter(d => d.falhou).forEach(d => avisos.push('o documento ' + d.nome + ' não pôde ser lido e ficou fora'));
       payload.documentos.filter(d => d.truncado).forEach(d => avisos.push('o documento ' + d.nome + ' é muito longo e foi usado só em parte'));
     }
+    // T07: participantes citados que não bateram com o cadastro (nome e unidade)
+    const part = payload.participantes;
+    if (part && Array.isArray(part.divergentes) && part.divergentes.length) {
+      avisos.push(part.divergentes.length + ' participante(s) citado(s) não bateram com o cadastro do Superlógica (veja no topo da ata)');
+    }
+    if (part && part.sindico && part.sindico.situacao !== 'ok') avisos.push('o síndico citado na ata não bate com o cadastro do Superlógica');
+    if (part && part.erro) avisos.push(part.erro);
+    ataMostrarConferenciaParticipantes(part);
     if (payload.gate && Array.isArray(payload.gate.flags) && payload.gate.flags.length) {
       avisos.push(payload.gate.flags.length + ' trecho(s) sem apoio na transcrição nem nos documentos, marcados na ata para conferir');
     }
@@ -861,6 +825,7 @@ async function gerarAtaIA() {
     toast('Falha ao gerar ata: ' + (e.message || 'erro'), 'err');
   } finally {
     clearInterval(progTimer);
+    window._gerandoAta = false;
     btn.disabled = false;
     btn.textContent = btnTextoOriginal;
   }
@@ -1325,3 +1290,95 @@ ${trans}
     document.body.removeChild(ta);
   }
 }
+
+// ============================================================
+// CADASTRO DO CONDOMÍNIO NA ATA (T07)
+// O seletor único escolhe o condomínio; nome, CNPJ, endereço e síndico vêm de
+// /api/condominio/:id/cadastro (Superlógica). O edital só completa data, tipo e local.
+// Trocar de condomínio limpa a ata em andamento (nada de um condomínio vaza para outro).
+// ============================================================
+let _ataCadastro = null; // { ok, id, dados } do condomínio ativo
+let _ataCadastroSeq = 0;
+
+function ataCondInit() {
+  if (window.CondSeletor && document.getElementById('ata-cond-seletor')) {
+    CondSeletor.montar('ata-cond-seletor', { placeholder: 'Clique para ver todos ou digite o nome' });
+  }
+  ataCadastroCarregar();
+}
+
+async function ataCadastroCarregar(forcar) {
+  const st = document.getElementById('ata-cadastro-status');
+  const cond = (typeof getCondominioAtivo === 'function') ? getCondominioAtivo() : null;
+  if (!cond || !cond.id_superlogica) {
+    _ataCadastro = null;
+    if (st) { st.textContent = cond ? 'Este condomínio não tem código do Superlógica: preencha nome, CNPJ, endereço e síndico à mão ou pelo edital.' : 'Escolha o condomínio: nome, CNPJ, endereço e síndico vêm do cadastro do Superlógica.'; st.style.color = 'var(--muted)'; }
+    return;
+  }
+  if (!forcar && _ataCadastro && _ataCadastro.ok && _ataCadastro.id === cond.id_superlogica) return;
+  if (!window.AUTH_TOKEN) return;
+  const seq = ++_ataCadastroSeq;
+  if (st) { st.textContent = 'Lendo o cadastro no Superlógica...'; st.style.color = 'var(--muted)'; }
+  try {
+    const r = await apiAuthFetch('/api/condominio/' + encodeURIComponent(cond.id_superlogica) + '/cadastro');
+    const j = await r.json().catch(() => ({}));
+    if (seq !== _ataCadastroSeq) return; // trocou no meio
+    if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+    _ataCadastro = { ok: true, id: cond.id_superlogica, dados: j };
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+    set('ata-cond', j.nome || j.nome_fantasia || cond.nome);
+    set('ata-cnpj', j.cnpj);
+    set('ata-endereco', j.endereco && (j.endereco.completo || ''));
+    set('ata-sindico', j.sindico && j.sindico.nome);
+    const faltam = [];
+    if (!j.cnpj) faltam.push('CNPJ');
+    if (!(j.endereco && j.endereco.completo)) faltam.push('endereço');
+    if (!j.sindico) faltam.push(j.sindico_indisponivel ? 'síndico (lista de síndicos fora do ar)' : 'síndico atual');
+    if (st) {
+      st.textContent = 'Dados do cadastro do Superlógica (código ' + cond.id_superlogica + ').' + (faltam.length ? ' Não veio do cadastro: ' + faltam.join(', ') + '; preencha à mão.' : '');
+      st.style.color = faltam.length ? 'var(--warning)' : 'var(--success)';
+    }
+  } catch (e) {
+    if (seq !== _ataCadastroSeq) return;
+    _ataCadastro = { ok: false, id: cond.id_superlogica };
+    if (st) { st.textContent = 'Não foi possível ler o cadastro agora (' + (e.message || 'erro') + '). Preencha à mão ou pelo edital.'; st.style.color = 'var(--danger)'; }
+  }
+}
+
+// Mostra no topo da revisão quem não bateu com o cadastro (sem mexer no texto da ata).
+function ataMostrarConferenciaParticipantes(part) {
+  const box = document.getElementById('ata-gerada-conteudo');
+  if (!box || !part) return;
+  const esc = (t) => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  const linhas = [];
+  if (part.parcial) linhas.push('Condomínio com muitas unidades: só parte do cadastro foi conferida.');
+  (part.divergentes || []).forEach((d) => {
+    let motivo = 'unidade não encontrada no cadastro';
+    if (d.situacao === 'nome_parecido') motivo = 'grafia diferente do cadastro';
+    if (d.situacao === 'nome_nao_bate') motivo = 'nome não consta como morador ou proprietário' + (d.unidade_cadastro ? ' da unidade ' + d.unidade_cadastro : '');
+    if (Array.isArray(d.nomes_cadastro) && d.nomes_cadastro.length) motivo += '; no cadastro: ' + d.nomes_cadastro.join(', ');
+    linhas.push(esc(d.nome) + ', unidade ' + esc(d.unidade) + ': ' + esc(motivo));
+  });
+  if (part.sindico && part.sindico.situacao !== 'ok') linhas.push('Síndico citado (' + esc(part.sindico.nome) + ') não bate com o cadastro (' + esc((part.sindico.cadastro || []).join(', ')) + ')');
+  if (!linhas.length) return;
+  const div = document.createElement('div');
+  div.style.cssText = 'margin:0 0 16px;padding:10px 12px;border:1px solid #e0a800;background:#fff8e1;border-radius:6px;font-family:Arial,sans-serif;font-size:10pt;color:#5c4400';
+  div.innerHTML = '<strong>Conferir participantes (não sai no PDF nem no Word):</strong><br>' + linhas.join('<br>');
+  box.insertBefore(div, box.firstChild);
+}
+
+// Trocou de condomínio: a ata em andamento era do anterior. Limpa e lê o cadastro do novo.
+window.addEventListener('condominioAtivo:trocou', function () {
+  const tinha = ['ata-transcricao', 'ata-participantes', 'ata-data', 'ata-local'].some(function (k) { const el = document.getElementById(k); return el && el.value.trim(); })
+    || (typeof _ataDocsApoio !== 'undefined' && _ataDocsApoio.length) || _editalDropzoneTexto;
+  limparAta();
+  if (tinha) toast('Ata em andamento descartada: o condomínio mudou.', 'info');
+});
+// O seletor pode completar o código do Superlógica de um ativo antigo (dispara só changed).
+window.addEventListener('condominioAtivo:changed', function () {
+  const cond = (typeof getCondominioAtivo === 'function') ? getCondominioAtivo() : null;
+  const p = document.getElementById('panel-atas');
+  if (p && p.classList.contains('active') && cond && cond.id_superlogica && (!_ataCadastro || _ataCadastro.id !== cond.id_superlogica)) ataCadastroCarregar(true);
+});
+document.addEventListener('auth:ready', function () { const p = document.getElementById('panel-atas'); if (p && p.classList.contains('active')) ataCondInit(); });
+setTimeout(function () { const p = document.getElementById('panel-atas'); if (p && p.classList.contains('active') && window.AUTH_TOKEN) ataCondInit(); }, 0);

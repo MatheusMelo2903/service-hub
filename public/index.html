@@ -1613,18 +1613,66 @@
     </div>
 
     <div class="panel" id="panel-atas">
+      <!-- T07: condomínio pelo seletor único; nome, CNPJ, endereço e síndico vêm do cadastro do Superlógica -->
       <div class="card">
         <div class="card-header">
-          <span class="card-title">Dados da Reunião</span>
+          <span class="card-title">Condomínio e reunião</span>
         </div>
+        <div style="max-width:560px;margin-bottom:6px"><div id="ata-cond-seletor"></div></div>
+        <div id="ata-cadastro-status" style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-bottom:14px">Escolha o condomínio: nome, CNPJ, endereço e síndico vêm do cadastro do Superlógica.</div>
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:16px">
+          <div class="form-group" style="margin:0">
+            <label>Condomínio</label>
+            <input type="text" id="ata-cond" placeholder="Nome do condomínio" autocomplete="off" name="ata-cond">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>CNPJ</label>
+            <input type="text" id="ata-cnpj" placeholder="vem do cadastro" autocomplete="off" name="ata-cnpj">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:16px">
+          <div class="form-group" style="margin:0">
+            <label>Endereço</label>
+            <input type="text" id="ata-endereco" placeholder="vem do cadastro" autocomplete="off" name="ata-endereco">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Síndico</label>
+            <input type="text" id="ata-sindico" placeholder="vem do cadastro" autocomplete="off" name="ata-sindico">
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
+          <div class="form-group" style="margin:0">
+            <label>Data da Reunião</label>
+            <input type="text" id="ata-data" placeholder="DD/MM/AAAA" autocomplete="off" name="ata-data">
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Tipo de Assembleia</label>
+            <select id="ata-tipo">
+              <option value="AGO">AGO, Assembleia Geral Ordinária</option>
+              <option value="AGE">AGE, Assembleia Geral Extraordinária</option>
+              <option value="Reunião de Diretoria">Reunião de Diretoria</option>
+              <option value="Reunião de Moradores">Reunião de Moradores</option>
+            </select>
+          </div>
+          <div class="form-group" style="margin:0">
+            <label>Local da Reunião</label>
+            <input type="text" id="ata-local" placeholder="ex: Salão de Festas" autocomplete="off" name="ata-local">
+          </div>
+        </div>
+      </div>
 
+      <!-- T07: no lugar da lista manual de pauta, o edital e o PDF da apresentação (T01) -->
+      <div class="card" id="ata-docs-card">
+        <div class="card-header">
+          <span class="card-title">Edital e apresentação</span>
+        </div>
         <!-- ANEXAR EDITAL PRA AUTOPREENCHER -->
         <div id="edital-dropzone" style="background:var(--bg3);border:1.5px dashed var(--border2);border-radius:var(--radius);padding:14px 18px;margin-bottom:16px;transition:all 0.2s"
           ondragover="editalDragOver(event)"
           ondragleave="editalDragLeave(event)"
           ondrop="editalDrop(event)">
-          <div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">📄 Anexar edital de convocação para autopreencher</div>
-          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:10px">Arraste o PDF/imagem aqui ou clique para selecionar. A IA lê o edital, preenche os campos abaixo e o texto do edital alimenta a geração da ata, então o cabeçalho (CNPJ, endereço, data e signatário) sai do próprio edital. Revise antes de prosseguir.</p>
+          <div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:8px">📄 Edital de convocação</div>
+          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin-bottom:10px">Arraste o PDF ou a imagem do edital aqui ou clique em Selecionar edital. O edital completa a data, o local e o tipo da assembleia e a pauta. Nome, CNPJ, endereço e síndico vêm do cadastro do Superlógica (acima).</p>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <label id="edital-label" style="display:inline-flex;align-items:center;gap:8px;padding:8px 14px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:var(--sans);color:var(--gs-blue);transition:all 0.15s">
               📎 Selecionar edital
@@ -1639,69 +1687,17 @@
           </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px">
-          <div class="form-group" style="margin:0">
-            <label>Condomínio</label>
-            <input type="text" id="ata-cond" placeholder="Nome do condomínio" autocomplete="off" name="ata-cond">
-          </div>
-          <div class="form-group" style="margin:0">
-            <label>Data da Reunião</label>
-            <input type="text" id="ata-data" placeholder="DD/MM/AAAA" autocomplete="off" name="ata-data">
-          </div>
-          <div class="form-group" style="margin:0">
-            <label>Tipo de Assembleia</label>
-            <select id="ata-tipo">
-              <option value="AGO">AGO — Assembleia Geral Ordinária</option>
-              <option value="AGE">AGE — Assembleia Geral Extraordinária</option>
-              <option value="Reunião de Diretoria">Reunião de Diretoria</option>
-              <option value="Reunião de Moradores">Reunião de Moradores</option>
-            </select>
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-          <div class="form-group" style="margin:0">
-            <label>Síndico</label>
-            <input type="text" id="ata-sindico" placeholder="Nome completo do síndico" autocomplete="off" name="ata-sindico">
-          </div>
-          <div class="form-group" style="margin:0">
-            <label>Local da Reunião</label>
-            <input type="text" id="ata-local" placeholder="ex: Salão de Festas" autocomplete="off" name="ata-local">
-          </div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">
-          <span class="card-title">Itens de Pauta</span>
-          <div style="display:flex;gap:8px;align-items:center">
-            <span style="font-size:10px;font-family:var(--mono);color:var(--muted)">📎 PDF opcional por item</span>
-            <button class="btn btn-ghost" onclick="addPauta()" style="font-size:12px;padding:6px 12px">+ Adicionar item</button>
-          </div>
-        </div>
-        <div id="pauta-list">
-          <div class="pauta-item" style="flex-wrap:wrap;gap:6px;align-items:flex-start">
-            <input type="text" placeholder="ex: Aprovação do balancete financeiro" autocomplete="off" name="pauta-1-titulo" style="flex:1;min-width:200px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none">
-            <label style="display:inline-flex;align-items:center;gap:5px;padding:8px 11px;background:var(--bg3);border:1px dashed var(--border2);border-radius:8px;cursor:pointer;font-size:11px;font-family:var(--mono);color:var(--muted);white-space:nowrap;transition:all 0.15s" title="Anexar PDF com informações deste item">
-              📎 PDF
-              <input type="file" accept="application/pdf" style="display:none" onchange="anexarPdfPauta(this)">
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px 18px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+            <div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em">📊 Apresentação e documentos da assembleia</div>
+            <label style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:var(--sans);color:var(--gs-blue)">
+              📎 Adicionar PDF da apresentação
+              <input type="file" id="ata-docs-input" accept="application/pdf,.pdf" multiple style="display:none" onchange="anexarDocsAssembleia(event)">
             </label>
-            <span class="pauta-pdf-nome" style="font-size:10px;font-family:var(--mono);color:var(--gs-blue);display:none;align-self:center"></span>
-            <button class="pauta-remove" onclick="removePauta(this)">×</button>
           </div>
+          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin:0 0 10px">Opcional. Apresentação, prestação de contas, orçamentos ou propostas mostrados na assembleia, um ou mais PDFs. Os números, nomes de empresas e nomes escritos nestes documentos têm prioridade sobre o áudio; quando o áudio disser diferente, a ata usa o documento e marca [conferir: transcrição dizia ...].</p>
+          <div id="ata-docs-lista" style="display:flex;flex-direction:column;gap:6px"></div>
         </div>
-      </div>
-
-      <!-- T01: documentos da assembleia (apresentação, prestação de contas, orçamentos, propostas) -->
-      <div class="card" id="ata-docs-card">
-        <div class="card-header">
-          <span class="card-title">Documentos da assembleia</span>
-          <label style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:var(--sans);color:var(--gs-blue)">
-            📎 Adicionar PDF
-            <input type="file" id="ata-docs-input" accept="application/pdf,.pdf" multiple style="display:none" onchange="anexarDocsAssembleia(event)">
-          </label>
-        </div>
-        <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin:0 0 10px">Opcional. Apresentação, prestação de contas, orçamentos ou propostas mostrados na assembleia, um ou mais PDFs. Os números, nomes de empresas e nomes escritos nestes documentos têm prioridade sobre o áudio; quando o áudio disser diferente, a ata usa o documento e marca [conferir: transcrição dizia ...].</p>
-        <div id="ata-docs-lista" style="display:flex;flex-direction:column;gap:6px"></div>
       </div>
 
       <div class="card">
@@ -2147,6 +2143,8 @@ function condTrocaBloqueada() {
   if (typeof state !== 'undefined' && state.unidades && state.unidades.importing) return 'Aguarde a importação de unidades terminar (ou clique em Parar) antes de trocar o condomínio.';
   if (window._enviandoDespesas) return 'Aguarde o envio das despesas terminar antes de trocar o condomínio.';
   if (window._enviandoConsumo) return 'Aguarde o envio das leituras terminar antes de trocar o condomínio.';
+  if (window._gerandoAta) return 'Aguarde a ata terminar de gerar antes de trocar o condomínio.';
+  if (window._lendoEditalAta) return 'Aguarde a leitura do edital terminar antes de trocar o condomínio.';
   if (typeof prestacaoState !== 'undefined' && prestacaoState.gerando) return 'Aguarde a prestação de contas terminar de gerar antes de trocar o condomínio.';
   return '';
 }
@@ -2518,6 +2516,9 @@ function showPanel(name) {
   }
   if (name === 'condominio') {
     if (typeof condominioFichaAbrir === 'function') condominioFichaAbrir();
+  }
+  if (name === 'atas') {
+    if (typeof ataCondInit === 'function') ataCondInit();
   }
   if (name === 'dashboard') {
     if (typeof alertasDashAbrir === 'function') alertasDashAbrir();

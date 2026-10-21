@@ -2096,7 +2096,7 @@ const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 7;
 // Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
 // PRIMEIRA passada Sonnet que retornar texto; a validação é só aviso, nunca bloqueia
 // nem dispara retry. Retry (1x, Sonnet) só se a API não retornar texto. Sem Opus.
-async function gerarAtaJob(jobId, userMessage, documentosEntrada) {
+async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia) {
   const documentos = Array.isArray(documentosEntrada) ? documentosEntrada : [];
   let system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_DETALHAMENTO_MAXIMO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
@@ -2328,6 +2328,26 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada) {
       g = { gate: { flags: [], veredicto: 'erro_gate', marcacaoFalhou: false, erro: 'falha_interna_no_gate' } };
     }
 
+    // T07: confere nome e unidade dos participantes citados contra o cadastro do Superlógica
+    // (só leitura, só quando a tela mandou o código e o usuário tem acesso). Não altera a ata:
+    // devolve a lista para a tela mostrar quem não bateu. Falha aberta, com teto de tempo.
+    let participantes = null;
+    if (idConferencia) {
+      try {
+        const pessoasMod = require('./superlogica/pessoas');
+        const cli = require('./superlogica').cliente({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN });
+        const pessoas = await Promise.race([
+          pessoasMod.carregarPessoas(cli, idConferencia),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('tempo_esgotado')), 40000)),
+        ]);
+        const conf = pessoasMod.conferirParticipantes(ataFinal, pessoas);
+        participantes = { conferidos: conf.itens.length, divergentes: conf.divergentes, parcial: conf.parcial, sindico: pessoasMod.conferirSindico(ataFinal, pessoas) };
+      } catch (eP) {
+        console.warn('[engine-ata] conferência de participantes falhou (segue sem):', eP && eP.message);
+        participantes = { erro: 'Não foi possível conferir os participantes no cadastro do Superlógica agora.' };
+      }
+    }
+
     const vFinal = validarAta(ataFinal);
     const canonFinal = valoresCanonicos(ataFinal);
     // diagnóstico determinístico: valores da fala fora da ata final.
@@ -2345,6 +2365,7 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada) {
       tentativas, auditoria: etapa, avisos: consol.avisoSkip ? vFinal.avisos.concat([consol.avisoSkip]) : vFinal.avisos,
       gate: g.gate,
       documentos: docsInfo,
+      participantes,
       conferencia: { divergencias: (ataFinal.match(/\[conferir:/g) || []).length, marcadores_removidos: conferirTel.removidos, valores_so_documento: valoresSoDocumento.length, chamadas_apoio: _chamadasApoio }
     });
   }
@@ -2410,11 +2431,22 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '36mb' }), (req, 
   const docsNorm = normalizarDocumentosApoio(req.body && req.body.documentos);
   if (docsNorm.erro) return res.status(400).json({ erro: 'documentos_invalidos', detalhe: docsNorm.erro });
 
+  // T07: código do condomínio para conferir os participantes no cadastro (opcional).
+  const idSL = req.body && req.body.id_superlogica != null ? String(req.body.id_superlogica) : '';
+  if (idSL && !/^[1-9][0-9]{0,8}$/.test(idSL)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+
   const jobId = crypto.randomUUID();
-  atasJobs.set(jobId, { status: 'processing', criadoEm: Date.now() });
+  atasJobs.set(jobId, { status: 'processing', criadoEm: Date.now(), dono: req.authMode === 'internal' ? 'internal' : String((req.user && req.user.sub) || '') });
   // fire-and-forget: não aguarda. gerarAtaJob já trata tudo internamente; o .catch
   // é rede de segurança caso algo escape do try interno.
-  gerarAtaJob(jobId, userMessage, docsNorm.docs).catch((e) => {
+  // Só confere quem tem acesso aos dados do Superlógica (a checagem é feita aqui, antes do job).
+  const podeConferir = async () => {
+    if (!idSL || !superlogicaNativa()) return null;
+    if (req.authMode === 'internal') return idSL;
+    if (!SUPABASE_SERVICE_ROLE_KEY) return null;
+    try { return (await podeUsarSuperlogica(req.user && req.user.sub)) ? idSL : null; } catch (e) { return null; }
+  };
+  podeConferir().then((idConf) => gerarAtaJob(jobId, userMessage, docsNorm.docs, idConf)).catch((e) => {
     const j = atasJobs.get(jobId);
     if (j && j.status === 'processing') { j.status = 'error'; j.erro = { httpStatus: 500, erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' }; }
   });
@@ -2438,6 +2470,11 @@ app.get('/api/atas/gerar/status/:jobId', requireAuth, (req, res) => {
     res.status(status).set('Cache-Control', 'no-store').type('application/json').end(JSON.stringify(obj));
   };
   const j = atasJobs.get(req.params.jobId);
+  // T07: só quem criou a geração lê o resultado (o resultado pode trazer nomes de moradores).
+  if (j && j.dono) {
+    const quem = req.authMode === 'internal' ? 'internal' : String((req.user && req.user.sub) || '');
+    if (quem !== j.dono) return enviar(404, { status: 'not_found' });
+  }
   if (!j) return enviar(404, { status: 'not_found' });
   if (j.status === 'done') return enviar(200, Object.assign({ status: 'done' }, j.payload));
   if (j.status === 'error') return enviar(200, Object.assign({ status: 'error' }, j.erro));
