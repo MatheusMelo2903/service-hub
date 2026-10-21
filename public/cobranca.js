@@ -125,7 +125,8 @@ function cobVerUnidades(idSL) {
   var el = document.getElementById('cob-unidades');
   if (!reg || !el) return;
   var p = reg.p;
-  var gerencia = window.USER_ROLE === 'GESTOR' || window.USER_ROLE === 'GERENTE';
+  // T18: 2ª via para o GESTOR ou quem tem a ação cobranca.segunda_via (public/carteira-modulos.js).
+  var gerencia = typeof window.cobPodeSegundaVia === 'function' ? window.cobPodeSegundaVia() : window.USER_ROLE === 'GESTOR';
   var ate = cobIsoDias(3);
   el.innerHTML = '<div class="card-header"><span class="card-title">' + cobEsc(reg.cond.nome) + ': unidades em atraso</span></div>'
     + '<table class="ficha-tab"><tr><th>Unidade</th><th>Responsável</th><th class="n">Cobranças</th><th class="n">Corrigido</th><th>Último contato</th><th></th></tr>'

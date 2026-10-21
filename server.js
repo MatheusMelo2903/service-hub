@@ -321,6 +321,22 @@ function mascararSensiveis(v, prof) {
   return o;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// T18: carteira com bloqueio de verdade no servidor e módulos das abas Ficha do Condomínio,
+// Cobrança e Comparativo. Regras e explicação em superlogica/carteira.js. Vem antes do proxy
+// e das rotas: condomínio fora da carteira de quem chama recebe 403.
+// ─────────────────────────────────────────────────────────────────────────
+const carteiraT18 = require('./superlogica/carteira').criarCarteira({
+  lerPerfil: (id) => lerPerfil(id),
+  lerCarteirasPerfis: (id) => lerCarteirasPerfis(id),
+  semColuna: () => lerCarteirasPerfis.semColuna === true,
+  gruposCarteiras: () => gruposCarteiras(),
+  ativo: () => !!(SUPABASE_SERVICE_ROLE_KEY && SUPABASE_URL && superlogicaNativa()),
+  express,
+});
+app.use('/api/superlogica', requireAuth, carteiraT18.guardaProxy);
+app.use('/api', carteiraT18.guardaRotas(requireAuth));
+
 app.use('/api/superlogica', requireAuth, async (req, res) => {
   if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'Chaves do Superlógica não configuradas no servidor.' });
   if (!SUPABASE_SERVICE_ROLE_KEY) return res.status(503).json({ erro: 'service_role_nao_configurada' });
@@ -3268,11 +3284,19 @@ const slAlertas = require('./superlogica/alertas');
 const slAlertasOper = require('./superlogica/alertas-operacionais');
 // Alertas da T05 (contas a vencer, saldo, recorrentes) mais os operacionais da T08
 // (pagamento sem nota fiscal, manutenção periódica atrasada, consumo fora do padrão).
+// T18: prazos das manutenções periódicas guardados no banco (config_geral), editáveis pelo
+// GESTOR em Configurações. Detalhes em superlogica/prazos-manutencao.js.
+const slPrazos = require('./superlogica/prazos-manutencao');
+slPrazos.criarRotas(app, {
+  requireAuth, requireGestor, express, banco: (m, p, b) => supabaseAdminRequest(m, p, b),
+  servidorPronto: () => !!(SUPABASE_SERVICE_ROLE_KEY && SUPABASE_URL), usuarioId: (req) => _usuarioId(req),
+});
 async function calcularTodosAlertas(id, hoje, cfg, forcar) {
   const cli = clienteSL();
+  const prazos = cfg && cfg.prazos ? cfg.prazos : (await slPrazos.ler(supabaseAdminRequest)).prazos;
   const [a, o] = await Promise.all([
     slAlertas.calcularAlertas(cli, id, hoje, cfg),
-    slAlertasOper.calcularOperacionais(cli, id, hoje, { forcar: !!forcar }).catch(() => ({ alertas: [], falhas: ['alertas operacionais'] })),
+    slAlertasOper.calcularOperacionais(cli, id, hoje, { forcar: !!forcar, prazos }).catch(() => ({ alertas: [], falhas: ['alertas operacionais'] })),
   ]);
   return { alertas: a.alertas.concat(o.alertas), falhas: a.falhas.concat(o.falhas), saldo_minimo: a.saldo_minimo };
 }
@@ -3347,10 +3371,10 @@ app.get('/api/condominio/:idSuperlogica/alertas', requireAuth, async (req, res) 
   if (!(await exigirLeituraSuperlogica(req, res))) return;
   if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) return res.status(503).json({ erro: 'service_role_nao_configurada' });
   try {
-    const cfg = await _lerConfigAlertas(id);
+    const cfg = Object.assign({}, await _lerConfigAlertas(id), { prazos: (await slPrazos.ler(supabaseAdminRequest)).prazos });
     const hoje = _hojeBrasilia();
     // forcar=1 (botão Atualizar) recalcula sem cache; resultado com falha de leitura não fica em cache.
-    const chaveCache = 'alertas:' + id + ':' + hoje.toISOString().slice(0, 10) + ':' + cfg.saldo_minimo;
+    const chaveCache = 'alertas:' + id + ':' + hoje.toISOString().slice(0, 10) + ':' + cfg.saldo_minimo + ':' + slPrazos.assinatura(cfg.prazos);
     let calc;
     if (req.query.forcar === '1') calc = await calcularTodosAlertas(id, hoje, cfg, true);
     else {
@@ -3398,6 +3422,11 @@ app.patch('/api/alertas/:alertaId', requireAuth, express.json({ limit: '10kb' })
   if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) return res.status(503).json({ erro: 'service_role_nao_configurada' });
   if (!(await exigirGestaoAlertas(req, res))) return;
   if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) return res.status(503).json({ erro: 'service_role_nao_configurada' });
+  // T18: o alerta é de um condomínio; quem tem carteira só mexe nos da carteira.
+  const dono = await supabaseAdminRequest('GET', '/rest/v1/alertas?id=eq.' + aid + '&select=id_superlogica');
+  if (dono.status !== 200 || !Array.isArray(dono.body)) return res.status(502).json({ erro: 'falha_atualizar', detalhe: 'Não foi possível atualizar o alerta.' });
+  if (!dono.body.length) return res.status(404).json({ erro: 'falha_atualizar', detalhe: 'Não foi possível atualizar o alerta.' });
+  if (!(await _exigirCarteira(req, res, dono.body[0].id_superlogica))) return;
   const r = await supabaseAdminRequest('PATCH', '/rest/v1/alertas?id=eq.' + aid, { status, atualizado_em: new Date().toISOString(), atualizado_por: _usuarioId(req) });
   if (r.status !== 200 || !Array.isArray(r.body) || !r.body.length) return res.status(r.status === 200 ? 404 : 502).json({ erro: 'falha_atualizar', detalhe: 'Não foi possível atualizar o alerta.' });
   res.json({ id: aid, status: r.body[0].status });
@@ -3458,7 +3487,7 @@ app.post('/api/condominio/:idSuperlogica/unidades/conferir', requireAuth, expres
 // Carteiras (T09): grupos de condomínios do Superlógica (Carteira A, Carteira B...).
 // O GESTOR vincula cada usuário a uma ou mais carteiras (profiles.carteiras). Quem tem
 // carteira vê no seletor e nas listas só os condomínios dela; GESTOR e quem não tem
-// carteira veem todos. É filtro de tela: não bloqueia chamada direta às rotas do Superlógica.
+// carteira veem todos. Desde a T18 também é bloqueio no servidor (superlogica/carteira.js).
 // ─────────────────────────────────────────────────────────────────────────
 const _cacheCarteiras = slModulo.consulta.criarCache(10 * 60 * 1000, 2, 15 * 1000);
 function gruposCarteiras() {
@@ -3497,25 +3526,13 @@ function _painelCobranca(id, forcar) {
   }
   return _cachePainelCob.pegar(chave, () => slCobranca.painelCondominio(clienteSL(), id, hoje));
 }
-// Carteira no servidor: quem não é GESTOR e tem carteira só lê (e gera 2ª via) dos
-// condomínios dela. Sem carteira, ou erro ao ler a carteira, segue a regra da tela (todos).
+// Carteira no servidor (T18: bloqueio de verdade, regras em superlogica/carteira.js). Quem
+// tem carteira só usa os condomínios dela; erro ao conferir a carteira recusa (não libera).
 async function _dentroDaCarteira(req, id) {
-  if (req.authMode === 'internal' || !SUPABASE_SERVICE_ROLE_KEY) return true;
-  try {
-    const perfil = await lerPerfil(req.user && req.user.sub);
-    if (!perfil || perfil.role === 'GESTOR') return true;
-    const mapa = await lerCarteirasPerfis(perfil.id);
-    const minhas = (mapa && mapa[perfil.id]) || [];
-    if (!minhas.length) return true;
-    const r = slModulo.carteiras.condominiosDasCarteiras(await gruposCarteiras(), minhas);
-    if (!r.carteiras.length) return true;
-    return r.ids_superlogica.includes(Number(id));
-  } catch (e) { return true; }
+  return carteiraT18.dentroDaCarteira(req, id);
 }
 async function _exigirCarteira(req, res, id) {
-  if (await _dentroDaCarteira(req, id)) return true;
-  res.status(403).json({ erro: 'fora_da_carteira', detalhe: 'Esse condomínio não está na sua carteira.' });
-  return false;
+  return carteiraT18.exigir(req, res, id);
 }
 function _dataISOparaDate(v) {
   const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -3573,7 +3590,8 @@ app.post('/api/cobranca/condominio/:idSuperlogica/simular', requireAuth, express
 });
 
 // POST /api/cobranca/condominio/:id/segunda-via { id_unidade, id_recebimento, pagar_ate: AAAA-MM-DD }
-// Gera o link da 2ª via no Superlógica e devolve o texto pronto para WhatsApp. GESTOR e GERENTE.
+// Gera o link da 2ª via no Superlógica e devolve o texto pronto para WhatsApp. GESTOR ou quem tem
+// a ação cobranca.segunda_via (T18; antes era GESTOR e GERENTE pelo cargo).
 app.post('/api/cobranca/condominio/:idSuperlogica/segunda-via', requireAuth, express.json({ limit: '5kb' }), async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const id = String(req.params.idSuperlogica || '');
@@ -3586,7 +3604,7 @@ app.post('/api/cobranca/condominio/:idSuperlogica/segunda-via', requireAuth, exp
   if (req.authMode !== 'internal') {
     let p = null;
     try { p = await lerPerfil(req.user && req.user.sub); } catch (e) { p = null; }
-    if (!p || (p.role !== 'GESTOR' && p.role !== 'GERENTE')) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Só gestor ou gerente pode gerar a 2ª via.' });
+    if (!require('./superlogica/carteira').temModulo(p, 'cobranca', 'segunda_via')) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não pode gerar a 2ª via.' });
   }
   if (!(await _exigirCarteira(req, res, id))) return;
   try {
@@ -3657,23 +3675,17 @@ app.get('/api/carteiras', requireAuth, requireGestor, async (req, res) => {
 });
 
 // GET /api/carteiras/minha — o que o usuário logado deve ver no seletor e nas listas.
-// { todas: true } para GESTOR, acesso interno e quem não tem carteira.
+// { todas: true } para GESTOR, acesso interno, quem não tem carteira e quem tem a ação
+// configuracoes.todas_carteiras (T18). É a mesma regra que o servidor usa para bloquear.
 app.get('/api/carteiras/minha', requireAuth, async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  if (req.authMode === 'internal' || !SUPABASE_SERVICE_ROLE_KEY) return res.json({ todas: true });
   try {
-    const perfil = await lerPerfil(req.user && req.user.sub);
-    if (!perfil || perfil.role === 'GESTOR') return res.json({ todas: true });
-    const mapa = await lerCarteirasPerfis(perfil.id);
-    const minhas = (mapa && mapa[perfil.id]) || [];
-    if (!minhas.length) return res.json({ todas: true });
-    if (!superlogicaNativa()) return res.json({ todas: true, aviso: 'Carteira não aplicada: Superlógica não configurado neste ambiente.' });
-    const r = slModulo.carteiras.condominiosDasCarteiras(await gruposCarteiras(), minhas);
-    if (!r.carteiras.length) return res.json({ todas: true, aviso: 'Sua carteira não existe mais no Superlógica. Fale com o gestor.' });
-    res.json({ todas: false, carteiras: r.carteiras, ids_superlogica: r.ids_superlogica });
+    const esc = await carteiraT18.escopo(req);
+    if (esc.todas) return res.json({ todas: true });
+    res.json({ todas: false, carteiras: esc.carteiras, ids_superlogica: esc.ids_superlogica, aviso: esc.aviso || undefined });
   } catch (e) {
     console.warn('[carteiras/minha] falhou: ' + (e && e.message));
-    res.json({ todas: true, aviso: 'Não foi possível ler sua carteira agora; mostrando todos os condomínios.' });
+    res.status(503).json({ erro: 'carteira_indisponivel', detalhe: 'Não foi possível ler sua carteira agora.' });
   }
 });
 
@@ -3711,6 +3723,7 @@ app.put('/api/admin/usuarios/:id/carteiras',
       if (!unicas.every((x) => validos.has(x))) return res.status(400).json({ erro: 'carteira_inexistente', detalhe: 'Alguma carteira escolhida não existe no Superlógica.' });
     }
     const r = await supabaseAdminRequest('PATCH', `/rest/v1/profiles?id=eq.${encodeURIComponent(req.params.id)}`, { carteiras: unicas });
+    carteiraT18.esquecer(req.params.id);
     if (r.status !== 200) {
       const semColuna = r.body && /carteiras/.test(JSON.stringify(r.body));
       return res.status(semColuna ? 503 : 502).json({ erro: semColuna ? 'carteiras_nao_instaladas' : 'falha_salvar', detalhe: semColuna ? 'O banco deste ambiente ainda não tem o campo de carteira (migration 008).' : 'Não foi possível salvar.' });
@@ -3891,17 +3904,8 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
     const p = perfil && perfil.permissoes && perfil.permissoes[modulo];
     const pode = perfil && (perfil.role === 'GESTOR' || (p && p.visivel === true && Array.isArray(p.acoes) && p.acoes.includes('gerar')));
     if (!pode) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não pode arquivar este documento no Superlógica.' });
-    if (perfil.role !== 'GESTOR') {
-      const mapa = await lerCarteirasPerfis(perfil.id);
-      const minhas = (mapa && mapa[perfil.id]) || [];
-      if (minhas.length) {
-        let permitidos = [];
-        try { permitidos = slModulo.carteiras.condominiosDasCarteiras(await gruposCarteiras(), minhas).ids_superlogica; } catch (e) {
-          return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível conferir sua carteira no Superlógica agora.' });
-        }
-        if (!permitidos.includes(Number(id))) return res.status(403).json({ erro: 'fora_da_carteira', detalhe: 'Este condomínio não está na sua carteira.' });
-      }
-    }
+    // Carteira (T18): mesma regra de todas as rotas (inclui a ação "ver todas as carteiras").
+    if (!(await _exigirCarteira(req, res, id))) return;
   }
   const D = slModulo.documentos;
   const titulo = D.tituloSeguro(b.titulo);

@@ -29,8 +29,31 @@ const MESES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'o
 // ficam fora do alerta de nota fiscal. Comparação sem acento na descrição da conta.
 const SEM_NF = /(salari|ferias|13o|13º|decimo|adiantamento|inss|fgts|darf|irrf|\biss\b|\bpis\b|cofins|csll|rescis|vale.?transporte|vale.?alimenta|vale.?refeic|cesta basica|tarifa|juros|multa|imposto|iof|pro.?labore|contribuicao (sindical|assistencial|confederativa)|encargos sociais|gratificac|hora extra|\bgps\b|esocial|pensao|seguro|taxa de lixo|iptu|devolu|reembolso|transferencia|aplicacao financeira|resgate)/;
 
-// Manutenções periódicas. prazo_dias: prazo de referência (usual de mercado; a periodicidade
-// real depende do contrato e da legislação municipal, por isso aparece no texto do alerta).
+// Contas de água e luz (T18): a própria conta da concessionária é o documento fiscal, então
+// não entram no alerta de "pagamento sem nota fiscal". Critério (sem acento, minúsculas):
+//  a) fornecedor é concessionária conhecida de água ou energia (CESAN, EDP, ESCELSA e as
+//     principais do país) ou tem "distribuição de energia" / "companhia ... de saneamento" /
+//     "serviço autônomo de água" no nome; OU
+//  b) TODAS as contas do plano de contas da despesa são de consumo puro de água, esgoto ou
+//     energia ("Energia", "Esgoto", "Água-Esgoto", "Água e Esgoto", "Energia Elétrica", "Luz").
+// A conta tem que ser exatamente de consumo: "Energia Solar" (financiamento), "Contrato
+// Manutenção e Análise de Água-Poço", "Material de Bomba de Água", "Serviço Elétrico" e
+// "Manutenção de Caixa d'água" continuam no alerta. Gás (ex.: Supergasbras) continua, porque
+// o pedido foi só água e luz. "Saneamento" sozinho no fornecedor não vale (há empresas de
+// "saneamento ambiental" que prestam serviço e emitem nota).
+const RE_FORNECEDOR_CONCESSIONARIA = /\b(cesan|edp|escelsa|sabesp|copasa|cedae|embasa|sanepar|compesa|cagece|caesb|casan|corsan|saae|cemig|copel|celesc|coelba|cosern|celpe|energisa|neoenergia|enel)\b|distribuicao de energia|companhia [a-z ]*de saneamento|servico autonomo de agua/;
+const RE_CONTA_CONSUMO = /^(conta (de )?)?(agua|esgoto|agua e esgoto|agua esgoto|saneamento|energia|energia eletrica|luz|energia e luz)( (comum|predial|condominio|do condominio|area comum|geral))?$/;
+const normConta = (s) => semAcento(s).replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+function ehContaConcessionaria(d) {
+  if (RE_FORNECEDOR_CONCESSIONARIA.test(normConta(d.st_nome_con))) return true;
+  const contas = (Array.isArray(d.contas) ? d.contas : []).map(normConta).filter(Boolean);
+  return contas.length > 0 && contas.every((c) => RE_CONTA_CONSUMO.test(c));
+}
+
+// Manutenções periódicas. prazo_dias: prazo padrão (confirmado pelo Matheus em 21/10/2026).
+// O prazo usado no cálculo vem do banco (T18, superlogica/prazos-manutencao.js); este é só o
+// padrão quando o banco não tem valor. A periodicidade real depende do contrato e da
+// legislação municipal, por isso o texto do alerta pede para conferir o contrato.
 const MANUTENCOES = [
   { tipo: 'dedetizacao', nome: 'Dedetização', re: /(dedetiz|desinsetiz|descupiniz|desratiz|controle de pragas)/, prazo_dias: 180 },
   { tipo: 'extintores', nome: 'Recarga de extintores', re: /extintor/, prazo_dias: 365 },
@@ -41,7 +64,8 @@ const TOLERANCIA_DIAS = 15;
 
 // Consumo: alta forte = variação de 50% ou mais e pelo menos 1 unidade acima da média;
 // queda forte = variação de 80% ou mais para baixo com média de pelo menos 1 (medidor parado
-// ou leitura errada). O tipo de leitura vem do Superlógica (1 e 2); o nome fica "tipo N".
+// ou leitura errada). O tipo de leitura vem do Superlógica (1 e 2); o nome (Água, Gás...) é
+// descoberto por condomínio em nomeTipoLeitura (T18).
 const CONSUMO_ALTA_PCT = 50, CONSUMO_ALTA_MIN = 1, CONSUMO_QUEDA_PCT = -80, CONSUMO_QUEDA_MEDIA_MIN = 1;
 
 async function paginas(cliente, rota, params, max) {
@@ -79,6 +103,7 @@ async function pagasUltimosMeses(cliente, id, h) {
       id: String(d.id_parcela_pdes || d.id_despesa_des || ''),
       dt_liquidacao_pdes: d.dt_liquidacao_pdes, vl_valor_pdes: d.vl_valor_pdes, st_nome_con: limpar(d.st_nome_con),
       conta: apro.map((a) => limpar(a.st_descricao_cont)).filter(Boolean).join(', '),
+      contas: apro.map((a) => limpar(a.st_descricao_cont)).filter(Boolean),
       texto: textoDespesa(d), nf: temNotaFiscal(d),
     };
   });
@@ -108,7 +133,7 @@ function alertasNotaFiscal(pagas, h) {
   pagas.forEach((d) => {
     const dl = dataDe(d.dt_liquidacao_pdes);
     if (!dl || dl < desde || dl > h) return;
-    if (SEM_NF.test(semAcento(d.conta)) || d.nf) return;
+    if (SEM_NF.test(semAcento(d.conta)) || d.nf || ehContaConcessionaria(d)) return;
     const k = dl.getFullYear() + doisDig(dl.getMonth() + 1);
     if (!porMes.has(k)) porMes.set(k, []);
     porMes.get(k).push({ id: d.id, fornecedor: d.st_nome_con || 'fornecedor', pago_em: br(dl), valor: cent(num(d.vl_valor_pdes)), descricao: d.conta });
@@ -130,9 +155,11 @@ function alertasNotaFiscal(pagas, h) {
   });
 }
 
-function alertasManutencao(pagas, h) {
+function alertasManutencao(pagas, h, prazos) {
   const out = [];
-  MANUTENCOES.forEach((m) => {
+  MANUTENCOES.forEach((m0) => {
+    const p = prazos && Number(prazos[m0.tipo]);
+    const m = Object.assign({}, m0, { prazo_dias: Number.isInteger(p) && p > 0 ? p : m0.prazo_dias });
     let ultima = null, ultimaD = null;
     pagas.forEach((d) => {
       if (!m.re.test(d.texto)) return;
@@ -158,6 +185,62 @@ function alertasManutencao(pagas, h) {
   return out;
 }
 
+// Nome do tipo de leitura (T18). O consumo/index não traz o nome do tipo (só id_tipo_rec), mas
+// cada leitura cobrada aponta para a receita lançada no boleto (leituras.mes_atual/mes_anterior
+// .receita[].id_receita_rec e o recebimento em receita_apropriacao[].id_recebimento_recb). A
+// conta do plano de contas dessa receita (cobranca/index com comDadosDasContasEReceitas) diz o
+// que é: "Gás", "Água Individual", "Energia"... Conferido em 21/10/2026 em 3 condomínios
+// (Aldeia Manguinhos 2, 8 e 10): tipo 1 = conta 1.6 Gás, tipo 2 = conta 1.8 Água Individual.
+// Não há número fixo no código: cada condomínio é lido. Sem receita para conferir, o nome fica
+// "consumo (tipo N)". Cache de 24 h por condomínio e tipo.
+const _cacheNomeTipo = new Map(); // id:tipo -> { ate, nome }
+function nomeDaConta(desc) {
+  const s = semAcento(desc);
+  if (/\bgas\b/.test(s)) return 'Gás';
+  if (/agua|esgoto/.test(s)) return 'Água';
+  if (/energia|\bluz\b/.test(s)) return 'Energia';
+  return limpar(desc) || null;
+}
+function receitaDaLeitura(unidades) {
+  for (const u of unidades) {
+    const lt = (u && u.leituras) || {};
+    for (const mes of [lt.mes_atual, lt.mes_anterior]) {
+      for (const r of ((mes && mes.receita) || [])) {
+        const ap = Array.isArray(r.receita_apropriacao) ? r.receita_apropriacao : [];
+        const recb = ap.map((a) => a && a.id_recebimento_recb).find((x) => /^\d+$/.test(String(x || '')));
+        if (recb && /^\d+$/.test(String(r.id_receita_rec || ''))) return { recb: String(recb), receita: String(r.id_receita_rec) };
+      }
+    }
+  }
+  return null;
+}
+function acharConta(o, idReceita, prof) {
+  if (!o || typeof o !== 'object' || prof > 8) return null;
+  if (String(o.id_receita_rec) === idReceita && o.st_descricao_cont) return String(o.st_descricao_cont);
+  for (const v of Object.values(o)) { const r = acharConta(v, idReceita, prof + 1); if (r) return r; }
+  return null;
+}
+async function nomeTipoLeitura(cliente, id, tipo, unidades) {
+  const chave = id + ':' + tipo;
+  const c = _cacheNomeTipo.get(chave);
+  if (c && c.ate > Date.now()) return c.nome;
+  let nome = null;
+  const ref = receitaDaLeitura(unidades);
+  if (ref) {
+    try {
+      const j = await cliente.get('cobranca/index', { idCondominio: id, id: ref.recb, comDadosDasApropriacoes: 1, comDadosDasContasEReceitas: 1 });
+      const desc = acharConta(j, ref.receita, 0);
+      nome = desc ? nomeDaConta(desc) : null;
+    } catch (e) { nome = null; }
+  }
+  // Só guarda o que achou (falha de leitura tenta de novo na próxima).
+  if (nome) {
+    _cacheNomeTipo.set(chave, { ate: Date.now() + 24 * 3600 * 1000, nome });
+    if (_cacheNomeTipo.size > 1000) _cacheNomeTipo.delete(_cacheNomeTipo.keys().next().value);
+  }
+  return nome;
+}
+
 async function alertasConsumo(cliente, id, h) {
   const out = [];
   for (const tipo of [1, 2]) {
@@ -166,6 +249,7 @@ async function alertasConsumo(cliente, id, h) {
     let j = [];
     try { j = await cliente.get('consumo/index', { tipoLeitura: tipo, idCondominio: id, posicaoEm: dataSL(h) }); }
     catch (e) { if (e && e.status >= 400 && e.status < 500) j = []; else throw e; }
+    const doTipo = [];
     (Array.isArray(j) ? j : []).forEach((u) => {
       if (!u || !u.id_unidade_uni) return;
       const lt = u.leituras || {};
@@ -179,10 +263,10 @@ async function alertasConsumo(cliente, id, h) {
       const ref = (ma.nm_ano_rsp || h.getFullYear()) + doisDig(ma.nm_mes_rsp || (h.getMonth() + 1));
       const uni = limpar(u.st_unidade_uni) + (limpar(u.st_bloco_uni) ? ' ' + limpar(u.st_bloco_uni) : '');
       const fmt = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
-      out.push({
+      doTipo.push({
         chave: 'consumo:' + tipo + ':' + u.id_unidade_uni + ':' + ref,
         tipo: 'consumo_fora_padrao',
-        titulo: 'Consumo ' + (alta ? 'muito acima' : 'muito abaixo') + ' da média na unidade ' + uni + ' (leitura tipo ' + tipo + ')',
+        _alta: alta, _uni: uni,
         detalhe: {
           unidade: uni, tipo_leitura: tipo, mes: MESES[+ref.slice(4) - 1] + '/' + ref.slice(0, 4),
           consumo: atual, media: Math.round(media * 1000) / 1000, variacao_pct: varp, meses_media: num(c.meses),
@@ -190,6 +274,18 @@ async function alertasConsumo(cliente, id, h) {
             + (alta ? '; possível vazamento ou leitura errada' : '; possível medidor parado ou leitura errada'),
         },
       });
+    });
+    if (!doTipo.length) continue;
+    // Nome só é procurado quando há alerta desse tipo (uma leitura a mais, com cache).
+    const nome = await nomeTipoLeitura(cliente, id, tipo, j);
+    const rotulo = nome || ('consumo (tipo ' + tipo + ')');
+    doTipo.forEach((a) => {
+      const alta = a._alta, uni = a._uni;
+      delete a._alta; delete a._uni;
+      a.titulo = (nome ? 'Consumo de ' + nome.toLowerCase() : 'Consumo') + ' ' + (alta ? 'muito acima' : 'muito abaixo')
+        + ' da média na unidade ' + uni + (nome ? '' : ' (tipo ' + tipo + ')');
+      a.detalhe.leitura = rotulo;
+      out.push(a);
     });
   }
   return out;
@@ -213,7 +309,7 @@ function historico(cliente, id, h, forcar) {
 
 // tetoMs: passado o tempo, devolve o que tiver (o histórico continua lendo em segundo plano e
 // fica no cache para a próxima abertura); os alertas da T05 não esperam por ele.
-async function calcularOperacionais(cliente, id, hoje, { forcar = false, tetoMs = 25000 } = {}) {
+async function calcularOperacionais(cliente, id, hoje, { forcar = false, tetoMs = 25000, prazos = null } = {}) {
   const h = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
   const falhas = [];
   const ESGOTOU = {};
@@ -229,8 +325,8 @@ async function calcularOperacionais(cliente, id, hoje, { forcar = false, tetoMs 
   else if (pagas.cortado) falhas.push('histórico de pagamentos cortado (mês com despesas demais)');
   if (consumo === ESGOTOU || consumo === null) falhas.push('consumo');
   const ok = Array.isArray(pagas);
-  const alertas = [].concat(ok ? alertasNotaFiscal(pagas, h) : [], ok ? alertasManutencao(pagas, h) : [], Array.isArray(consumo) ? consumo : []);
+  const alertas = [].concat(ok ? alertasNotaFiscal(pagas, h) : [], ok ? alertasManutencao(pagas, h, prazos) : [], Array.isArray(consumo) ? consumo : []);
   return { alertas, falhas };
 }
 
-module.exports = { calcularOperacionais, alertasNotaFiscal, alertasManutencao, temNotaFiscal, SEM_NF, MANUTENCOES };
+module.exports = { calcularOperacionais, alertasNotaFiscal, alertasManutencao, alertasConsumo, temNotaFiscal, ehContaConcessionaria, nomeDaConta, SEM_NF, MANUTENCOES };
