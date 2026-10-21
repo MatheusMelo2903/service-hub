@@ -1628,6 +1628,19 @@
         </div>
       </div>
 
+      <!-- T01: documentos da assembleia (apresentação, prestação de contas, orçamentos, propostas) -->
+      <div class="card" id="ata-docs-card">
+        <div class="card-header">
+          <span class="card-title">Documentos da assembleia</span>
+          <label style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:var(--sans);color:var(--gs-blue)">
+            📎 Adicionar PDF
+            <input type="file" id="ata-docs-input" accept="application/pdf,.pdf" multiple style="display:none" onchange="anexarDocsAssembleia(event)">
+          </label>
+        </div>
+        <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin:0 0 10px">Opcional. Apresentação, prestação de contas, orçamentos ou propostas mostrados na assembleia, um ou mais PDFs. Os números, nomes de empresas e nomes escritos nestes documentos têm prioridade sobre o áudio; quando o áudio disser diferente, a ata usa o documento e marca [conferir: transcrição dizia ...].</p>
+        <div id="ata-docs-lista" style="display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+
       <div class="card">
         <div class="card-header">
           <span class="card-title">Transcrição da Reunião</span>
@@ -3364,6 +3377,104 @@ function anexarPdfPauta(input) {
 }
 
 // ============================================================
+// DOCUMENTOS DA ASSEMBLEIA (T01) — PDFs de apoio da ata
+// ============================================================
+// Cada PDF tem o texto extraído aqui no navegador (pdf.js, sem custo). PDF escaneado (sem
+// camada de texto) vai em base64 e o servidor lê com o Claude. O servidor trata o texto destes
+// documentos como fonte oficial prioritária de números, empresas e nomes (ver server.js,
+// REGRAS_DOCUMENTOS_APOIO). Limites espelham os do servidor.
+const ATA_DOCS_MAX = 6;
+const ATA_DOCS_MAX_ESCANEADOS = 3;
+const ATA_DOCS_MAX_BYTES_ESCANEADO = 8 * 1024 * 1024;
+const ATA_DOCS_MAX_CHARS_DOC = 80000;          // igual ao servidor (DOCS_APOIO_MAX_CHARS_DOC)
+const ATA_DOCS_MAX_CORPO = 34 * 1024 * 1024;   // abaixo do limite de 36mb da rota
+let _ataDocsApoio = []; // { id, nome, texto, pdfBase64, paginas, status }
+let _ataDocsSeq = 0;
+let _ataDocsLendo = false; // uma leitura por vez: evita passar do limite de escaneados
+
+// Lê um PDF: texto por página e número de páginas. Usa o mesmo loader do pdf.js.
+async function _ataDocLerPdf(arrayBuffer) {
+  const pdfjsLib = await carregarPdfjs();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let texto = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    texto += '[página ' + i + '] ' + content.items.map(it => it.str).join(' ') + '\n';
+  }
+  return { texto: texto.trim(), paginas: pdf.numPages };
+}
+
+function _ataDocBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => { const v = String(r.result || ''); const i = v.indexOf(','); resolve(i >= 0 ? v.slice(i + 1) : v); };
+    r.onerror = () => reject(new Error('falha ao ler arquivo'));
+    r.readAsDataURL(file);
+  });
+}
+
+async function anexarDocsAssembleia(event) {
+  const input = event && event.target;
+  const files = Array.from((input && input.files) || []);
+  if (input) input.value = '';
+  if (_ataDocsLendo) { toast('Aguarde terminar a leitura dos documentos anteriores', 'warn'); return; }
+  _ataDocsLendo = true;
+  try {
+  for (const file of files) {
+    if (_ataDocsApoio.length >= ATA_DOCS_MAX) { toast('No máximo ' + ATA_DOCS_MAX + ' documentos por ata', 'warn'); break; }
+    const ehPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
+    if (!ehPdf) { toast(file.name + ': use PDF', 'err'); continue; }
+    const doc = { id: ++_ataDocsSeq, nome: file.name, texto: '', pdfBase64: '', paginas: 0, status: 'lendo' };
+    _ataDocsApoio.push(doc);
+    renderAtaDocs();
+    try {
+      const lido = await _ataDocLerPdf(await file.arrayBuffer());
+      doc.paginas = lido.paginas;
+      const util = lido.texto.replace(/\[página \d+\]/g, '').replace(/\s+/g, '');
+      // Escaneado: quase nenhum texto por página. Vai como PDF para o servidor ler.
+      if (util.length < 80 * Math.max(1, lido.paginas)) {
+        const escaneados = _ataDocsApoio.filter(d => d.pdfBase64).length;
+        if (escaneados >= ATA_DOCS_MAX_ESCANEADOS) throw new Error('no máximo ' + ATA_DOCS_MAX_ESCANEADOS + ' PDFs escaneados por ata');
+        if (file.size > ATA_DOCS_MAX_BYTES_ESCANEADO) throw new Error('PDF escaneado acima de 8MB');
+        doc.pdfBase64 = await _ataDocBase64(file);
+        doc.texto = '';
+        doc.status = 'escaneado';
+      } else {
+        doc.texto = lido.texto.slice(0, ATA_DOCS_MAX_CHARS_DOC);
+        doc.status = 'ok';
+        if (lido.texto.length > ATA_DOCS_MAX_CHARS_DOC) toast(file.name + ': documento longo, só o início será usado', 'warn');
+      }
+    } catch (e) {
+      _ataDocsApoio = _ataDocsApoio.filter(d => d.id !== doc.id);
+      toast(file.name + ': ' + (e && e.message ? e.message : 'não foi possível ler o PDF'), 'err');
+    }
+    renderAtaDocs();
+  }
+  } finally { _ataDocsLendo = false; }
+}
+
+function removerDocAssembleia(id) {
+  _ataDocsApoio = _ataDocsApoio.filter(d => d.id !== id);
+  renderAtaDocs();
+}
+
+function renderAtaDocs() {
+  const lista = document.getElementById('ata-docs-lista');
+  if (!lista) return;
+  const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  lista.innerHTML = _ataDocsApoio.map(d => {
+    let info = 'lendo...';
+    if (d.status === 'ok') info = d.paginas + ' pág. · ' + d.texto.length.toLocaleString('pt-BR') + ' caracteres';
+    if (d.status === 'escaneado') info = d.paginas + ' pág. · escaneado, será lido no servidor ao gerar';
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px">' +
+      '<span style="flex:1;font-size:12px;font-family:var(--mono);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ' + esc(d.nome) + '</span>' +
+      '<span style="font-size:11px;font-family:var(--mono);color:' + (d.status === 'escaneado' ? 'var(--warning)' : 'var(--muted)') + '">' + esc(info) + '</span>' +
+      '<button class="pauta-remove" title="Remover" onclick="removerDocAssembleia(' + d.id + ')">×</button></div>';
+  }).join('');
+}
+
+// ============================================================
 // EDITAL AUTOPREENCHE — IA lê PDF/imagem e preenche os 5 campos
 // ============================================================
 
@@ -3831,6 +3942,8 @@ function limparAta() {
   document.getElementById('ata-participantes').value = '';
   // Reset uploader edital
   _editalDropzoneTexto = ''; _editalDropzoneNome = '';
+  // Reset documentos da assembleia (T01): nunca levar PDF de uma ata para outra.
+  _ataDocsApoio = []; renderAtaDocs();
   const editalStatus = document.getElementById('edital-status');
   if (editalStatus) { editalStatus.textContent = ''; editalStatus.style.color = ''; }
   const editalProgress = document.getElementById('edital-progress-wrap');
@@ -3869,6 +3982,7 @@ async function gerarAtaIA() {
   if (!trans) { toast('Cole ou importe a transcrição antes de gerar', 'err'); return; }
   if (!cond)  { toast('Informe o nome do condomínio', 'err'); return; }
   if (!data)  { toast('Informe a data da reunião', 'err'); return; }
+  if (_ataDocsApoio.some(d => d.status === 'lendo')) { toast('Aguarde terminar a leitura dos documentos da assembleia', 'warn'); return; }
 
   // Coleta itens de pauta (mesma lógica do fallback copiarProClaude)
   const pautaItems = document.querySelectorAll('#pauta-list .pauta-item');
@@ -3949,10 +4063,18 @@ async function gerarAtaIA() {
     // 4s até 'done'/'error'. Cada request é curto, imune a timeout de borda e a idle
     // do navegador. O backend monta o system prompt e faz retry Sonnet → Opus com
     // validação pós-geração; o payload final ({ ata, modelo_usado, ... }) é o mesmo.
+    const corpoAta = JSON.stringify({
+        userMessage,
+        // T01: documentos da assembleia. Texto extraído aqui; escaneado vai como PDF (base64).
+        documentos: _ataDocsApoio.filter(d => d.status === 'ok' || d.status === 'escaneado').map(d => (
+          d.pdfBase64 ? { nome: d.nome, texto: '', pdf_base64: d.pdfBase64 } : { nome: d.nome, texto: d.texto }
+        ))
+      });
+    if (corpoAta.length > ATA_DOCS_MAX_CORPO) throw new Error('os documentos anexados passam do limite de tamanho; remova algum PDF escaneado');
     const resp = await apiAuthFetch('/api/atas/gerar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userMessage })
+      body: corpoAta
     });
     if (!resp.ok) {
       const errJson = await resp.json().catch(() => ({}));
@@ -3973,10 +4095,10 @@ async function gerarAtaIA() {
     // AbortController de 15s por consulta pra um request pendurado não travar o laço.
     let payload = null;
     let errosSeguidos = 0;
-    const prazoMax = Date.now() + 25 * 60 * 1000;
+    const prazoMax = Date.now() + (_ataDocsApoio.some(d => d.pdfBase64) ? 35 : 25) * 60 * 1000;
     for (;;) {
       await new Promise((r) => setTimeout(r, 4000));
-      if (Date.now() > prazoMax) throw new Error('tempo esgotado (25 min) — tente novamente');
+      if (Date.now() > prazoMax) throw new Error('tempo esgotado, tente novamente');
       let st;
       try {
         const ac = new AbortController();
@@ -4009,7 +4131,21 @@ async function gerarAtaIA() {
     document.getElementById('ata-gerada-conteudo').innerHTML = renderAtaBlocos(texto, escHtml);
     document.getElementById('ata-gerada-modal').style.display = 'flex';
     // avisos não bloqueantes da validação (ex.: revisar assinaturas). A ata foi entregue.
-    const avisos = Array.isArray(payload.avisos) ? payload.avisos : [];
+    const avisos = Array.isArray(payload.avisos) ? payload.avisos.slice() : [];
+    // T01: divergências áudio x documento e trechos sem âncora marcados na ata.
+    if (payload.conferencia && payload.conferencia.divergencias > 0) {
+      avisos.push(payload.conferencia.divergencias + ' ponto(s) em que o áudio divergiu dos documentos, marcados com [conferir: ...]');
+    }
+    if (payload.conferencia && payload.conferencia.valores_so_documento > 0) {
+      avisos.push(payload.conferencia.valores_so_documento + ' valor(es) da ata vieram só dos documentos e não foram ditos na reunião; confira se foram apresentados');
+    }
+    if (Array.isArray(payload.documentos)) {
+      payload.documentos.filter(d => d.falhou).forEach(d => avisos.push('o documento ' + d.nome + ' não pôde ser lido e ficou fora'));
+      payload.documentos.filter(d => d.truncado).forEach(d => avisos.push('o documento ' + d.nome + ' é muito longo e foi usado só em parte'));
+    }
+    if (payload.gate && Array.isArray(payload.gate.flags) && payload.gate.flags.length) {
+      avisos.push(payload.gate.flags.length + ' trecho(s) sem apoio na transcrição nem nos documentos, marcados na ata para conferir');
+    }
     addHistorico('Ata gerada via IA: ' + cond + ' · ' + data + (avisos.length ? ' (com avisos)' : ''));
     if (avisos.length) toast('Ata gerada. Pontos para revisar: ' + avisos.join('; '), 'warn');
     else toast('Ata gerada. Revise antes de baixar.', 'ok');

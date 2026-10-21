@@ -161,6 +161,24 @@ for (let i = 0; i < 10; i++) {
 }
 check('10 execucoes -> saida byte a byte identica', identico, 'houve variacao entre execucoes');
 
+console.log('\n===== COBERTURA T01: falsos positivos achados em ata real (20/10/2026) =====');
+// Tratamento e cargo nunca são nome: "Sra." e "Mesa Diretora" não podem virar marca.
+const rT1 = gateDeSaida('Estiveram presentes a Síndica Sra. Maria Silva e a Secretária da Mesa Diretora.', 'a sindica Maria Silva abriu a reuniao');
+check('T01-A: tratamento/cargo (Sra, Secretária, Mesa Diretora) NAO marcados', rT1.gate.flags.length === 0, JSON.stringify(rT1.gate.flags.map((f) => f.trecho)));
+// Gatilho "cia." não pode casar dentro de "eficácia." e transformar abertura em nome.
+const rT2 = gateDeSaida('O acordo reduzia sua eficácia. Citou também a empresa Bit.', 'a empresa Bit fez a obra');
+check('T01-B: "eficácia. Citou" NAO vira nome com gatilho', !rT2.gate.flags.some((f) => /Citou/.test(f.trecho)), JSON.stringify(rT2.gate.flags.map((f) => f.trecho)));
+// Abertura que abre a frase não é objeto de voto quando a frase tem o nome real.
+const rT3 = gateDeSaida('Submetida a votação a escolha da empresa Bit Engenharia, obteve vinte e três (23) votos.', 'a empresa Bit teve 23 votos');
+check('T01-C: "Submetida" NAO vira objeto de voto; Bit ancorado -> limpo', rT3.gate.veredicto === 'limpo', JSON.stringify(rT3.gate.flags.map((f) => f.tipo + '/' + f.trecho)));
+// Nome fabricado continua pego mesmo com a frase aberta por abertura.
+const rT4 = gateDeSaida('Submetida a votação a escolha da empresa Habitex, obteve vinte e três (23) votos.', 'a empresa Bit teve 23 votos');
+check('T01-D: nome fabricado na mesma frase continua CRITICO', rT4.gate.veredicto === 'critico' && rT4.gate.flags.some((f) => /Habitex/.test(f.trecho)), JSON.stringify(rT4.gate.flags.map((f) => f.tipo + '/' + f.trecho)));
+
+// Abertura verbal abrindo frase sem nenhum outro nome também não é objeto de voto.
+const rT5 = gateDeSaida('Submetida a votação a escolha entre os sistemas, um (1) voto foi registrado a favor do bolsão.', 'votacao do sistema, um voto para o bolsao');
+check('T01-E: "Submetida" sem outro nome NAO vira voto critico', rT5.gate.veredicto !== 'critico', JSON.stringify(rT5.gate.flags.map((f) => f.tipo + '/' + f.trecho)));
+
 console.log('\n===== IDEMPOTENCIA: Gate(Gate(ata)) =====');
 const r2 = gateDeSaida(r.ata, transcricao);
 check('texto e ponto fixo (Gate(Gate(ata)).ata === Gate(ata).ata)', r2.ata === r.ata, 'texto mudou na 2a passada');

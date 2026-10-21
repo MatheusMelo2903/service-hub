@@ -247,3 +247,7 @@ na ata, e nem no slide nem na transcrição, é fabricação. Valor que difere d
 leitura, não de deliberação.
 
 Status: REGISTRADO, não iniciado. Só depois do gate atual fechado e validado.
+
+## INTEGRAÇÃO NA DEV PELA T01 (20/10/2026)
+
+O gate entrou na dev junto com a T01 (documentos da assembleia), por cherry pick deste commit. Na primeira ata REAL (Casablanca) ele marcava "Sra", "Secretaria", "Citou", "Submetida", o nome da síndica e o endereço em toda ata. Ajustes: fonte = mensagem do usuário (edital e dados) + contexto da administradora + documentos; _GATE_NAO_NOME (tratamentos e cargos); gatilho com fronteira de palavra ("eficácia." casava "cia."); abertura no início da frase não é objeto de voto quando há outro nome na frase. Harness 45/45 (4 testes novos T01). Validação visual do Matheus continua pendente.

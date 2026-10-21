@@ -656,6 +656,182 @@ REGRAS:
 - Se uma "lacuna" já estiver na ata, ignore (não duplique).
 - Devolva APENAS a ata completa corrigida, do cabeçalho até a última linha de assinatura. Nada antes, nada depois, sem comentários.`;
 
+// ─── DOCUMENTOS DA ASSEMBLEIA (T01, 2026-10-20) ─────────────────────────────
+// Apresentação, prestação de contas, orçamentos, propostas: PDFs anexados na aba Atas.
+// São TEXTO ESCRITO, então valem como fonte oficial prioritária para números, nomes de
+// empresas e nomes próprios (a transcrição é áudio e erra exatamente nesses três pontos,
+// ver evidência congelada da fixture Casablanca). O front extrai o texto com pdf.js; PDF
+// escaneado (sem camada de texto) vem em base64 e é lido aqui por uma chamada ao Claude
+// com o PDF como documento. Tudo opcional: sem documento, o motor roda exatamente como antes.
+const DOCS_APOIO_MAX = 6;                         // documentos por geração
+const DOCS_APOIO_MAX_ESCANEADOS = 3;              // PDFs escaneados lidos pela IA por geração
+const DOCS_APOIO_MAX_PDF_B64 = 11 * 1024 * 1024;  // ~8MB de PDF em base64
+const DOCS_APOIO_MAX_CHARS_DOC = 80000;           // texto por documento (corta e avisa)
+const DOCS_APOIO_MAX_CHARS_TOTAL = 150000;        // texto somado dos documentos
+// Teto SEPARADO de chamadas de apoio (leitura de escaneado + conferência). Não mexe no teto
+// do motor (MAX_CHAMADAS_ANTHROPIC_POR_ATA) para não roubar orçamento da auditoria.
+// Pior caso: 3 leituras de escaneado + 1 conferência = 4.
+const MAX_CHAMADAS_APOIO_POR_ATA = 4;
+
+const REGRAS_DOCUMENTOS_APOIO = `REGRAS DOS DOCUMENTOS DA ASSEMBLEIA (APRESENTAÇÃO, PRESTAÇÃO DE CONTAS, ORÇAMENTOS, PROPOSTAS)
+
+Junto com a transcrição podem vir DOCUMENTOS DA ASSEMBLEIA, que são texto ESCRITO e oficial (o que foi mostrado na tela, os orçamentos, a prestação de contas). Eles são a FONTE OFICIAL PRIORITÁRIA para três tipos de dado: (a) números (valores em reais, totais, saldos, percentuais, quantidades, datas de período); (b) nomes de empresas, fornecedores e prestadores; (c) nomes próprios de pessoas que constem por escrito.
+
+DOC 1. PAPEL DE CADA FONTE. A transcrição diz o que foi FALADO e DELIBERADO (quem falou, o que foi votado, o resultado, as justificativas). O documento diz COMO SE ESCREVE o dado (o número exato, a grafia correta da empresa). Edital segue valendo para convocação, data, local, CNPJ e pauta.
+
+DOC 2. DIVERGÊNCIA ENTRE ÁUDIO E DOCUMENTO. Quando a transcrição cita um valor, empresa ou nome que corresponde claramente a um dado do documento, mas com forma diferente (número próximo, empresa ouvida errado), USE A FORMA DO DOCUMENTO e coloque logo depois o marcador [conferir: transcrição dizia X], onde X é o que a transcrição trouxe. Exemplo: o documento traz "R$ 355.200,00" e a fala diz "355 mil", escreva "R$ 355.200,00 [conferir: transcrição dizia 355 mil]". Este marcador é a ÚNICA exceção autorizada à FID 6: é curto, cita só o que a transcrição trouxe, sem explicar motivo. Só use o marcador quando houver divergência real entre a FALA e o DOCUMENTO, e só quando a forma que você escreve estiver LITERALMENTE no documento. Variação de um nome dentro da própria transcrição (a fala chamou a mesma empresa de dois jeitos) NÃO é caso deste marcador: segue as regras de nome próprio (FID 3). Se a fala bate com o documento, escreva só o dado, sem marcador.
+
+DOC 3. O DOCUMENTO NÃO CRIA FATO DA ASSEMBLEIA. Nunca registrar como aprovado, votado, decidido, APRESENTADO, LIDO ou EXPLICADO algo que só aparece no documento. O que aconteceu na reunião (quem apresentou o quê, votos, placar, aprovação, desfecho) vem SÓ da transcrição. Ter o documento anexado NÃO prova que ele foi apresentado: se a transcrição não mostra alguém apresentando aquele assunto nesta reunião, a ata não diz que ele foi apresentado. Exemplo do que é PROIBIDO: anexaram a prestação de contas, a fala não apresentou a prestação, e a ata escreve "a representante apresentou a prestação de contas, com saldo inicial de R$ X". Isso é invenção.
+
+DOC 4. DETALHAMENTO PELO DOCUMENTO, SÓ ONDE A FALA TRATOU. Só quando a TRANSCRIÇÃO mostra que um assunto foi apresentado nesta reunião (alguém falando dele) e o documento detalha esse mesmo assunto, a ata pode trazer os números e nomes do documento para ele, na forma literal do documento. Nunca acrescentar número, saldo, total ou rubrica do documento em item onde a fala não tratou daquele assunto. Na dúvida, não use o documento para acrescentar: use só para corrigir a forma do que a fala citou (DOC 2).
+
+DOC 5. ANTI-INVENÇÃO CONTINUA ABSOLUTA. Dado que não está nem na transcrição nem nos documentos nem no edital vira [a confirmar]. Nunca recalcular, somar ou arredondar número do documento.`;
+
+// Prompt da leitura de PDF escaneado (sem camada de texto). Só transcreve, não interpreta.
+const PROMPT_LEITURA_DOC_ESCANEADO = `Você recebe um PDF escaneado (imagem) de um documento apresentado numa assembleia de condomínio: apresentação, prestação de contas, orçamento ou proposta.
+
+Tarefa: transcrever o TEXTO do documento, página por página, de forma fiel. Números exatamente como impressos (R$ 1.234,56), nomes de empresas e pessoas exatamente como escritos. Tabelas viram linhas de texto com as colunas separadas por " | ". Comece cada página com "PÁGINA N".
+
+NUNCA invente, complete ou corrija dado. Trecho ilegível vira [ilegível]. Não resuma, não comente, não explique. Devolva só o texto transcrito.`;
+
+// Prompt da conferência pré geração: transcrição x documentos. Lista só divergências.
+const PROMPT_CONFERENCIA_DOCS = `Você confere a TRANSCRIÇÃO de uma assembleia de condomínio contra os DOCUMENTOS ESCRITOS apresentados nela (apresentação, prestação de contas, orçamentos, propostas).
+
+Tarefa: listar cada VALOR em reais, NOME DE EMPRESA ou NOME PRÓPRIO citado na transcrição que corresponde claramente a um dado do documento, mas aparece na fala de forma DIFERENTE do documento (número próximo porém diferente, empresa ou pessoa com grafia ou nome ouvido errado).
+
+REGRAS:
+CONF 1. Uma divergência por linha, no formato exato:
+DIVERGENCIA | transcrição: <como a fala trouxe> | documento: <como o documento escreve> | assunto: <item ou contexto em poucas palavras>
+CONF 2. Só aponte quando a correspondência é clara pelo contexto (mesmo item de pauta, mesmo orçamento, mesma rubrica). Na dúvida se é o mesmo dado, NÃO aponte.
+CONF 3. Fala arredondada ou informal que bate com o documento ("355 mil" para R$ 355.200,00) É divergência de forma: aponte, porque a ata vai usar o número exato do documento.
+CONF 4. Não aponte o que é igual. Não aponte dado que só existe num dos lados.
+CONF 5. Não invente. Não comente. Sem texto fora das linhas.
+CONF 6. Se não houver nenhuma divergência, responda exatamente: NENHUMA DIVERGENCIA`;
+
+// Valida e normaliza a lista de documentos que veio do front. Nunca lança: devolve
+// { docs, erro }. Nome do arquivo é saneado (só exibição/prompt), texto é cortado no teto.
+function normalizarDocumentosApoio(lista) {
+  if (lista == null) return { docs: [] };
+  if (!Array.isArray(lista)) return { docs: [], erro: 'documentos deve ser uma lista' };
+  if (lista.length > DOCS_APOIO_MAX) return { docs: [], erro: 'no máximo ' + DOCS_APOIO_MAX + ' documentos por ata' };
+  const docs = [];
+  let escaneados = 0;
+  for (const d of lista) {
+    if (!d || typeof d !== 'object') continue;
+    const nome = String(d.nome || 'documento.pdf').replace(/[\u0000-\u001f\u007f\[\]]/g, ' ').trim().slice(0, 120) || 'documento.pdf';
+    const texto = typeof d.texto === 'string' ? d.texto : '';
+    const b64 = typeof d.pdf_base64 === 'string' ? d.pdf_base64 : '';
+    if (b64) {
+      if (b64.length > DOCS_APOIO_MAX_PDF_B64) return { docs: [], erro: 'o documento ' + nome + ' passa de 8MB' };
+      if (!/^[A-Za-z0-9+/=\s]+$/.test(b64.slice(0, 2000)) || !/^JVBER/.test(b64.replace(/\s+/g, '').slice(0, 8))) return { docs: [], erro: 'o documento ' + nome + ' não é um PDF válido' };
+      if (++escaneados > DOCS_APOIO_MAX_ESCANEADOS) return { docs: [], erro: 'no máximo ' + DOCS_APOIO_MAX_ESCANEADOS + ' PDFs escaneados por ata' };
+    }
+    if (!texto.trim() && !b64) continue;
+    docs.push({ nome, texto: texto.slice(0, DOCS_APOIO_MAX_CHARS_DOC), truncado: texto.length > DOCS_APOIO_MAX_CHARS_DOC, pdfBase64: b64 || null, origem: b64 ? 'leitura_ia' : 'texto' });
+  }
+  return { docs };
+}
+
+// Lê um PDF escaneado mandando o PDF como documento ao Claude. Devolve o texto ou ''.
+async function lerDocumentoEscaneado(doc, chamarApoio) {
+  const content = [
+    { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: doc.pdfBase64.replace(/\s+/g, '') } },
+    { type: 'text', text: 'Transcreva o texto deste documento conforme as regras.' }
+  ];
+  const r = await chamarApoio('claude-sonnet-4-6', 16000, PROMPT_LEITURA_DOC_ESCANEADO, content);
+  if (r && r.raw && r.raw.stop_reason === 'max_tokens') doc.truncado = true; // leitura cortada: avisa
+  return (r && r.ok && r.texto) ? r.texto.trim() : '';
+}
+
+// Bloco de texto com todos os documentos, respeitando o teto total de caracteres.
+// Devolve { bloco, textoIncluido }: textoIncluido é SÓ o que o modelo vai ver (respeita o teto),
+// e é ele que alimenta o grounding do gate e da consolidação de nomes.
+function montarBlocoDocumentos(docs) {
+  let restante = DOCS_APOIO_MAX_CHARS_TOTAL;
+  const partes = [];
+  const incluidos = [];
+  docs.forEach((d, i) => {
+    if (!d.texto) return;
+    if (restante <= 0) { d.truncado = true; return; }
+    const t = d.texto.slice(0, restante);
+    restante -= t.length;
+    if (t.length < d.texto.length) d.truncado = true;
+    incluidos.push(t);
+    partes.push('=== DOCUMENTO ' + (i + 1) + ': ' + d.nome + ' ===\n' + t);
+  });
+  if (!partes.length) return { bloco: '', textoIncluido: '' };
+  return {
+    bloco: '=== DOCUMENTOS DA ASSEMBLEIA (FONTE OFICIAL PRIORITÁRIA PARA NÚMEROS, EMPRESAS E NOMES) ===\n' + partes.join('\n\n'),
+    textoIncluido: incluidos.join('\n')
+  };
+}
+
+// Conferência pré geração: uma chamada Sonnet que lista as divergências transcrição x
+// documento. Falha aberta: qualquer erro devolve '' e a geração segue sem a lista.
+async function conferirTranscricaoComDocumentos(transcricao, blocoDocs, chamarApoio) {
+  const msg = blocoDocs + '\n\n=== TRANSCRIÇÃO DA ASSEMBLEIA ===\n' + transcricao + '\n\nListe as divergências conforme as regras.';
+  const r = await chamarApoio('claude-sonnet-4-6', 4000, PROMPT_CONFERENCIA_DOCS, msg);
+  if (!r || !r.ok || !r.texto) return '';
+  const linhas = r.texto.split('\n').map((l) => l.trim()).filter((l) => /^DIVERGENCIA\s*\|/i.test(l));
+  return linhas.slice(0, 80).join('\n');
+}
+
+// Troca na fala as menções monetárias cujo valor canônico está em `canons` por um rótulo neutro,
+// para a correção cirúrgica não usá-las como candidato. Só usada com documentos (T01).
+function _ocultarValoresFala(txt, canons) {
+  const s = String(txt);
+  const cortes = [];
+  const add = (m, canon) => { if (canons.has(canon)) cortes.push([m.index, m.index + m[0].length]); };
+  for (const m of s.matchAll(/R\$\s*\d[\d.]*(?:,\d{2})?(?:\s*mil)?/gi)) {
+    const mm = m[0].match(/(\d[\d.]*(?:,\d{2})?)(\s*mil)?/i);
+    add(m, _numPtBr(mm[1], mm[2] ? 1000 : 1));
+  }
+  for (const m of s.matchAll(/(?<![\d$]\s?)\b(\d+(?:[.,]\d+)?)\s*mil\b/gi)) add(m, _numPtBr(m[1], 1000));
+  cortes.sort((a, b) => b[0] - a[0]);
+  let out = s, lim = Infinity;
+  for (const [a, b] of cortes) { if (b > lim) continue; out = out.slice(0, a) + '[valor divergente do documento]' + out.slice(b); lim = a; }
+  return out;
+}
+
+// VALIDADOR DETERMINÍSTICO dos marcadores [conferir: ...] (T01, anti invenção).
+// O marcador afirma "o dado escrito antes veio do DOCUMENTO e a fala disse outra coisa". Na ata
+// real o modelo também usou o marcador só para normalizar fala informal ("107 mil" virou
+// R$ 107.000,00 [conferir: ...]) sem o valor existir no documento, e colocou explicação dentro.
+// Regra: o marcador só fica se o dado IMEDIATAMENTE antes dele (valor R$ ou nome capitalizado)
+// existir no texto dos documentos; senão o marcador sai e o dado fica para o gate julgar contra
+// as fontes. O conteúdo é limpo para a forma curta "[conferir: transcrição dizia X]".
+function validarMarcadoresConferir(ataTxt, textoDocs) {
+  const s = String(ataTxt);
+  const canonDocs = valoresCanonicos(textoDocs || '');
+  const reMk = /\s*\[conferir:\s*([^\]]*)\]/g;
+  const trocas = [];
+  let m, mantidos = 0, removidos = 0;
+  while ((m = reMk.exec(s))) {
+    const antes = s.slice(Math.max(0, m.index - 120), m.index);
+    let ancorado = false;
+    const mv = antes.match(/R\$\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?\s*$/);
+    if (mv) {
+      const c = [...valoresCanonicos(mv[0])];
+      ancorado = c.length === 1 && canonDocs.has(c[0]);
+    } else {
+      const mn = antes.match(/((?:[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.&]*\s*){1,4})$/);
+      const palavras = mn ? mn[1].trim().split(/\s+/).map((w) => w.replace(/[.,;:]+$/, '')).filter((w) => w.length >= 3 && !_SUFIXOS_NORM.has(_normLoose(w))) : [];
+      ancorado = palavras.length > 0 && palavras.every((w) => existeLiteral(w, textoDocs || ''));
+    }
+    let novo = '';
+    if (ancorado) {
+      // forma curta: só o que a transcrição dizia (corta explicação depois de ; ou de "o documento")
+      const dizia = m[1].replace(/^transcri[çc][ãa]o dizia\s*/i, '').split(/;|\bo documento\b/i)[0].trim().replace(/[,.]+$/, '');
+      novo = dizia ? ' [conferir: transcrição dizia ' + dizia + ']' : '';
+      mantidos++;
+    } else removidos++;
+    trocas.push([m.index, m.index + m[0].length, novo]);
+  }
+  let out = s;
+  for (let i = trocas.length - 1; i >= 0; i--) out = out.slice(0, trocas[i][0]) + trocas[i][2] + out.slice(trocas[i][1]);
+  return { ata: out, mantidos, removidos };
+}
+
 // Extrai só a transcrição de dentro do userMessage (pra auditar em blocos).
 function extrairTranscricao(um) {
   const partes = String(um).split(/=== TRANSCRIÇÃO COMPLETA DA REUNIÃO ===/);
@@ -1349,16 +1525,19 @@ async function consolidarNomesProprios(ataTxt, transcricao, chamar) {
 }
 
 // Auditoria de completude de UM bloco: devolve a lista de lacunas (texto) ou '' se nada.
-async function auditarBlocoCompletude(ata, bloco, i, n, chamar) {
-  const sys = PROMPT_AUDITORIA_BLOCO + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+// extraSys (opcional, T01): regras + texto dos DOCUMENTOS DA ASSEMBLEIA, anexados no FIM do
+// system (sem reordenar o que já existia). Sem documento, o system fica idêntico ao de antes.
+async function auditarBlocoCompletude(ata, bloco, i, n, chamar, extraSys) {
+  // Cache só quando há mais de um bloco (o system se repete entre eles).
+  const sys = PROMPT_AUDITORIA_BLOCO + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '') + (extraSys ? '\n\n---\n\n' + extraSys : '');
   const msg = '=== ATA GERADA (completa) ===\n' + ata + '\n\n=== TRECHO ' + i + ' DE ' + n + ' DA TRANSCRIÇÃO ===\n' + bloco + '\n\nListe as lacunas DESTE trecho conforme as regras.';
-  const r = await chamar('claude-sonnet-4-6', 8000, sys, msg);
+  const r = await chamar('claude-sonnet-4-6', 8000, sys, msg, n > 1);
   return (r.ok && r.texto) ? r.texto.trim() : '';
 }
 
 // Inserção cirúrgica das lacunas (modelo = sonnet ou opus). Devolve a ata ou null.
-async function inserirLacunasNaAta(ata, listaLacunas, modelo, chamar) {
-  const sys = PROMPT_INSERCAO_LACUNAS + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+async function inserirLacunasNaAta(ata, listaLacunas, modelo, chamar, extraSys) {
+  const sys = PROMPT_INSERCAO_LACUNAS + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '') + (extraSys ? '\n\n---\n\n' + extraSys : '');
   const msg = '=== ATA ATUAL ===\n' + ata + '\n\n=== LACUNAS A INSERIR (fatos da transcrição que faltaram) ===\n' + listaLacunas + '\n\nInsira cirurgicamente cada lacuna no item correto e devolva a ATA COMPLETA corrigida.';
   const r = await chamar(modelo, 32000, sys, msg);
   return (r.ok && r.texto && r.texto.trim()) ? r.texto.trim() : null;
@@ -1429,7 +1608,30 @@ const _GATE_ABERTURAS = new Set([
   'primeiramente', 'procedida', 'procedido', 'procedeu', 'prosseguindo', 'prosseguiu', 'quanto',
   'realizada', 'realizado', 'registrada', 'registrado', 'registrou', 'ressaltada', 'ressaltado',
   'ressaltou', 'sendo', 'sobre', 'submetida', 'submetido', 'tendo', 'todavia', 'uma', 'verificada',
-  'verificado'
+  'verificado',
+  // T01 (ata real Casablanca, 20/10/2026): verbos de relato e particípios que abriram frase
+  // e viraram falso positivo.
+  'citou', 'concluida', 'concluido', 'declarou', 'destacou', 'encerrados', 'esclareceu',
+  'explicou', 'informou', 'apresentou', 'lembrou', 'mencionou', 'observou', 'relatou',
+  'solicitou', 'sugeriu', 'propos', 'questionou', 'respondeu', 'submetidas', 'submetidos',
+  'apurou', 'apurados', 'concluidos', 'concluidas', 'colocou', 'aprovou', 'votou'
+].map((s) => _normLoose(s)));
+
+// T01: TRATAMENTOS e CARGOS não são nome próprio (aparecem capitalizados na ata mas nunca são
+// ditos assim no áudio: "Sra.", "Mesa Diretora", "Secretária da Ata"). Sem isto a ata real saía
+// com dezenas de marcas espúrias ("[nome sem âncora na fonte: 'Sra']"). Não é blacklist de nome
+// suspeito: são palavras que NUNCA identificam uma pessoa ou empresa.
+const _GATE_NAO_NOME = new Set([
+  'sr', 'sra', 'srta', 'srs', 'sras', 'dr', 'dra', 'exmo', 'exma', 'dona',
+  'secretaria', 'secretario', 'diretora', 'diretor', 'diretoria', 'presidente', 'mesa',
+  'sindica', 'sindico', 'subsindica', 'subsindico', 'conselheira', 'conselheiro', 'conselho',
+  'fiscal', 'consultivo', 'condomina', 'condomino', 'condominos', 'tesoureira', 'tesoureiro',
+  'assembleia', 'ata', 'edital', 'item', 'pauta', 'torre', 'bloco', 'unidade', 'advogado',
+  'advogada', 'representante', 'gerente', 'zelador', 'zeladora', 'porteiro', 'administradora',
+  // substantivos comuns que a ata capitaliza (achado da 2a rodada real, T01)
+  'presidencia', 'regiao', 'banco', 'prefeitura', 'cartorio', 'justica', 'tribunal', 'estado',
+  'municipio', 'governo', 'receita', 'federal', 'previdencia', 'codigo', 'civil', 'convencao',
+  'regimento', 'interno', 'artigo', 'lei', 'processo'
 ].map((s) => _normLoose(s)));
 
 // Prefixos dos marcadores que o PRÓPRIO gate cria. Detectados na re-execução (idempotência):
@@ -1475,6 +1677,7 @@ function _gateRaizesDistintivas(run, baseIdx) {
     if (!/[a-zà-öø-ÿ]/.test(tok)) continue;               // sem minúscula = cabeçalho, ignora
     if (/^(d[aeo]s?|e|no|na|nos|nas|ao|aos|com|para|por)$/i.test(tok)) continue; // conectivo
     if (_SUFIXOS_NORM.has(_normLoose(tok))) continue;     // sufixo genérico, não é raiz
+    if (_GATE_NAO_NOME.has(_normLoose(tok))) continue;    // T01: tratamento ou cargo, não é nome
     // ATENÇÃO: o filtro de _GATE_ABERTURAS NÃO fica aqui de propósito. Esta função alimenta OS
     // DOIS pools (afirmação isolada E objeto de voto). Filtrar abertura aqui tirava um nome
     // fabricado que colide com palavra gramatical (ex.: empresa "Assim") do pool de VOTO também,
@@ -1501,7 +1704,9 @@ function _gateAncorado(raiz, transcricaoTxt) {
 }
 
 // Palavras que, imediatamente antes de um nome, forçam sua inclusão mesmo em início de frase.
-const _GATE_GATILHO_NOME = /(empresa|firma|prestador|prestadora|construtora|fornecedor|fornecedora|vencedor|vencedora|loja|companhia|cia\.?|tinta|marca|condom[íi]nio|contrato|s[íi]ndic[oa]|sr\.?|sra\.?|dr\.?)\s*$/i;
+// T01: fronteira de palavra antes do gatilho. Sem ela "eficácia. Citou" casava "cia." (companhia)
+// e a abertura de frase virava nome com gatilho.
+const _GATE_GATILHO_NOME = /(?:^|[^A-Za-zÀ-ÿ])(empresa|firma|prestador|prestadora|construtora|fornecedor|fornecedora|vencedor|vencedora|loja|companhia|cia\.?|tinta|marca|condom[íi]nio|contrato|s[íi]ndic[oa]|sr\.?|sra\.?|dr\.?)\s*$/i;
 // Gatilho no INÍCIO do próprio run (não só antes dele). Quando a frase abre com o gatilho
 // capitalizado ("Empresa Xurupita apresentou..."), a palavra vira o 1o token do run e some do
 // r.antes; sem isto o run inteiro caía no descarte de início-de-frase e o nome escapava (achado
@@ -1660,6 +1865,19 @@ function gateDeSaida(ataTxt, transcricaoTxt) {
     let antesMelhor = null, depoisMelhor = null;
     for (const c of rootsTodos) {
       if (c.idx < sent.ini || c.idx >= sent.fim) continue;
+      // T01: abertura gramatical que é a PRIMEIRA palavra da frase ("Submetida a votação...",
+      // "Procedeu-se...") não é objeto de voto; o objeto é o nome real da frase. Uma entidade
+      // fabricada com o mesmo nome continua sendo pega quando vem com gatilho ("empresa Assim"),
+      // porque aí não é a primeira palavra da frase. E só pula quando a frase TEM outro nome
+      // candidato: "Assim venceu com (10) votos" (sem outro nome) continua ligando o voto a "Assim".
+      // Abertura VERBAL (particípio ou pretérito: "Submetida", "Procedeu", "Apurou") abrindo a
+      // frase nunca é objeto de voto, mesmo sem outro nome na frase ("Submetida a votação a
+      // escolha entre os sistemas, um (1) voto..."). Advérbio/conector ("Assim") só é pulado
+      // quando há outro nome (R4-A: "Assim venceu com (10) votos" continua crítico).
+      const _abNorm = _normLoose(c.raiz);
+      if (_GATE_ABERTURAS.has(_abNorm) && !masked.slice(sent.ini, c.idx).trim() &&
+          (/(ad[ao]s?|id[ao]s?|ou|eu|iu)$/.test(_abNorm) ||
+           rootsTodos.some((o) => o !== c && o.idx >= sent.ini && o.idx < sent.fim))) continue;
       if (c.idx < p.votosIdx) { if (!antesMelhor || c.idx > antesMelhor.idx) antesMelhor = c; }
       else if (!depoisMelhor || c.idx < depoisMelhor.idx) depoisMelhor = c;
     }
@@ -1775,7 +1993,10 @@ function validarAta(resposta) {
 // engine_falhou). 600s dá folga pra atas longas. Roda em background (job), sem prender
 // requisição HTTP do cliente.
 // Retorna { ok, status, texto, raw, erro }.
-function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
+// cacheSystem (T01, revisão): cache_control só onde o MESMO system se repete na geração (as
+// auditorias de bloco 2 e 3). Gravar cache custa 1,25x o input; em chamada de prefixo único é
+// prejuízo, então ali o system segue como string simples, igual ao de antes.
+function chamarAnthropicAta(modelo, maxTokens, system, userMessage, cacheSystem) {
   return new Promise((resolve) => {
     const body = JSON.stringify({
       model: modelo,
@@ -1786,7 +2007,14 @@ function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
       // da correcao cirurgica deterministica (corrigirPlaceholdersDeliberacao) + auditoria
       // fracionada. Ver RÉGUA REALISTA no roadmap: alvo consertado por codigo, conflito real
       // marcado [a confirmar], ruido fora. Reversao do temperature 0 autorizada em 2026-07-08.
-      system,
+      //
+      // PROMPT CACHING (mesma forma do wip feat/prompt-cache-anthropic, só a parte da ata): o
+      // system (SKILL + regras + glossário, e na T01 os documentos da assembleia anexados no FIM)
+      // é idêntico entre as chamadas de mesmo tipo de uma geração (ex.: as até 3 auditorias de
+      // bloco). Só marcamos o fim desse prefixo com cache_control, SEM reordenar nada. O
+      // userMessage (variável) continua depois, fora do cache. userMessage pode ser string ou
+      // lista de blocos (a leitura de PDF escaneado manda o PDF como bloco document).
+      system: cacheSystem ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system,
       messages: [{ role: 'user', content: userMessage }]
     });
     const opts = {
@@ -1811,6 +2039,13 @@ function chamarAnthropicAta(modelo, maxTokens, system, userMessage) {
         const d = Buffer.concat(chunks).toString('utf8');
         try {
           const j = JSON.parse(d);
+          // Telemetria de cache (só contagem de token, nunca conteúdo).
+          if (j && j.usage) {
+            console.log('[ATA cache] modelo=' + modelo +
+              ' cache_creation=' + (j.usage.cache_creation_input_tokens || 0) +
+              ' cache_read=' + (j.usage.cache_read_input_tokens || 0) +
+              ' input=' + (j.usage.input_tokens || 0));
+          }
           const texto = (j.content && j.content[0] && j.content[0].text || '').trim();
           resolve({ ok: resp.statusCode === 200 && !!texto, status: resp.statusCode, texto, raw: j });
         } catch (e) {
@@ -1859,8 +2094,9 @@ const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 7;
 // Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
 // PRIMEIRA passada Sonnet que retornar texto; a validação é só aviso, nunca bloqueia
 // nem dispara retry. Retry (1x, Sonnet) só se a API não retornar texto. Sem Opus.
-async function gerarAtaJob(jobId, userMessage) {
-  const system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_DETALHAMENTO_MAXIMO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
+async function gerarAtaJob(jobId, userMessage, documentosEntrada) {
+  const documentos = Array.isArray(documentosEntrada) ? documentosEntrada : [];
+  let system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_DETALHAMENTO_MAXIMO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
   const concluir = (payload) => { const j = atasJobs.get(jobId); if (j) { j.status = 'done'; j.payload = payload; } agendarLimpezaJob(jobId); };
   // httpStatus (não 'status') pra NÃO colidir com o campo status do job. A rota /status
@@ -1877,12 +2113,100 @@ async function gerarAtaJob(jobId, userMessage) {
   // consolidação de nome próprio pode somar mais 1 (pior caso real = 8); se estourar o teto
   // aqui, ela falha ABERTA sozinha (ver consolidarNomesProprios), não aborta a geração.
   let _chamadas = 0;
-  const chamar = (modelo, maxTokens, sys, msg) => {
+  const chamar = (modelo, maxTokens, sys, msg, cacheSystem) => {
     if (++_chamadas > MAX_CHAMADAS_ANTHROPIC_POR_ATA) {
       throw new Error('TETO_CHAMADAS: teto de ' + MAX_CHAMADAS_ANTHROPIC_POR_ATA + ' chamadas à API por geração atingido; abortado para não gerar custo');
     }
+    return chamarAnthropicAta(modelo, maxTokens, sys, msg, cacheSystem);
+  };
+
+  // ─── DOCUMENTOS DA ASSEMBLEIA (T01) ───────────────────────────────────────
+  // Estado da geração com documentos. Sem documento tudo fica neutro e o motor roda igual.
+  let mensagemGeracao = userMessage;   // o que vai para a geração (userMessage + documentos)
+  let extraSysDocs = '';                // regras + texto dos documentos para auditoria e inserção
+  let textoDocs = '';                   // texto puro somado dos documentos (grounding)
+  let canonConferencia = new Set();     // valores já apontados como divergentes pela conferência
+  let docsInfo = [];
+  const transcricaoBase = extrairTranscricao(userMessage);
+  let fonteNomes = transcricaoBase;
+  // Fonte do gate = tudo que é fonte OFICIAL entregue ao modelo: a mensagem do usuário (dados da
+  // reunião, edital anexado, participantes, transcrição) e o contexto fixo da administradora.
+  // Medido na ata real Casablanca (T01, 20/10/2026): só com a transcrição o gate marcava o nome
+  // da síndica, o endereço e a administradora, que vêm do edital e do contexto, em TODA ata.
+  // Limite conhecido e aceito: nome que só existe no edital passa como ancorado (edital é fonte
+  // oficial, não é invenção). Com documentos, o texto deles entra também (prepararDocumentos).
+  const fonteGateBase = userMessage + '\n' + CONTEXTO_GRUPO_SERVICE;
+  let fonteGate = fonteGateBase;
+  let _chamadasApoio = 0;
+  const chamarApoio = (modelo, maxTokens, sys, msg) => {
+    if (++_chamadasApoio > MAX_CHAMADAS_APOIO_POR_ATA) {
+      throw new Error('TETO_APOIO: teto de ' + MAX_CHAMADAS_APOIO_POR_ATA + ' chamadas de apoio por geração atingido');
+    }
     return chamarAnthropicAta(modelo, maxTokens, sys, msg);
   };
+  async function prepararDocumentos() {
+    if (!documentos.length) return;
+    const systemAntes = system;
+    try {
+      // 1) PDFs escaneados lidos em PARALELO (cada um conta no teto de apoio). Falhou: segue sem ele.
+      await Promise.all(documentos.filter((d) => d.pdfBase64).map(async (d) => {
+        try {
+          const lido = await lerDocumentoEscaneado(d, chamarApoio);
+          if (lido) d.texto = (d.texto ? d.texto + '\n' : '') + lido.slice(0, DOCS_APOIO_MAX_CHARS_DOC);
+          else d.falhou = true;
+        } catch (e) { d.falhou = true; }
+        d.pdfBase64 = null; // libera memória: o PDF não é mais necessário
+      }));
+      const { bloco, textoIncluido } = montarBlocoDocumentos(documentos);
+      docsInfo = documentos.map((d) => ({ nome: d.nome, origem: d.origem, caracteres: (d.texto || '').length, truncado: !!d.truncado, falhou: !!d.falhou }));
+      if (!bloco) return;
+      textoDocs = textoIncluido;
+      fonteNomes = transcricaoBase + '\n' + textoDocs;
+      fonteGate = fonteGateBase + '\n' + textoDocs;
+      // 2) Conferência transcrição x documento (1 chamada). Falha aberta.
+      let conferencia = '';
+      try { conferencia = await conferirTranscricaoComDocumentos(transcricaoBase, bloco, chamarApoio); }
+      catch (e) { conferencia = ''; }
+      // ÂNCORA da conferência (anti invenção): a linha só segue para a geração se o lado
+      // "documento:" estiver de fato no texto do documento (valor canônico, ou todas as palavras
+      // distintivas do nome). Na ata real a conferência listou variações da PRÓPRIA fala
+      // ("DM Mantas" x "ADN Mantas") como se fossem do documento; isso agora é descartado.
+      const canonDocsConf = valoresCanonicos(textoDocs);
+      conferencia = (conferencia ? conferencia.split('\n') : []).filter((l) => {
+        const ld = ((l.match(/documento:\s*([^|]*)/i) || [])[1] || '').replace(/["“”']/g, '').trim();
+        if (!ld) return false;
+        const vd = [...valoresCanonicos('valor ' + ld)];
+        if (vd.length) return vd.every((v) => canonDocsConf.has(v));
+        const palavras = ld.split(/\s+/).filter((w) => w.length >= 3 && /[A-Za-zÀ-ÿ]/.test(w));
+        return palavras.length > 0 && palavras.every((w) => existeLiteral(w.replace(/[.,;:()]+/g, ''), textoDocs));
+      }).join('\n');
+      // Valor do lado da TRANSCRIÇÃO só entra no filtro quando a linha é VERIFICÁVEL: o valor do
+      // lado "documento:" existe de fato no texto do documento e o da transcrição existe de fato
+      // na fala. Linha inventada pela conferência não suprime lacuna nenhuma.
+      const canonDocs = valoresCanonicos(textoDocs);
+      const canonFala = valoresCanonicos(transcricaoBase);
+      canonConferencia = new Set();
+      for (const l of (conferencia ? conferencia.split('\n') : [])) {
+        const lt = (l.match(/transcri[çc][ãa]o:\s*([^|]*)/i) || [])[1] || '';
+        const ld = (l.match(/documento:\s*([^|]*)/i) || [])[1] || '';
+        const vt = [...valoresCanonicos('valor ' + lt)];
+        const vd = [...valoresCanonicos('valor ' + ld)];
+        if (vt.length === 1 && vd.length === 1 && vt[0] !== vd[0] && canonDocs.has(vd[0]) && canonFala.has(vt[0])) canonConferencia.add(vt[0]);
+      }
+      // 3) Regras no FIM do system (anexo, sem reordenar) e documentos + conferência no FIM da mensagem.
+      system += '\n\n---\n\n' + REGRAS_DOCUMENTOS_APOIO;
+      extraSysDocs = REGRAS_DOCUMENTOS_APOIO + '\n\nATENÇÃO NESTA AUDITORIA: esta assembleia tem os DOCUMENTOS OFICIAIS abaixo. A ata pode trazer valores, empresas e nomes na forma do DOCUMENTO, seguidos de [conferir: transcrição dizia X]. Isso é CORRETO. Não aponte como lacuna nem como divergência um dado da ata que bate com o documento, nunca troque esse dado pela forma da transcrição nem o rebaixe para [a confirmar], e preserve todo marcador [conferir: ...].\n\n' + bloco;
+      mensagemGeracao = userMessage + '\n\n' + bloco +
+        (conferencia ? '\n\n=== CONFERÊNCIA PRÉVIA: TRANSCRIÇÃO x DOCUMENTOS ===\nNestes pontos a fala diverge do documento. Use a forma do DOCUMENTO e marque logo depois [conferir: transcrição dizia X] (regra DOC 2).\n' + conferencia : '') +
+        '\n\nLembrete: os DOCUMENTOS DA ASSEMBLEIA acima são a fonte oficial prioritária para números, empresas e nomes (regras DOC). Votos e deliberações vêm só da transcrição.';
+    } catch (e) {
+      // Falha aberta: qualquer erro inesperado aqui volta ao estado NEUTRO (ata sem documentos).
+      console.error('[engine-ata] preparo dos documentos falhou, seguindo sem eles:', e && e.message);
+      system = systemAntes; mensagemGeracao = userMessage; extraSysDocs = ''; textoDocs = '';
+      fonteNomes = transcricaoBase; fonteGate = fonteGateBase; canonConferencia = new Set();
+      docsInfo = documentos.map((d) => ({ nome: d.nome, origem: d.origem, caracteres: 0, truncado: false, falhou: true }));
+    }
+  }
 
   // Entrega a ata com AUDITORIA DE COMPLETUDE FRACIONADA:
   //  1) a ata já veio gerada (texto);
@@ -1912,7 +2236,7 @@ async function gerarAtaJob(jobId, userMessage) {
       numBlocos = blocos.length;
       let lacunas = '';
       for (let i = 0; i < blocos.length; i++) {
-        const res = await auditarBlocoCompletude(texto, blocos[i], i + 1, blocos.length, chamar);
+        const res = await auditarBlocoCompletude(texto, blocos[i], i + 1, blocos.length, chamar, extraSysDocs);
         if (res && /LACUNA/i.test(res) && !/^NENHUMA LACUNA\s*$/i.test(res)) lacunas += res + '\n';
       }
       lacunas = lacunas.trim();
@@ -1924,18 +2248,21 @@ async function gerarAtaJob(jobId, userMessage) {
       const gapsDet = [];
       for (const mnc of mencoesMonetarias(transcricao)) {
         if (canonAtaBase.has(mnc.canon) || jaFlag.has(mnc.canon) || vistos.has(mnc.canon)) continue;
+        // T01: valor da fala que a conferência já apontou como divergente do documento NÃO volta
+        // como lacuna (a ata usa a forma do documento + [conferir: transcrição dizia X]).
+        if (canonConferencia.has(mnc.canon)) continue;
         vistos.add(mnc.canon);
         gapsDet.push('LACUNA (' + fmtBRL(mnc.canon) + '): valor dito na assembleia, confira se entra em algum item — "' + mnc.trecho + '"');
       }
       numGapsDet = gapsDet.length;
       const gapList = [lacunas, gapsDet.join('\n')].filter(Boolean).join('\n').trim();
       if (gapList.length > 0) {
-        const inserida = await inserirLacunasNaAta(texto, gapList, 'claude-sonnet-4-6', chamar);
+        const inserida = await inserirLacunasNaAta(texto, gapList, 'claude-sonnet-4-6', chamar, extraSysDocs);
         if (aceitaInsercao(inserida)) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
         else {
           // inserção Sonnet quebrou OU tentou condensar → mantém original e tenta OPUS (último recurso).
           etapa = inserida ? 'insercao_sonnet_condensou_usou_original' : 'insercao_sonnet_quebrou_usou_original';
-          const opus = await inserirLacunasNaAta(texto, gapList, 'claude-opus-4-7', chamar);
+          const opus = await inserirLacunasNaAta(texto, gapList, 'claude-opus-4-7', chamar, extraSysDocs);
           if (aceitaInsercao(opus)) { ataFinal = opus; etapa = 'insercao_opus'; usouOpus = true; }
         }
       }
@@ -1946,14 +2273,20 @@ async function gerarAtaJob(jobId, userMessage) {
 
     // PASSE DE CONSOLIDAÇÃO DE NOME PRÓPRIO (aditivo): depois da auditoria/inserção, ANTES da
     // cirúrgica. Falha aberto (nunca quebra a entrega). Ver consolidarNomesProprios.
-    const consol = await consolidarNomesProprios(ataFinal, transcricao, chamar);
+    // T01: com documentos, o grounding de nome aceita também o texto ESCRITO dos documentos
+    // (nome de empresa que só aparece certo no orçamento passa a ser forma válida). Sem documento,
+    // fonteNomes === transcricao e o passe é idêntico ao de antes.
+    const consol = await consolidarNomesProprios(ataFinal, fonteNomes, chamar);
     ataFinal = consol.ata;
 
     // CORREÇÃO CIRÚRGICA DETERMINÍSTICA (por código, NÃO pelo LLM): preenche
     // [valor a confirmar] com o valor de deliberação falado quando o casamento é
     // 1-para-1. Fecha a variância do Sonnet (que ora preenche, ora deixa placeholder)
     // sem forçar valor de ruído. Roda sobre a MELHOR ata que temos (mesmo se cortou por teto).
-    const cir = corrigirPlaceholdersDeliberacao(ataFinal, transcricao);
+    // T01: com documentos, a cirúrgica NÃO pode preencher placeholder com o valor da fala que a
+    // conferência provou divergente do documento (ex.: o arredondado no lugar do exato). Esses
+    // valores são removidos da fala que ela enxerga. Sem documento, canonConferencia é vazio.
+    const cir = corrigirPlaceholdersDeliberacao(ataFinal, canonConferencia.size ? _ocultarValoresFala(transcricao, canonConferencia) : transcricao);
     ataFinal = cir.ata;
 
     // ►► GATE DE SAÍDA (determinístico). Última passada, sobre a ata já reparada. Código puro,
@@ -1962,9 +2295,29 @@ async function gerarAtaJob(jobId, userMessage) {
     // harness). Ver gateDeSaida.
     // FALHA ABERTO (regra de ouro do projeto): se o gate lançar por bug futuro, NUNCA descartar
     // a ata já gerada e paga. Entrega a ata sem marca e sinaliza a falha do próprio gate.
+    // T01: valores da ata que existem SÓ no documento (nem na fala, nem no edital/dados) viram
+    // aviso para o revisor conferir se foram de fato apresentados na reunião (regra DOC 3/4).
+    let valoresSoDocumento = [];
+    if (textoDocs) {
+      try {
+        const cFonte = valoresCanonicos(fonteGateBase);
+        const cDocs = valoresCanonicos(textoDocs);
+        valoresSoDocumento = [...valoresCanonicos(ataFinal.replace(/\[conferir:[^\]]*\]/g, ' '))].filter((v) => cDocs.has(v) && !cFonte.has(v));
+      } catch (eSo) { valoresSoDocumento = []; }
+    }
+
+    // T01: marcador [conferir: ...] só sobrevive se o dado antes dele estiver no documento.
+    let conferirTel = { mantidos: 0, removidos: 0 };
+    try {
+      const vc = validarMarcadoresConferir(ataFinal, textoDocs);
+      ataFinal = vc.ata; conferirTel = { mantidos: vc.mantidos, removidos: vc.removidos };
+    } catch (eVc) { console.error('[engine-ata] validador de [conferir] falhou (segue sem):', eVc && eVc.message); }
+
     let g;
     try {
-      g = gateDeSaida(ataFinal, transcricao);
+      // T01: fonte do gate = fontes oficiais (ver fonteGateBase) + texto dos documentos que o
+      // modelo viu. O que não estiver sustentado por nenhuma delas continua marcado.
+      g = gateDeSaida(ataFinal, fonteGate);
       ataFinal = g.ata;
     } catch (eGate) {
       // Mensagem crua da exceção fica SÓ no log do servidor (pode conter trecho de ata/transcrição
@@ -1988,7 +2341,9 @@ async function gerarAtaJob(jobId, userMessage) {
       ata: ataFinal,
       modelo_usado: usouOpus ? modelo_usado + ' + opus (inserção)' : modelo_usado,
       tentativas, auditoria: etapa, avisos: consol.avisoSkip ? vFinal.avisos.concat([consol.avisoSkip]) : vFinal.avisos,
-      gate: g.gate
+      gate: g.gate,
+      documentos: docsInfo,
+      conferencia: { divergencias: (ataFinal.match(/\[conferir:/g) || []).length, marcadores_removidos: conferirTel.removidos, valores_so_documento: valoresSoDocumento.length, chamadas_apoio: _chamadasApoio }
     });
   }
 
@@ -2001,7 +2356,10 @@ async function gerarAtaJob(jobId, userMessage) {
     // Tentativa 1: Sonnet 4.6 + 32k. max_tokens subido de 16k p/ 32k (opção "a",
     // 2026-07-07): atas ricas (decomposição por categoria) passavam de 16k tokens e
     // eram truncadas/condensadas; 32k dá folga pra sair completa.
-    let r = await chamar('claude-sonnet-4-6', 32000, system, userMessage);
+    // T01: prepara os documentos da assembleia ANTES da geração (leitura de escaneado e
+    // conferência transcrição x documento). Falha aberta: problema aqui nunca impede a ata.
+    await prepararDocumentos();
+    let r = await chamar('claude-sonnet-4-6', 32000, system, mensagemGeracao);
     tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 32000, status: r.status, erro: r.erro || null });
     if (r.ok && r.texto && r.texto.trim()) {
       tentativas[0].validacao = validarAta(r.texto);
@@ -2010,7 +2368,7 @@ async function gerarAtaJob(jobId, userMessage) {
 
     // Só chega aqui se a API NÃO retornou texto na 1a. UM único retry Sonnet.
     console.warn('[engine-ata] Tentativa 1 sem texto (' + (r.erro || 'status ' + r.status) + '). Fazendo 1 retry Sonnet (SEM Opus).');
-    r = await chamar('claude-sonnet-4-6', 32000, system, userMessage);
+    r = await chamar('claude-sonnet-4-6', 32000, system, mensagemGeracao);
     tentativas.push({ modelo: 'claude-sonnet-4-6', max_tokens: 32000, status: r.status, erro: r.erro || null });
     if (r.ok && r.texto && r.texto.trim()) {
       tentativas[1].validacao = validarAta(r.texto);
@@ -2036,7 +2394,8 @@ async function gerarAtaJob(jobId, userMessage) {
 }
 
 // POST dispara a geração em background e responde JÁ com o jobId (request curto).
-app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), (req, res) => {
+// limit 36mb (T01): até 3 PDFs escaneados de 8MB em base64 (~11MB cada) mais a transcrição.
+app.post('/api/atas/gerar', requireAuth, express.json({ limit: '36mb' }), (req, res) => {
   if (!ANTHROPIC_KEY) return res.status(500).json({ erro: 'anthropic_key_ausente' });
   if (!ATA_SKILL_MD) return res.status(500).json({ erro: 'skill_md_nao_carregada', detalhe: 'skills-server/ata-condominial.md não encontrada no servidor' });
 
@@ -2045,11 +2404,15 @@ app.post('/api/atas/gerar', requireAuth, express.json({ limit: '10mb' }), (req, 
     return res.status(400).json({ erro: 'userMessage_invalido', detalhe: 'envie a transcrição + dados da reunião como string em userMessage (mín 50 chars)' });
   }
 
+  // T01: documentos da assembleia (opcional). Lista inválida recusa antes de gastar API.
+  const docsNorm = normalizarDocumentosApoio(req.body && req.body.documentos);
+  if (docsNorm.erro) return res.status(400).json({ erro: 'documentos_invalidos', detalhe: docsNorm.erro });
+
   const jobId = crypto.randomUUID();
   atasJobs.set(jobId, { status: 'processing', criadoEm: Date.now() });
   // fire-and-forget: não aguarda. gerarAtaJob já trata tudo internamente; o .catch
   // é rede de segurança caso algo escape do try interno.
-  gerarAtaJob(jobId, userMessage).catch((e) => {
+  gerarAtaJob(jobId, userMessage, docsNorm.docs).catch((e) => {
     const j = atasJobs.get(jobId);
     if (j && j.status === 'processing') { j.status = 'error'; j.erro = { httpStatus: 500, erro: 'erro_inesperado', detalhe: e && e.message ? e.message : 'erro' }; }
   });
@@ -3087,5 +3450,5 @@ if (require.main === module) {
 module.exports = {
   corrigirPlaceholdersDeliberacao, valoresCanonicos, mencoesMonetarias,
   extrairNomesCandidatos, reunirEvidencia, decidirPorCodigo, aplicarConsolidacao, existeLiteral,
-  gateDeSaida
+  gateDeSaida, validarMarcadoresConferir
 };
