@@ -227,7 +227,11 @@ function lerCampos(texto, hojeIso) {
     for (const r of rotulos) { valor = valorDepois(t, r); if (valor != null) { origemValor = 'texto'; break; } }
   }
   let vencimento = linha && linha.vencimento ? linha.vencimento : null;
-  if (!vencimento) vencimento = dataDepois(t, '(?:data\\s+de\\s+)?vencimento') || dataDepois(t, 'vence\\s+em') || dataDepois(t, 'pagar\\s+at[eé]');
+  let origemVenc = vencimento ? 'linha' : null;
+  if (!vencimento) {
+    vencimento = dataDepois(t, '(?:data\\s+de\\s+)?vencimento') || dataDepois(t, 'vence\\s+em') || dataDepois(t, 'pagar\\s+at[eé]');
+    if (vencimento) origemVenc = 'texto';
+  }
   const emissao = dataDepois(t, '(?:data\\s+(?:e\\s+hora\\s+)?(?:de\\s+|da\\s+)?emiss[aã]o|emitid[ao]\\s+em|data\\s+do\\s+documento|compet[eê]ncia)');
   const cnpjs = cnpjsDoTexto(t);
   let documento = acharDocumento(t, tipo);
@@ -239,7 +243,7 @@ function lerCampos(texto, hojeIso) {
     if (e) e.papel = 'beneficiario';
     else if (cnpjValido(ch.emitente)) cnpjs.push({ cnpj: ch.emitente, papel: 'beneficiario', ordem: cnpjs.length });
   }
-  return { tipo, valor, origem_valor: origemValor, vencimento, emissao, documento,
+  return { tipo, valor, origem_valor: origemValor, vencimento, origem_vencimento: origemVenc, emissao, documento,
     linha: linha ? linha.linha : null, barras: linha ? linha.barras : null, especie_linha: linha ? linha.especie : null, cnpjs };
 }
 // Resultado da leitura interna (escaneado) no mesmo formato de lerCampos. A linha digitável e os
@@ -255,7 +259,9 @@ function camposDaLeitura(j, hojeIso) {
   return {
     tipo: tipos.includes(r.tipo) ? r.tipo : 'outro',
     valor: linha && linha.valor ? linha.valor : valorLido, origem_valor: linha && linha.valor ? 'linha' : valorLido ? 'leitura' : null,
-    vencimento: (linha && linha.vencimento) || brParaIso(r.vencimento), emissao: brParaIso(r.emissao),
+    vencimento: (linha && linha.vencimento) || brParaIso(r.vencimento),
+    origem_vencimento: linha && linha.vencimento ? 'linha' : brParaIso(r.vencimento) ? 'leitura' : null,
+    emissao: brParaIso(r.emissao),
     documento: r.numero_documento ? limpar(r.numero_documento).slice(0, 25) : null,
     linha: linha ? linha.linha : null, barras: linha ? linha.barras : null, especie_linha: linha ? linha.especie : null, cnpjs,
   };
@@ -285,6 +291,7 @@ function juntarLeituras(texto, interna, preferirInterna) {
   const out = Object.assign({}, texto);
   ['valor', 'vencimento', 'emissao', 'documento', 'linha', 'barras', 'especie_linha'].forEach((k) => { if (out[k] == null && interna[k] != null) out[k] = interna[k]; });
   if (texto.valor == null && interna.valor != null) out.origem_valor = interna.origem_valor;
+  if (texto.vencimento == null && interna.vencimento != null) out.origem_vencimento = interna.origem_vencimento;
   if ((texto.tipo === 'outro' || !texto.tipo) && interna.tipo) out.tipo = interna.tipo;
   const cn = texto.cnpjs.slice();
   interna.cnpjs.forEach((c) => { const j = cn.find((x) => x.cnpj === c.cnpj); if (!j) cn.push(Object.assign({}, c, { ordem: cn.length })); else if (j.papel === 'indefinido') j.papel = c.papel; });
@@ -369,7 +376,11 @@ async function comCache(chave, ms, fn) {
   if (_cache.size > 500) _cache.delete(_cache.keys().next().value);
   return v;
 }
-function limparCache() { _cache.clear(); }
+// Sem argumento limpa tudo; com prefixos limpa só essas chaves (o lote não refaz o que é geral).
+function limparCache(prefixos) {
+  if (!Array.isArray(prefixos)) { _cache.clear(); return; }
+  for (const k of [..._cache.keys()]) if (prefixos.some((p) => k.startsWith(p))) _cache.delete(k);
+}
 // estrito: página cheia no teto lança erro (conferência de duplicidade não pode ficar cortada).
 async function paginas(cliente, rota, params, max, estrito) {
   const out = [];
@@ -443,14 +454,27 @@ async function contasDoPlano(cliente, plano) {
       .map((c) => ({ conta: String(c.st_conta_cont), nome: limpar(c.st_descricao_cont) }));
   });
 }
-async function contaPrincipal(cliente, id) {
-  return comCache('cb:' + id, 600000, async () => {
-    const r = await cliente.get('contabancos/index', { idCondominio: id, exibirContasAtivas: 1 });
-    const l = (Array.isArray(r) ? r : []).filter((c) => String(c.id_condominio_cond) === String(id));
-    const p = l.find((c) => String(c.fl_principal_cb) === '1') || l[0];
-    return p ? String(p.id_contabanco_cb) : null;
-  });
+// T40: contas do condomínio: a principal (onde a despesa é lançada) e a maior data de bloqueio
+// de lançamentos entre as contas ativas (mês fechado). Cache curto: fechar o mês tem de valer logo.
+function dataSL(v) {
+  const s = limpar(v);
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return dataValida(+m[2], +m[1], +m[3]) ? m[3] + '-' + doisDig(m[1]) + '-' + doisDig(m[2]) : null;
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m && dataValida(+m[3], +m[2], +m[1]) ? m[1] + '-' + m[2] + '-' + m[3] : null;
 }
+function resumoContas(lista, id) {
+  const l = (Array.isArray(lista) ? lista : []).filter((c) => String(c.id_condominio_cond) === String(id));
+  const p = l.find((c) => String(c.fl_principal_cb) === '1') || l[0];
+  let bloqueio = null;
+  l.forEach((c) => { const b = dataSL(c.dt_bloquearlancamentos_cb); if (b && b > '1900-01-01' && (!bloqueio || b > bloqueio)) bloqueio = b; });
+  return { id: p ? String(p.id_contabanco_cb) : null, nome: p ? limpar(p.st_descricao_cb) || limpar(p.st_nome_banc) : null, bloqueio, quantidade: l.length };
+}
+async function contasBanco(cliente, id, semCache) {
+  const ler = async () => resumoContas(await cliente.get('contabancos/index', { idCondominio: id, exibirContasAtivas: 1 }), id);
+  return semCache ? ler() : comCache('cb:' + id, 120000, ler);
+}
+async function contaPrincipal(cliente, id) { return (await contasBanco(cliente, id)).id; }
 
 // Condomínio pelo CNPJ do pagador ou tomador e fornecedor pelo CNPJ do beneficiário ou emitente.
 // escopo: Set de ids que o usuário pode ver, ou null (todos). Condomínio fora da carteira não
@@ -525,18 +549,50 @@ function acharDuplicidades(parcelas, d) {
   }
   return out.slice(0, 10);
 }
-// Categoria sugerida: a da última despesa do mesmo fornecedor no condomínio.
+// Categoria sugerida pelo histórico do fornecedor no condomínio: entre as 6 despesas mais recentes
+// dele, a categoria que mais aparece (empate: a mais recente). Uma despesa conta uma vez só.
 function contaSugerida(parcelas, idFornecedor) {
   if (!idFornecedor) return null;
-  const l = parcelas.filter((p) => String(p.id_contato_con) === String(idFornecedor) && Array.isArray(p.apropriacao) && p.apropriacao[0])
-    .sort((a, b) => String(slParaIso(b.dt_vencimento_pdes)).localeCompare(String(slParaIso(a.dt_vencimento_pdes))));
-  return l.length ? { conta: String(l[0].apropriacao[0].st_conta_cont), nome: limpar(l[0].apropriacao[0].st_descricao_cont) } : null;
+  const vistas = new Set();
+  const l = parcelas.filter((p) => String(p.id_contato_con) === String(idFornecedor) && Array.isArray(p.apropriacao) && p.apropriacao[0] && p.apropriacao[0].st_conta_cont)
+    .sort((a, b) => String(slParaIso(b.dt_vencimento_pdes)).localeCompare(String(slParaIso(a.dt_vencimento_pdes))))
+    .filter((p) => { const k = String(p.id_despesa_des); if (vistas.has(k)) return false; vistas.add(k); return true; })
+    .slice(0, 6);
+  if (!l.length) return null;
+  const cont = new Map();
+  l.forEach((p, i) => {
+    const a = p.apropriacao[0], k = String(a.st_conta_cont);
+    if (!cont.has(k)) cont.set(k, { conta: k, nome: limpar(a.st_descricao_cont), vezes: 0, ordem: i });
+    cont.get(k).vezes++;
+  });
+  const m = [...cont.values()].sort((a, b) => b.vezes - a.vezes || a.ordem - b.ordem)[0];
+  return { conta: m.conta, nome: m.nome, vezes: m.vezes, de: l.length };
+}
+// Histórico de 180 dias do condomínio (para a categoria do fornecedor), cache de 1 hora.
+// Leitura não estrita: se cortar no teto, usa o que veio (é só sugestão).
+async function despesasHistorico(cliente, id, hojeIso) {
+  const fim = hojeIso || isoDe(new Date(Date.now() - 3 * 3600000)), ini = somarDias(fim, -180);
+  return comCache('hist:' + id + ':' + ini, 3600000, () =>
+    paginas(cliente, 'despesas/index', { idCondominio: id, comStatus: 'todas', dtInicio: isoParaSL(ini), dtFim: isoParaSL(fim) }, 12, false));
+}
+// Confiança do valor e do vencimento. Alta só quando bate com a linha digitável conferida pelos
+// dígitos; senão vale a confirmação feita na tela, presa ao valor confirmado (mudou, perde).
+function confianca(d) {
+  const conf = (d && d.confirmado) || {};
+  const valorAlta = !!(d.valor > 0 && d.valor_linha > 0 && Math.abs(d.valor - d.valor_linha) < 0.005);
+  const vencAlta = !!(d.vencimento && d.vencimento_linha && d.vencimento === d.vencimento_linha);
+  const valorConf = !!(d.valor > 0 && conf.valor != null && Math.abs(Number(conf.valor) - d.valor) < 0.005);
+  const vencConf = !!(d.vencimento && conf.vencimento && conf.vencimento === d.vencimento);
+  return { valor: valorAlta ? 'alta' : valorConf ? 'confirmado' : 'baixa', vencimento: vencAlta ? 'alta' : vencConf ? 'confirmado' : 'baixa' };
 }
 
 // Alertas do rascunho. GRAVES precisam ser vistos e aceitos na tela antes de lançar;
 // IMPEDE não deixa lançar de jeito nenhum.
-const GRAVES = ['duplicidade', 'outro_condominio', 'condominio_diferente_do_documento', 'na_fila', 'cnpj_repetido'];
-const IMPEDE = ['sem_condominio', 'sem_fornecedor', 'sem_valor', 'sem_vencimento', 'sem_conta', 'conferencia_incompleta', 'fora_da_carteira'];
+const GRAVES = ['duplicidade', 'outro_condominio', 'condominio_diferente_do_documento', 'na_fila', 'cnpj_repetido', 'comprovante'];
+// Avisos que o lote não aceita (só lançando pelo documento, olhando).
+const FORA_DO_LOTE = ['vencido', 'emissao_mes_fechado', 'valor_diferente_linha'];
+const IMPEDE = ['sem_condominio', 'sem_fornecedor', 'sem_valor', 'sem_vencimento', 'sem_conta', 'conferencia_incompleta', 'fora_da_carteira',
+  'confirmar_valor', 'confirmar_vencimento', 'mes_fechado'];
 // d: { id_superlogica, id_fornecedor, valor, vencimento, documento, linha, barras, conta, tipo, cond_documento }
 // outrosNaFila: rascunhos ou lançados do Hub com a mesma linha ou o mesmo arquivo.
 async function conferir(cliente, d, opts) {
@@ -549,6 +605,9 @@ async function conferir(cliente, d, opts) {
   if (!(d.valor > 0)) add('sem_valor', 'Informe o valor.');
   if (!d.vencimento) add('sem_vencimento', 'Informe o vencimento.');
   if (!d.conta) add('sem_conta', 'Escolha a categoria (conta) da despesa.');
+  const cf = confianca(d);
+  if (d.valor > 0 && cf.valor === 'baixa') add('confirmar_valor', 'Confira o valor no documento e marque "conferi" ao lado do valor (não veio da linha digitável).');
+  if (d.vencimento && cf.vencimento === 'baixa') add('confirmar_vencimento', 'Confira o vencimento no documento e marque "conferi" ao lado do vencimento (não veio da linha digitável).');
   if (d.tipo === 'comprovante') add('comprovante', 'Parece um comprovante de pagamento, não um boleto ou nota.');
   const hoje = o.hojeIso || isoDe(new Date(Date.now() - 3 * 3600000));
   if (d.vencimento && d.vencimento < hoje) add('vencido', 'Vencimento já passou (' + d.vencimento.split('-').reverse().join('/') + ').');
@@ -562,7 +621,7 @@ async function conferir(cliente, d, opts) {
       if (cond && cond.cnpj && (await cnpjsRepetidos(cliente)).has(cond.cnpj)) add('cnpj_repetido', 'O CNPJ deste condomínio aparece em outro cadastro do Superlógica. Confira se é o condomínio certo.');
     } catch (e) { /* a conferência de duplicidade abaixo avisa se o Superlógica falhou */ }
   }
-  let sugestao = null, duplicidades = [];
+  let sugestao = null, duplicidades = [], contaBanco = null;
   if (d.id_superlogica && !(o.escopo && !o.escopo.has(String(d.id_superlogica)))) {
     try {
       const parcelas = await despesasPerto(cliente, d.id_superlogica, d.vencimento);
@@ -570,6 +629,24 @@ async function conferir(cliente, d, opts) {
       sugestao = contaSugerida(parcelas, d.id_fornecedor);
       if (duplicidades.length) add('duplicidade', 'Já existe despesa parecida neste condomínio no Superlógica.', { itens: duplicidades });
     } catch (e) { add('conferencia_incompleta', 'Não deu para conferir duplicidade no Superlógica agora. Tente de novo.'); }
+    // Categoria pelo histórico de 180 dias quando o fornecedor não aparece perto do vencimento.
+    if (!sugestao && d.id_fornecedor) {
+      try { sugestao = contaSugerida(await despesasHistorico(cliente, d.id_superlogica, hoje), d.id_fornecedor); } catch (e) { sugestao = null; }
+    }
+    // Mês fechado: vencimento até a data de bloqueio de lançamentos de alguma conta do condomínio.
+    try {
+      contaBanco = await contasBanco(cliente, d.id_superlogica, !!o.semCache);
+      if (contaBanco.bloqueio && d.vencimento && d.vencimento <= contaBanco.bloqueio) {
+        add('mes_fechado', 'O mês deste vencimento já está fechado no Superlógica (lançamentos bloqueados até ' + contaBanco.bloqueio.split('-').reverse().join('/') + '). Não dá para lançar.');
+      }
+      // Emissão em mês fechado com vencimento aberto: a despesa entra sem a data de emissão
+      // (o Superlógica usa a de hoje), nunca dentro do mês fechado. Hoje fechado também recusa.
+      if (contaBanco.bloqueio && d.emissao && d.emissao <= contaBanco.bloqueio && !(d.vencimento && d.vencimento <= contaBanco.bloqueio)) {
+        if (hoje <= contaBanco.bloqueio) add('mes_fechado', 'O mês de hoje já está fechado no Superlógica (lançamentos bloqueados até ' + contaBanco.bloqueio.split('-').reverse().join('/') + '). Não dá para lançar.');
+        else add('emissao_mes_fechado', 'A emissão é de mês já fechado no Superlógica: a despesa entra com a data de hoje no lugar da emissão.');
+      }
+      if (!contaBanco.id) add('sem_conta_bancaria', 'O condomínio não tem conta bancária ativa no Superlógica; a despesa entra sem conta.');
+    } catch (e) { contaBanco = null; add('conferencia_incompleta', 'Não deu para conferir se o mês está fechado no Superlógica agora. Tente de novo.'); }
   }
   if ((d.linha || d.barras) && d.vencimento) {
     try {
@@ -581,7 +658,7 @@ async function conferir(cliente, d, opts) {
         Object.assign(resumoParcela(p), { condominio: limpar(p.st_fantasia_cond), id_superlogica: String(p.id_condominio_cond) })) });
     } catch (e) { add('conferencia_incompleta', 'Não deu para conferir se o boleto está em outro condomínio. Tente de novo.'); }
   }
-  return { alertas, sugestao_conta: sugestao };
+  return { alertas, sugestao_conta: sugestao, conta_banco: contaBanco ? { id: contaBanco.id, nome: contaBanco.nome, bloqueio: contaBanco.bloqueio } : null, confianca: cf };
 }
 function podeLancar(alertas, aceitos) {
   const ac = new Set((aceitos || []).map(String));
@@ -593,14 +670,17 @@ function podeLancar(alertas, aceitos) {
 }
 
 // ---------- gravação (só chamada pelo server.js depois da trava do condomínio) ----------
-// Trava: sem a variável ENTRADA_LIBERADA só o condomínio de teste 167 recebe lançamento.
-// ENTRADA_LIBERADA=todos libera todos; uma lista de códigos libera só esses (e o 167).
+// T40: trava por condomínio, igual à CONSUMO_LANCAMENTO_LIBERADO. ENTRADA_LANCAMENTO_LIBERADO é a
+// lista de códigos que podem receber lançamento direto; sem a variável (ou vazia) vale só o 167
+// (teste). Não existe "todos": cada condomínio entra pelo código. Os cadastros de fora da
+// administração (143, 144, 145, 160, 162) nunca entram. A variável antiga ENTRADA_LIBERADA não vale mais.
+function liberados(env) {
+  const v = String((env || process.env).ENTRADA_LANCAMENTO_LIBERADO || '').trim() || '167';
+  return [...new Set(v.split(/[\s,;]+/).filter((x) => /^[1-9]\d{0,8}$/.test(x) && !NAO_CONDOMINIOS.has(x)))];
+}
 function lancamentoLiberado(id, env) {
-  const v = String((env || process.env).ENTRADA_LIBERADA || '').trim();
-  if (String(id) === '167') return true;
-  if (!v) return false;
-  if (/^todos$/i.test(v)) return true;
-  return v.split(/[\s,;]+/).includes(String(id));
+  const s = String(id == null ? '' : id);
+  return /^[1-9]\d{0,8}$/.test(s) && liberados(env).includes(s);
 }
 function pedir({ base, appToken, accessToken }, metodo, caminho, query, corpo, tipoCorpo) {
   return new Promise((resolve) => {
@@ -654,7 +734,8 @@ function corpoDespesa(d) {
   p.set('ID_FORMA_PAG', String(d.forma_pag == null ? 0 : d.forma_pag));
   if (TIPOS_DOC_SL[d.tipo]) p.set('ID_TIPO_DOC', String(TIPOS_DOC_SL[d.tipo]));
   if (d.documento) p.set('ST_DOCUMENTO_DES', String(d.documento).slice(0, 25));
-  if (d.emissao) p.set('DT_DESPESA_DES', isoParaSL(d.emissao));
+  // Emissão dentro de mês fechado (bloqueio_contas lido na conferência) não vai: o Superlógica usa a data de hoje.
+  if (d.emissao && !(d.bloqueio_contas && d.emissao <= d.bloqueio_contas)) p.set('DT_DESPESA_DES', isoParaSL(d.emissao));
   p.set('APROPRIACAO[0][ST_CONTA_CONT]', d.conta);
   p.set('APROPRIACAO[0][VL_VALOR_PDES]', d.valor.toFixed(2));
   if (d.complemento) p.set('APROPRIACAO[0][ST_COMPLEMENTO_APRO]', String(d.complemento).slice(0, 200));
@@ -663,6 +744,17 @@ function corpoDespesa(d) {
   if (d.id_arquivo) p.set('ARQUIVOS[0][ID_ARQUIVO_ARQ]', String(d.id_arquivo));
   p.set('FL_ACAO_IMPRESSAO', '1');
   return p.toString();
+}
+// Prova (T40): despesa relida com o mesmo valor, fornecedor, condomínio e vencimento, e o arquivo anexado.
+function provaDe(parc, d, idArquivo) {
+  if (!parc) return null;
+  return {
+    valor: Math.abs((Number(parc.vl_valor_pdes) || 0) - d.valor) < 0.005,
+    fornecedor: String(parc.id_contato_con) === String(d.id_fornecedor),
+    condominio: parc.id_condominio_cond != null && String(parc.id_condominio_cond) === String(d.id_superlogica),
+    vencimento: slParaIso(parc.dt_vencimento_pdes) === d.vencimento,
+    anexo: !!(Array.isArray(parc.arquivos) && parc.arquivos.some((a) => String(a.id_arquivo_arq) === String(idArquivo))),
+  };
 }
 // Lança a despesa com o PDF: envia o arquivo, cria a despesa já com o arquivo, anexa de novo se
 // não ficou, põe a etiqueta e prova relendo. Devolve { ok, incerto, msg, id_despesa, id_parcela, id_arquivo, conferido }.
@@ -700,15 +792,16 @@ async function lancar(cred, cliente, d, pdf, nome) {
     const re = corpoOk(await pedir(cred, 'PUT', 'arquivos/adicionaretiqueta', null, Buffer.from(new URLSearchParams({ idDocumento: arq.id, idEtiqueta: String(ETIQUETA[d.tipo]) }).toString(), 'utf8')));
     etiqueta = re.ok;
   }
-  const conferido = !!parc && Math.abs((Number(parc.vl_valor_pdes) || 0) - d.valor) < 0.005 && String(parc.id_contato_con) === String(d.id_fornecedor);
-  return { ok: true, conferido, anexado, etiqueta, id_despesa: idDespesa, id_parcela: parc ? String(parc.id_parcela_pdes) : null, id_arquivo: arq.id,
+  const prova = provaDe(parc, d, arq.id);
+  const conferido = !!prova && prova.valor && prova.fornecedor && prova.condominio && prova.vencimento;
+  return { ok: true, conferido, prova, anexado, etiqueta, id_despesa: idDespesa, id_parcela: parc ? String(parc.id_parcela_pdes) : null, id_arquivo: arq.id,
     codigo_barras_gravado: parc ? !!soDig(parc.st_codigobarras_pdes) : null, msg: c.msg };
 }
 
 module.exports = {
-  MAX_PDF_BYTES, NAO_CONDOMINIOS, TIPOS_DOC_SL, GRAVES, IMPEDE,
+  MAX_PDF_BYTES, NAO_CONDOMINIOS, TIPOS_DOC_SL, GRAVES, IMPEDE, FORA_DO_LOTE, provaDe,
   cnpjValido, formatarCnpj, cnpjsDoTexto, linhaBoletoValida, linhaArrecValida, barrasDaLinha, vencimentoDoFator, acharLinha,
   lerDinheiro, brParaIso, isoParaSL, slParaIso, lerCampos, camposDaLeitura, chaveNota, faltaEssencial, juntarLeituras, classificar, acharDocumento, textoUtil, ehPdf, hashDe, extrairTexto,
-  mapaCondominios, cadastroCondominios, cnpjsRepetidos, condominioPorId, fornecedorPorCnpj, fornecedorPorId, contasDoPlano, contaPrincipal, identificar,
-  acharDuplicidades, contaSugerida, conferir, podeLancar, lancamentoLiberado, corpoDespesa, lancar, limparCache, nomeArquivoSeguro,
+  mapaCondominios, cadastroCondominios, cnpjsRepetidos, condominioPorId, fornecedorPorCnpj, fornecedorPorId, contasDoPlano, contaPrincipal, contasBanco, resumoContas, dataSL, identificar,
+  acharDuplicidades, contaSugerida, despesasHistorico, confianca, conferir, podeLancar, liberados, lancamentoLiberado, corpoDespesa, lancar, limparCache, nomeArquivoSeguro,
 };

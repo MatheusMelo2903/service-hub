@@ -98,10 +98,12 @@ t('grave sem aceite', E.podeLancar([{ codigo: 'duplicidade', nivel: 'grave' }], 
 t('grave aceito', E.podeLancar([{ codigo: 'duplicidade', nivel: 'grave' }, { codigo: 'vencido', nivel: 'aviso' }], ['duplicidade']).ok);
 
 // 9. Trava do lançamento
+// T40: ENTRADA_LANCAMENTO_LIBERADO (padrão só 167); a antiga ENTRADA_LIBERADA não libera nada.
 t('sem variável só 167', E.lancamentoLiberado('167', {}) && !E.lancamentoLiberado('136', {}));
-t('variável vazia trava', !E.lancamentoLiberado('136', { ENTRADA_LIBERADA: '  ' }));
-t('todos', E.lancamentoLiberado('136', { ENTRADA_LIBERADA: 'todos' }));
-t('lista', E.lancamentoLiberado('136', { ENTRADA_LIBERADA: '136,140' }) && !E.lancamentoLiberado('2', { ENTRADA_LIBERADA: '136,140' }));
+t('variável vazia vale só 167', !E.lancamentoLiberado('136', { ENTRADA_LANCAMENTO_LIBERADO: '  ' }) && E.lancamentoLiberado('167', { ENTRADA_LANCAMENTO_LIBERADO: '  ' }));
+t('todos não libera', !E.lancamentoLiberado('136', { ENTRADA_LANCAMENTO_LIBERADO: 'todos' }));
+t('variável antiga não libera', !E.lancamentoLiberado('136', { ENTRADA_LIBERADA: 'todos' }));
+t('lista', E.lancamentoLiberado('136', { ENTRADA_LANCAMENTO_LIBERADO: '136,140' }) && !E.lancamentoLiberado('2', { ENTRADA_LANCAMENTO_LIBERADO: '136,140' }));
 
 // 10. Corpo da despesa e nome de arquivo
 const corpo = new URLSearchParams(E.corpoDespesa({ id_superlogica: '167', id_fornecedor: '6263', nome_fornecedor: 'F', vencimento: '2026-11-05', forma_pag: 0, tipo: 'nota', documento: 'T33', conta: '2.2.60', valor: 1, id_arquivo: '9', linha: L }));
