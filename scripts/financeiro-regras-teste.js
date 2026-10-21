@@ -188,6 +188,39 @@ caso('Utilitários: datas e valores', () => {
   assert.strictEqual(D.recorrente([{ dt_vencimento_pdes: '05/01/2026' }, { dt_vencimento_pdes: '05/08/2026' }, { dt_vencimento_pdes: '05/15/2026' }]), true);
 });
 
+// ---------- Correções da revisão 1 ----------
+caso('R4 despesa com 3 parcelas pagas e 1 comprovante: 2 sem comprovante', () => {
+  const arq = [{ st_nomeabreviadoetiqueta_eti: 'Comprovante', dt_envio_arq: '05/10/2026' }, { st_nomeabreviadoetiqueta_eti: 'Doc. Fiscal', dt_envio_arq: '05/02/2026' }];
+  const a = p({ arquivos: arq });
+  const v = ['05/10/2026', '06/10/2026', '07/10/2026'].map((d, i) => ({ ...a, id_parcela_pdes: String(900 + i), dt_vencimento_pdes: d, dt_liquidacao_pdes: d }));
+  const al = rodar(v, [], ['R4']);
+  assert.deepStrictEqual(al.map((x) => x.id_parcela).sort(), ['901', '902']);
+});
+caso('R8 anexo da despesa: vale o primeiro envio de cada etiqueta', () => {
+  const al = rodar([p({ dt_liquidacao_pdes: '05/10/2026', arquivos: [{ st_nomeabreviadoetiqueta_eti: 'Comprovante', dt_envio_arq: '05/10/2026' }, { st_nomeabreviadoetiqueta_eti: 'Comprovante', dt_envio_arq: '09/10/2026' }, { st_nomeabreviadoetiqueta_eti: 'Doc. Fiscal', dt_envio_arq: '05/01/2026' }] })], [], ['R8']);
+  assert.strictEqual(de(al, 'R8_ANEXO_TARDIO').length, 0);
+});
+caso('R8 vencimento no sábado pago na segunda não é atraso', () => {
+  assert.strictEqual(de(rodar([p({ dt_vencimento_pdes: '05/09/2026', dt_liquidacao_pdes: '05/11/2026' })], [], ['R8']), 'R8_PAGO_ATRASO').length, 0);
+});
+caso('R9 linha digitável alterada é alta; documento preenchido é baixa', () => {
+  const al = rodar([], [linha('Linha digitável da parcela#332575 da despesa#303839 alterada.'), linha('Despesa#303848 alterada.Documento de  para 78.'), linha('Despesa#303874 alterada.Documento de 695 para 629.')], ['R9']);
+  assert.strictEqual(al.find((a) => a.mexida === 'Linha digitável alterada').gravidade, 'alta');
+  assert.strictEqual(al.find((a) => a.mexida === 'Documento preenchido').gravidade, 'baixa');
+  assert.strictEqual(al.find((a) => a.mexida === 'Documento alterado').gravidade, 'media');
+});
+caso('R9 evento com condomínio -1 recebe o condomínio de outra linha da despesa; excluído some', () => {
+  const al = rodar([], [linha('Arquivo#5 removido da despesa#7001.', { st_sql_aud: '-1', st_fantasia_cond: '' }), linha('Despesa#7001 alterada.Documento de 1 para 2.', { st_sql_aud: '33', st_fantasia_cond: 'COND 33' }),
+    linha('Arquivo#6 removido da despesa#7002.', { st_sql_aud: '-1', st_fantasia_cond: '' }), linha('Despesa#7002 alterada.Documento de 1 para 2.', { st_sql_aud: '143' })], ['R9']);
+  const rem = al.filter((a) => a.mexida === 'Remoção de anexo');
+  assert.strictEqual(rem.length, 1); assert.strictEqual(rem[0].id_condominio, '33'); assert.strictEqual(rem[0].condominio, 'COND 33');
+});
+caso('Documento NFE e NFSE normalizados', () => {
+  assert.strictEqual(U.documento({ st_documento_des: 'NFE 123' }), '123'); assert.strictEqual(U.documento({ st_documento_des: 'NFSE 55' }), '55');
+  assert.strictEqual(U.documento({ st_documento_des: 'N 77' }), '77'); assert.strictEqual(U.documento({ st_documento_des: 'NORTE' }), 'NORTE');
+  assert.strictEqual(U.valor('1.234,56'), 1234.56);
+});
+
 // ---------- Dados reais da T23 (fora do git) ----------
 const REAIS = process.argv[2] || '/Users/matheusmelo/v8s/EXECUCAO/testes/T23/saida';
 const ARQ_DESP = path.join(REAIS, 'cobr_04_a_desp_liq_mes_cm1.json');   // liquidadas 01 a 15/09, carteira inteira

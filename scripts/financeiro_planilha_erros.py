@@ -20,7 +20,7 @@ ABAS = [
     ('R4_SEM_COMPROVANTE', 'Pago sem comprovante', 'Parcela paga sem arquivo com etiqueta Comprovante. Débito automático aparece com gravidade baixa.'),
     ('R4_ANEXO_REMOVIDO', 'Anexo removido após pagto', 'Arquivo removido de despesa já paga (auditoria dos últimos 10 dias úteis). Gravidade média quando outro arquivo foi vinculado no mesmo dia.'),
     ('R5_SEM_NOTA', 'Pago sem nota fiscal', 'Parcela paga sem arquivo com etiqueta Doc. Fiscal. Fora: concessionárias, impostos, débito automático, folha, tarifas, transferências e repasses.'),
-    ('R6_VENCIDA', 'Vencida sem baixa', 'Parcela pendente com vencimento antes de hoje (vencimentos desde 01/04/2026).'),
+    ('R6_VENCIDA', 'Vencida sem baixa', 'Parcela pendente com vencimento antes de hoje (vencimentos desde 01/01/2025).'),
     ('R8_LANCAMENTO_TARDIO', 'Lançada após vencimento', 'Despesa lançada no sistema depois do vencimento da parcela. Débito automático fica fora.'),
     ('R8_ANEXO_TARDIO', 'Anexo tardio', 'Comprovante, nota ou boleto anexado mais de 30 dias depois do pagamento. Comprovante tardio pesa menos que nota tardia.'),
     ('R8_PAGO_ATRASO', 'Pago com atraso sem juros', 'Paga depois do vencimento sem juros nem multa registrados. Atenção: a data de pagamento do Superlógica é pouco confiável (baixa em lote) e o juro nunca é registrado; conferir no boleto.'),
@@ -64,9 +64,12 @@ def mdy(s):  # MM/DD/AAAA da auditoria para DD/MM/AAAA
     return s[3:5] + '/' + s[0:2] + '/' + s[6:10] if s else ''
 
 
-rs.append(['Despesas pagas e pendentes de 01/04/2026 até ' + br(D['hoje']) + ' (' + str(D['parcelas']) + ' parcelas). Auditoria: ' +
+rs.append(['Despesas pagas de 01/04/2026 até ' + br(D['hoje']) + ' e pendentes (vencidas desde 01/01/2025 e a vencer em 60 dias), ' + str(D['parcelas']) + ' parcelas. Auditoria: ' +
            str(len(dias)) + ' dias úteis (' + mdy(dias[0] if dias else '') + ' a ' + mdy(dias[-1] if dias else '') + ', ' +
            str(D['linhas_auditoria']) + ' registros).'])
+for av in D.get('avisos', []):
+    rs.append(['AVISO: ' + av])
+    rs.cell(row=rs.max_row, column=1).font = Font(bold=True, color='C00000')
 rs.append(['Fora da análise: cadastros de empresa 143, 144, 145, 160, 162 e o Residencial Teste (167). Leitura só, nada foi alterado no Superlógica.'])
 rs.append([])
 
@@ -172,7 +175,11 @@ for t, nome, regra in ABAS:
             linha += [a.get('usuario') or '', br(a.get('quando')), a.get('mexida') or ('Remoção de anexo' + (' (trocado)' if a.get('substituido') else '')), a.get('texto_auditoria') or '']
         linha += [FORMA.get(str(a.get('forma_pagamento') or ''), ''), int(a['id_despesa']) if str(a['id_despesa']).isdigit() else a['id_despesa'],
                   int(a['id_parcela']) if str(a.get('id_parcela') or '').isdigit() else (a.get('id_parcela') or ''), a['detalhe']]
+        # Texto vindo do Superlógica nunca vira fórmula.
         ws.append(linha)
+        for c in ws[ws.max_row]:
+            if c.data_type == 'f':
+                c.data_type = 's'
         ws.cell(row=ws.max_row, column=1).fill = COR.get(a['gravidade'], PatternFill())
         ws.cell(row=ws.max_row, column=8).number_format = MOEDA
     ws.auto_filter.ref = 'A2:' + get_column_letter(len(cols)) + str(max(ws.max_row, 2))
@@ -190,7 +197,9 @@ notas = [
     'Limites conhecidos',
     'A auditoria cobre só os últimos 10 dias úteis: remoção de anexo, alterações e exclusões mais antigas não aparecem.',
     'O Superlógica nunca registra juros (o valor pago é sempre igual ao valor bruto) e muitas baixas são feitas em lote na data do vencimento: por isso a aba Pago com atraso sem juros é só um indício.',
-    'Vencidas sem baixa: só parcelas com vencimento a partir de 01/04/2026; pendências mais antigas ficam fora.',
+    'Pendentes: vencidas desde 01/01/2025 (as anteriores a 01/04/2026 entram na aba Vencida sem baixa) e a vencer nos próximos 60 dias (entram só nas abas de duplicidade e condomínio trocado, para pegar antes de pagar).',
+    'Arquivos ficam na despesa, não na parcela: numa despesa com várias parcelas pagas, as últimas além do número de comprovantes aparecem como sem comprovante.',
+    'Pago com atraso sem juros: vencimento no fim de semana pago no dia útil seguinte não conta.',
     'Sem nota fiscal: além de concessionárias, impostos e débito automático, ficaram fora folha (salários, férias, rescisão, vales), tarifas bancárias, transferências, reembolsos e repasses, que não têm nota. Lista a confirmar com o financeiro.',
     'Duplicidade por fornecedor e valor: concessionárias ficam fora (várias unidades consumidoras, como a ESCELSA de R$ 39,48), assim como diaristas e prestadores semanais (lista branca e repetição semanal).',
     'Um mesmo documento com valor diferente pode ser contrato que repete o número todo mês ou nota dividida em parcelas: por isso aparece com gravidade baixa.',

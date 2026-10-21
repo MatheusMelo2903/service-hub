@@ -15,6 +15,8 @@ const PADROES = [
   ['PARCELA_EXCLUIDA', /Parcela#(\d+) da despesa#(\d+)\s+excluída\.\s*Valor R\$ ?(\d[\d.]*,\d{2})/, (m) => ({ parcela: m[1], despesa: m[2], valor: U.valorBR(m[3]) })],
   ['DESPESA_EXCLUIDA', /^Despesa#(\d+) excluída/, (m) => ({ despesa: m[1] })],
   ['PAGAMENTO_CANCELADO', /O pagamento da parcela#(\d+) da despesa#(\d+) foi cancelado/, (m) => ({ parcela: m[1], despesa: m[2] })],
+  ['LINHA_DIGITAVEL_ALTERADA', /Linha digitável da parcela#(\d+) da despesa#(\d+) alterada/, (m) => ({ parcela: m[1], despesa: m[2] })],
+  ['DOCUMENTO_ALTERADO', /Despesa#(\d+) alterada\.\s*Documento:? de (.*?) para (.*?)\.(?:\s|$)/, (m) => ({ despesa: m[1], de: m[2].trim(), para: m[3].trim() })],
   ['FORNECEDOR_TROCADO', /Despesa#(\d+) alterada\..*?Contato: de (.*?) para (.*?)\.(?:\s|$)/, (m) => ({ despesa: m[1], de: m[2].trim(), para: m[3].trim() })],
 ];
 const RX_DESPESA = /despesa\s?#(\d+)/i;
@@ -99,6 +101,7 @@ function deEvento(regra, tipo, gravidade, ev, despesa, ctx, extra) {
   const a = A.deItem(regra, tipo, gravidade, base, ctx, extra);
   if (!a.id_condominio || a.id_condominio === '-1') a.id_condominio = ev.id_condominio;
   if (!a.condominio) a.condominio = ev.condominio;
+  if (!a.id_condominio || a.id_condominio === '-1') { a.id_condominio = ''; a.condominio = a.condominio || '[a confirmar]'; }
   if (ev.parcela) a.id_parcela = ev.parcela;
   a.usuario = ev.usuario; a.quando = ev.quando; a.id_auditoria = ev.id_auditoria;
   if (ev.usuario) { a.analista = ev.usuario; a.analista_origem = 'usuário do evento na auditoria'; }
@@ -123,11 +126,20 @@ function r4r9(linhas, itens, ctx) {
   // Anexo novo vinculado à mesma despesa no mesmo dia: troca de arquivo, não remoção pura.
   const vinculos = new Set();
   for (const r of linhas || []) { const m = String(r.st_texto_aud || '').match(/Arquivo#\d+ vinculado a despesa#(\d+)/); if (m) vinculos.add(m[1] + '|' + quando(r).slice(0, 10)); }
-  const CORRIGIVEL = new Set(['ANEXO_REMOVIDO', 'VALOR_ALTERADO', 'VENCIMENTO_ALTERADO', 'PARCELA_EXCLUIDA', 'DESPESA_EXCLUIDA']);
+  // Condomínio da despesa por outras linhas da auditoria (eventos de arquivo vêm com condomínio -1).
+  const condDesp = new Map();
+  for (const r of linhas || []) {
+    const c = String(r.st_sql_aud || ''); if (!c || c === '-1') continue;
+    const m = String(r.st_texto_aud || '').match(RX_DESPESA); if (m && !condDesp.has(m[1])) condDesp.set(m[1], { id: c, nome: String(r.st_fantasia_cond || '').trim() });
+  }
+  const CORRIGIVEL = new Set(['DOCUMENTO_ALTERADO', 'ANEXO_REMOVIDO', 'VALOR_ALTERADO', 'VENCIMENTO_ALTERADO', 'PARCELA_EXCLUIDA', 'DESPESA_EXCLUIDA']);
   const out = [];
   for (const ev of evs) {
     const parcelas = idx.get(String(ev.despesa)) || [];
     const p = (ev.parcela && parcelas.find((x) => String(x.id_parcela_pdes) === String(ev.parcela))) || parcelas[0] || null;
+    if ((!ev.id_condominio || ev.id_condominio === '-1') && condDesp.has(String(ev.despesa))) {
+      const c = condDesp.get(String(ev.despesa)); ev.id_condominio = c.id; ev.condominio = c.nome || ev.condominio;
+    }
     const idCond = (p && p.id_condominio_cond) || ev.id_condominio;
     if (condExcluido(idCond)) continue;
     const dia = ev.quando.slice(0, 10);
@@ -157,6 +169,8 @@ function r4r9(linhas, itens, ctx) {
     } else if (ev.tipo === 'PARCELA_EXCLUIDA') { mexida = 'Exclusão de parcela'; det = 'Parcela excluída, ' + U.moeda(ev.valor); }
     else if (ev.tipo === 'DESPESA_EXCLUIDA') { mexida = 'Exclusão de despesa'; det = 'Despesa excluída'; }
     else if (ev.tipo === 'PAGAMENTO_CANCELADO') { mexida = 'Pagamento cancelado'; det = 'Pagamento da parcela cancelado'; }
+    else if (ev.tipo === 'LINHA_DIGITAVEL_ALTERADA') { grav = 'alta'; mexida = 'Linha digitável alterada'; det = 'Linha digitável (código de barras) da parcela alterada: conferir o beneficiário'; }
+    else if (ev.tipo === 'DOCUMENTO_ALTERADO') { grav = ev.de ? 'media' : 'baixa'; mexida = ev.de ? 'Documento alterado' : 'Documento preenchido'; det = 'Documento de ' + (ev.de || '(vazio)') + ' para ' + (ev.para || '(vazio)'); }
     else if (ev.tipo === 'FORNECEDOR_TROCADO') { grav = 'alta'; mexida = 'Troca de fornecedor'; det = 'Fornecedor de ' + ev.de + ' para ' + ev.para; }
     if (CORRIGIVEL.has(ev.tipo) && correcao(ev)) { grav = 'baixa'; det += ' (o mesmo usuário lançou a despesa no mesmo dia: provável correção)'; }
     out.push(deEvento('R9', 'R9_MEXIDA', grav, ev, p, ctx, { mexida, detalhe: det }));

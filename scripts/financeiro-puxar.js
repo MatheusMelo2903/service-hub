@@ -98,12 +98,17 @@ function ultimosDiasUteis(fim, n) {
 }
 
 (async () => {
+  try { fs.unlinkSync(path.join(SAIDA, 'FIM.txt')); } catch (e) { /* não existia */ }
   log('início ' + INICIO + ' a ' + FIM + ', saída ' + SAIDA);
   const LIQ = { status: 'liquidadas', comStatus: 'liquidadas', filtrarpor: 'liquidacao', idCondominio: -1 };
   const PEND = { comStatus: 'pendentes', idCondominio: -1 };
   const tarefas = [];
   for (const [a, b] of quinzenas(INICIO, FIM)) tarefas.push(() => janela('liq', 'despesas/index', LIQ, a, b));
   tarefas.push(() => janela('pend', 'despesas/index', PEND, INICIO, FIM));
+  // Pendentes a vencer nos próximos 60 dias (R1 e R2 pegam a duplicidade antes de pagar)
+  // e vencidas desde 01/01/2025 (R6 mais antigas).
+  tarefas.push(() => janela('pend', 'despesas/index', PEND, maisDias(FIM, 1), maisDias(FIM, 60)));
+  tarefas.push(() => janela('pend', 'despesas/index', PEND, '2025-01-01', maisDias(INICIO, -1)));
   const nLiq = await emParalelo(tarefas, SIMULTANEAS);
   log('despesas: ' + nLiq.reduce((s, x) => s + x, 0) + ' itens');
   const dias = ultimosDiasUteis(FIM, 10);

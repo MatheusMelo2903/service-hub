@@ -30,7 +30,13 @@ function dias(a, b) { // b menos a, em dias
 }
 function maisDias(a, n) { const d = new Date(a + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 // Valor da API ("5218.85") ou do texto da auditoria ("R$ 4.143,26" ou "R$ 4143,26").
-function valor(v) { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; }
+function valor(v) {
+  let n = Number(v);
+  if (!Number.isFinite(n) && typeof v === 'string' && /,\d{1,2}$/.test(v.trim())) n = Number(v.trim().replace(/\./g, '').replace(',', '.'));
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+}
+// Data de hoje no fuso de Vitória (America/Sao_Paulo), AAAA-MM-DD.
+const hojeSP = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 function valorBR(s) {
   const t = String(s || '').replace(/R\$\s*/, '').trim();
   if (!t) return null;
@@ -79,7 +85,7 @@ function categoria(item) {
 
 // Documento e código de barras que servem para comparar (descarta vazio, zero e marcações genéricas).
 function documento(item) {
-  const d = norm(item.st_documento_des).replace(/^(NF|NFE|NFS|NFSE|NOTA|DOC|N)[\s.:º°-]*/, '').replace(/^0+/, '');
+  const d = norm(item.st_documento_des).replace(/^(NFSE|NFE|NFS|NOTA|DOC|NF|N(?=[\s.:º°-]|\d))[\s.:º°-]*/, '').replace(/^0+/, '');
   if (!d || d.length < 2 || /^(SN|S\/N|SEM|X+|-+)$/.test(d)) return '';
   return d;
 }
@@ -95,6 +101,6 @@ function fornecedorChave(item) {
 function fornecedorNome(item) { return String(item.st_nome_con || item.st_fantasia_con || '').trim(); }
 
 module.exports = {
-  IDS_EXCLUIDOS, ID_TESTE, norm, dataTexto, moeda, soDigitos, data, dataBR, dias, maisDias, valor, valorBR, centavos,
+  IDS_EXCLUIDOS, ID_TESTE, norm, dataTexto, moeda, hojeSP, soDigitos, data, dataBR, dias, maisDias, valor, valorBR, centavos,
   etiquetas, temEtiqueta, excluido, categoria, contasDe, documento, codigoBarras, fornecedorChave, fornecedorNome,
 };

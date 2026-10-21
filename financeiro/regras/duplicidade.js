@@ -92,7 +92,6 @@ function recorrente(g) {
 // e pares com documentos ou códigos de barras diferentes (são contas distintas).
 function r1FornecedorValor(itens, ctx, opcoes) {
   const lista = unicas(itens).filter((it) => U.categoria(it) === 'comum' && !naListaBranca(it, opcoes) && U.centavos(it.vl_valor_pdes) > 0);
-  const jaR1 = new Set(((ctx && ctx.paresR1) || []));
   const grupos = porChave(lista, (it) => it.id_condominio_cond + '|' + U.fornecedorChave(it) + '|' + U.centavos(it.vl_valor_pdes));
   const out = [];
   for (const idx of grupos.values()) {
@@ -110,7 +109,8 @@ function r1FornecedorValor(itens, ctx, opcoes) {
         if (dx && dy && dx !== dy) continue;
         const bx = U.codigoBarras(x), by = U.codigoBarras(y);
         if (bx && by && bx !== by) continue;
-        if (jaR1.has(x.id_despesa_des + '|' + y.id_despesa_des) || (dx && dx === dy) || (bx && bx === by)) continue; // já é R1a
+        const docR1a = dx && dx === dy && U.categoria(x) !== 'concessionaria' && !RX_DOC_NAO_NOTA.test(dx);
+        if (docR1a || (bx && bx === by)) continue; // já é R1a
         const grupo = 'R1b-' + [x.id_parcela_pdes, y.id_parcela_pdes].sort().join('-');
         const grav = d === 0 ? 'alta' : 'media';
         out.push(A.deItem('R1', 'R1_FORNECEDOR_VALOR', grav, y, ctx, { grupo, relacionados: [String(x.id_despesa_des)], detalhe: d + ' dias de diferença no vencimento; par: ' + rotulo(x) }));
