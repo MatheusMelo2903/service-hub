@@ -338,7 +338,7 @@ async function chamarLote(apiKey, lote, ctx) {
   const instrucao = lote.escrever_receitas
     ? 'Este lote também traz receitas_nomes (só nomes que precisam de grafia arrumada) e receita_insight.'
     : 'Neste lote NÃO escreva receitas_nomes nem receita_insight.';
-  const esforco = ctx && ctx.esforco !== undefined ? ctx.esforco : modelos.esforco('prestacao');
+  const esforco = ctx && ctx.esforco !== undefined ? ctx.esforco : modelos.esforco('prestacao'); // null = sem esforço
   const corpo = JSON.stringify({
     model: modelo,
     ...(esforco ? { output_config: { effort: esforco } } : {}),

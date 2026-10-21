@@ -40,3 +40,19 @@ group by 1, 2;
 revoke all on public.api_uso_dia from anon, authenticated;
 grant select on public.api_uso_dia to service_role;
 grant select, insert on public.api_uso to service_role;
+
+-- Revisão 1: resumo do mês por função que usa o índice de criado_em (a visão agrega a tabela
+-- inteira antes de filtrar o dia) e sequência do id fechada para anon e authenticated.
+create or replace function public.api_uso_resumo(de date, ate date)
+returns table (dia date, funcao text, chamadas integer, custo_usd numeric)
+language sql stable security invoker set search_path = public as $$
+  select (u.criado_em at time zone 'America/Sao_Paulo')::date, u.funcao, count(*)::integer, coalesce(sum(u.custo_usd), 0)::numeric(14,6)
+  from public.api_uso u
+  where u.criado_em >= (de::timestamp at time zone 'America/Sao_Paulo')
+    and u.criado_em < ((ate + 1)::timestamp at time zone 'America/Sao_Paulo')
+  group by 1, 2
+  order by 1, 2;
+$$;
+revoke all on function public.api_uso_resumo(date, date) from public, anon, authenticated;
+grant execute on function public.api_uso_resumo(date, date) to service_role;
+revoke all on sequence public.api_uso_id_seq from anon, authenticated;

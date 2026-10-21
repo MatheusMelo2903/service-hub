@@ -33,7 +33,7 @@ const { chamarModelo } = require('../servico/modelo');
 const processar = require('../servico/processar');
 const { criarRotasCusto } = require('../servico/rotas-custo');
 
-const limparEnv = () => Object.keys(process.env).filter((k) => /^MODELO_|^ATA_MODELO$|^PRESTACAO_MODELO$|^MEDIDOR_MODELO|^ENTRADA_MODELO$|^CUSTO_/.test(k)).forEach((k) => delete process.env[k]);
+const limparEnv = () => Object.keys(process.env).filter((k) => /^MODELO_|^ATA_MODELO$|^PRESTACAO_MODELO$|^MEDIDOR_MODELO|^ENTRADA_MODELO$|^CUSTO_|^ESFORCO_/.test(k)).forEach((k) => delete process.env[k]);
 // Usuário fictício do teste (montado aqui para não parecer credencial).
 const UID = ['11111111', '2222', '3333', '4444', '555555555555'].join('-');
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -53,6 +53,15 @@ t('variável antiga continua valendo e a nova tem prioridade', () => {
   assert.strictEqual(modelos.modelo('ata'), 'claude-sonnet-4-6');
   process.env.MODELO_ATA = 'claude-sonnet-5-5'; assert.strictEqual(modelos.modelo('ata'), 'claude-sonnet-5-5');
   limparEnv();
+});
+t('comunicado segue ATA_MODELO como antes', () => {
+  limparEnv(); process.env.ATA_MODELO = 'claude-sonnet-4-6'; assert.strictEqual(modelos.modelo('comunicado'), 'claude-sonnet-4-6'); limparEnv();
+});
+t('esforço: padrão baixo, troca por variável e nenhum desliga', () => {
+  limparEnv(); assert.strictEqual(modelos.esforco('prestacao'), 'low'); assert.strictEqual(modelos.esforco('edital'), undefined);
+  process.env.ESFORCO_PRESTACAO = 'high'; assert.strictEqual(modelos.esforco('prestacao'), 'high');
+  process.env.ESFORCO_PRESTACAO = 'nenhum'; assert.strictEqual(modelos.esforco('prestacao'), undefined);
+  delete process.env.ESFORCO_PRESTACAO;
 });
 t('nome inválido na variável é ignorado', () => {
   limparEnv(); process.env.MODELO_UNIDADES = 'x y; rm'; assert.strictEqual(modelos.modelo('unidades'), modelos.PADRAO.unidades); limparEnv();
@@ -219,9 +228,11 @@ t('auditor, sem nível e erro na checagem recebem 403 e ficam no registro', asyn
 });
 t('mês inválido cai no mês corrente; banco caído dá 500 sem detalhe técnico', async () => {
   let pedido = '';
-  const { app } = montarRota('dono', async (m, p) => { pedido = p; return { status: 200, body: [] }; });
+  const { app } = montarRota('dono', async (m, p, corpo) => { pedido = m + ' ' + p + ' ' + JSON.stringify(corpo); return { status: 200, body: [] }; });
   await chamarRota(app, { mes: '2026-13' });
-  assert.ok(/dia=gte\.\d{4}-\d{2}-01/.test(pedido));
+  assert.ok(/^POST \/rest\/v1\/rpc\/api_uso_resumo \{"de":"\d{4}-\d{2}-01","ate":"\d{4}-\d{2}-\d{2}"\}$/.test(pedido), pedido);
+  await chamarRota(app, { mes: '2026-02' });
+  assert.ok(pedido.includes('"de":"2026-02-01","ate":"2026-02-28"'), pedido);
   const { app: app2 } = montarRota('dono', async () => { throw new Error('rede'); });
   const r = await chamarRota(app2, { mes: '2026-10' });
   assert.strictEqual(r.st, 500); assert.ok(!/rede/.test(JSON.stringify(r.corpo)));

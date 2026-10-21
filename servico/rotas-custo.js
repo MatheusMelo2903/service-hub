@@ -33,9 +33,9 @@ function criarRotasCusto(app, d) {
     const mes = RE_MES.test(String(req.query.mes || '')) ? String(req.query.mes) : mesDeBrasilia(agora);
     const [a, m] = mes.split('-').map(Number);
     const ultimo = new Date(Date.UTC(a, m, 0)).getUTCDate();
-    const q = '/rest/v1/api_uso_dia?select=dia,funcao,chamadas,custo_usd&dia=gte.' + mes + '-01&dia=lte.' + mes + '-' + String(ultimo).padStart(2, '0') + '&order=dia.asc&limit=2000';
+    // Função do banco (migration 019): filtra pelo índice de criado_em e devolve dia e função.
     let r;
-    try { r = await banco('GET', q); } catch (e) { r = null; }
+    try { r = await banco('POST', '/rest/v1/rpc/api_uso_resumo', { de: mes + '-01', ate: mes + '-' + String(ultimo).padStart(2, '0') }); } catch (e) { r = null; }
     if (!r || r.status !== 200 || !Array.isArray(r.body)) return res.status(500).json({ erro: 'falha_leitura', detalhe: 'Não foi possível ler o custo agora.' });
     const resumo = custo.resumirMes(r.body, mes, agora, custo.limiteMensal());
     res.json(resumo);

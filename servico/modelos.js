@@ -19,6 +19,7 @@ const PADRAO = {
 // Nomes de variável que já existiam antes da T42 (continuam valendo).
 const LEGADO = {
   ata: 'ATA_MODELO',
+  comunicado: 'ATA_MODELO', // antes da T42 o comunicado seguia o modelo da ata
   prestacao: 'PRESTACAO_MODELO',
   medidor: 'MEDIDOR_MODELO',
   medidor_reforco: 'MEDIDOR_MODELO_REFORCO',
@@ -38,11 +39,13 @@ function modelo(funcao) {
 }
 
 // Esforço (nos modelos que pensam antes de responder): ESFORCO_<FUNCAO> = low, medium ou high;
-// vazio ou outro valor = padrão do modelo. Só as funções listadas aqui leem a variável.
+// 'nenhum' não manda o campo (modelo que não aceita esforço); vazio ou outro valor = padrão abaixo.
+// Só as funções listadas aqui leem a variável.
 const ESFORCO_PADRAO = { unidades: 'low', prestacao: 'low' };
 function esforco(funcao) {
   if (!Object.prototype.hasOwnProperty.call(ESFORCO_PADRAO, funcao)) return undefined;
   const v = String(process.env['ESFORCO_' + funcao.toUpperCase()] || '').trim();
+  if (v === 'nenhum') return undefined;
   return ['low', 'medium', 'high'].includes(v) ? v : ESFORCO_PADRAO[funcao];
 }
 
