@@ -51,6 +51,7 @@
     try {
       var b64 = await o.pdfBase64();
       if (!b64) throw new Error('Não consegui montar o PDF.');
+      if (b64.length * 3 / 4 > 15 * 1024 * 1024) throw new Error('O PDF passa de 15 MB, limite do Superlógica.');
       var resp = await apiAuthFetch('/api/condominio/' + encodeURIComponent(o.idSuperlogica) + '/documentos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -65,7 +66,8 @@
         return;
       }
       if (!resp.ok) throw new Error(j.detalhe || ('erro ' + resp.status));
-      status(host, '✓ Arquivado no Superlógica como "' + esc(j.titulo) + '". Ainda não publicado para os condôminos.', 'var(--success)');
+      status(host, '✓ Arquivado no Superlógica como "' + esc(j.titulo) + '". '
+        + (j.publicado === true ? 'Atenção: o Superlógica marcou como publicado; confira lá.' : 'Não foi publicado para os condôminos (publique no Superlógica depois de conferir).'), 'var(--success)');
       if (btn) btn.style.display = 'none';
       if (typeof toast === 'function') toast('Arquivado no Superlógica', 'ok');
     } catch (e) {

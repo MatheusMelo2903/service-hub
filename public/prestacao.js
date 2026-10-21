@@ -1922,7 +1922,10 @@ function prestacaoOferecerArquivo(pdfB64) {
 }
 
 function prestacaoBaixarResultado(r) {
-  if (r && r.pdf_b64) prestacaoOferecerArquivo(r.pdf_b64);
+  // Só oferece arquivar o PDF quando o PDF também foi baixado (formato PDF ou ambos).
+  var fmtArq = document.querySelector('input[name="prest-formato"]:checked');
+  var fmtArqV = fmtArq ? fmtArq.value : 'ambos';
+  if (r && r.pdf_b64 && (fmtArqV === 'ambos' || fmtArqV === 'pdf')) prestacaoOferecerArquivo(r.pdf_b64);
   var fmtSel = document.querySelector('input[name="prest-formato"]:checked');
   var formato = fmtSel ? fmtSel.value : 'ambos';
   var base = r.nome_arquivo || ('Prestação de Contas ' + (prestacaoState.condNome || ''));
@@ -2228,7 +2231,7 @@ async function prestacaoGerarServico() {
 
       var msgStatus = partesStatus.length > 0 ? ' ' + partesStatus.join('. ') + '.' : '';
       toast('Prestação gerada: ' + dados.blocos + ' bloco(s). ' + baixados.join(' e ') + ' baixado(s).' + msgStatus, 'ok');
-      if (dados.pdf_b64) prestacaoOferecerArquivo(dados.pdf_b64);
+      if (dados.pdf_b64 && querPdf && prestacaoState.condIdSuperlogica) prestacaoOferecerArquivo(dados.pdf_b64);
     } else {
       toast('Nenhum arquivo foi baixado. Tente novamente ou contate o suporte.', 'err');
     }

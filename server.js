@@ -3765,14 +3765,9 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
   const b = req.body || {};
   const modulo = b.tipo === 'ata' ? 'atas' : b.tipo === 'prestacao' ? 'prestacao_contas' : null;
   if (!modulo) return res.status(400).json({ erro: 'tipo_invalido', detalhe: 'Tipo deve ser ata ou prestacao.' });
-  const D = slModulo.documentos;
-  const titulo = D.tituloSeguro(b.titulo);
-  if (titulo.length < 5) return res.status(400).json({ erro: 'titulo_invalido', detalhe: 'Informe um título com pelo menos 5 letras.' });
-  if (typeof b.pdf_base64 !== 'string' || !b.pdf_base64.length) return res.status(400).json({ erro: 'arquivo_ausente', detalhe: 'O PDF não veio.' });
-  const buf = Buffer.from(b.pdf_base64, 'base64');
-  if (!D.ehPdf(buf)) return res.status(400).json({ erro: 'nao_e_pdf', detalhe: 'O arquivo enviado não é um PDF.' });
-  if (buf.length > D.MAX_BYTES) return res.status(413).json({ erro: 'arquivo_grande', detalhe: 'O PDF passa de 15 MB, limite do Superlógica.' });
   if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
+  // Permissão antes de decodificar o arquivo: módulo com "gerar" (ou GESTOR) e, para quem
+  // tem carteira (T09), só condomínios da carteira. Esta rota grava no Superlógica.
   if (req.authMode !== 'internal') {
     if (!SUPABASE_SERVICE_ROLE_KEY) return res.status(503).json({ erro: 'service_role_nao_configurada' });
     let perfil = null;
@@ -3780,7 +3775,26 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
     const p = perfil && perfil.permissoes && perfil.permissoes[modulo];
     const pode = perfil && (perfil.role === 'GESTOR' || (p && p.visivel === true && Array.isArray(p.acoes) && p.acoes.includes('gerar')));
     if (!pode) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não pode arquivar este documento no Superlógica.' });
+    if (perfil.role !== 'GESTOR') {
+      const mapa = await lerCarteirasPerfis(perfil.id);
+      const minhas = (mapa && mapa[perfil.id]) || [];
+      if (minhas.length) {
+        let permitidos = [];
+        try { permitidos = slModulo.carteiras.condominiosDasCarteiras(await gruposCarteiras(), minhas).ids_superlogica; } catch (e) {
+          return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível conferir sua carteira no Superlógica agora.' });
+        }
+        if (!permitidos.includes(Number(id))) return res.status(403).json({ erro: 'fora_da_carteira', detalhe: 'Este condomínio não está na sua carteira.' });
+      }
+    }
   }
+  const D = slModulo.documentos;
+  const titulo = D.tituloSeguro(b.titulo);
+  if (titulo.length < 5) return res.status(400).json({ erro: 'titulo_invalido', detalhe: 'Informe um título com pelo menos 5 letras.' });
+  if (typeof b.pdf_base64 !== 'string' || !b.pdf_base64.length) return res.status(400).json({ erro: 'arquivo_ausente', detalhe: 'O PDF não veio.' });
+  if (b.pdf_base64.length > Math.ceil(D.MAX_BYTES / 3) * 4 + 8) return res.status(413).json({ erro: 'arquivo_grande', detalhe: 'O PDF passa de 15 MB, limite do Superlógica.' });
+  const buf = Buffer.from(b.pdf_base64, 'base64');
+  if (!D.ehPdf(buf)) return res.status(400).json({ erro: 'nao_e_pdf', detalhe: 'O arquivo enviado não é um PDF.' });
+  if (buf.length > D.MAX_BYTES) return res.status(413).json({ erro: 'arquivo_grande', detalhe: 'O PDF passa de 15 MB, limite do Superlógica.' });
   const cli = clienteSL();
   if (b.forcar !== true) {
     try {
@@ -3792,9 +3806,9 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
     }
   }
   const r = await D.enviarDocumento({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }, id, titulo, buf);
-  console.log('[documentos] ' + (req.user && req.user.email ? req.user.email : req.authMode) + ' arquivou ' + b.tipo + ' no condomínio ' + id + ': ' + (r.ok ? 'ok' : 'falhou ' + r.status));
-  if (!r.ok) return res.status(502).json({ erro: 'falha_envio', detalhe: 'O Superlógica não aceitou o documento' + (r.msg ? ': ' + r.msg : '.') });
-  res.json({ ok: true, titulo, id_superlogica: Number(id), publicado: false });
+  console.log('[documentos] ' + (req.user && req.user.email ? req.user.email : req.authMode) + ' arquivou ' + b.tipo + ' no condomínio ' + id + ': ' + (r.ok ? 'ok id ' + r.id : 'falhou ' + r.status + ' formato ' + r.formato));
+  if (!r.ok) return res.status(502).json({ erro: 'falha_envio', detalhe: 'O Superlógica não confirmou o recebimento do documento' + (r.msg ? ': ' + r.msg : '.') + ' Confira nos documentos do condomínio antes de tentar de novo.' });
+  res.json({ ok: true, titulo, id_superlogica: Number(id), id_documento: r.id || null, publicado: r.publicado == null ? null : !['', '0'].includes(r.publicado) });
 });
 
 // Agenda: 1 minuto depois de subir e depois todo dia às 6h de Brasília (9h UTC).
