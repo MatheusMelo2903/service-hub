@@ -78,6 +78,11 @@ function conferir(existentes, linhas) {
       // diferentes), importar sem bloco quase certamente duplica uma delas. Marca as duas.
       else if (!b && cands.length === 1) unidade = cands[0];
       else if (!b && cands.length > 1) unidade = { rotulo: cands.map((e) => e.rotulo).join(', ') + ' (informe o bloco)', contatos: [].concat(...cands.map((e) => e.contatos)) };
+      // Documento traz bloco e o Superlógica tem essa unidade sem bloco: provavelmente é ela.
+      else if (b) {
+        const semBloco = cands.filter((e) => !e.b);
+        if (semBloco.length === 1) unidade = { rotulo: semBloco[0].rotulo + ' (sem bloco no Superlógica; confira o bloco)', contatos: semBloco[0].contatos };
+      }
     }
     const doc = digitos(l && l.cpf) || digitos(l && l.cnpj);
     const nome = chaveNome(l && l.nome);

@@ -177,6 +177,7 @@ async function _zipLerArquivo(buf, alvo) {
       const dados = new Uint8Array(buf, ini, tamComp);
       if (metodo === 0) return dec.decode(dados);
       if (metodo !== 8) throw new Error('Compressão do Word não suportada.');
+      if (typeof DecompressionStream === 'undefined') throw new Error('Este navegador não abre Word aqui. Salve o arquivo como PDF ou use o Chrome atualizado.');
       const ds = new DecompressionStream('deflate-raw');
       const txt = await new Response(new Blob([dados]).stream().pipeThrough(ds)).arrayBuffer();
       return dec.decode(txt);
@@ -256,40 +257,54 @@ function partesDeLinhas(linhas, cabecalho) {
   return partes.map((p) => (cabecalho ? [cabecalho].concat(p) : p).join('\n'));
 }
 
-// Monta o que vai para a IA: uma ou mais partes (cada parte = um pedido).
+// Monta o que vai para a IA: { partes: [pedido, ...], avisos: [...] }.
 async function montarPartesNormalizar(file, tipo) {
   const pedido = 'Transforme cada pessoa do documento acima em uma linha JSON conforme as regras do sistema. Coloque as duvidas em "duvidas".';
-  const textoEmPartes = (rotulo, partes) => partes.map((t, i) => [{ type: 'text', text:
-    rotulo + (partes.length > 1 ? ' (parte ' + (i + 1) + ' de ' + partes.length + '; a primeira ou a ultima linha pode estar incompleta: se estiver, emita o que da e coloque "dado cortado entre partes" em duvidas)' : '') +
-    ':\n\n' + t + '\n\n' + pedido }]);
+  const avisos = [];
+  // Texto grande vai em partes. Da parte 2 em diante vai junto o começo do documento
+  // (títulos e cabeçalho da tabela) para a IA saber o que é cada coluna.
+  const textoEmPartes = (rotulo, linhas) => {
+    const blocos = partesDeLinhas(linhas, '');
+    const contexto = linhas.slice(0, 6).join('\n').slice(0, 1500);
+    return blocos.map((t, i) => [{ type: 'text', text:
+      (blocos.length > 1 && i > 0 ? 'COMECO DO DOCUMENTO, so para voce saber o que e cada coluna (NAO emita pessoas destas linhas, elas sao de outra parte):\n' + contexto + '\n\n' : '') +
+      rotulo + (blocos.length > 1 ? ' (parte ' + (i + 1) + ' de ' + blocos.length + '; a primeira ou a ultima linha pode estar incompleta: se estiver, emita o que da e coloque "dado cortado entre partes" em duvidas)' : '') +
+      ':\n\n' + t + '\n\n' + pedido }]);
+  };
 
   const mb = (file.size / 1024 / 1024).toFixed(1);
+  const cabeBinario = () => file.size <= NORMALIZAR_MAX_BYTES_BINARIO;
   const limiteBinario = () => {
-    if (file.size > NORMALIZAR_MAX_BYTES_BINARIO) throw new Error('Arquivo muito grande (' + mb + ' MB). PDF escaneado e imagem vão inteiros para a IA: o limite é 7 MB. Divida o arquivo ou reduza a resolução.');
+    if (!cabeBinario()) throw new Error('Arquivo muito grande (' + mb + ' MB). PDF escaneado e imagem vão inteiros para a IA: o limite é 7 MB. Divida o arquivo ou reduza a resolução.');
   };
   if (tipo === 'pdf' ? file.size > 3 * NORMALIZAR_MAX_BYTES : file.size > NORMALIZAR_MAX_BYTES) {
     throw new Error('Arquivo muito grande (' + mb + ' MB). Limite ' + (tipo === 'pdf' ? '24' : '8') + ' MB.');
   }
+  const documentoInteiro = async () => [[{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: await fileToBase64(file) } }, { type: 'text', text: pedido }]];
 
   if (tipo === 'imagem') {
     limiteBinario();
     const mt = file.type || (/\.png$/i.test(file.name) ? 'image/png' : /\.webp$/i.test(file.name) ? 'image/webp' : /\.gif$/i.test(file.name) ? 'image/gif' : 'image/jpeg');
-    return [[{ type: 'image', source: { type: 'base64', media_type: mt, data: await fileToBase64(file) } }, { type: 'text', text: pedido }]];
+    return { partes: [[{ type: 'image', source: { type: 'base64', media_type: mt, data: await fileToBase64(file) } }, { type: 'text', text: pedido }]], avisos };
   }
   if (tipo === 'pdf') {
-    // PDF com muito texto: vai em partes de texto (a resposta da IA não corta).
-    // PDF escaneado ou com pouco texto: vai inteiro como documento (a IA lê a imagem das páginas).
+    // Todas as páginas com texto: vai como texto (em partes se for grande; a resposta não corta).
+    // Alguma página escaneada (quase sem texto): vai inteiro como documento (a IA lê a imagem).
     let info = null;
     try { info = await lerPaginasPdfTexto(await file.arrayBuffer()); } catch (_) { info = null; }
     const totalTexto = info ? info.paginas.reduce((s, p) => s + p.length, 0) : 0;
-    const temTexto = info && totalTexto >= 150 * info.numPaginas;
-    if (temTexto && totalTexto > NORMALIZAR_PDF_TEXTO_DIRETO) {
-      const linhas = info.paginas.join('\n').split('\n').map((l) => l.trim()).filter(Boolean);
-      return textoEmPartes('Documento PDF (texto extraido)', partesDeLinhas(linhas, ''));
+    const escaneadas = info ? info.paginas.map((p, i) => (p.length < 50 ? i + 1 : 0)).filter(Boolean) : [];
+    const linhasTexto = () => info.paginas.join('\n').split('\n').map((l) => l.trim()).filter(Boolean);
+    if (info && totalTexto > 0 && !escaneadas.length && (totalTexto > NORMALIZAR_PDF_TEXTO_DIRETO || !cabeBinario())) {
+      return { partes: textoEmPartes('Documento PDF (texto extraido)', linhasTexto()), avisos };
     }
     if (info && info.numPaginas > 100) throw new Error('PDF escaneado com mais de 100 páginas. Divida em partes menores.');
+    if (!cabeBinario() && info && totalTexto > 0) {
+      avisos.push('O PDF tem página(s) sem texto (escaneada): ' + escaneadas.join(', ') + '. Como o arquivo passa de 7 MB, essas páginas NÃO foram lidas. Divida o PDF para lê-las.');
+      return { partes: textoEmPartes('Documento PDF (texto extraido)', linhasTexto()), avisos };
+    }
     limiteBinario();
-    return [[{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: await fileToBase64(file) } }, { type: 'text', text: pedido }]];
+    return { partes: await documentoInteiro(), avisos };
   }
   if (tipo === 'planilha') {
     const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' });
@@ -299,21 +314,16 @@ async function montarPartesNormalizar(file, tipo) {
       const linhas = csv.split(/\r?\n/).filter((l) => l.replace(/;/g, '').trim());
       if (!linhas.length) return;
       const rot = 'Planilha original' + (wb.SheetNames.length > 1 ? ', aba "' + nomeAba + '"' : '') + ' (CSV bruto fora do padrao)';
-      const cab = linhas.length > NORMALIZAR_PARTE_MAX_LINHAS ? linhas[0] : '';
-      const blocos = partesDeLinhas(cab ? linhas.slice(1) : linhas, cab);
-      textoEmPartes(rot, blocos).forEach((p) => partes.push(p));
+      textoEmPartes(rot, linhas).forEach((p) => partes.push(p));
     });
     if (!partes.length) throw new Error('A planilha está vazia.');
-    return partes;
+    return { partes, avisos };
   }
   if (tipo === 'docx' || tipo === 'texto') {
     const texto = tipo === 'docx' ? await lerTextoDocx(file) : await file.text();
     const linhas = texto.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     if (!linhas.length) throw new Error('O documento não tem texto.');
-    const ehTabela = tipo === 'texto' && /\.(csv|tsv)$/i.test(file.name);
-    const cab = ehTabela && linhas.length > NORMALIZAR_PARTE_MAX_LINHAS ? linhas[0] : '';
-    return textoEmPartes(tipo === 'docx' ? 'Documento Word (texto extraido; celulas de tabela separadas por |)' : 'Documento original',
-      partesDeLinhas(cab ? linhas.slice(1) : linhas, cab));
+    return { partes: textoEmPartes(tipo === 'docx' ? 'Documento Word (texto extraido; celulas de tabela separadas por |)' : 'Documento original', linhas), avisos };
   }
   if (tipo === 'doc') throw new Error('Word antigo (.doc) não é lido aqui. Abra no Word e salve como .docx ou PDF.');
   if (tipo === 'heic') throw new Error('Foto em HEIC não é lida aqui. Exporte como JPG ou PNG.');
@@ -330,13 +340,17 @@ function parseJsonlNormalizado(texto) {
     if (!l || l === '[' || l === ']') return;
     let o;
     try { o = JSON.parse(l); } catch (_) { invalidas++; return; }
+    (Array.isArray(o) ? o : [o]).forEach((x) => adicionar(x));
+  });
+  function adicionar(o) {
     if (!o || typeof o !== 'object' || Array.isArray(o)) { invalidas++; return; }
     const row = NORMALIZAR_CHAVES.map((k) => (o[k] == null ? '' : String(o[k]).replace(/\s+/g, ' ').trim()));
-    if (!row.some(Boolean)) return;
     const duvidas = (Array.isArray(o.duvidas) ? o.duvidas : o.duvidas ? [o.duvidas] : [])
       .map((d) => String(d).replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 8);
+    // Linha só com dúvida (pessoa ilegível) fica: aparece como "falta dado" na prévia.
+    if (!row.some(Boolean) && !duvidas.length) return;
     itens.push({ row, duvidas });
-  });
+  }
   return { itens, invalidas };
 }
 
@@ -475,7 +489,8 @@ async function processarDocNormalizar(file) {
   progressBar.style.width = '10%';
 
   try {
-    const partes = await montarPartesNormalizar(file, tipo);
+    const montado = await montarPartesNormalizar(file, tipo);
+    const partes = montado.partes;
     if (geracao !== _normalizarGeracao) return;
     progressBar.style.width = '25%';
     status.textContent = partes.length > 1 ? 'IA reformatando (' + partes.length + ' partes)...' : 'IA reformatando...';
@@ -486,7 +501,7 @@ async function processarDocNormalizar(file) {
     });
     if (geracao !== _normalizarGeracao) return;
 
-    const avisos = [];
+    const avisos = montado.avisos.slice();
     const itens = [];
     res.forEach((r, i) => {
       const rot = partes.length > 1 ? 'Parte ' + (i + 1) + ' de ' + partes.length : 'O documento';
@@ -523,7 +538,7 @@ async function processarDocNormalizar(file) {
 }
 
 // Cruza a prévia com as unidades do condomínio ativo no Superlógica.
-async function conferirNormalizadoSuperlogica() {
+async function conferirNormalizadoSuperlogica(fresco) {
   if (!_normalizarRows || !_normalizarRows.length) return;
   const cond = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
   if (!cond || !cond.id_superlogica) {
@@ -537,7 +552,9 @@ async function conferirNormalizadoSuperlogica() {
   renderPreviewNormalizado();
   try {
     const linhas = rowsRef.map((r) => ({ unidade: r[1], bloco: r[2], nome: r[5], cpf: r[6], cnpj: r[7] }));
-    const resp = await apiAuthFetch('/api/condominio/' + encodeURIComponent(idSL) + '/unidades/conferir', {
+    const chaveConf = (r) => [r[1], r[2], r[5], r[6], r[7]].join('\u0001');
+    const chavesEnviadas = rowsRef.map(chaveConf);
+    const resp = await apiAuthFetch('/api/condominio/' + encodeURIComponent(idSL) + '/unidades/conferir' + (fresco ? '?fresco=1' : ''), {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ linhas })
     });
     const j = await resp.json().catch(() => ({}));
@@ -552,7 +569,13 @@ async function conferirNormalizadoSuperlogica() {
     }
     const atual = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
     if (!atual || String(atual.id_superlogica) !== idSL) return;
-    (j.resultado || []).forEach((c, i) => { if (_normalizarMeta[i]) { _normalizarMeta[i].conf = c; _normalizarMeta[i].confDesatualizada = false; } });
+    // Linha editada enquanto conferia: o resultado é dos dados antigos; fica desatualizada.
+    (j.resultado || []).forEach((c, i) => {
+      const m = _normalizarMeta[i];
+      if (!m || !_normalizarRows[i]) return;
+      if (chaveConf(_normalizarRows[i]) === chavesEnviadas[i]) { m.conf = c; m.confDesatualizada = false; }
+      else { m.conf = null; m.confDesatualizada = true; }
+    });
     _normalizarConfInfo = { idSuperlogica: idSL, nome: cond.nome || '', total: j.total_existentes || 0, truncado: !!j.truncado, linhasConferidas: linhas.length };
   } catch (e) {
     if (rowsRef !== _normalizarRows) return;
@@ -606,7 +629,7 @@ function renderPreviewNormalizado() {
     '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;align-items:center">' +
     [['todas', 'Todas (' + rows.length + ')'], ['problema', 'Faltando obrigatório (' + nErro + ')'], ['duvida', 'Com dúvida (' + nDuv + ')'], ['existe', 'Já existem (' + nEx + ')'], ['ok', 'Sem pendência (' + nOk + ')']]
       .map(([v, l]) => '<div class="chip' + (_normalizarFiltro === v ? ' active' : '') + '" onclick="filtrarNormalizado(\'' + v + '\')">' + l + '</div>').join('') +
-    '<button class="btn btn-ghost" onclick="conferirNormalizadoSuperlogica()" style="font-size:11px;padding:4px 10px">↻ Conferir de novo</button>' +
+    '<button class="btn btn-ghost" onclick="conferirNormalizadoSuperlogica(true)" style="font-size:11px;padding:4px 10px">↻ Conferir de novo</button>' +
     (nEx ? '<button class="btn btn-ghost" onclick="removerExistentesNormalizado()" style="font-size:11px;padding:4px 10px">Remover as que já existem</button>' : '') +
     '</div>';
 
@@ -644,7 +667,7 @@ function linhaHtmlNormalizado(r, i, m) {
   return '<tr data-i="' + i + '" style="border-left:3px solid ' + _NORM_COR[nv] + '">' +
     '<td style="' + td + '"><button onclick="removerLinhaNormalizada(' + i + ')" title="Remover esta linha" style="border:none;background:none;color:var(--muted);cursor:pointer;font-size:13px">✕</button></td>' +
     '<td style="' + td + 'max-width:260px;overflow:hidden;text-overflow:ellipsis;color:' + _NORM_COR[nv] + '" title="' + _normEsc(motivos.join('\n')) + '"><b>' + rotulo + '</b>' + (motivos.length ? ' · ' + _normEsc(motivos.join('; ')) : '') + '</td>' +
-    r.map((c, k) => '<td contenteditable="true" spellcheck="false" data-c="' + k + '" style="' + td + 'min-width:40px;max-width:200px;overflow:hidden;text-overflow:ellipsis;outline:none' +
+    r.map((c, k) => '<td contenteditable="plaintext-only" spellcheck="false" data-c="' + k + '" style="' + td + 'min-width:40px;max-width:200px;overflow:hidden;text-overflow:ellipsis;outline:none' +
       (campoRuim[k] ? ';background:rgba(220,60,60,0.12)' : '') + '" title="' + _normEsc(c) + '">' + _normEsc(c) + '</td>').join('') +
     '</tr>';
 }
@@ -665,14 +688,17 @@ function aoEditarCelulaNormalizada(e) {
   // Mexeu no que a conferência usa: o resultado antigo não vale mais para esta linha.
   if ([1, 2, 5, 6, 7].indexOf(c) !== -1 && m && m.conf) { m.conf = null; m.confDesatualizada = true; }
   validarNormalizado();
-  // Redesenha e devolve o foco para a célula para onde a pessoa foi (Tab ou clique).
+  // Redesenha depois do clique terminar (senão o clique em ✕, filtro ou botão se perde)
+  // e devolve o foco para a célula para onde a pessoa foi (Tab ou clique).
   const destino = e.relatedTarget && e.relatedTarget.dataset && e.relatedTarget.dataset.c != null
     ? { i: e.relatedTarget.closest('tr') && e.relatedTarget.closest('tr').dataset.i, c: e.relatedTarget.dataset.c } : null;
-  renderPreviewNormalizado();
-  if (destino) {
-    const alvo = document.querySelector('#normalizar-table tr[data-i="' + destino.i + '"] td[data-c="' + destino.c + '"]');
-    if (alvo) alvo.focus();
-  }
+  setTimeout(() => {
+    renderPreviewNormalizado();
+    if (destino) {
+      const alvo = document.querySelector('#normalizar-table tr[data-i="' + destino.i + '"] td[data-c="' + destino.c + '"]');
+      if (alvo) alvo.focus();
+    }
+  }, 150);
 }
 
 function removerLinhaNormalizada(i) {
@@ -704,6 +730,15 @@ function filtrarNormalizado(v) {
 }
 
 // Para a tela de revisão (unidades.js): situação de cada linha da prévia, na mesma ordem.
+// Para a revisão saber se a checagem de duplicadas valeu: 'ok', 'carregando', 'falhou', 'desatualizada'.
+function estadoConferenciaNormalizado() {
+  const ci = _normalizarConfInfo;
+  if (ci && ci.carregando) return 'carregando';
+  if (!ci || ci.erro) return 'falhou';
+  if ((_normalizarMeta || []).some((m) => m && m.confDesatualizada)) return 'desatualizada';
+  return 'ok';
+}
+
 function situacaoLinhasNormalizado() {
   return (_normalizarRows || []).map((_, i) => {
     const m = _normalizarMeta[i] || {};
@@ -738,6 +773,8 @@ function baixarPlanilhaNormalizada() {
 // Trocou de condomínio: a conferência era do anterior (unidades.js já limpa a prévia).
 window.addEventListener('condominioAtivo:trocou', function() {
   _normalizarGeracao++;
+  const pw = document.getElementById('normalizar-progress-wrap');
+  if (pw) pw.style.display = 'none';
   _normalizarMeta = [];
   _normalizarAvisos = [];
   _normalizarConfInfo = null;

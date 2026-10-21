@@ -1448,6 +1448,11 @@ function abrirRevisaoFromNormalizado() {
   if (!_normalizarRows || !_normalizarRows.length) { toast('Nada para revisar', 'err'); return; }
   // Situação de cada linha da prévia (T06): falta obrigatório e "já existe no Superlógica"
   // entram na revisão como Descartar (dá para mudar lá); dúvida entra como Incerto.
+  var estConf = typeof estadoConferenciaNormalizado === 'function' ? estadoConferenciaNormalizado() : 'ok';
+  if (estConf === 'carregando') { toast('Aguarde terminar a conferência no Superlógica', 'warn'); return; }
+  if (estConf !== 'ok' && !confirm(estConf === 'desatualizada'
+      ? 'Você editou linhas depois da conferência: elas NÃO foram conferidas no Superlógica (podem duplicar unidades). Clique em Cancelar e depois em "Conferir de novo", ou OK para seguir assim.'
+      : 'As duplicadas NÃO foram conferidas no Superlógica (sem condomínio escolhido ou a conferência falhou). Importar pode criar unidades repetidas. Continuar mesmo assim?')) return;
   var sit = typeof situacaoLinhasNormalizado === 'function' ? situacaoLinhasNormalizado() : [];
   var nErro = sit.filter(function(s) { return s.nivel === 'erro'; }).length;
   var nEx = sit.filter(function(s) { return s.existe && s.nivel !== 'erro'; }).length;

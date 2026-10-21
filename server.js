@@ -3309,6 +3309,8 @@ app.post('/api/condominio/:idSuperlogica/unidades/conferir', requireAuth, expres
   const txt = (v) => String(v == null ? '' : v).slice(0, 200);
   const limpas = linhas.map((l) => ({ unidade: txt(l && l.unidade), bloco: txt(l && l.bloco), nome: txt(l && l.nome), cpf: txt(l && l.cpf), cnpj: txt(l && l.cnpj) }));
   if (!(await exigirLeituraSuperlogica(req, res))) return;
+  // "Conferir de novo" pede leitura nova (ex.: logo depois de importar unidades).
+  if (req.query.fresco === '1') _cacheConferencia.limpar('conf:' + id);
   try {
     const ex = await _cacheConferencia.pegar('conf:' + id, () => slModulo.conferencia.lerUnidades(clienteSL(), id));
     res.json({ total_existentes: ex.itens.length, truncado: ex.truncado, resultado: slModulo.conferencia.conferir(ex.itens, limpas) });

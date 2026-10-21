@@ -197,6 +197,7 @@ function criarCache(ttlMs, max, tetoMs) {
   const m = new Map();
   const andamento = new Map();
   return {
+    limpar(chave) { m.delete(chave); },
     pegar(chave, fn) {
       const c = m.get(chave);
       if (c && c.ate > Date.now()) return Promise.resolve(c.v);
