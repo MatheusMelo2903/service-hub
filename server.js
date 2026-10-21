@@ -3750,6 +3750,53 @@ app.post('/api/multas/registrar', requireAuth, express.json({ limit: '100kb' }),
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// POST /api/condominio/:id/documentos (T12) — arquiva no Superlógica a ata ou a
+// prestação de contas gerada no Hub (documentos do condomínio, sem publicar para os
+// condôminos). Body JSON: { tipo: 'ata'|'prestacao', titulo, pdf_base64, forcar? }.
+// Precisa do módulo (Atas ou Prestação de Contas) com a ação "gerar", ou ser GESTOR.
+// Se já existe documento com o mesmo título, responde 409 (a tela pergunta e reenvia
+// com forcar=true). Só PDF, até 15 MB.
+// ─────────────────────────────────────────────────────────────────────────
+app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json({ limit: '22mb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  const b = req.body || {};
+  const modulo = b.tipo === 'ata' ? 'atas' : b.tipo === 'prestacao' ? 'prestacao_contas' : null;
+  if (!modulo) return res.status(400).json({ erro: 'tipo_invalido', detalhe: 'Tipo deve ser ata ou prestacao.' });
+  const D = slModulo.documentos;
+  const titulo = D.tituloSeguro(b.titulo);
+  if (titulo.length < 5) return res.status(400).json({ erro: 'titulo_invalido', detalhe: 'Informe um título com pelo menos 5 letras.' });
+  if (typeof b.pdf_base64 !== 'string' || !b.pdf_base64.length) return res.status(400).json({ erro: 'arquivo_ausente', detalhe: 'O PDF não veio.' });
+  const buf = Buffer.from(b.pdf_base64, 'base64');
+  if (!D.ehPdf(buf)) return res.status(400).json({ erro: 'nao_e_pdf', detalhe: 'O arquivo enviado não é um PDF.' });
+  if (buf.length > D.MAX_BYTES) return res.status(413).json({ erro: 'arquivo_grande', detalhe: 'O PDF passa de 15 MB, limite do Superlógica.' });
+  if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
+  if (req.authMode !== 'internal') {
+    if (!SUPABASE_SERVICE_ROLE_KEY) return res.status(503).json({ erro: 'service_role_nao_configurada' });
+    let perfil = null;
+    try { perfil = await lerPerfil(req.user && req.user.sub); } catch (e) { perfil = null; }
+    const p = perfil && perfil.permissoes && perfil.permissoes[modulo];
+    const pode = perfil && (perfil.role === 'GESTOR' || (p && p.visivel === true && Array.isArray(p.acoes) && p.acoes.includes('gerar')));
+    if (!pode) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não pode arquivar este documento no Superlógica.' });
+  }
+  const cli = clienteSL();
+  if (b.forcar !== true) {
+    try {
+      const iguais = await D.procurarMesmoTitulo(cli, id, titulo);
+      if (iguais.length) return res.status(409).json({ erro: 'ja_existe', detalhe: 'Já existe documento com esse título no Superlógica.', existentes: iguais.slice(0, 3) });
+    } catch (e) {
+      console.warn('[documentos] conferência de título falhou: ' + (e && e.message));
+      return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível conferir os documentos do condomínio no Superlógica agora.' });
+    }
+  }
+  const r = await D.enviarDocumento({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }, id, titulo, buf);
+  console.log('[documentos] ' + (req.user && req.user.email ? req.user.email : req.authMode) + ' arquivou ' + b.tipo + ' no condomínio ' + id + ': ' + (r.ok ? 'ok' : 'falhou ' + r.status));
+  if (!r.ok) return res.status(502).json({ erro: 'falha_envio', detalhe: 'O Superlógica não aceitou o documento' + (r.msg ? ': ' + r.msg : '.') });
+  res.json({ ok: true, titulo, id_superlogica: Number(id), publicado: false });
+});
+
 // Agenda: 1 minuto depois de subir e depois todo dia às 6h de Brasília (9h UTC).
 function _agendarSyncDiario() {
   const agora = new Date();

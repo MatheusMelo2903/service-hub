@@ -26,6 +26,7 @@ function idValido(v) {
 const consulta = require('./consulta');
 const carteiras = require('./carteiras');
 const conferencia = require('./conferencia');
+const documentos = require('./documentos');
 
 module.exports = {
   cliente,
@@ -33,6 +34,7 @@ module.exports = {
   consulta,
   carteiras,
   conferencia,
+  documentos,
   buscarCadastro: (cli, id, opts) => cadastro.buscarCadastro(cli, id, opts),
   montarCadastro: cadastro.montarCadastro,
 };

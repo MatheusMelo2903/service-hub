@@ -833,6 +833,32 @@ async function gerarAtaIA() {
 
 function fecharAtaGerada() {
   document.getElementById('ata-gerada-modal').style.display = 'none';
+  if (window.ArquivarSL) ArquivarSL.esconder('ata-arquivar');
+}
+
+// T12: manda o PDF desta ata para os documentos do condomínio no Superlógica.
+// Título no padrão que a equipe já usa lá: "ATA ASSEMBLEIA AGO 16.06.2026".
+function abrirArquivarAta() {
+  if (!_ataTextoGerado) { toast('Gere a ata antes de arquivar', 'err'); return; }
+  if (!window.ArquivarSL) return;
+  const cond = (typeof getCondominioAtivo === 'function') ? getCondominioAtivo() : null;
+  const tipo = (document.getElementById('ata-tipo') || {}).value || '';
+  const data = ((document.getElementById('ata-data') || {}).value || '').trim();
+  const dataTitulo = data.replace(/\//g, '.').replace(/[^0-9.]/g, '').slice(0, 10);
+  const textoNaHora = _ataTextoGerado;
+  ArquivarSL.mostrar('ata-arquivar', {
+    tipo: 'ata',
+    titulo: ('ATA ASSEMBLEIA ' + tipo + ' ' + dataTitulo).replace(/\s+/g, ' ').trim(),
+    idSuperlogica: cond && cond.id_superlogica,
+    nomeCond: (cond && cond.nome) || (document.getElementById('ata-cond') || {}).value || '',
+    pdfBase64: async () => {
+      if (!window.jspdf || !window.jspdf.jsPDF) throw new Error('Biblioteca de PDF não carregou. Recarregue a página.');
+      const doc = montarAtaPDF(window.jspdf.jsPDF, textoNaHora);
+      return ArquivarSL.paraBase64(doc.output('arraybuffer'));
+    }
+  });
+  const el = document.getElementById('ata-arquivar');
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 async function copiarAtaTexto() {

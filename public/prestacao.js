@@ -1907,7 +1907,22 @@ function prestacaoAtualizarPeriodo() {
   prestacaoAtualizarBotao();
 }
 
+// T12: depois de gerar, oferece arquivar o PDF no Superlógica (documentos do condomínio).
+// Guarda condomínio e período da geração (a tela pode mudar depois).
+function prestacaoOferecerArquivo(pdfB64) {
+  if (!window.ArquivarSL || !pdfB64) return;
+  var periodo = prestacaoState.periodo || '';
+  ArquivarSL.mostrar('prest-arquivar', {
+    tipo: 'prestacao',
+    titulo: ('Prestação de contas ' + periodo).replace(/\s+/g, ' ').trim(),
+    idSuperlogica: prestacaoState.condIdSuperlogica,
+    nomeCond: prestacaoState.condNome || '',
+    pdfBase64: function () { return Promise.resolve(pdfB64); }
+  });
+}
+
 function prestacaoBaixarResultado(r) {
+  if (r && r.pdf_b64) prestacaoOferecerArquivo(r.pdf_b64);
   var fmtSel = document.querySelector('input[name="prest-formato"]:checked');
   var formato = fmtSel ? fmtSel.value : 'ambos';
   var base = r.nome_arquivo || ('Prestação de Contas ' + (prestacaoState.condNome || ''));
@@ -2213,6 +2228,7 @@ async function prestacaoGerarServico() {
 
       var msgStatus = partesStatus.length > 0 ? ' ' + partesStatus.join('. ') + '.' : '';
       toast('Prestação gerada: ' + dados.blocos + ' bloco(s). ' + baixados.join(' e ') + ' baixado(s).' + msgStatus, 'ok');
+      if (dados.pdf_b64) prestacaoOferecerArquivo(dados.pdf_b64);
     } else {
       toast('Nenhum arquivo foi baixado. Tente novamente ou contate o suporte.', 'err');
     }
