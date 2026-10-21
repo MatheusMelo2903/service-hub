@@ -97,7 +97,7 @@ const ok = (nome, fn) => Promise.resolve().then(fn).then(() => { n++; console.lo
         }
         if (caminho === 'caixa/index') return [{ id_contabanco_cb: '1', id_contabanco_mov: '5', dt_data_mov: '04/02/2026', vl_valor_mov: '1' }, { id_contabanco_cb: '2', id_contabanco_mov: '6', dt_data_mov: '04/02/2026', vl_valor_mov: '1' }];
         if (caminho === 'cobranca/index') return p.pagina === 1 ? [{ id_recebimento_recb: String(p.status === 'pendentes' ? 1 : 2), id_condominio_cond: String(p.idCondominio) }] : [];
-        if (caminho === 'auditoria/index') return [{ id_auditoria_aud: '1', dt_data_aud: '04/02/2026 10:00:00', st_texto_aud: 'Despesa#1 criada.', st_fantasia_cond: 'X' }, { id_auditoria_aud: '2', dt_data_aud: '04/02/2026 10:00:00', st_texto_aud: 'Despesa#2 criada.', st_fantasia_cond: 'EMPRESA' }];
+        if (caminho === 'auditoria/index') return [{ id_auditoria_aud: '1', dt_data_aud: '04/02/2026 10:00:00', st_texto_aud: 'Arquivo#1 vinculado a despesa#1.', st_fantasia_cond: 'X' }, { id_auditoria_aud: '2', dt_data_aud: '04/02/2026 10:00:00', st_texto_aud: 'Arquivo#2 vinculado a despesa#2.', st_fantasia_cond: 'EMPRESA' }];
         throw new Error('inesperado ' + caminho);
       },
     };
