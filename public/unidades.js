@@ -1446,7 +1446,31 @@ function abrirRevisao(contatos, sourceName, linhasOrigem) {
 // Abre a revisao a partir do resultado do Normalizador IA (familia B).
 function abrirRevisaoFromNormalizado() {
   if (!_normalizarRows || !_normalizarRows.length) { toast('Nada para revisar', 'err'); return; }
+  // Situação de cada linha da prévia (T06): falta obrigatório e "já existe no Superlógica"
+  // entram na revisão como Descartar (dá para mudar lá); dúvida entra como Incerto.
+  var sit = typeof situacaoLinhasNormalizado === 'function' ? situacaoLinhasNormalizado() : [];
+  var nErro = sit.filter(function(s) { return s.nivel === 'erro'; }).length;
+  var nEx = sit.filter(function(s) { return s.existe && s.nivel !== 'erro'; }).length;
+  if ((nErro || nEx) && !confirm(
+    (nErro ? nErro + ' linha(s) sem campo obrigatório (tipo, unidade ou nome)' : '') +
+    (nErro && nEx ? ' e ' : '') +
+    (nEx ? nEx + ' linha(s) que já existem no Superlógica' : '') +
+    ' vão para a revisão marcadas como Descartar. Você pode corrigir antes na prévia ou mudar o papel na revisão. Continuar?')) return;
   var contatos = inferirPapeis(_normalizarRows.map(linha26ParaContato));
+  contatos.forEach(function(c) {
+    var s = sit[c.id - 1];
+    if (!s) return;
+    if (s.nivel === 'erro') {
+      c.papel = 'descartar'; c.confianca = 'incerta';
+      c.motivo = 'Falta dado: ' + s.erros.join('; ');
+    } else if (s.existe) {
+      c.papel = 'descartar'; c.confianca = 'incerta';
+      c.motivo = s.motivos.filter(function(t) { return /Superlógica/.test(t); }).join('; ') + '. Mude o papel só se tiver certeza.';
+    } else if (s.nivel === 'duvida') {
+      c.confianca = 'incerta';
+      c.motivo = 'Conferir: ' + s.motivos.join('; ') + (c.motivo ? ' · ' + c.motivo : '');
+    }
+  });
   abrirRevisao(contatos, _normalizarSourceName || 'normalizado', _normalizarRows.length);
 }
 

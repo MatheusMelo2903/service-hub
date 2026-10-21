@@ -3294,6 +3294,30 @@ app.put('/api/condominio/:idSuperlogica/alertas/config', requireAuth, express.js
   res.json({ id_superlogica: Number(id), saldo_minimo: saldo });
 });
 
+// POST /api/condominio/:id/unidades/conferir — Normalizar via IA (T06): marca na prévia
+// as linhas cuja unidade ou pessoa já existe no Superlógica. Só leitura. Recebe só
+// unidade, bloco, nome e documento de cada linha; devolve sim/não por linha (os dados
+// dos cadastros existentes não saem do servidor). Cache curto: logo após uma importação
+// a conferência pode levar até 2 minutos para enxergar o que acabou de entrar.
+const _cacheConferencia = slModulo.consulta.criarCache(2 * 60 * 1000, 50, 90 * 1000);
+app.post('/api/condominio/:idSuperlogica/unidades/conferir', requireAuth, express.json({ limit: '2mb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  const linhas = req.body && Array.isArray(req.body.linhas) ? req.body.linhas : null;
+  if (!linhas || linhas.length > 5000) return res.status(400).json({ erro: 'linhas_invalidas', detalhe: 'Envie de 0 a 5000 linhas.' });
+  const txt = (v) => String(v == null ? '' : v).slice(0, 200);
+  const limpas = linhas.map((l) => ({ unidade: txt(l && l.unidade), bloco: txt(l && l.bloco), nome: txt(l && l.nome), cpf: txt(l && l.cpf), cnpj: txt(l && l.cnpj) }));
+  if (!(await exigirLeituraSuperlogica(req, res))) return;
+  try {
+    const ex = await _cacheConferencia.pegar('conf:' + id, () => slModulo.conferencia.lerUnidades(clienteSL(), id));
+    res.json({ total_existentes: ex.itens.length, truncado: ex.truncado, resultado: slModulo.conferencia.conferir(ex.itens, limpas) });
+  } catch (e) {
+    console.warn('[conferir-unidades] ' + id + ' falhou: ' + (e && e.message));
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler as unidades no Superlógica agora. Tente de novo em alguns minutos.' });
+  }
+});
+
 // Agenda: 1 minuto depois de subir e depois todo dia às 6h de Brasília (9h UTC).
 function _agendarSyncDiario() {
   const agora = new Date();

@@ -24,11 +24,13 @@ function idValido(v) {
 }
 
 const consulta = require('./consulta');
+const conferencia = require('./conferencia');
 
 module.exports = {
   cliente,
   idValido,
   consulta,
+  conferencia,
   buscarCadastro: (cli, id, opts) => cadastro.buscarCadastro(cli, id, opts),
   montarCadastro: cadastro.montarCadastro,
 };
