@@ -54,7 +54,7 @@ function criarRotasBalancete(app, h) {
     if (s.estado === 'ocupado') return res.status(429).json({ erro: 'ocupado', detalhe: 'Outra conferência está rodando. Tente de novo em 2 minutos.' });
     if (s.estado === 'rodando') return res.status(202).json({ estado: 'rodando', desde: new Date(s.inicio).toISOString(), detalhe: 'Baixando e lendo o PDF. Leva de 1 a 3 minutos; a tela pergunta de novo sozinha.' });
     if (s.estado === 'erro') {
-      const msg = { nao_encontrada: 'Essa impressão não é um 900A deste condomínio e mês.', outro_mes: 'Essa impressão é de outro mês.', leitura: 'Não foi possível ler o PDF.', pdf_grande_demais: 'O PDF é maior que o limite.' }[s.erro] || 'Não foi possível conferir agora.';
+      const msg = { nao_encontrada: 'Essa impressão não é um 900A deste condomínio e mês.', outro_mes: 'Essa impressão é de outro mês.', leitura: 'Não foi possível ler o PDF.', memoria: 'O PDF é grande demais para ler aqui.', tempo_esgotado: 'A leitura do PDF passou do tempo.', saida_grande: 'O PDF tem texto demais para ler aqui.', pdf_grande_demais: 'O PDF é maior que o limite.' }[s.erro] || 'Não foi possível conferir agora.';
       return res.status(s.erro === 'nao_encontrada' || s.erro === 'outro_mes' ? 404 : 502).json({ estado: 'erro', erro: s.erro, detalhe: msg + ' Use "Conferir de novo" para repetir.' });
     }
     res.json({ estado: 'pronto', concluido_em: new Date(s.fim).toISOString(), resultado: s.resultado });

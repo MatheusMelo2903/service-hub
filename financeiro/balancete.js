@@ -355,6 +355,7 @@ async function despesasLiquidadas(cliente, idCondominio, comp) {
 // Itens esperados conforme a seleção que gerou a impressão (pelo título "900A - <nome da seleção>").
 // Seleção NOVA (pessoal, a API não devolve os itens): ITENS_NOVA. Seleções fixas do condomínio:
 // lidas em relatoriosselecao/index. Seleção desconhecida: null (itens não conferidos).
+// Ids conferidos na tela de Relatórios do Superlógica (links 900A?ID_SELECAO_RLS=1, 2, 3, 4, 5 e 11) em 21/10/2026.
 const SELECOES_FIXAS = { 'prestacao de contas': '1', 'prestacao de contas resumida': '2', 'prestacao de contas anual': '3', 'prestacao de contas na web': '4', 'prestacao de contas no boleto': '5', 'prestacao de contas da administracao': '11' };
 async function itensEsperados(cliente, idCondominio, titulo) {
   const nome = semAcento(String(titulo || '').replace(/^900A\s*-?\s*/i, '')).toLowerCase().replace(/\s+/g, ' ').trim();
@@ -377,7 +378,7 @@ async function itensEsperados(cliente, idCondominio, titulo) {
 // Baixa o PDF de uma impressão para um arquivo temporário. documentos/download devolve 302 para o
 // armazenamento do Superlógica; só segue para https em *.superlogica.com ou *.superlogica.net, e as
 // chaves vão só no primeiro pedido (api.superlogica.net). Teto de tamanho e de tempo total.
-const MAX_PDF = Math.min(600, Math.max(10, Number(process.env.BALANCETE_PDF_MAX_MB) || 400)) * 1024 * 1024;
+const MAX_PDF = Math.min(600, Math.max(10, Number(process.env.BALANCETE_PDF_MAX_MB) || 300)) * 1024 * 1024;
 const TEMPO_DOWNLOAD_MS = 8 * 60 * 1000;
 const HOST_ARMAZENAMENTO = /(^|\.)superlogica\.(com|net)$/i;
 function baixarImpressao({ base, appToken, accessToken }, id, destino) {
@@ -400,7 +401,9 @@ function baixarImpressao({ base, appToken, accessToken }, id, destino) {
       req = https.request({ hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: 'GET', headers }, (resp) => {
         if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location && saltos > 0) {
           resp.resume();
-          return pedir(new URL(resp.headers.location, url).toString(), {}, saltos - 1);
+          let prox;
+          try { prox = new URL(resp.headers.location, url).toString(); } catch (e) { return fim(Object.assign(new Error('destino_invalido'), { status: 502 })); }
+          return pedir(prox, {}, saltos - 1);
         }
         if (resp.statusCode !== 200) { resp.resume(); return fim(Object.assign(new Error('download_http_' + resp.statusCode), { status: resp.statusCode === 404 ? 404 : 502 })); }
         if (Number(resp.headers['content-length']) > MAX_PDF) { resp.resume(); return fim(Object.assign(new Error('pdf_grande_demais'), { codigo: 'pdf_grande_demais' })); }
@@ -438,7 +441,7 @@ function lerPdf(caminho, { tempoMs = 10 * 60 * 1000 } = {}) {
   return new Promise((ok, falha) => {
     let filho;
     try {
-      filho = spawn(process.execPath, [path.join(__dirname, 'balancete-pdf-worker.js'), caminho, String(MAX_PDF)], {
+      filho = spawn(process.execPath, ['--max-old-space-size=1024', path.join(__dirname, 'balancete-pdf-worker.js'), caminho, String(MAX_PDF)], {
         stdio: ['ignore', 'pipe', 'ignore'], env: { PATH: process.env.PATH || '', NODE_PATH: process.env.NODE_PATH || '', NODE_ENV: process.env.NODE_ENV || '' },
       });
     } catch (e) { return falha(Object.assign(new Error('leitor_nao_subiu'), { codigo: 'leitura' })); }
@@ -581,7 +584,8 @@ function iniciarConferencia({ cred, cliente, idCondominio, competencia: comp, id
   })().then((resultado) => {
     Object.assign(reg, { estado: 'pronto', fim: Date.now(), resultado });
   }).catch((e) => {
-    Object.assign(reg, { estado: 'erro', fim: Date.now(), erro: (e && (e.codigo || e.message)) || 'falha' });
+    const cod = e && (e.message === 'memoria' || e.message === 'tempo_esgotado' || e.message === 'saida_grande') ? e.message : (e && (e.codigo || e.message)) || 'falha';
+    Object.assign(reg, { estado: 'erro', fim: Date.now(), erro: cod });
     if (log) log('[balancete] conferência ' + id + ' falhou: ' + (e && e.message));
   }).finally(() => {
     emAndamento = null;

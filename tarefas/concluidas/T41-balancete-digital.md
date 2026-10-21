@@ -29,4 +29,4 @@ comprovante no PDF, nenhuma página em branco ou repetida; carta com %administra
 
 ## Para o Matheus validar
 Abrir Financeiro como GESTOR, escolher Victoria Bay no topo, mês 2026-09, Listar 900A do mês, Conferir a 647731.
-Antes do deploy: conferir se o serviço no Railway tem memória para o leitor (cerca de 800 MB por conferência; uma por vez).
+Antes do deploy: o serviço no Railway precisa de cerca de 1,2 GB livres para o leitor (uma conferência por vez; PDF até 300 MB, BALANCETE_PDF_MAX_MB; teto do leitor BALANCETE_LEITOR_MAX_MB, padrão 1200).

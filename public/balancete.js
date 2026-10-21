@@ -115,13 +115,15 @@
     var it = r.itens || { presentes: [], faltando: [] };
     var mesFora = r.mes_fora || [], branco = r.paginas_em_branco || [], rep = r.paginas_repetidas || [], campos = r.campos_nao_preenchidos || [];
     var semComp = c.sem_comprovante_no_pdf || [], extra = c.no_pdf_sem_liquidacao_no_mes || [], parcRep = c.parcela_repetida || [];
+    var semItens = !!it.nao_conferido;
     var html = '<div style="margin-top:10px;font-size:13px"><b>Impressão ' + esc(idImp) + '</b>: ' + esc(r.total_paginas) + ' páginas, mês ' + esc(r.mes)
-      + (r.ok ? '. Tudo conferido, pode seguir para publicar no Superlógica.' : '. ' + esc(r.problemas) + ' ponto(s) para olhar antes de publicar.') + '</div>';
+      + (r.ok && !semItens ? '. Tudo conferido, pode seguir para publicar no Superlógica.' : r.ok ? '. Sem problemas no que foi conferido, mas os itens da seleção não foram conferidos.' : '. ' + esc(r.problemas) + ' ponto(s) para olhar antes de publicar.') + '</div>';
     if (r.aviso) html += '<div class="hint" style="color:var(--danger)">' + esc(r.aviso) + '</div>';
     html += linha(!mesFora.length, 'Mês em todas as capas e relatórios', mesFora.map(function (m) {
       return esc(m.codigo + ' ' + m.titulo + ' (pág. ' + m.paginas + '): esperado ' + m.esperado + ', saiu ' + m.achado);
     }).join('<br>'));
-    html += linha(!it.faltando.length, 'Itens da seleção: ' + it.presentes.length + ' de ' + it.esperados, it.faltando.length ? 'Faltando: ' + esc(it.faltando.join(', ')) : '');
+    html += semItens ? linha(false, 'Itens da seleção não conferidos', esc(it.nao_conferido))
+      : linha(!it.faltando.length, 'Itens da seleção: ' + it.presentes.length + ' de ' + it.esperados, it.faltando.length ? 'Faltando: ' + esc(it.faltando.join(', ')) : '');
     html += linha(!semComp.length && !extra.length && !parcRep.length, 'Comprovantes: ' + (c.parcelas_no_pdf || 0) + ' parcelas no PDF (' + (c.paginas || 0) + ' páginas) para ' + (c.despesas_liquidadas || 0) + ' despesas pagas no mês'
       + (c.movimentacoes_diretas ? ', mais ' + c.movimentacoes_diretas + ' movimentações diretas' : ''),
       semComp.map(function (d) { return 'Paga sem comprovante no PDF: parcela ' + esc(d.parcela) + ' ' + esc(d.fornecedor) + ' ' + esc(brl(d.valor)) + ' (' + esc(d.liquidacao) + ', ' + esc(d.anexos) + ' anexo(s))'; })
