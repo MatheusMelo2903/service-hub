@@ -34,9 +34,10 @@ async function paginas(cliente, rota, params, max) {
 }
 
 // Descrição do CRM sem email e telefone (o registro automático cita o email do morador).
+// Telefone, celular, CPF: qualquer trecho com 8 dígitos ou mais (contando separadores).
 function semContato(t) {
   return limpar(t).replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, 'o email cadastrado')
-    .replace(/(\+?\d[\d\s().]{7,}\d)/g, 'o telefone cadastrado').slice(0, 200);
+    .replace(/\+?\(?\d[\d\s().-]{6,}\d/g, (m) => (m.replace(/\D/g, '').length >= 8 ? 'o número cadastrado' : m)).slice(0, 200);
 }
 
 // Último registro do CRM por unidade nos últimos 120 dias: o último contato feito por alguém
@@ -67,7 +68,8 @@ async function ultimosContatos(cliente, id, hoje) {
 async function painelCondominio(cliente, id, hoje) {
   const [inad, crm] = await Promise.all([
     paginas(cliente, 'inadimplencia/index', { idCondominio: id, posicaoEm: dataSL(hoje), comValoresAtualizados: 1, apenasResumoInad: 0 }, 12),
-    ultimosContatos(cliente, id, hoje).catch(() => null),
+    // Teto próprio para o CRM: se demorar, o painel sai sem o último contato (não cai inteiro).
+    Promise.race([ultimosContatos(cliente, id, hoje).catch(() => null), new Promise((ok) => setTimeout(() => ok(null), 60000))]),
   ]);
   const unidades = inad.map((u) => {
     const recs = (Array.isArray(u.recebimento) ? u.recebimento : []).map((rc) => {
@@ -91,6 +93,7 @@ async function painelCondominio(cliente, id, hoje) {
       dias_atraso_maior: recs.reduce((m, r) => Math.max(m, r.dias), 0),
       juridico: num(u.saldo_juridico) > 0,
       recebimentos: recs.slice(0, 120),
+      recebimentos_cortados: recs.length > 120,
       ultimo_contato: c.humano || null,
       ultimo_evento: c.qualquer || null,
     };
@@ -101,7 +104,7 @@ async function painelCondominio(cliente, id, hoje) {
     quantidade_unidades: unidades.length,
     total_original: cent(unidades.reduce((s, u) => s + u.valor_original, 0)),
     total_corrigido: cent(unidades.reduce((s, u) => s + u.valor_corrigido, 0)),
-    sem_contato_90_dias: unidades.filter((u) => !u.ultimo_contato || diasDesde(u.ultimo_contato.data, hoje) > 90).length,
+    sem_contato_90_dias: crm && !crm.cortado ? unidades.filter((u) => !u.ultimo_contato || diasDesde(u.ultimo_contato.data, hoje) > 90).length : null,
     crm_indisponivel: !crm,
     cortado: !!inad.cortado || !!(crm && crm.cortado),
   };
@@ -132,7 +135,8 @@ async function simularAcordo(cliente, id, idUnidade, recebimentos, opcoes, hoje)
   const principal = lista.find((x) => String(x.fl_principal_cb) === '1') || lista[0];
   if (!principal) { const e = new Error('sem_conta'); e.status = 422; throw e; }
   const total = cent(apro.reduce((s, a) => s + num(a.total_receita), 0));
-  const entrada = cent(Math.max(0, Math.min(num(opcoes.entrada), total)));
+  const entrada = cent(Math.max(0, num(opcoes.entrada)));
+  if (entrada >= total) { const e = new Error('entrada_maior_que_total'); e.status = 400; throw e; }
   const q = {
     TOTAL_RECEITAAPRO: total, PRIORIZARHONORARIOS: 0, SIMULA_TOTAL: total, SIMULA_ENTRADA: entrada,
     NM_PARCELA_ACO: opcoes.parcelas, FL_EMITIR_RECIBO: 0, DT_PRIMEIRA_PARCELA: dataSL(opcoes.primeira),
@@ -161,7 +165,9 @@ async function simularAcordo(cliente, id, idUnidade, recebimentos, opcoes, hoje)
 
 // Link da 2ª via de uma cobrança da unidade, atualizada para a data pedida.
 async function linkSegundaVia(cliente, id, recebimento, vencimentoOriginal, atualizarPara) {
-  const j = await cliente.get('cobranca/gerarlinksegundavia', {
+  // Chamada única (sem repetir em erro): se o Superlógica registrar o boleto atualizado,
+  // repetir poderia duplicar o registro.
+  const j = await (cliente.getUmaVez || cliente.get)('cobranca/gerarlinksegundavia', {
     ID_CONDOMINIO_COND: id, ID_RECEBIMENTO_RECB: recebimento.id,
     DT_VENCIMENTO_RECB: vencimentoOriginal, DT_ATUALIZACAO_VENCIMENTO: dataSL(atualizarPara),
   });
@@ -171,4 +177,4 @@ async function linkSegundaVia(cliente, id, recebimento, vencimentoOriginal, atua
   return String(link);
 }
 
-module.exports = { painelCondominio, simularAcordo, linkSegundaVia, diasDesde, dataSL };
+module.exports = { painelCondominio, simularAcordo, linkSegundaVia, diasDesde, dataSL, semContato };

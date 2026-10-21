@@ -65,7 +65,16 @@ function criarCliente({ base, appToken, accessToken }) {
     e.corpo = ultima && ultima.json;
     throw e;
   }
-  return { get };
+  // Uma tentativa só, sem retry (para chamadas que não podem repetir). Mesmo formato do get.
+  async function getUmaVez1(caminho, params) {
+    const r = await getUmaVez(caminho, params);
+    if (r.status === 200) return r.json;
+    const e = new Error('superlogica_' + r.status);
+    e.status = r.status;
+    e.corpo = r.json;
+    throw e;
+  }
+  return { get, getUmaVez: getUmaVez1 };
 }
 
 // Executa tarefas assíncronas com no máximo n ao mesmo tempo.

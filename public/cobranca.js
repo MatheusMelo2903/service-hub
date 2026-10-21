@@ -26,15 +26,19 @@ async function cobJson(url, opts) {
 
 // Ao abrir a aba: monta a lista de carteiras (GESTOR vê todos os grupos do Superlógica).
 async function cobrancaAbrir() {
-  if (cobEstado.carregado || !window.AUTH_TOKEN) return;
-  cobEstado.carregado = true;
+  if (cobEstado.carregado || cobEstado.abrindo || !window.AUTH_TOKEN) return;
   var sel = document.getElementById('cob-carteira');
   if (!sel) return;
+  cobEstado.abrindo = true;
   if (window.CondSeletor && CondSeletor.lista() === null) await CondSeletor.carregar();
+  cobEstado.abrindo = false;
+  if (!window.CondSeletor || !CondSeletor.lista()) return; // tenta de novo na próxima abertura
+  cobEstado.carregado = true;
   sel.innerHTML = '<option value="meus">Meus condomínios</option><option value="ativo">Só o condomínio ativo</option>';
   if (window.USER_ROLE === 'GESTOR') {
     try {
       var g = await cobJson('/api/carteiras');
+      cobEstado.carteirasOk = true;
       (Array.isArray(g) ? g : []).forEach(function (c) {
         if (!c || !c.id) return;
         var o = document.createElement('option');
@@ -43,7 +47,7 @@ async function cobrancaAbrir() {
         o.dataset.ids = (c.condominios || []).join(',');
         sel.appendChild(o);
       });
-    } catch (e) { /* sem carteiras: fica com meus condomínios */ }
+    } catch (e) { cobEstado.carregado = false; /* sem carteiras agora: tenta de novo na próxima abertura */ }
   }
 }
 
@@ -64,6 +68,16 @@ function cobCondominiosEscolhidos() {
 // Carrega condomínio por condomínio (3 de cada vez), enchendo a tabela aos poucos.
 async function cobrancaCarregar(forcar) {
   var conds = cobCondominiosEscolhidos();
+  // Muitos condomínios = muitas leituras no Superlógica: confirma antes (sem janela do navegador).
+  var aviso = document.getElementById('cob-info');
+  if (conds.length > 30 && !cobEstado.confirmouGrande) {
+    cobEstado.confirmouGrande = true;
+    aviso.textContent = 'São ' + conds.length + ' condomínios: a leitura pode levar vários minutos. Clique em Carregar de novo para confirmar, ou escolha uma carteira menor.';
+    return;
+  }
+  cobEstado.confirmouGrande = false;
+  var det = document.getElementById('cob-unidades');
+  if (det) { det.style.display = 'none'; det.innerHTML = ''; }
   var seq = ++cobEstado.seq;
   var tab = document.getElementById('cob-tabela');
   var info = document.getElementById('cob-info');
@@ -85,7 +99,7 @@ async function cobrancaCarregar(forcar) {
         totalC += p.total_corrigido; totalU += p.quantidade_unidades;
         linha.innerHTML = '<td>' + cobEsc(c.nome) + (p.cortado ? ' <span class="ficha-sub">(lista cortada)</span>' : '') + '</td>'
           + '<td class="n">' + p.quantidade_unidades + '</td><td class="n">' + cobBRL(p.total_original) + '</td><td class="n">' + cobBRL(p.total_corrigido) + '</td>'
-          + '<td class="n">' + p.sem_contato_90_dias + (p.crm_indisponivel ? ' <span class="ficha-sub">(CRM indisponível)</span>' : '') + '</td>'
+          + '<td class="n">' + (p.sem_contato_90_dias == null ? '<span class="ficha-sub">sem dado</span>' : p.sem_contato_90_dias) + (p.crm_indisponivel ? ' <span class="ficha-sub">(CRM indisponível)</span>' : '') + '</td>'
           + '<td>' + (p.quantidade_unidades ? '<button class="btn btn-ghost cob-ver" data-id="' + cobEsc(c.id_superlogica) + '" style="font-size:11px;padding:4px 10px">Ver unidades</button>' : '') + '</td>';
         linha.dataset.total = p.total_corrigido;
       } catch (e) {
@@ -118,23 +132,25 @@ function cobVerUnidades(idSL) {
     + p.unidades.map(function (u, k) {
       var c = u.ultimo_contato;
       var contato = c ? cobEsc(c.data) + ' · ' + cobEsc(c.canal) + (c.por ? ' · ' + cobEsc(c.por) : '') + '<div class="ficha-sub">' + cobEsc(c.descricao) + '</div>'
-        : '<span class="ficha-erro" style="padding:0">sem contato registrado em 120 dias</span>';
+        : (p.crm_indisponivel ? '<span class="ficha-sub">CRM indisponível agora</span>' : '<span class="ficha-erro" style="padding:0">sem contato registrado em 120 dias</span>');
       var semAcordo = u.recebimentos.filter(function (r) { return !r.acordo; });
       var opc = semAcordo.slice(-24).map(function (r) { return '<option value="' + cobEsc(r.id) + '">' + cobEsc(r.vencimento) + ' · ' + cobBRL(r.corrigido) + '</option>'; }).join('');
       return '<tr><td>' + cobEsc(u.unidade) + (u.juridico ? ' <span class="ficha-tag">jurídico</span>' : '') + '</td><td>' + cobEsc(u.responsavel) + '</td>'
         + '<td class="n">' + u.cobrancas + '</td><td class="n">' + cobBRL(u.valor_corrigido) + '</td><td>' + contato + '</td>'
         + '<td style="white-space:nowrap">'
-        + (semAcordo.length ? '<button class="btn btn-ghost" style="font-size:11px;padding:4px 8px" onclick="cobAbrirAcordo(\'' + cobEsc(idSL) + '\',' + k + ')">Simular acordo</button>' : '<span class="ficha-sub">em acordo</span>')
+        + (semAcordo.length ? '<button class="btn btn-ghost cob-acao" data-acao="abrir" data-k="' + k + '" style="font-size:11px;padding:4px 8px">Simular acordo</button>' : '<span class="ficha-sub">em acordo</span>')
         + '</td></tr>'
         + '<tr class="cob-extra" id="cob-x-' + k + '" style="display:none"><td colspan="6">'
         + '<div class="cob-form">Parcelas <input type="number" min="1" max="60" value="6" class="cob-n" style="width:70px">'
         + ' Entrada R$ <input type="number" min="0" step="0.01" value="0" class="cob-e" style="width:110px">'
         + ' 1ª parcela <input type="date" class="cob-p" value="' + cobIsoDias(10) + '" style="width:150px">'
-        + ' <button class="btn btn-primary" style="font-size:11px;padding:5px 10px" onclick="cobSimular(\'' + cobEsc(idSL) + '\',' + k + ')">Simular</button></div>'
+        + ' <button class="btn btn-primary cob-acao" data-acao="simular" data-k="' + k + '" style="font-size:11px;padding:5px 10px">Simular</button></div>'
         + (gerencia && semAcordo.length ? '<div class="cob-form">2ª via do boleto <select class="cob-r" style="width:auto">' + opc + '</select> pagar até <input type="date" class="cob-a" value="' + ate + '" style="width:150px">'
-          + ' <button class="btn btn-ghost" style="font-size:11px;padding:5px 10px" onclick="cobSegundaVia(\'' + cobEsc(idSL) + '\',' + k + ')">Gerar link</button></div>' : '')
+          + ' <button class="btn btn-ghost cob-acao" data-acao="via" data-k="' + k + '" style="font-size:11px;padding:5px 10px">Gerar link</button></div>' : '')
         + '<div class="cob-res"></div></td></tr>';
     }).join('') + '</table>';
+  el.dataset.idsl = String(idSL);
+  el.dataset.seq = String(cobEstado.seq);
   el.style.display = '';
   el.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -178,12 +194,14 @@ async function cobSimular(idSL, k) {
   }
 }
 
-async function cobSegundaVia(idSL, k) {
+async function cobSegundaVia(idSL, k, btn) {
   var reg = cobEstado.paineis[idSL];
   var tr = document.getElementById('cob-x-' + k);
-  if (!reg || !tr) return;
+  if (!reg || !tr || (btn && btn.disabled)) return;
   var u = reg.p.unidades[k];
   var res = tr.querySelector('.cob-res');
+  if (btn) btn.disabled = true; // sem clique duplo: cada clique pode gerar um boleto atualizado
+  setTimeout(function () { if (btn) btn.disabled = false; }, 15000);
   res.innerHTML = '<div class="cond-loading">Gerando o link no Superlógica...</div>';
   try {
     var r = await cobJson('/api/cobranca/condominio/' + encodeURIComponent(idSL) + '/segunda-via', {
@@ -198,7 +216,16 @@ async function cobSegundaVia(idSL, k) {
 
 document.addEventListener('click', function (ev) {
   var b = ev.target.closest && ev.target.closest('.cob-ver');
-  if (b) cobVerUnidades(b.dataset.id);
+  if (b) { cobVerUnidades(b.dataset.id); return; }
+  var a = ev.target.closest && ev.target.closest('.cob-acao');
+  if (!a) return;
+  var det = document.getElementById('cob-unidades');
+  // A lista de unidades é do carregamento em que foi aberta; recarregou, ela some.
+  if (!det || det.dataset.seq !== String(cobEstado.seq)) return;
+  var idSL = det.dataset.idsl, k = parseInt(a.dataset.k, 10);
+  if (a.dataset.acao === 'abrir') cobAbrirAcordo(idSL, k);
+  else if (a.dataset.acao === 'simular') cobSimular(idSL, k);
+  else if (a.dataset.acao === 'via') cobSegundaVia(idSL, k, a);
 });
 document.addEventListener('auth:ready', function () {
   var p = document.getElementById('panel-cobranca');

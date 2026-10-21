@@ -3401,10 +3401,35 @@ async function lerCarteirasPerfis(id) {
 // ─────────────────────────────────────────────────────────────────────────
 const slCobranca = require('./superlogica/cobranca');
 const _cachePainelCob = slModulo.consulta.criarCache(15 * 60 * 1000, 300, 120 * 1000);
+const _forcarCob = new Map(); // id -> último Atualizar (no máximo um por minuto por condomínio)
 function _painelCobranca(id, forcar) {
   const hoje = _hojeBrasilia();
-  const chave = 'cob:' + id + ':' + hoje.toISOString().slice(0, 10) + (forcar ? ':' + Date.now() : '');
+  const chave = 'cob:' + id + ':' + hoje.toISOString().slice(0, 10);
+  if (forcar && Date.now() - (_forcarCob.get(id) || 0) > 60000) {
+    _forcarCob.set(id, Date.now());
+    _cachePainelCob.limpar(chave);
+  }
   return _cachePainelCob.pegar(chave, () => slCobranca.painelCondominio(clienteSL(), id, hoje));
+}
+// Carteira no servidor: quem não é GESTOR e tem carteira só lê (e gera 2ª via) dos
+// condomínios dela. Sem carteira, ou erro ao ler a carteira, segue a regra da tela (todos).
+async function _dentroDaCarteira(req, id) {
+  if (req.authMode === 'internal' || !SUPABASE_SERVICE_ROLE_KEY) return true;
+  try {
+    const perfil = await lerPerfil(req.user && req.user.sub);
+    if (!perfil || perfil.role === 'GESTOR') return true;
+    const mapa = await lerCarteirasPerfis(perfil.id);
+    const minhas = (mapa && mapa[perfil.id]) || [];
+    if (!minhas.length) return true;
+    const r = slModulo.carteiras.condominiosDasCarteiras(await gruposCarteiras(), minhas);
+    if (!r.carteiras.length) return true;
+    return r.ids_superlogica.includes(Number(id));
+  } catch (e) { return true; }
+}
+async function _exigirCarteira(req, res, id) {
+  if (await _dentroDaCarteira(req, id)) return true;
+  res.status(403).json({ erro: 'fora_da_carteira', detalhe: 'Esse condomínio não está na sua carteira.' });
+  return false;
 }
 function _dataISOparaDate(v) {
   const m = String(v || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -3419,6 +3444,7 @@ app.get('/api/cobranca/condominio/:idSuperlogica', requireAuth, async (req, res)
   const id = String(req.params.idSuperlogica || '');
   if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
   if (!(await exigirLeituraSuperlogica(req, res))) return;
+  if (!(await _exigirCarteira(req, res, id))) return;
   try {
     res.json(await _painelCobranca(id, req.query.forcar === '1'));
   } catch (e) {
@@ -3442,16 +3468,19 @@ app.post('/api/cobranca/condominio/:idSuperlogica/simular', requireAuth, express
   if (!(entrada >= 0) || !isFinite(entrada)) return res.status(400).json({ erro: 'entrada_invalida', detalhe: 'Entrada inválida.' });
   if (!primeira || primeira < hoje || (primeira - hoje) > 180 * 86400000) return res.status(400).json({ erro: 'data_invalida', detalhe: 'A primeira parcela deve ser entre hoje e 180 dias.' });
   if (!(await exigirLeituraSuperlogica(req, res))) return;
+  if (!(await _exigirCarteira(req, res, id))) return;
   try {
     const painel = await _painelCobranca(id, false);
     const u = painel.unidades.find((x) => x.id_unidade === String(b.id_unidade || ''));
     if (!u) return res.status(404).json({ erro: 'unidade_sem_atraso', detalhe: 'Essa unidade não está em atraso neste condomínio.' });
+    if (u.recebimentos_cortados) return res.status(422).json({ erro: 'cobrancas_demais', detalhe: 'Essa unidade tem cobranças demais para simular por aqui. Simule no Superlógica.' });
     const recs = u.recebimentos.filter((r) => !r.acordo).map((r) => r.id);
     if (!recs.length) return res.status(422).json({ erro: 'ja_em_acordo', detalhe: 'As cobranças dessa unidade já estão em acordo.' });
     const sim = await slCobranca.simularAcordo(clienteSL(), id, u.id_unidade, recs, { parcelas, entrada, primeira }, hoje);
     res.json(Object.assign({ unidade: u.unidade, responsavel: u.responsavel, cobrancas: recs.length }, sim));
   } catch (e) {
     console.warn('[cobranca-simular] ' + id + ' falhou: ' + (e && e.message));
+    if (e && e.message === 'entrada_maior_que_total') return res.status(400).json({ erro: e.message, detalhe: 'A entrada precisa ser menor que o total atualizado.' });
     if (e && e.status === 422) return res.status(422).json({ erro: e.message, detalhe: 'O Superlógica não montou a simulação para essa unidade. Confira no Superlógica.' });
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível simular agora. Tente de novo em alguns minutos.' });
   }
@@ -3473,12 +3502,14 @@ app.post('/api/cobranca/condominio/:idSuperlogica/segunda-via', requireAuth, exp
     try { p = await lerPerfil(req.user && req.user.sub); } catch (e) { p = null; }
     if (!p || (p.role !== 'GESTOR' && p.role !== 'GERENTE')) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Só gestor ou gerente pode gerar a 2ª via.' });
   }
+  if (!(await _exigirCarteira(req, res, id))) return;
   try {
     const painel = await _painelCobranca(id, false);
     const u = painel.unidades.find((x) => x.id_unidade === String(b.id_unidade || ''));
-    const r = u && u.recebimentos.find((x) => x.id === String(b.id_recebimento || ''));
+    const r = u && u.recebimentos.find((x) => x.id === String(b.id_recebimento || '') && !x.acordo);
     if (!r) return res.status(404).json({ erro: 'cobranca_nao_encontrada', detalhe: 'Essa cobrança não está em aberto para a unidade.' });
     const m = r.vencimento.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (!m) return res.status(422).json({ erro: 'sem_vencimento', detalhe: 'Essa cobrança está sem data de vencimento no Superlógica.' });
     const link = await slCobranca.linkSegundaVia(clienteSL(), id, r, m[2] + '/' + m[1] + '/' + m[3], pagarAte);
     const cad = await slModulo.buscarCadastro(clienteSL(), id).catch(() => null);
     const nomeCond = cad ? (cad.nome_fantasia || cad.nome) : '';
