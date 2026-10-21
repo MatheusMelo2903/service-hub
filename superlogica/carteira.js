@@ -114,8 +114,11 @@ function partesPhp(nome) {
 // Pedaço de nome que cita condomínio (sem olhar sinais: id_condominio_cond, idCondominio,
 // condominioatual, ID.CONDOMINIO.COND...). Na dúvida conta como condomínio (fechado).
 const citaCondominio = (p) => String(p).replace(/[^a-z0-9]/g, '').includes('condominio');
-// Prefixos de nome de bandeira (nome base já em minúsculas, como partesPhp devolve).
-const BANDEIRA = /^(somente|exibir|com|apenas|mostrar|incluir|fl_|flag)/;
+// Bandeiras conhecidas do Superlógica (nome base já em minúsculas, como partesPhp devolve).
+// Lista exata (C04, menor 1 da revisão dos menores da T18): um prefixo largo deixaria passar
+// calada uma bandeira desconhecida que alargue o resultado. Nome fora da lista conta como código.
+const BANDEIRAS = new Set(['somentecondominiosativos', 'exibircondominiosinativos']);
+const BANDEIRA = { test: (nome) => BANDEIRAS.has(String(nome).replace(/[^a-z0-9]/g, '')) };
 
 // Condomínios citados numa chamada ao proxy.
 //  explicitos: ids inteiros puros; todos: -1 ou 0 (lista geral); invalidos: nomes ou valores

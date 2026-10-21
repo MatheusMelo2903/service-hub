@@ -78,7 +78,10 @@
         if (r.ok) return r.json();
         // T18: 503 = o servidor não conseguiu conferir a carteira; não mostra todos (ele recusaria um a um).
         if (r.status === 503) return carteiraIndisponivel();
-        return { todas: true };
+        // C04: 401 e 403 seguem como antes (o servidor recusa um a um); outro erro (500, 502...)
+        // fecha igual ao 503 em vez de mostrar todos.
+        if (r.status === 401 || r.status === 403) return { todas: true };
+        return carteiraIndisponivel();
       })
       // Erro de rede ou tempo esgotado (8 s): igual ao 503, lista vazia e aviso para recarregar.
       // Vale também para GESTOR (fechado de propósito; recarregar resolve).

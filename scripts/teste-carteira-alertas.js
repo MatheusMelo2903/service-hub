@@ -207,8 +207,12 @@ function testesUnitarios() {
   const vazioIds = (r) => r.explicitos.length === 0 && r.todos === false && r.invalidos.length === 0;
   t('bandeira somenteCondominiosAtivos=1 ignorada', vazioIds(C.idsCondominio('unidades/index', [['somenteCondominiosAtivos', '1']])));
   t('bandeira somenteCondominiosAtivos=0 não vira todos', vazioIds(C.idsCondominio('unidades/index', [['somenteCondominiosAtivos', '0']])));
-  t('bandeiras exibir, com, apenas, mostrar, incluir, fl_ e flag ignoradas', ['exibirCondominiosInativos', 'comCondominio', 'apenasCondominioAtual', 'MOSTRARCONDOMINIOS', 'incluirCondominios', 'FL_CONDOMINIO_ATIVO', 'flagCondominio', 'somente.condominios']
+  t('bandeiras conhecidas ignoradas', ['exibirCondominiosInativos', 'EXIBIRCONDOMINIOSINATIVOS', 'somente.condominios.ativos', 'SOMENTECONDOMINIOSATIVOS']
     .every((n) => vazioIds(C.idsCondominio('unidades/index', [[n, '1']])) && vazioIds(C.idsCondominio('unidades/index', [[n, '0']]))));
+  // C04: nome fora da lista exata não é bandeira; 1 conta como condomínio 1 e 0 como todos (recusa para carteira).
+  t('nome parecido com bandeira conta como código', ['comCondominio', 'apenasCondominioAtual', 'MOSTRARCONDOMINIOS', 'incluirCondominios', 'FL_CONDOMINIO_ATIVO', 'flagCondominio', 'somente.condominios', 'exibirTodosCondominios']
+    .every((n) => C.idsCondominio('unidades/index', [[n, '1']]).explicitos[0] === 1 && C.idsCondominio('unidades/index', [[n, '0']]).todos === true));
+  t('gravação só com bandeira parecida conta código', C.idsCondominio('unidades/post', [['ID_CONDOMINIO_COND', '2'], ['comCondominio', '1']]).explicitos.join(',') === '2,1');
   t('bandeira com outro valor recusa', ['2', '136', '-1', '', ' 1', '1 ', '01', 'true', '1abc'].every((v) => {
     const r = C.idsCondominio('unidades/index', [['somenteCondominiosAtivos', v]]);
     return r.invalidos.length === 1 && r.explicitos.length === 0 && r.todos === false;
