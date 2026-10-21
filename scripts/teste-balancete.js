@@ -7,6 +7,8 @@ const http = require('http');
 const B = require('../financeiro/balancete');
 let ok = 0, falha = 0;
 const t = (nome, cond) => { if (cond) ok++; else { falha++; console.log('FALHOU: ' + nome); } };
+const pend = [];
+const P = (p) => pend.push(p.catch((e) => t('promessa sem exceção: ' + e.message, false)));
 
 // ── 1. funções puras ──
 t('competencia válida', B.competencia('2026-09').rotulo === 'Set/2026');
@@ -68,26 +70,40 @@ t('seleção do condomínio', B.selecaoGeracao().ID_SELECAO_RLS === '4' && !B.se
 process.env.BALANCETE_SELECAO = 'qualquer coisa';
 t('seleção inválida volta à NOVA', B.selecaoGeracao().ID_RELATORIOSELECAO_RLSU === '1');
 delete process.env.BALANCETE_SELECAO;
-B.pedirGeracao({ base: 'https://api.superlogica.net', appToken: 'x', accessToken: 'y' }, '136', '2026-09').then(() => t('não liberado recusa', false), (e) => t('não liberado recusa', e.codigo === 'nao_liberado'));
+P(B.pedirGeracao({ base: 'https://api.superlogica.net', appToken: 'x', accessToken: 'y' }, '136', '2026-09').then(() => t('não liberado recusa', false), (e) => t('não liberado recusa', e.codigo === 'nao_liberado')));
+P(B.pedirGeracao({ base: 'https://api.superlogica.net', appToken: 'x', accessToken: 'y' }, '94', B.mesAtualBrasilia()).then(() => t('mês aberto recusa', false), (e) => t('mês aberto recusa', e.codigo === 'mes_aberto')));
+t('palavras que não são mês', B.mesesCitados('mais de 2026; setor de 2025; outros/2024').length === 0);
+t('ano antigo não quebra', B.conferir([pg(1, ['W011A T (1)', 'D', 'Comparativo de Mar/2014 com os próximos 11 meses', 'x'])], { competencia: '2015-03', esperados: [] }).mes_fora.length === 1);
+t('página não lida acusa', B.conferir([pg(1, ['W037E T (1)', 'D', 'Posição em Set/2026', 'x'], { erro: true })], { competencia: '2026-09', esperados: [] }).paginas_em_branco.length === 1);
+t('sem seleção conhecida não confere itens', B.conferir([], { competencia: '2026-09' }).itens.nao_conferido !== undefined);
+P(B.baixarImpressao({ base: 'https://example.com', appToken: 'x', accessToken: 'y' }, '1', '/tmp/nao-usar.pdf').then(() => t('download só no Superlógica', false), (e) => t('download só no Superlógica', e.message === 'destino_nao_permitido')));
+P(B.baixarImpressao({ base: 'https://api.superlogica.net', appToken: 'x', accessToken: 'y' }, '1;2', '/tmp/nao-usar.pdf').then(() => t('download id inválido', false), (e) => t('download id inválido', e.codigo === 'id')));
+const quebrado = path.join(require('os').tmpdir(), 'balancete-teste-quebrado.pdf');
+fs.writeFileSync(quebrado, '%PDF-1.3 isto não é um pdf');
+P(B.lerPdf(quebrado).then(() => t('PDF quebrado recusa', false), (e) => t('PDF quebrado recusa', e.codigo === 'leitura')).finally(() => fs.unlinkSync(quebrado)));
+const clienteSel = { get: async (c, q) => (c === 'relatoriosselecao/index' && q.ID_SELECAO_RLS === '4' ? [{ nm_ordenacao_rls: '1', st_url_rls: 'https://x.superlogica.net/clients/condor/relatorios/id/035C?TITULO=EXTRATO&MODELO=1' }, { nm_ordenacao_rls: '0', st_url_rls: 'https://x.superlogica.net/clients/condor/relatorios/id/035F?POSICAOEM=0' }] : []) };
+P(B.itensEsperados(clienteSel, '94', '900A - Prestação de contas na Web').then((l) => t('itens da seleção do condomínio', l && l.length === 2 && l[0].codigo === '035F' && l[1].titulo === 'EXTRATO')));
+P(B.itensEsperados(clienteSel, '94', '900A - Prestação de contas na Web NOVA teste Hub').then((l) => t('itens da seleção NOVA', l === B.ITENS_NOVA)));
+P(B.itensEsperados(clienteSel, '94', '900A - Outra seleção qualquer').then((l) => t('seleção desconhecida', l === null)));
 t('nunca publica: sem impressoes/post nem email no módulo', !/impressoes\/post|impressoes\/email|FL_COMPARTILHAR/.test(fs.readFileSync(path.join(__dirname, '..', 'financeiro', 'balancete.js'), 'utf8').replace(/\/\/.*$/gm, '')));
 
 // ── 3. rotas com dublês (sem Superlógica) ──
 const express = require('express');
 const { criarRotasBalancete } = require('../financeiro/balancete-rotas');
 const app = express();
-let papel = 'GESTOR', financeiro = true, chamadasGerar = 0, iniciou = 0;
+let papel = 'GESTOR', financeiro = true, escrita = true, chamadasGerar = 0, iniciou = 0;
 const requireAuth = (req, res, next) => { req.user = { sub: 'u1', app_metadata: { role: papel } }; next(); };
 const requireGestor = (req, res, next) => (papel === 'GESTOR' ? next() : res.status(403).json({ erro: 'acesso_negado' }));
 const eventos = [];
 B.listarImpressoes = async () => [{ id: '647731', titulo: '900A', da_competencia: true }];
 B.pedirGeracao = async () => { chamadasGerar++; return { pedido: true, http: 504, id_impressao: '', aguardar: true }; };
 const estados = new Map();
-B.situacaoConferencia = (id) => estados.get(id) || null;
-B.iniciarConferencia = (o) => { iniciou++; const s = { estado: 'rodando', inicio: Date.now(), id_condominio: o.idCondominio, competencia: o.competencia }; estados.set(o.idImpressao, s); return s; };
+B.situacaoConferencia = (c, m, id) => estados.get(c + '|' + m + '|' + id) || null;
+B.iniciarConferencia = (o) => { iniciou++; const s = { estado: 'rodando', inicio: Date.now() }; estados.set(o.idCondominio + '|' + o.competencia + '|' + o.idImpressao, s); return s; };
 criarRotasBalancete(app, {
   requireAuth, requireGestor, express, idValido: (v) => /^[1-9][0-9]{0,8}$/.test(String(v || '')),
   exigirFinanceiro: async (req, res) => { if (financeiro) return true; res.status(403).json({ erro: 'modulo_sem_acesso' }); return false; },
-  exigirLeituraSuperlogica: async () => true, cred: () => ({}), cliente: () => ({}), auditar: (req, acao) => eventos.push(acao),
+  exigirLeituraSuperlogica: async () => true, exigirEscritaSuperlogica: async (req, res) => { if (escrita) return true; res.status(403).json({ erro: 'acesso_negado' }); return false; }, cred: () => ({}), cliente: () => ({}), auditar: (req, acao) => eventos.push(acao),
 });
 const srv = app.listen(0, async () => {
   const porta = srv.address().port;
@@ -114,11 +130,16 @@ const srv = app.listen(0, async () => {
     const c1 = await pedir('GET', '/api/financeiro/balancete/94/conferencia?competencia=2026-09&impressao=647731');
     t('conferência começa 202', c1.st === 202 && iniciou === 1 && eventos.includes('balancete_conferencia'));
     t('conferência não duplica', (await pedir('GET', '/api/financeiro/balancete/94/conferencia?competencia=2026-09&impressao=647731')).st === 202 && iniciou === 1);
-    t('resultado de outro condomínio 404', (await pedir('GET', '/api/financeiro/balancete/167/conferencia?competencia=2026-09&impressao=647731')).st === 404);
-    estados.get('647731').estado = 'pronto'; estados.get('647731').fim = Date.now(); estados.get('647731').resultado = { ok: true };
+    const e94 = estados.get('94|2026-09|647731');
+    e94.estado = 'pronto'; e94.fim = Date.now(); e94.resultado = { ok: true };
+    const outro = await pedir('GET', '/api/financeiro/balancete/167/conferencia?competencia=2026-09&impressao=647731');
+    t('outro condomínio não recebe o resultado', outro.st === 202 && !outro.j.resultado && iniciou === 2);
     const c2 = await pedir('GET', '/api/financeiro/balancete/94/conferencia?competencia=2026-09&impressao=647731');
     t('conferência pronta 200', c2.st === 200 && c2.j.resultado.ok === true);
     t('gerar não liberado 403', (await pedir('POST', '/api/financeiro/balancete/136/gerar', { competencia: '2026-09' })).st === 403 && chamadasGerar === 0);
+    escrita = false;
+    t('gerar sem escrita 403', (await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09' })).st === 403 && chamadasGerar === 0);
+    escrita = true;
     const g = await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09' });
     t('gerar liberado 202 e audita', g.st === 202 && chamadasGerar === 1 && eventos.includes('balancete_gerar'));
     t('gerar com mês ruim 400', (await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: 'x' })).st === 400 && chamadasGerar === 1);
@@ -137,6 +158,7 @@ const srv = app.listen(0, async () => {
       t('PDF da T28: acusa 011A, 037F, 037E e 061B', ['011A', '037F', '037E', '061B'].every((c) => velho.mes_fora.some((m) => m.codigo === c)));
     }
   }
+  await Promise.all(pend);
   console.log((falha ? 'FALHOU' : 'OK') + ': ' + ok + ' certos, ' + falha + ' falhas');
   process.exit(falha ? 1 : 0);
 });

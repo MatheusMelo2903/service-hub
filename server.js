@@ -3979,7 +3979,7 @@ app.get('/api/financeiro/condominio/:idSuperlogica/pre-balancete', requireAuth, 
 // T41 Balancete digital: lista dos 900A do mês, conferência automática do PDF (só leitura) e
 // geração sem publicar para condomínio liberado (BALANCETE_GERACAO_LIBERADA). Rotas em financeiro/balancete-rotas.js.
 require('./financeiro/balancete-rotas').criarRotasBalancete(app, {
-  requireAuth, requireGestor, express, exigirFinanceiro: _exigirFinanceiro, exigirLeituraSuperlogica, idValido: slModulo.idValido,
+  requireAuth, requireGestor, express, exigirFinanceiro: _exigirFinanceiro, exigirLeituraSuperlogica, exigirEscritaSuperlogica, idValido: slModulo.idValido,
   cred: () => ({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }),
   cliente: () => clienteSL(), auditar: (req, acao, det, susp) => auditoria.evento(req, acao, det, susp),
 });

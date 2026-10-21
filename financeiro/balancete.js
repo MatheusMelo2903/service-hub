@@ -13,7 +13,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const https = require('https');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 const semAcento = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -27,7 +27,7 @@ function competencia(str) {
   const m = /^(\d{4})-(\d{2})$/.exec(String(str || ''));
   if (!m) return null;
   const ano = Number(m[1]), mes = Number(m[2]);
-  if (ano < 2015 || ano > 2100 || mes < 1 || mes > 12) return null;
+  if (ano < 2000 || ano > 2100 || mes < 1 || mes > 12) return null;
   return { ano, mes, chave: m[1] + '-' + m[2], rotulo: MESES[mes - 1] + '/' + ano };
 }
 function somarMeses(c, n) {
@@ -42,7 +42,7 @@ const chaveDe = (ano, mes) => ano + '-' + String(mes).padStart(2, '0');
 function mesesCitados(trecho) {
   const t = semAcento(String(trecho || '')).replace(/com competencia em .*$/i, '');
   const out = [];
-  const reAbrev = /\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*\s*(?:\/|de)\s*(\d{4})\b/gi;
+  const reAbrev = /\b(jan|janeiro|fev|fevereiro|mar|marco|abr|abril|mai|maio|jun|junho|jul|julho|ago|agosto|set|setembro|out|outubro|nov|novembro|dez|dezembro)\s*(?:\/|de)\s*(\d{4})\b/gi;
   let m;
   while ((m = reAbrev.exec(t))) {
     const i = MESES.findIndex((x) => semAcento(x).toLowerCase() === m[1].slice(0, 3).toLowerCase());
@@ -67,7 +67,7 @@ function linhas(texto) { return String(texto || '').split('\n').map(limpar).filt
 
 function classificarPagina(p) {
   const ls = linhas(p.texto);
-  const out = { pagina: p.pagina, imagens: Number(p.imagens) || 0, desenhos: Number(p.desenhos) || 0, chars: ls.join(' ').length };
+  const out = { pagina: p.pagina, imagens: Number(p.imagens) || 0, desenhos: Number(p.desenhos) || 0, chars: ls.join(' ').length, erro: !!p.erro };
   const m = ls.length ? RX_CABECALHO.exec(ls[0]) : null;
   if (m && ls.length >= 2) {
     out.tipo = 'relatorio';
@@ -129,26 +129,27 @@ function montarSecoes(paginas) {
 // Relatórios de posição (003A, 002B, 060B) citam o último dia do mês; 020A cita "saldo em" do mês
 // anterior no corpo, mas o corpo não entra: só o cabeçalho (filtro) é conferido.
 const ANUAIS = new Set(['015G', '060B']);
+const rot = (chave) => (competencia(chave) || {}).rotulo || String(chave || '?');
 function conferirMesSecao(s, comp) {
-  const citados = mesesCitados(s.filtro);
+  const citados = mesesCitados(s.filtro).filter((c) => competencia(c));
   if (!citados.length) return null; // sem período no cabeçalho (carta, parecer): nada a conferir
   if (s.codigo === '011A') {
-    const ini = somarMeses(comp, -11);
+    const ini = somarMeses(comp, -11) || { chave: '', rotulo: '?' };
     const primeira = citados[0];
     const m = /pr[oó]ximos\s+(\d+)\s+meses/i.exec(s.filtro);
     const qtd = m ? Number(m[1]) : 0;
     if (primeira === ini.chave && qtd === 11) return null;
-    const ultima = primeira && qtd ? somarMeses(competencia(primeira), qtd) : null;
-    return { esperado: ini.rotulo + ' a ' + comp.rotulo, achado: (competencia(primeira) || {}).rotulo + (ultima ? ' a ' + ultima.rotulo : '') };
+    const ultima = primeira && qtd && competencia(primeira) ? somarMeses(competencia(primeira), qtd) : null;
+    return { esperado: ini.rotulo + ' a ' + comp.rotulo, achado: rot(primeira) + (ultima ? ' a ' + ultima.rotulo : '') };
   }
   if (ANUAIS.has(s.codigo)) {
     const ultimo = citados.slice().sort().pop();
     if (ultimo === comp.chave) return null;
-    return { esperado: 'até ' + comp.rotulo, achado: 'até ' + ((competencia(ultimo) || {}).rotulo || ultimo) };
+    return { esperado: 'até ' + comp.rotulo, achado: 'até ' + rot(ultimo) };
   }
   const fora = [...new Set(citados.filter((c) => c !== comp.chave))];
   if (!fora.length) return null;
-  return { esperado: comp.rotulo, achado: fora.map((c) => (competencia(c) || {}).rotulo || c).join(', ') };
+  return { esperado: comp.rotulo, achado: fora.map(rot).join(', ') };
 }
 
 // Itens esperados: lista de códigos na ordem da seleção (capas como '035C' com o título).
@@ -211,7 +212,8 @@ function conferirPaginas(secoes) {
   for (const s of secoes) {
     for (const p of s.paginas) {
       const anexo = (s.codigo === '061A' || s.codigo === '061B') && (p.corpo || 0) < 20;
-      if (p.tipo === 'vazia' && !p.imagens && p.desenhos < 3) emBranco.push({ pagina: p.pagina, motivo: 'página sem conteúdo' });
+      if (p.erro) emBranco.push({ pagina: p.pagina, motivo: 'página que o leitor não conseguiu ler' });
+      else if (p.tipo === 'vazia' && !p.imagens && p.desenhos < 3) emBranco.push({ pagina: p.pagina, motivo: 'página sem conteúdo' });
       else if (anexo && !p.imagens) emBranco.push({ pagina: p.pagina, motivo: 'anexo sem imagem (' + s.codigo + ')' });
       else if (p.tipo === 'relatorio' && s.codigo !== '061A' && s.codigo !== '061B' && (p.corpo || 0) < 5 && !p.imagens && p.desenhos < 10) emBranco.push({ pagina: p.pagina, motivo: 'relatório sem conteúdo (' + s.codigo + ')' });
     }
@@ -240,7 +242,7 @@ function marcarRepetidas(paginasBrutas, resultado) {
 }
 
 // Itens da seleção "Prestação de contas na Web NOVA teste Hub" (T28 e T41), na ordem. A API não
-// devolve os itens de uma seleção pessoal; para seleção do condomínio, itensDaSelecao lê da API.
+// devolve os itens de uma seleção pessoal; para as seleções do condomínio, itensEsperados lê da API.
 const ITENS_NOVA = [
   ['035F', 'Carta'], ['035A', 'Parecer'], ['035C', 'Capa', 'BALANCETE RESUMIDO'], ['015E', 'Balancete com aprovação'],
   ['035C', 'Capa', 'BALANCETE ANALITICO'], ['020A', 'Demonstrativo analítico'], ['035C', 'Capa', 'BALANCETE COMPARATIVO'],
@@ -269,7 +271,7 @@ function conferir(paginas, opcoes) {
     if (s.codigo === '061A' && ult && ult.codigo === '061A' && ult.achado === r.achado) { ult.paginas += ', ' + s.inicio; continue; }
     foraDoMes.push(Object.assign({ codigo: s.codigo, titulo: s.titulo, paginas: s.inicio === s.fim ? String(s.inicio) : s.inicio + ' a ' + s.fim }, r));
   }
-  const itens = conferirItens(secoes, opcoes.esperados || ITENS_NOVA);
+  const itens = Array.isArray(opcoes.esperados) ? conferirItens(secoes, opcoes.esperados) : { esperados: 0, presentes: [], faltando: [], nao_conferido: 'Seleção desconhecida: itens não conferidos.' };
   const comprovantes = conferirComprovantes(secoes, opcoes.despesas || []);
   const pags = marcarRepetidas(paginas, conferirPaginas(secoes));
   const campos = camposNaoPreenchidos(paginas);
@@ -295,10 +297,10 @@ function resumirSecoes(secoes) {
 // ── Superlógica (só GET) ──────────────────────────────────────────────────
 const sl = (d) => String(d.getUTCMonth() + 1).padStart(2, '0') + '/' + String(d.getUTCDate()).padStart(2, '0') + '/' + d.getUTCFullYear();
 const RX_900A = /^900A\b/;
-// "10/21/2026 14:52:59" -> Date (horário de Brasília)
-function dataSL(s) {
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(String(s || ''));
-  return m ? new Date(Date.UTC(+m[3], +m[1] - 1, +m[2], (+m[4] || 0) + 3, +m[5] || 0, +m[6] || 0)) : null;
+// Mês corrente no horário de Brasília ('AAAA-MM').
+function mesAtualBrasilia(agora) {
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).formatToParts(agora || new Date());
+  return p.find((x) => x.type === 'year').value + '-' + p.find((x) => x.type === 'month').value;
 }
 
 // Impressões do 900A de um mês: geradas do 1º dia do mês da prestação até hoje (no máximo 6 páginas de 50).
@@ -306,7 +308,7 @@ async function listarImpressoes(cliente, idCondominio, comp, agora) {
   const c = competencia(comp);
   if (!c) throw Object.assign(new Error('competencia_invalida'), { codigo: 'competencia' });
   const ini = new Date(Date.UTC(c.ano, c.mes - 1, 1));
-  const fim = agora || new Date();
+  const fim = new Date((agora || new Date()).getTime() + 24 * 3600 * 1000);
   if (ini > fim) throw Object.assign(new Error('competencia_futura'), { codigo: 'competencia' });
   const out = [];
   for (let pg = 1; pg <= 6; pg++) {
@@ -350,72 +352,147 @@ async function despesasLiquidadas(cliente, idCondominio, comp) {
   return out;
 }
 
+// Itens esperados conforme a seleção que gerou a impressão (pelo título "900A - <nome da seleção>").
+// Seleção NOVA (pessoal, a API não devolve os itens): ITENS_NOVA. Seleções fixas do condomínio:
+// lidas em relatoriosselecao/index. Seleção desconhecida: null (itens não conferidos).
+const SELECOES_FIXAS = { 'prestacao de contas': '1', 'prestacao de contas resumida': '2', 'prestacao de contas anual': '3', 'prestacao de contas na web': '4', 'prestacao de contas no boleto': '5', 'prestacao de contas da administracao': '11' };
+async function itensEsperados(cliente, idCondominio, titulo) {
+  const nome = semAcento(String(titulo || '').replace(/^900A\s*-?\s*/i, '')).toLowerCase().replace(/\s+/g, ' ').trim();
+  if (/nova teste hub/.test(nome)) return ITENS_NOVA;
+  if (!nome) return /^usuario:1$/.test(String(process.env.BALANCETE_SELECAO || 'usuario:1')) ? ITENS_NOVA : null;
+  const idSel = SELECOES_FIXAS[nome];
+  if (!idSel) return null;
+  const j = await cliente.get('relatoriosselecao/index', { ID_EMPRESA_RLS: idCondominio, ID_SELECAO_RLS: idSel });
+  const arr = Array.isArray(j) ? j : (j && Array.isArray(j.data) ? j.data : null);
+  if (!arr || !arr.length) return null;
+  return arr.slice().sort((a, b) => Number(a.nm_ordenacao_rls) - Number(b.nm_ordenacao_rls)).map((x) => {
+    const u = String(x.st_url_rls || '');
+    const cod = (/\/id\/(\d{3}[A-Z])/.exec(u) || [])[1] || '';
+    let tit = '';
+    try { tit = cod === '035C' ? (new URL(u, 'https://x.superlogica.net').searchParams.get('TITULO') || '') : ''; } catch (e) { tit = ''; }
+    return { codigo: cod, titulo: tit, rotulo: cod + (tit ? ' Capa ' + tit : '') };
+  }).filter((x) => x.codigo);
+}
+
 // Baixa o PDF de uma impressão para um arquivo temporário. documentos/download devolve 302 para o
-// armazenamento do Superlógica; só segue para https em *.superlogica.com ou *.superlogica.net, sem as chaves.
-const MAX_PDF = Number(process.env.BALANCETE_PDF_MAX_MB || 600) * 1024 * 1024;
+// armazenamento do Superlógica; só segue para https em *.superlogica.com ou *.superlogica.net, e as
+// chaves vão só no primeiro pedido (api.superlogica.net). Teto de tamanho e de tempo total.
+const MAX_PDF = Math.min(600, Math.max(10, Number(process.env.BALANCETE_PDF_MAX_MB) || 400)) * 1024 * 1024;
+const TEMPO_DOWNLOAD_MS = 8 * 60 * 1000;
 const HOST_ARMAZENAMENTO = /(^|\.)superlogica\.(com|net)$/i;
 function baixarImpressao({ base, appToken, accessToken }, id, destino) {
   if (!/^\d{1,12}$/.test(String(id))) return Promise.reject(Object.assign(new Error('id_invalido'), { codigo: 'id' }));
-  const pedir = (url, headers, saltos) => new Promise((ok, falha) => {
-    const u = new URL(url);
-    if (u.protocol !== 'https:' || !HOST_ARMAZENAMENTO.test(u.hostname)) return falha(Object.assign(new Error('destino_nao_permitido'), { status: 502 }));
-    const r = https.request({ hostname: u.hostname, path: u.pathname + u.search, method: 'GET', headers }, (resp) => {
-      if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location && saltos > 0) {
-        resp.resume();
-        return pedir(new URL(resp.headers.location, url).toString(), {}, saltos - 1).then(ok, falha);
-      }
-      if (resp.statusCode !== 200) { resp.resume(); return falha(Object.assign(new Error('download_http_' + resp.statusCode), { status: resp.statusCode === 404 ? 404 : 502 })); }
-      let n = 0;
-      const w = fs.createWriteStream(destino, { mode: 0o600 });
-      resp.on('data', (c) => { n += c.length; if (n > MAX_PDF) { resp.destroy(); w.destroy(); falha(Object.assign(new Error('pdf_grande_demais'), { status: 413 })); } });
-      resp.pipe(w);
-      w.on('finish', () => ok({ bytes: n }));
-      w.on('error', (e) => falha(e));
-      resp.on('error', (e) => falha(e));
-    });
-    r.setTimeout(300000, () => r.destroy(new Error('tempo_esgotado')));
-    r.on('error', (e) => falha(Object.assign(e, { status: e.status || 504 })));
-    r.end();
+  return new Promise((ok, falha) => {
+    let acabou = false, req = null, escrita = null;
+    const fim = (e, v) => {
+      if (acabou) return;
+      acabou = true; clearTimeout(prazo);
+      if (e) { try { if (req) req.destroy(); } catch (x) { /* nada */ } try { if (escrita) escrita.destroy(); } catch (x) { /* nada */ } }
+      // Só resolve depois que o arquivo fechou: quem chama pode apagar a pasta sem escrita pendente.
+      const fechar = (cb) => (escrita && !escrita.closed ? escrita.once('close', cb) : cb());
+      fechar(() => (e ? falha(e) : ok(v)));
+    };
+    const prazo = setTimeout(() => fim(Object.assign(new Error('tempo_esgotado'), { status: 504 })), TEMPO_DOWNLOAD_MS);
+    const pedir = (url, headers, saltos) => {
+      let u;
+      try { u = new URL(url); } catch (e) { return fim(Object.assign(new Error('destino_invalido'), { status: 502 })); }
+      if (u.protocol !== 'https:' || !HOST_ARMAZENAMENTO.test(u.hostname)) return fim(Object.assign(new Error('destino_nao_permitido'), { status: 502 }));
+      req = https.request({ hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: 'GET', headers }, (resp) => {
+        if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location && saltos > 0) {
+          resp.resume();
+          return pedir(new URL(resp.headers.location, url).toString(), {}, saltos - 1);
+        }
+        if (resp.statusCode !== 200) { resp.resume(); return fim(Object.assign(new Error('download_http_' + resp.statusCode), { status: resp.statusCode === 404 ? 404 : 502 })); }
+        if (Number(resp.headers['content-length']) > MAX_PDF) { resp.resume(); return fim(Object.assign(new Error('pdf_grande_demais'), { codigo: 'pdf_grande_demais' })); }
+        let n = 0;
+        escrita = fs.createWriteStream(destino, { mode: 0o600 });
+        resp.on('data', (c) => { n += c.length; if (n > MAX_PDF) fim(Object.assign(new Error('pdf_grande_demais'), { codigo: 'pdf_grande_demais' })); });
+        resp.on('error', (e) => fim(e));
+        escrita.on('error', (e) => fim(e));
+        escrita.on('finish', () => fim(null, { bytes: n }));
+        resp.pipe(escrita);
+      });
+      req.setTimeout(120000, () => fim(Object.assign(new Error('sem_resposta'), { status: 504 })));
+      req.on('error', (e) => fim(Object.assign(e, { status: e.status || 504 })));
+      req.end();
+    };
+    pedir(base + '/v2/condor/documentos/download?id=' + encodeURIComponent(id), { app_token: appToken, access_token: accessToken }, 3);
   });
-  return pedir(base + '/v2/condor/documentos/download?id=' + encodeURIComponent(id), { app_token: appToken, access_token: accessToken }, 3);
 }
 
-// Lê o PDF num processo separado com teto de memória e de tempo; devolve as páginas.
-function lerPdf(caminho, { tempoMs = 10 * 60 * 1000, memoriaMb = 1536 } = {}) {
+// Memória do processo filho (Linux: /proc; Mac: ps).
+function memoriaDe(pid) {
+  return new Promise((ok) => {
+    fs.readFile('/proc/' + pid + '/statm', 'utf8', (e, t) => {
+      if (!e) return ok(Number(String(t).split(' ')[1]) * 4096 || 0);
+      execFile('ps', ['-o', 'rss=', '-p', String(pid)], { timeout: 2000 }, (e2, out) => ok(e2 ? 0 : (Number(String(out).trim()) || 0) * 1024));
+    });
+  });
+}
+// Lê o PDF num processo separado, sem os segredos do servidor no ambiente, com teto de memória
+// medido de fora (o PDF fica fora do heap do V8) e de tempo. Mata o filho se o servidor sair.
+const MEMORIA_LEITOR = Math.max(300, Number(process.env.BALANCETE_LEITOR_MAX_MB) || 1200) * 1024 * 1024;
+const filhosVivos = new Set();
+process.once('exit', () => { for (const f of filhosVivos) { try { f.kill('SIGKILL'); } catch (e) { /* nada */ } } });
+function lerPdf(caminho, { tempoMs = 10 * 60 * 1000 } = {}) {
   return new Promise((ok, falha) => {
-    const filho = spawn(process.execPath, ['--max-old-space-size=' + memoriaMb, path.join(__dirname, 'balancete-pdf-worker.js'), caminho], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let filho;
+    try {
+      filho = spawn(process.execPath, [path.join(__dirname, 'balancete-pdf-worker.js'), caminho, String(MAX_PDF)], {
+        stdio: ['ignore', 'pipe', 'ignore'], env: { PATH: process.env.PATH || '', NODE_PATH: process.env.NODE_PATH || '', NODE_ENV: process.env.NODE_ENV || '' },
+      });
+    } catch (e) { return falha(Object.assign(new Error('leitor_nao_subiu'), { codigo: 'leitura' })); }
+    filhosVivos.add(filho);
     const paginas = [];
-    let resto = '', fim = null, erro = null;
-    const relogio = setTimeout(() => { erro = 'tempo_esgotado'; filho.kill('SIGKILL'); }, tempoMs);
+    let resto = '', fimLeitura = null, erro = null, acabou = false, medindo = false;
+    const acabar = (motivo) => {
+      if (motivo && !erro) erro = motivo;
+      try { if (filho.exitCode === null) filho.kill('SIGKILL'); } catch (e) { /* nada */ }
+    };
+    const relogio = setTimeout(() => acabar('tempo_esgotado'), tempoMs);
+    const vigia = setInterval(async () => {
+      if (medindo || acabou) return;
+      medindo = true;
+      const m = await memoriaDe(filho.pid);
+      medindo = false;
+      if (m > MEMORIA_LEITOR) acabar('memoria');
+    }, 500);
     filho.stdout.on('data', (c) => {
       resto += c.toString('utf8');
+      if (resto.length > 50 * 1024 * 1024) return acabar('saida_grande');
       let i;
       while ((i = resto.indexOf('\n')) >= 0) {
         const l = resto.slice(0, i); resto = resto.slice(i + 1);
-        try { const o = JSON.parse(l); if (o.pagina) paginas.push(o); else if (o.fim) fim = o; else if (o.erro) erro = o.erro; } catch (e) { /* linha quebrada */ }
+        try { const o = JSON.parse(l); if (o.pagina) paginas.push(o); else if (o.fim) fimLeitura = o; else if (o.erro) erro = erro || o.erro; } catch (e) { /* linha quebrada */ }
       }
     });
-    filho.on('close', () => {
-      clearTimeout(relogio);
-      if (erro || !fim) return falha(Object.assign(new Error(erro || 'leitura_incompleta'), { codigo: 'leitura' }));
-      ok({ paginas, total: fim.paginas, lidas: fim.lidas });
-    });
+    const encerrar = () => {
+      if (acabou) return;
+      acabou = true; clearTimeout(relogio); clearInterval(vigia); filhosVivos.delete(filho);
+      if (erro || !fimLeitura) return falha(Object.assign(new Error(erro || 'leitura_incompleta'), { codigo: erro === 'pdf_grande_demais' ? 'pdf_grande_demais' : 'leitura' }));
+      ok({ paginas, total: fimLeitura.paginas, lidas: fimLeitura.lidas });
+    };
+    filho.on('error', () => { erro = erro || 'leitor_nao_subiu'; encerrar(); });
+    filho.on('close', encerrar);
   });
 }
 
 // ── geração do 900A (sem publicar) ─────────────────────────────────────────
 // Só para condomínio da lista BALANCETE_GERACAO_LIBERADA (padrão: Victoria Bay 94 e Residencial
-// Teste 167). Pede pela API v2 o mesmo que a tela pede ao clicar em Visualizar: relatorios/id/900A
-// com render=pdf e getId=1 (cria a impressão só para a administração, sem publicar e sem e-mail).
-// O Superlógica leva cerca de 3 minutos num 900A grande e o gateway corta em 60 s (HTTP 504), então
-// o pedido é disparado uma vez e a tela acompanha a lista de impressões.
+// Teste 167; 143, 144, 145, 160 e 162 nunca). Pede pela API v2 o mesmo que a tela pede ao clicar em
+// Visualizar: relatorios/id/900A com render=pdf e getId=1 (cria a impressão só para a administração,
+// sem publicar e sem envio por email). O Superlógica leva cerca de 3 minutos num 900A grande e o
+// gateway corta em 60 s (HTTP 504), então o pedido é disparado uma vez e a tela acompanha a lista.
 // Nunca chama impressoes/post (compartilhar) nem impressoes/email.
+const EXCLUIDOS = new Set(['143', '144', '145', '160', '162']);
 function liberadosGeracao() {
   const v = process.env.BALANCETE_GERACAO_LIBERADA;
   const lista = (v == null || v === '' ? '94,167' : v).split(',').map((x) => x.trim()).filter((x) => /^\d{1,9}$/.test(x) && !EXCLUIDOS.has(x));
   return new Set(lista);
 }
 // Seleção usada na geração: "usuario:<id>" (MINHA SELEÇÃO) ou "condominio:<id>" (seleção do condomínio).
+// O padrão (usuario:1) é a "Prestação de contas na Web NOVA teste Hub", que fica no Superlógica e
+// pode ser editada lá: a conferência mostra se algo mudou.
 function selecaoGeracao() {
   const m = /^(usuario|condominio):(\d{1,6})$/.exec(String(process.env.BALANCETE_SELECAO || 'usuario:1'));
   if (!m) return { ID_RELATORIOSELECAO_RLSU: '1' };
@@ -426,19 +503,23 @@ const TRAVA_GERACAO_MS = 15 * 60 * 1000;
 function pedirGeracao({ base, appToken, accessToken }, idCondominio, comp) {
   const c = competencia(comp);
   if (!c) return Promise.reject(Object.assign(new Error('competencia_invalida'), { codigo: 'competencia' }));
+  // Só mês já fechado: o mês corrente ainda está aberto.
+  if (c.chave >= mesAtualBrasilia()) return Promise.reject(Object.assign(new Error('mes_aberto'), { codigo: 'mes_aberto' }));
   const id = String(idCondominio);
   if (!liberadosGeracao().has(id)) return Promise.reject(Object.assign(new Error('geracao_nao_liberada'), { codigo: 'nao_liberado' }));
+  const agora = Date.now();
+  for (const [k, t0] of pedidosGeracao) if (agora - t0 >= TRAVA_GERACAO_MS) pedidosGeracao.delete(k);
   const chave = id + '|' + c.chave;
   const ultimo = pedidosGeracao.get(chave);
-  if (ultimo && Date.now() - ultimo < TRAVA_GERACAO_MS) return Promise.reject(Object.assign(new Error('geracao_em_andamento'), { codigo: 'em_andamento', desde: new Date(ultimo).toISOString() }));
-  pedidosGeracao.set(chave, Date.now());
+  if (ultimo) return Promise.reject(Object.assign(new Error('geracao_em_andamento'), { codigo: 'em_andamento', desde: new Date(ultimo).toISOString() }));
+  pedidosGeracao.set(chave, agora);
   const q = Object.assign({ ID_CONDOMINIO_COND: id }, selecaoGeracao(), {
     DT_PADRAO_REL: String(c.mes).padStart(2, '0') + '/01/' + c.ano, NAO_PULAR_PAGINA_ENTRE_RELATORIOS: '0', NAO_EXIBIR_LINK_ANEXOS: '0', render: 'pdf', getId: '1',
   });
   const u = new URL(base + '/v2/condor/relatorios/id/900A');
   Object.entries(q).forEach(([k, v]) => u.searchParams.set(k, v));
   return new Promise((ok) => {
-    const r = https.request({ hostname: u.hostname, path: u.pathname + u.search, method: 'GET', headers: { app_token: appToken, access_token: accessToken, accept: 'application/json' } }, (resp) => {
+    const r = https.request({ hostname: u.hostname, port: u.port || 443, path: u.pathname + u.search, method: 'GET', headers: { app_token: appToken, access_token: accessToken, accept: 'application/json' } }, (resp) => {
       const p = []; resp.on('data', (x) => { if (p.length < 20) p.push(x); });
       resp.on('end', () => {
         let idImp = '';
@@ -455,35 +536,45 @@ function pedirGeracao({ base, appToken, accessToken }, idCondominio, comp) {
 
 // ── conferência de uma impressão (uma por vez, resultado guardado 6 horas) ───
 // Baixar e ler um 900A grande leva cerca de 1 a 2 minutos: a rota dispara e a tela pergunta de novo.
-const EXCLUIDOS = new Set(['143', '144', '145', '160', '162']);
-const resultados = new Map(); // id da impressão -> { estado, inicio, fim, resultado, erro, id_condominio, competencia }
+// O resultado é guardado por condomínio, mês e impressão: um pedido errado não atrapalha o certo.
+const resultados = new Map(); // "cond|AAAA-MM|impressao" -> { estado, inicio, fim, resultado, erro }
 const VALIDADE_MS = 6 * 60 * 60 * 1000;
 let emAndamento = null;
-function situacaoConferencia(idImpressao) {
-  const r = resultados.get(String(idImpressao));
-  if (r && r.estado !== 'rodando' && Date.now() - r.fim > VALIDADE_MS) { resultados.delete(String(idImpressao)); return null; }
-  return r || null;
+const chaveRes = (idCondominio, comp, idImpressao) => String(idCondominio) + '|' + String(comp) + '|' + String(idImpressao);
+function limparVencidos() {
+  const agora = Date.now();
+  for (const [k, r] of resultados) if (r.estado !== 'rodando' && agora - r.fim > VALIDADE_MS) resultados.delete(k);
+}
+function situacaoConferencia(idCondominio, comp, idImpressao) {
+  limparVencidos();
+  return resultados.get(chaveRes(idCondominio, comp, idImpressao)) || null;
 }
 // cred: { base, appToken, accessToken }; cliente: cliente GET (superlogica-dados.criarCliente)
 function iniciarConferencia({ cred, cliente, idCondominio, competencia: comp, idImpressao, log, forcar }) {
   const id = String(idImpressao);
-  const atual = situacaoConferencia(id);
+  const chave = chaveRes(idCondominio, comp, id);
+  const atual = situacaoConferencia(idCondominio, comp, id);
   if (atual && (atual.estado === 'rodando' || (atual.estado === 'pronto' && !forcar))) return atual;
-  if (emAndamento) return { estado: 'ocupado', detalhe: 'Outra conferência está rodando (impressão ' + emAndamento + ').' };
+  if (emAndamento) return { estado: 'ocupado', detalhe: 'Outra conferência está rodando.' };
   const reg = { estado: 'rodando', inicio: Date.now(), id_condominio: String(idCondominio), competencia: comp, id_impressao: id };
-  resultados.set(id, reg);
-  emAndamento = id;
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'balancete-'));
-  const arq = path.join(tmp, 'impressao.pdf');
+  resultados.set(chave, reg);
+  emAndamento = chave;
+  let tmp = null;
   (async () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'balancete-'));
+    const arq = path.join(tmp, 'impressao.pdf');
     const lista = await listarImpressoes(cliente, idCondominio, comp);
     const imp = lista.find((x) => x.id === id);
     if (!imp) throw Object.assign(new Error('impressao_nao_encontrada'), { codigo: 'nao_encontrada' });
-    const [baixado, despesas] = await Promise.all([baixarImpressao(cred, id, arq), despesasLiquidadas(cliente, idCondominio, comp)]);
+    if (!imp.da_competencia) throw Object.assign(new Error('impressao_de_outro_mes'), { codigo: 'outro_mes' });
+    // Espera os dois terminarem antes de seguir ou falhar: nada fica gravando depois da limpeza.
+    const [baixado, despesas, esperados] = await Promise.allSettled([baixarImpressao(cred, id, arq), despesasLiquidadas(cliente, idCondominio, comp), itensEsperados(cliente, idCondominio, imp.titulo)]);
+    if (baixado.status === 'rejected') throw baixado.reason;
+    if (despesas.status === 'rejected') throw despesas.reason;
     const lido = await lerPdf(arq);
-    const resultado = conferir(lido.paginas, { competencia: comp, despesas });
+    const resultado = conferir(lido.paginas, { competencia: comp, despesas: despesas.value, esperados: esperados.status === 'fulfilled' ? esperados.value : null });
     resultado.impressao = imp;
-    resultado.bytes = baixado.bytes;
+    resultado.bytes = baixado.value.bytes;
     resultado.paginas_lidas = lido.lidas;
     if (lido.lidas < lido.total) { resultado.ok = false; resultado.aviso = 'Só ' + lido.lidas + ' de ' + lido.total + ' páginas foram lidas.'; }
     return resultado;
@@ -494,14 +585,14 @@ function iniciarConferencia({ cred, cliente, idCondominio, competencia: comp, id
     if (log) log('[balancete] conferência ' + id + ' falhou: ' + (e && e.message));
   }).finally(() => {
     emAndamento = null;
-    fs.rm(tmp, { recursive: true, force: true }, () => {});
+    if (tmp) fs.rm(tmp, { recursive: true, force: true }, () => {});
   });
   return reg;
 }
 
 module.exports = {
   competencia, somarMeses, mesesCitados, classificarPagina, montarSecoes, conferirMesSecao, conferirItens, conferirComprovantes,
-  conferirPaginas, camposNaoPreenchidos, marcarRepetidas, conferir, resumirSecoes, ITENS_NOVA, EXCLUIDOS,
-  listarImpressoes, despesasLiquidadas, baixarImpressao, lerPdf, liberadosGeracao, selecaoGeracao, pedirGeracao,
-  iniciarConferencia, situacaoConferencia, dataSL,
+  conferirPaginas, camposNaoPreenchidos, marcarRepetidas, conferir, resumirSecoes, ITENS_NOVA, EXCLUIDOS, mesAtualBrasilia,
+  listarImpressoes, despesasLiquidadas, itensEsperados, baixarImpressao, lerPdf, liberadosGeracao, selecaoGeracao, pedirGeracao,
+  iniciarConferencia, situacaoConferencia,
 };

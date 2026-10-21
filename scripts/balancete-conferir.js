@@ -19,7 +19,7 @@ const cliente = criarCliente(cred);
   B.iniciarConferencia({ cred, cliente, idCondominio: idCond, competencia: comp, idImpressao: idImp, log: console.log });
   for (;;) {
     await new Promise((ok) => setTimeout(ok, 5000));
-    const s = B.situacaoConferencia(idImp);
+    const s = B.situacaoConferencia(idCond, comp, idImp);
     if (s.estado === 'rodando') continue;
     console.log('estado ' + s.estado + ' em ' + Math.round((Date.now() - t0) / 1000) + ' s');
     console.log(JSON.stringify(s.resultado || { erro: s.erro }, null, 1));

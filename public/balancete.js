@@ -53,6 +53,7 @@
     if (!/^\d{4}-\d{2}$/.test(mes)) { info('Escolha o mês.', true); return; }
     var seq = ++est.seq;
     est.cond = c; est.mes = mes;
+    document.getElementById('bal-gerar').style.display = 'none';
     info('Buscando os 900A de ' + c.nome + '...');
     try {
       var r = await apiAuthFetch('/api/financeiro/balancete/' + encodeURIComponent(c.id) + '/impressoes?competencia=' + encodeURIComponent(mes));
@@ -135,8 +136,11 @@
   }
 
   async function gerar() {
-    if (!est.cond || !est.mes) return;
-    if (!confirm('Pedir ao Superlógica o 900A de ' + est.mes + ' de ' + est.cond.nome + '? Ele fica só para a administração, sem publicar e sem e-mail.')) return;
+    var c = condAtivo();
+    var mes = (document.getElementById('bal-mes') || {}).value || '';
+    // O botão vale para o condomínio e o mês da última lista: se mudou, lista de novo antes.
+    if (!est.cond || !c || c.id !== est.cond.id || mes !== est.mes) { document.getElementById('bal-gerar').style.display = 'none'; info('O condomínio ou o mês mudou. Clique em Listar 900A do mês de novo.', true); return; }
+    if (!confirm('Pedir ao Superlógica o 900A de ' + est.mes + ' de ' + est.cond.nome + '? Ele fica só para a administração, sem publicar e sem envio por email.')) return;
     var b = document.getElementById('bal-gerar');
     b.disabled = true;
     try {

@@ -1,5 +1,5 @@
 // T41: leitura do PDF do 900A num PROCESSO separado (financeiro/balancete.js, lerPdf).
-// Recebe o caminho do arquivo (argv[2]) e devolve pela saída padrão um JSON por linha:
+// Recebe o caminho do arquivo (argv[2]) e o tamanho máximo em bytes (argv[3]) e devolve pela saída padrão um JSON por linha:
 // { pagina, texto, imagens, desenhos } e no fim { fim: true, paginas }.
 // O processo pai limita memória (--max-old-space-size) e tempo e mata se passar.
 // imagens: quantas imagens a página pinta; desenhos: quantos comandos de texto, linha ou
@@ -7,7 +7,8 @@
 'use strict';
 const fs = require('fs');
 const caminho = process.argv[2];
-const maxPaginas = Math.max(1, Math.min(3000, Number(process.argv[3]) || 1500));
+const maxBytes = Number(process.argv[3]) || 400 * 1024 * 1024;
+const maxPaginas = 3000;
 const escreve = (o) => new Promise((ok) => { if (!process.stdout.write(JSON.stringify(o) + '\n')) process.stdout.once('drain', ok); else ok(); });
 (async () => {
   let lib;
@@ -20,12 +21,15 @@ const escreve = (o) => new Promise((ok) => { if (!process.stdout.write(JSON.stri
   const DESENHO = new Set([OPS.showText, OPS.showSpacedText, OPS.nextLineShowText, OPS.nextLineSetSpacingShowText, OPS.fill, OPS.eoFill, OPS.stroke, OPS.fillStroke, OPS.eoFillStroke, OPS.closeStroke, OPS.closeFillStroke, OPS.closeEOFillStroke, OPS.constructPath].filter((x) => x !== undefined));
   let doc;
   try {
-    const dados = new Uint8Array(fs.readFileSync(caminho));
+    // Confere o tamanho antes de ler e não copia o arquivo (o pai mede a memória e mata se passar).
+    if (fs.statSync(caminho).size > maxBytes) { await escreve({ erro: 'pdf_grande_demais' }); process.exit(0); }
+    const buf = fs.readFileSync(caminho);
+    const dados = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
     doc = await lib.getDocument({ data: dados, disableFontFace: true, isEvalSupported: false, useSystemFonts: false, verbosity: 0, stopAtErrors: false }).promise;
   } catch (e) { await escreve({ erro: 'pdf_ilegivel' }); process.exit(0); }
   const n = Math.min(doc.numPages, maxPaginas);
   for (let i = 1; i <= n; i++) {
-    let texto = '', imagens = 0, desenhos = 0;
+    let texto = '', imagens = 0, desenhos = 0, erro = false;
     try {
       const p = await doc.getPage(i);
       const c = await p.getTextContent();
@@ -40,8 +44,8 @@ const escreve = (o) => new Promise((ok) => { if (!process.stdout.write(JSON.stri
       const ops = await p.getOperatorList({ intent: 'display' });
       for (const f of ops.fnArray) { if (IMG.has(f)) imagens++; else if (DESENHO.has(f)) desenhos++; }
       p.cleanup();
-    } catch (e) { texto = texto || ''; }
-    await escreve({ pagina: i, texto: texto.slice(0, 20000), imagens, desenhos });
+    } catch (e) { erro = true; }
+    await escreve({ pagina: i, texto: texto.slice(0, 20000), imagens, desenhos, erro });
   }
   await escreve({ fim: true, paginas: doc.numPages, lidas: n });
   process.exit(0);
