@@ -132,6 +132,7 @@
     html += linha(!branco.length && !rep.length, 'Páginas em branco ou repetidas', branco.map(function (p) { return 'Pág. ' + esc(p.pagina) + ': ' + esc(p.motivo); })
       .concat(rep.map(function (p) { return 'Pág. ' + esc(p.pagina) + ' igual à pág. ' + esc(p.igual_a); })).join('<br>'));
     html += linha(!campos.length, 'Textos do modelo preenchidos', campos.map(function (p) { return 'Pág. ' + esc(p.pagina) + ': ' + esc(p.campos); }).join('<br>'));
+    if ((r.avisos || []).length) html += '<div class="hint" style="margin-top:6px">Aviso: ' + r.avisos.map(esc).join('<br>') + '</div>';
     html += '<div class="hint" style="margin-top:6px">Conferido em ' + esc(quando ? new Date(quando).toLocaleString('pt-BR') : '') + '. <a href="#" id="bal-repetir">Conferir de novo</a></div>';
     document.getElementById('bal-resultado').innerHTML = html;
     document.getElementById('bal-repetir').addEventListener('click', function (ev) { ev.preventDefault(); conferir(idImp, true); });

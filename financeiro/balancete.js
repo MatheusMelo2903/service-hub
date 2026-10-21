@@ -274,12 +274,17 @@ function conferir(paginas, opcoes) {
   const itens = Array.isArray(opcoes.esperados) ? conferirItens(secoes, opcoes.esperados) : { esperados: 0, presentes: [], faltando: [], nao_conferido: 'Seleção desconhecida: itens não conferidos.' };
   const comprovantes = conferirComprovantes(secoes, opcoes.despesas || []);
   const pags = marcarRepetidas(paginas, conferirPaginas(secoes));
-  const campos = camposNaoPreenchidos(paginas);
+  // %administradora.nome% na carta da seleção pessoal é limitação conhecida do Superlógica (modelo padrão
+  // 999999939); o Matheus decidiu manter (21/10). Vira aviso e não conta como problema.
+  const todosCampos = camposNaoPreenchidos(paginas);
+  const ACEITOS = /^%administradora\.nome%$/i;
+  const campos = todosCampos.filter((c) => !c.campos.split(', ').every((x) => ACEITOS.test(x)));
+  const avisosCampos = todosCampos.filter((c) => c.campos.split(', ').every((x) => ACEITOS.test(x)));
   const problemas = foraDoMes.length + itens.faltando.length + comprovantes.sem_comprovante_no_pdf.length
     + comprovantes.no_pdf_sem_liquidacao_no_mes.length + comprovantes.parcela_repetida.length + pags.em_branco.length + pags.repetidas.length + campos.length;
   return {
     competencia: comp.chave, mes: comp.rotulo, total_paginas: paginas.length, ok: problemas === 0, problemas,
-    mes_fora: foraDoMes, itens, comprovantes, paginas_em_branco: pags.em_branco, paginas_repetidas: pags.repetidas, campos_nao_preenchidos: campos,
+    mes_fora: foraDoMes, itens, comprovantes, paginas_em_branco: pags.em_branco, paginas_repetidas: pags.repetidas, campos_nao_preenchidos: campos, avisos: avisosCampos.map((c) => 'Carta (pág. ' + c.pagina + '): assinatura da administradora sai como ' + c.campos + ' (limitação da seleção pessoal do Superlógica).'),
     secoes: resumirSecoes(secoes),
   };
 }

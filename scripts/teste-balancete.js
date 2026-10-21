@@ -32,7 +32,7 @@ const paginas = [
   pg(8, ['W061A TESTE (94)', 'Comprovantes de despesas', 'Credt. em Set/2026;Parcela 111', '8 de 99'], { imagens: 0, desenhos: 13 }),
   cab('061A', 'Comprovantes de despesas', 'Credt. em Set/2026;Parcela 222', 9),
   cab('061A', 'Comprovantes de despesas', 'Credt. em Set/2026;Parcela 111', 10),
-  pg(11, ['texto %administradora.nome% solto']),
+  pg(11, ['texto %condominio_nome% solto']),
 ];
 const esperados = [{ codigo: '035F' }, { codigo: '035C', titulo: 'BALANCETE RESUMIDO' }, { codigo: '011A' }, { codigo: '037F' }, { codigo: '037E', rotulo: '037E faltando' }, { codigo: '061A' }];
 const despesas = [{ id_parcela: '111', fornecedor: 'X', valor: 100 }, { id_parcela: '333', fornecedor: 'Y', valor: 50, arquivos: 1 }];
@@ -54,6 +54,7 @@ const rLimpo = B.conferir([cab('037E', 'D', 'Posição em Set/2026', 1)], { comp
 t('tudo certo fica ok', rLimpo.ok === true && rLimpo.problemas === 0);
 const dup = 'x'.repeat(400);
 const rDup = B.conferir([pg(1, [dup, '1 de 2']), pg(2, [dup, '2 de 2'])], { competencia: '2026-09', esperados: [] });
+t('assinatura da carta vira aviso', (() => { const x = B.conferir([pg(1, ['W035F T (1)', 'Prestação de contas', 'Carta', 'Atenciosamente,', '%administradora.nome%.'])], { competencia: '2026-09', esperados: [] }); return x.ok && x.campos_nao_preenchidos.length === 0 && x.avisos.length === 1; })());
 t('página repetida', rDup.paginas_repetidas.length === 1 && rDup.paginas_repetidas[0].igual_a === 1);
 
 // ── 1b. caminho C: mês da seleção NOVA ──
