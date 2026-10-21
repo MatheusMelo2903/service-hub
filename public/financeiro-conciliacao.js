@@ -68,29 +68,65 @@
       + contas.map(linhaConta).join('') + '</tbody></table></div>';
   }
 
-  // ── 1. Quadro da carteira ──────────────────────────────────
-  function cardQuadro() {
-    var card = document.getElementById('fin-conc-card');
-    if (!card) {
-      var ref = document.getElementById('fin-detalhe');
-      if (!ref) return null;
-      card = document.createElement('div');
-      card.className = 'card';
-      card.id = 'fin-conc-card';
-      ref.parentNode.insertBefore(card, ref);
-    }
-    card.style.display = '';
-    return card;
+  // ── 0. Tela própria (item Conciliação do menu, T37) ────────
+  // Falha fechada: mesma regra do menu (index.html, podeAbrirPainel). O servidor confere de novo.
+  var PAINEL = 'conciliacao';
+  if (typeof PAGE_META !== 'undefined') PAGE_META[PAINEL] = { title: 'Conciliação', sub: 'extrato importado no Superlógica comparado com os lançamentos' };
+  function podeVer() { return typeof window.podeAbrirPainel === 'function' && window.podeAbrirPainel(PAINEL); }
+  var carteirasCarregadas = false;
+  async function concAbrir() {
+    if (!podeVer() || !window.AUTH_TOKEN || carteirasCarregadas) return;
+    var sel = document.getElementById('conc-carteira');
+    if (!sel) return;
+    carteirasCarregadas = true;
+    if (window.USER_ROLE !== 'GESTOR') return;
+    try {
+      var r = await apiAuthFetch('/api/carteiras');
+      var g = await r.json().catch(function () { return []; });
+      (Array.isArray(g) ? g : []).forEach(function (c) {
+        if (!c || !c.id) return;
+        var o = document.createElement('option');
+        o.value = String(c.id);
+        o.textContent = c.nome + ' (' + (c.quantidade || (c.condominios || []).length) + ')';
+        sel.appendChild(o);
+      });
+    } catch (e) { carteirasCarregadas = false; }
   }
-  window.finConcQuadro = async function (forcar) {
-    var card = cardQuadro();
+  function painelAtivo() { var p = document.getElementById('panel-' + PAINEL); return !!(p && p.classList.contains('active')); }
+  if (typeof window.showPanel === 'function') {
+    var origShow = window.showPanel;
+    window.showPanel = function () {
+      var r = origShow.apply(this, arguments);
+      if (painelAtivo()) concAbrir();
+      return r;
+    };
+  }
+  document.addEventListener('auth:ready', function () { setTimeout(function () { if (painelAtivo()) concAbrir(); }, 0); });
+
+  // Detalhe de um condomínio, no card de baixo da tela.
+  function abrirCondominio(id, nome) {
+    if (!podeVer() || !/^\d+$/.test(String(id || ''))) return;
+    var card = document.getElementById('conc-detalhe');
     if (!card) return;
-    var sel = document.getElementById('fin-carteira');
+    card.style.display = '';
+    card.innerHTML = '<div class="card-header"><span class="card-title">' + esc(nome || ('Código ' + id)) + ' <span style="color:var(--muted);font-family:var(--mono);font-size:12px">' + esc(id) + '</span></span></div><div id="conc-detalhe-corpo"></div>';
+    window.finConcAba(document.getElementById('conc-detalhe-corpo'), { id: String(id), nome: nome || '' });
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  window.finConcAbrirAtivo = function () {
+    var c = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
+    var id = c ? String(c.id_superlogica || '') : '';
+    if (!/^\d+$/.test(id)) { msg('fin-conc-q-info', 'Escolha o condomínio no topo primeiro.', true); return; }
+    abrirCondominio(id, c.nome);
+  };
+
+  // ── 1. Quadro da carteira ──────────────────────────────────
+  window.finConcQuadro = async function (forcar) {
+    if (!podeVer()) return;
+    await concAbrir();
+    var sel = document.getElementById('conc-carteira');
     var carteira = sel ? sel.value : '';
-    card.innerHTML = '<div class="card-header"><span class="card-title">Conciliação da carteira</span><button class="btn btn-ghost" id="fin-conc-q-atualizar" style="font-size:12px;padding:6px 12px" title="Lê de novo no Superlógica">Atualizar</button></div>'
-      + '<div class="hint" style="margin-bottom:8px">Usa o extrato já importado no Superlógica, últimos 75 dias. Dias úteis sem extrato contam até ontem (feriados não são descontados); conta de pouco movimento não entra no maior atraso. Dias não conciliados são os dias com item do banco sem lançamento, lançamento sem saída no banco ou valor diferente.</div>'
-      + '<div id="fin-conc-q-info" class="ficha-sub" style="margin-bottom:8px"></div><div id="fin-conc-q-lista"></div>';
-    document.getElementById('fin-conc-q-atualizar').addEventListener('click', function () { window.finConcQuadro(true); });
+    document.getElementById('fin-conc-q-lista').innerHTML = '';
     var seq = ++est.seqQ;
     msg('fin-conc-q-info', 'Lendo os extratos das contas...');
     try {
@@ -130,7 +166,7 @@
         var i = tr.getAttribute('data-conc-i');
         if (ev.target && ev.target.getAttribute('data-conc-abrir') != null) {
           var c = lista[+i];
-          if (typeof window.finAbrirCondominio === 'function') window.finAbrirCondominio(c.id_condominio, c.condominio, 'conc');
+          abrirCondominio(c.id_condominio, c.condominio);
           return;
         }
         var det = el.querySelector('tr[data-conc-det="' + i + '"]');

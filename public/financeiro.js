@@ -1,7 +1,8 @@
 // ============================================================
-// FINANCEIRO (T31): quadro da carteira com os condomínios ordenados pela gravidade dos
-// alertas, alertas de cada condomínio com link para o lançamento, conferência dos boletos
-// do mês e pré balancete (o que impede fechar o mês). Só leitura.
+// FINANCEIRO (T31): painel geral: quadro da carteira com os condomínios ordenados pela gravidade
+// dos alertas, alertas de cada condomínio com link para o lançamento e pré balancete (o que
+// impede fechar o mês). Só leitura. T37: a conferência dos boletos do mês fica no item Boletos
+// do menu (tela panel-boletos, também neste arquivo); a Conciliação no item próprio.
 // Rotas: /api/financeiro/resumo, /api/financeiro/condominio/:id/alertas,
 // /api/financeiro/condominio/:id/pre-balancete, /api/financeiro/boletos/:id, /api/carteiras.
 // Módulo "financeiro" (ver, pre_balancete) entra no catálogo de permissões aqui, sem mexer
@@ -12,15 +13,15 @@
 
   // 1. Catálogo de permissões e título da aba.
   if (typeof MODULOS_CATALOGO !== 'undefined' && !MODULOS_CATALOGO.financeiro) {
-    MODULOS_CATALOGO.financeiro = { label: 'Financeiro (alertas e pré balancete)', acoes: ['ver', 'pre_balancete'] };
+    MODULOS_CATALOGO.financeiro = { label: 'Financeiro (painel, alertas e pré balancete)', acoes: ['ver', 'pre_balancete'] };
   }
-  if (typeof PAGE_META !== 'undefined') PAGE_META[PAINEL] = { title: 'Financeiro', sub: 'alertas, boletos e pré balancete' };
+  if (typeof PAGE_META !== 'undefined') PAGE_META[PAINEL] = { title: 'Financeiro', sub: 'painel da carteira: alertas e pré balancete' };
 
-  function podeVer() {
-    if (window.USER_ROLE === 'GESTOR') return true;
-    return typeof temPermissao === 'function' ? temPermissao('financeiro') : true;
-  }
+  // T37: falha fechada, mesma regra do menu (index.html, podeAbrirPainel).
+  function podeAbrir(nome) { return typeof window.podeAbrirPainel === 'function' && window.podeAbrirPainel(nome); }
+  function podeVer() { return podeAbrir(PAINEL); }
   function podePre() {
+    if (!podeVer()) return false;
     if (window.USER_ROLE === 'GESTOR') return true;
     return typeof temPermissao === 'function' && !!window.USER_PERMS && temPermissao('financeiro', 'pre_balancete');
   }
@@ -36,40 +37,33 @@
     var item = document.createElement('div');
     item.className = 'nav-item';
     item.id = 'nav-fincontrole';
+    item.style.display = 'none';
     item.setAttribute('onclick', "showPanel('" + PAINEL + "')");
     item.innerHTML = '<span class="nav-icon">◇</span> Financeiro';
     ref.insertAdjacentElement('afterend', item);
   }
   criarMenu();
 
+  // Visibilidade do item: aplicarVisibilidadePaineisFinanceiros (index.html) cuida de todos.
   function aplicarVisibilidade() {
-    var item = document.getElementById('nav-fincontrole');
-    if (item) item.style.display = podeVer() ? '' : 'none';
-    var p = document.getElementById('panel-' + PAINEL);
-    if (p && p.classList.contains('active') && !podeVer() && typeof showPanel === 'function') showPanel('dashboard');
+    if (typeof window.aplicarVisibilidadePaineisFinanceiros === 'function') window.aplicarVisibilidadePaineisFinanceiros();
   }
-  if (typeof window.aplicarPermissoesSidebar === 'function') {
-    var origPerm = window.aplicarPermissoesSidebar;
-    window.aplicarPermissoesSidebar = function () {
-      origPerm.apply(this, arguments);
-      if (window.USER_PERMS) aplicarVisibilidade();
-    };
+  function ativo(nome) { var p = document.getElementById('panel-' + nome); return !!(p && p.classList.contains('active')); }
+  // Depois de abrir: o próprio showPanel do index.html já recusa sem permissão.
+  function aoAbrir() {
+    if (ativo(PAINEL) && podeVer()) { finAbrir(); atalhos(); }
+    if (ativo('boletos') && podeAbrir('boletos')) boletosAbrir();
   }
   if (typeof window.showPanel === 'function') {
     var origShow = window.showPanel;
-    window.showPanel = function (nome) {
-      if (nome === PAINEL && window.USER_PERMS && !podeVer()) nome = 'dashboard';
-      var r = origShow.apply(this, [nome].concat([].slice.call(arguments, 1)));
-      if (nome === PAINEL) finAbrir();
+    window.showPanel = function () {
+      var r = origShow.apply(this, arguments);
+      aoAbrir();
       return r;
     };
   }
   document.addEventListener('auth:ready', function () {
-    setTimeout(function () {
-      aplicarVisibilidade();
-      var p = document.getElementById('panel-' + PAINEL);
-      if (p && p.classList.contains('active')) finAbrir();
-    }, 0);
+    setTimeout(function () { aplicarVisibilidade(); aoAbrir(); }, 0);
   });
 
   // 3. Utilitários.
@@ -133,6 +127,30 @@
   }
   window.finAbrir = finAbrir;
 
+  // 4a. Resumo das outras telas financeiras (cada uma no seu item do menu, sem repetir aqui).
+  // Só mostra o atalho de quem pode abrir; a Entrada mostra quantos rascunhos esperam.
+  async function atalhos() {
+    var el = document.getElementById('fin-atalhos');
+    if (!el) return;
+    var itens = [['boletos', 'Boletos', 'conferir os boletos do mês'], ['conciliacao', 'Conciliação', 'extrato x lançamentos'], ['entrada', 'Entrada de documentos', 'rascunhos para lançar']]
+      .filter(function (x) { return podeAbrir(x[0]); });
+    if (!itens.length) { el.innerHTML = ''; return; }
+    el.innerHTML = 'Também no menu: ' + itens.map(function (x) {
+      return '<a href="#" data-fin-ir="' + x[0] + '">' + esc(x[1]) + '</a> <span id="fin-atalho-' + x[0] + '">(' + esc(x[2]) + ')</span>';
+    }).join(' · ');
+    el.querySelectorAll('[data-fin-ir]').forEach(function (a) {
+      a.addEventListener('click', function (ev) { ev.preventDefault(); showPanel(a.getAttribute('data-fin-ir')); });
+    });
+    if (!podeAbrir('entrada')) return;
+    try {
+      var r = await apiAuthFetch('/api/entrada/fila?status=rascunho');
+      var j = await r.json().catch(function () { return {}; });
+      var n = r.ok && Array.isArray(j.itens) ? j.itens.length : null;
+      var s = document.getElementById('fin-atalho-entrada');
+      if (s && n != null) s.textContent = '(' + (n ? n + ' rascunho(s) para conferir' : 'nenhum rascunho esperando') + ')';
+    } catch (e) { /* sem a contagem agora: fica só o atalho */ }
+  }
+
   // 5. Quadro da carteira.
   window.finCarregar = async function (forcar) {
     await finAbrir();
@@ -188,7 +206,7 @@
     });
   }
 
-  // 6. Detalhe do condomínio: abas Alertas, Boletos e Pré balancete.
+  // 6. Detalhe do condomínio: abas Alertas e Pré balancete.
   var TH = 'style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border2)"';
   var TD = 'style="padding:6px 8px;font-size:12px;border-bottom:1px solid var(--border);vertical-align:top"';
   function botaoAba(chave, rotulo) {
@@ -199,7 +217,7 @@
     if (!/^\d+$/.test(String(id || ''))) return;
     est.cond = { id: String(id), nome: nome || '' };
     est.alertas = null;
-    est.aba = aba === 'conc' && typeof window.finConcAba === 'function' ? 'conc' : 'alertas';
+    est.aba = aba === 'pre' && podePre() ? 'pre' : 'alertas';
     var card = document.getElementById('fin-detalhe');
     card.style.display = '';
     montarDetalhe();
@@ -212,15 +230,14 @@
     var card = document.getElementById('fin-detalhe');
     var c = est.cond;
     card.innerHTML = '<div class="card-header" style="flex-wrap:wrap;gap:8px"><span class="card-title">' + esc(c.nome || ('Código ' + c.id)) + ' <span style="color:var(--muted);font-family:var(--mono);font-size:12px">' + esc(c.id) + '</span></span>'
-      + '<div style="display:flex;gap:6px;flex-wrap:wrap">' + botaoAba('alertas', 'Alertas') + botaoAba('boletos', 'Boletos do mês') + (podePre() ? botaoAba('pre', 'Pré balancete') : '') + (typeof window.finConcAba === 'function' ? botaoAba('conc', 'Conciliação') : '') + '</div></div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap">' + botaoAba('alertas', 'Alertas') + (podePre() ? botaoAba('pre', 'Pré balancete') : '') + '</div></div>'
       + '<div id="fin-aba-conteudo"></div>';
     card.querySelectorAll('[data-fin-aba]').forEach(function (b) {
       b.addEventListener('click', function () { est.aba = b.getAttribute('data-fin-aba'); montarDetalhe(); });
     });
-    if (est.aba === 'alertas') abaAlertas();
-    else if (est.aba === 'boletos') abaBoletos();
-    else if (est.aba === 'conc') window.finConcAba(document.getElementById('fin-aba-conteudo'), est.cond);
-    else abaPre();
+    // T37: Boletos do mês e Conciliação saíram daqui e ficam nos itens próprios do menu.
+    if (est.aba === 'pre' && podePre()) abaPre();
+    else { est.aba = 'alertas'; abaAlertas(); }
   }
 
   // 6a. Alertas.
@@ -292,32 +309,47 @@
   // 6b. Boletos do mês (conferência antes de enviar).
   var NOME_BOLETO = { valor_fora_padrao: 'Valor fora do padrão', sem_boleto: 'Unidade sem boleto', boleto_em_dobro: 'Boleto em dobro', leitura_faltando: 'Leitura faltando',
     leitura_zerada: 'Leitura zerada', rateio_sumiu: 'Rateio que sumiu', rateio_apareceu: 'Rateio novo', parcela_repetida: 'Parcela repetida' };
-  function abaBoletos() {
-    var el = document.getElementById('fin-aba-conteudo');
-    el.innerHTML = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
-      + '<label style="font-size:12px">Vencimento no mês <input type="month" id="fin-bol-mes" value="' + mesISO(0) + '" style="width:auto"></label>'
-      + '<button class="btn btn-primary" id="fin-bol-conferir" style="font-size:12px;padding:6px 14px">Conferir boletos</button></div>'
-      + '<div class="hint" style="margin-bottom:8px">Compara cada unidade com os 3 meses anteriores. Rode depois de gerar os boletos e antes de enviar.</div>'
-      + '<div id="fin-bol-info" class="ficha-sub" style="margin-bottom:8px"></div><div id="fin-bol-lista"></div>';
-    document.getElementById('fin-bol-conferir').addEventListener('click', function () { conferirBoletos(); });
+  // T37: tela própria (item Boletos do menu), sobre o condomínio ativo do topo.
+  est.seqB = 0;
+  function condBoletos() {
+    var c = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
+    var id = c ? String(c.id_superlogica || '') : '';
+    return /^\d+$/.test(id) ? { id: id, nome: c.nome || '' } : null;
   }
-  async function conferirBoletos() {
-    var c = est.cond;
+  function boletosAbrir() {
+    var mes = document.getElementById('fin-bol-mes');
+    if (mes && !mes.value) mes.value = mesISO(0);
+    if (!condBoletos()) msg('fin-bol-info', 'Escolha o condomínio no topo para conferir os boletos.');
+  }
+  function boletosLimpar() {
+    est.seqB++;
+    var l = document.getElementById('fin-bol-lista');
+    if (l) l.innerHTML = '';
+    msg('fin-bol-info', '');
+    var b = document.getElementById('fin-bol-conferir');
+    if (b) b.disabled = false;
+  }
+  window.addEventListener('condominioAtivo:trocou', boletosLimpar);
+  window.finBoletosConferir = async function () {
+    if (!podeAbrir('boletos')) return;
+    var c = condBoletos();
+    if (!c) { msg('fin-bol-info', 'Escolha o condomínio no topo para conferir os boletos.', true); return; }
     var mes = document.getElementById('fin-bol-mes').value;
     if (!/^\d{4}-\d{2}$/.test(mes)) { msg('fin-bol-info', 'Escolha o mês.', true); return; }
-    var seq = ++est.seqD;
+    var seq = ++est.seqB;
     var btn = document.getElementById('fin-bol-conferir');
     btn.disabled = true;
     document.getElementById('fin-bol-lista').innerHTML = '';
-    msg('fin-bol-info', 'Lendo os boletos do mês e dos 3 anteriores (pode levar até 1 minuto)...');
+    msg('fin-bol-info', 'Lendo os boletos de ' + (c.nome || 'código ' + c.id) + ' no mês e nos 3 anteriores (pode levar até 1 minuto)...');
     try {
-      var j = await pegar('/api/financeiro/boletos/' + encodeURIComponent(c.id) + '?competencia=' + encodeURIComponent(mes), null, 'seqD', seq);
-      if (seq !== est.seqD || !est.cond || est.cond.id !== c.id || est.aba !== 'boletos') return;
+      var j = await pegar('/api/financeiro/boletos/' + encodeURIComponent(c.id) + '?competencia=' + encodeURIComponent(mes), null, 'seqB', seq);
+      var agora = condBoletos();
+      if (seq !== est.seqB || !agora || agora.id !== c.id) return;
       renderBoletos(j);
     } catch (e) {
-      if (seq === est.seqD && e.message !== 'cancelado') msg('fin-bol-info', e.message, true);
-    } finally { if (document.getElementById('fin-bol-conferir')) document.getElementById('fin-bol-conferir').disabled = false; }
-  }
+      if (seq === est.seqB && e.message !== 'cancelado') msg('fin-bol-info', e.message, true);
+    } finally { if (seq === est.seqB && document.getElementById('fin-bol-conferir')) document.getElementById('fin-bol-conferir').disabled = false; }
+  };
   function renderBoletos(j) {
     var r = j.resumo || {};
     msg('fin-bol-info', (r.boletos || 0) + ' boleto(s) em ' + (r.unidades_com_boleto || 0) + ' unidade(s), total ' + brl(r.valor_total) + '; comparado com ' + (j.meses_comparados || []).join(', ') + '. '

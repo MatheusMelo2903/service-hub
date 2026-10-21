@@ -1028,17 +1028,16 @@
     <div class="nav-item" onclick="showPanel('unidades')">
       <span class="nav-icon">↑</span> Importar Unidades
     </div>
-    <div class="nav-item" onclick="showPanel('boletos')">
+    <!-- T37: os três itens abaixo começam escondidos e só aparecem depois de conferir as permissões
+         (podeAbrirPainel). Boletos e Conciliação exigem o módulo do item e o Financeiro. -->
+    <div class="nav-item" id="nav-boletos" style="display:none" onclick="showPanel('boletos')">
       <span class="nav-icon">◈</span> Boletos
-      <span class="nav-badge">em breve</span>
     </div>
-    <div class="nav-item" onclick="showPanel('financeiro')">
+    <div class="nav-item" id="nav-conciliacao" style="display:none" onclick="showPanel('conciliacao')">
       <span class="nav-icon">⇌</span> Conciliação
-      <span class="nav-badge">em breve</span>
     </div>
-    <div class="nav-item" onclick="showPanel('nf')">
-      <span class="nav-icon">⊡</span> Notas Fiscais
-      <span class="nav-badge">em breve</span>
+    <div class="nav-item" id="nav-entrada" style="display:none" onclick="showPanel('entrada')">
+      <span class="nav-icon">⊡</span> Entrada de documentos
     </div>
 
     <div class="nav-section">Gestão</div>
@@ -1397,39 +1396,37 @@
       </div>
     </div>
 
-    <!-- BOLETOS / CONCILIAÇÃO / NF / TAREFAS: em breve -->
+    <!-- BOLETOS (T27 no item próprio, T37): JS em public/financeiro.js -->
     <div class="panel" id="panel-boletos">
       <!-- Banner populado por renderBannerCondAtivo('boletos') ao abrir o painel -->
       <div id="banner-cond-boletos"></div>
       <div class="card">
-        <div class="empty">
-          <div class="empty-icon">◈</div>
-          <div class="empty-title">Boletos — em breve</div>
-          <div class="empty-sub">geração e gestão de cobranças via API Superlógica</div>
+        <div class="card-header"><span class="card-title">Conferência dos boletos do mês</span></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <label style="font-size:12px">Vencimento no mês <input type="month" id="fin-bol-mes" style="width:auto"></label>
+          <button class="btn btn-primary" id="fin-bol-conferir" onclick="finBoletosConferir()" style="font-size:12px;padding:6px 14px">Conferir boletos</button>
         </div>
+        <div class="hint" style="margin-bottom:8px">Compara cada unidade do condomínio ativo com os 3 meses anteriores. Rode depois de gerar os boletos e antes de enviar.</div>
+        <div id="fin-bol-info" class="ficha-sub" style="margin-bottom:8px"></div>
+        <div id="fin-bol-lista"></div>
       </div>
     </div>
 
-    <div class="panel" id="panel-financeiro">
-      <!-- Banner populado por renderBannerCondAtivo('financeiro') ao abrir o painel -->
-      <div id="banner-cond-financeiro"></div>
+    <!-- CONCILIAÇÃO (T35 no item próprio, T37): JS em public/financeiro-conciliacao.js -->
+    <div class="panel" id="panel-conciliacao">
       <div class="card">
-        <div class="empty">
-          <div class="empty-icon">⇌</div>
-          <div class="empty-title">Conciliação bancária — em breve</div>
-          <div class="empty-sub">upload de extrato e conciliação integrada</div>
+        <div class="card-header"><span class="card-title">Conciliação da carteira</span></div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <select id="conc-carteira" style="width:auto;min-width:260px"><option value="">Meus condomínios</option></select>
+          <button class="btn btn-primary" onclick="finConcQuadro()">Carregar</button>
+          <button class="btn btn-ghost" onclick="finConcQuadro(true)" title="Lê de novo no Superlógica">Atualizar</button>
+          <button class="btn btn-ghost" onclick="finConcAbrirAtivo()" title="Abre a conciliação do condomínio escolhido no topo">Condomínio ativo</button>
         </div>
+        <div class="hint" style="margin:10px 0 8px">Usa o extrato já importado no Superlógica, últimos 75 dias. Dias úteis sem extrato contam até ontem (feriados não são descontados); conta de pouco movimento não entra no maior atraso. Dias não conciliados são os dias com item do banco sem lançamento, lançamento sem saída no banco ou valor diferente.</div>
+        <div id="fin-conc-q-info" class="ficha-sub" style="margin-bottom:8px"></div>
+        <div id="fin-conc-q-lista"></div>
       </div>
-    </div>
-
-    <div class="panel" id="panel-nf">
-      <div class="card">
-        <div class="empty">
-          <div class="empty-icon">⊡</div>
-          <div class="empty-title">Notas Fiscais — em breve</div>
-          <div class="empty-sub">upload, OCR e indexação por condomínio</div>
-        </div>
-      </div>
+      <div class="card" id="conc-detalhe" style="display:none"></div>
     </div>
 
 
@@ -1437,7 +1434,7 @@
       <div class="card">
         <div class="empty">
           <div class="empty-icon">✓</div>
-          <div class="empty-title">Tarefas — em breve</div>
+          <div class="empty-title">Tarefas: em breve</div>
           <div class="empty-sub">gestão de demandas internas por condomínio</div>
         </div>
       </div>
@@ -1997,8 +1994,8 @@
           <select id="fin-carteira" style="width:auto;min-width:260px"><option value="">Meus condomínios</option></select>
           <button class="btn btn-primary" onclick="finCarregar()">Carregar</button>
           <button class="btn btn-ghost" onclick="finCarregar(true)" title="Lê de novo no Superlógica">Atualizar</button>
-          <button class="btn btn-ghost" onclick="finConcQuadro()" title="Extrato importado, dias sem extrato e dias não conciliados por conta">Conciliação</button>
         </div>
+        <div id="fin-atalhos" class="hint" style="margin-top:8px"></div>
         <div id="fin-info" class="ficha-sub" style="margin:10px 0"></div>
         <div id="fin-quadro"></div>
       </div>
@@ -2413,7 +2410,7 @@ function setCondominioAtivo(obj) {
 }
 
 // Abas com o banner do condomínio ativo (com o seletor único dentro).
-const BANNERS_COND = ['despesas','unidades','boletos','financeiro','previsao','consumo','condominio'];
+const BANNERS_COND = ['despesas','unidades','boletos','previsao','consumo','condominio'];
 
 /**
  * Lê o condomínio ativo na seguinte ordem de prioridade:
@@ -2682,9 +2679,9 @@ const PAGE_META = {
   dashboard:     { title: 'Dashboard', sub: 'visão geral do sistema' },
   despesas:      { title: 'Importar Despesas', sub: 'planilha → Superlógica' },
   unidades:      { title: 'Importar Unidades', sub: 'planilha → Superlógica' },
-  boletos:       { title: 'Boletos', sub: 'em breve' },
-  financeiro:    { title: 'Conciliação Bancária', sub: 'em breve' },
-  nf:            { title: 'Notas Fiscais', sub: 'em breve' },
+  boletos:       { title: 'Boletos', sub: 'conferência dos boletos do mês antes de enviar' },
+  conciliacao:   { title: 'Conciliação', sub: 'extrato importado no Superlógica comparado com os lançamentos' },
+  entrada:       { title: 'Entrada de documentos', sub: 'boletos, notas e guias para lançar' },
   tarefas:       { title: 'Tarefas', sub: 'em breve' },
   configuracoes: { title: 'Configurações', sub: 'credenciais e preferências' },
   prestacao:     { title: 'Prestação de Contas', sub: 'gerar apresentação financeira anual' },
@@ -2698,7 +2695,53 @@ const PAGE_META = {
   seguranca:     { title: 'Segurança', sub: 'uso do sistema por pessoa' },
 };
 
+// T37: módulos que cada tela financeira exige (todos ao mesmo tempo, com a ação ver).
+// O servidor confere de novo em cada rota; aqui só decide o que aparece.
+var PAINEL_MODULOS = {
+  fincontrole: ['financeiro'],
+  boletos:     ['boletos', 'financeiro'],
+  conciliacao: ['conciliacao', 'financeiro'],
+  entrada:     ['entrada_documentos']
+};
+// Nomes antigos de tela (guardados no navegador) que mudaram de lugar.
+var PAINEL_ALIAS = { financeiro: 'conciliacao', nf: 'entrada' };
+// Falha fechada: sem permissões carregadas não mostra. O GESTOR vê tudo (o servidor faz igual).
+function podeAbrirPainel(nome) {
+  var mods = PAINEL_MODULOS[nome];
+  if (!mods) return true;
+  if (window.USER_ROLE === 'GESTOR' && window.USER_PERMS) return true;
+  var p = window.USER_PERMS;
+  if (!p || typeof p !== 'object') return false;
+  return mods.every(function (m) {
+    var x = p[m];
+    return !!(x && x.visivel === true && Array.isArray(x.acoes) && x.acoes.indexOf('ver') >= 0);
+  });
+}
+function aplicarVisibilidadePaineisFinanceiros() {
+  Object.keys(PAINEL_MODULOS).forEach(function (nome) {
+    var item = document.getElementById('nav-' + nome);
+    if (item) item.style.display = podeAbrirPainel(nome) ? '' : 'none';
+    var painel = document.getElementById('panel-' + nome);
+    if (painel && painel.classList.contains('active') && !podeAbrirPainel(nome)) showPanel('dashboard');
+  });
+  var pend = window._painelPendente;
+  if (pend && window.USER_PERMS) {
+    window._painelPendente = null;
+    if (podeAbrirPainel(pend)) showPanel(pend);
+  }
+}
+
 function showPanel(name) {
+  // T37: telas financeiras com falha fechada. Sem permissão (ou antes de carregar as
+  // permissões) abre o Dashboard; o pedido fica guardado e é refeito depois de carregar.
+  if (PAINEL_ALIAS[name]) name = PAINEL_ALIAS[name];
+  if (PAINEL_MODULOS[name] && !podeAbrirPainel(name)) {
+    window._painelPendente = window.USER_PERMS ? null : name;
+    name = 'dashboard';
+  } else if (name !== 'dashboard') {
+    window._painelPendente = null;
+  }
+  if (!document.getElementById('panel-' + name)) name = 'dashboard';
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('panel-' + name).classList.add('active');
@@ -2751,7 +2794,8 @@ function showPanel(name) {
 // Restaura painel ativo ao carregar
 (function restorePanel() {
   try {
-    const saved = localStorage.getItem('sh_active_panel');
+    let saved = localStorage.getItem('sh_active_panel');
+    if (saved && PAINEL_ALIAS[saved]) saved = PAINEL_ALIAS[saved];
     if (saved && document.getElementById('panel-' + saved)) {
       // Adia para garantir que os overrides (ex: condominios) já estejam ativos
       setTimeout(() => showPanel(saved), 0);
@@ -3586,8 +3630,9 @@ const PANEL_TO_MODULO = {
   despesas:       'importar_despesas',
   unidades:       'importar_unidades',
   boletos:        'boletos',
-  financeiro:     'conciliacao',
-  nf:             'notas_fiscais',
+  conciliacao:    'conciliacao',
+  entrada:        'entrada_documentos',
+  fincontrole:    'financeiro',
   prestacao:      'prestacao_contas',
   atas:           'atas',
   consumo:        'leitura_consumo',
@@ -3638,11 +3683,14 @@ function aplicarPermissoesSidebar() {
     const handler = el.getAttribute('onclick') || '';
     const m = handler.match(/showPanel\('([^']+)'\)/);
     if (!m) return;
+    // T37: telas financeiras seguem podeAbrirPainel (mais de um módulo, GESTOR, falha fechada).
+    if (PAINEL_MODULOS[m[1]]) return;
     const modulo = PANEL_TO_MODULO[m[1]];
     if (!modulo) return;
     const visivel = window.USER_PERMS[modulo]?.visivel;
     el.style.display = visivel ? '' : 'none';
   });
+  aplicarVisibilidadePaineisFinanceiros();
   // Botão Configurações (não tem .nav-item)
   const cfgBtn = document.querySelector('.config-btn[onclick*="configuracoes"]');
   if (cfgBtn) {
@@ -3719,9 +3767,10 @@ const MODULOS_CATALOGO = {
   dashboard:          { label: 'Dashboard',           acoes: ['ver'] },
   importar_despesas:  { label: 'Importar Despesas',   acoes: ['ver', 'importar'] },
   importar_unidades:  { label: 'Importar Unidades',   acoes: ['ver', 'importar', 'normalizar'] },
-  boletos:            { label: 'Boletos',             acoes: ['ver'] },
-  conciliacao:        { label: 'Conciliação',         acoes: ['ver'] },
-  notas_fiscais:      { label: 'Notas Fiscais',       acoes: ['ver'] },
+  // T37: Boletos e Conciliação só abrem junto com o módulo Financeiro. O antigo
+  // notas_fiscais saiu da tela: o item virou Entrada de documentos (módulo entrada_documentos).
+  boletos:            { label: 'Boletos (precisa também do Financeiro)',     acoes: ['ver'] },
+  conciliacao:        { label: 'Conciliação (precisa também do Financeiro)', acoes: ['ver'] },
   prestacao_contas:   { label: 'Prestação de Contas', acoes: ['ver', 'gerar', 'ajustar_estrutura'] },
   atas:               { label: 'Atas Condominiais',   acoes: ['ver', 'gerar', 'edital', 'transcricao_livre'] },
   leitura_consumo:    { label: 'Leitura de Consumo',  acoes: ['ver', 'ler'] },

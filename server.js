@@ -3810,6 +3810,7 @@ app.get('/api/financeiro/boletos/:idSuperlogica', requireAuth, async (req, res) 
   const competencia = String(req.query.competencia || '');
   if (!finBoletos.competenciaValida(competencia)) return res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Informe a competência no formato AAAA-MM.' });
   if (!(await _exigirFinanceiro(req, res, 'ver'))) return;
+  if (!(await _exigirModuloItem(req, res, 'boletos'))) return;
   if (!(await exigirLeituraSuperlogica(req, res))) return;
   if (!(await _exigirCarteira(req, res, id))) return;
   if (!(await _exigirEscopoFinanceiro(req, res, id))) return;
@@ -3840,6 +3841,20 @@ async function _exigirFinanceiro(req, res, acao) {
   }
   if (finPainel.temFinanceiro(perfil, acao)) return true;
   res.status(403).json({ erro: 'modulo_sem_acesso', detalhe: acao === 'pre_balancete' ? 'Seu usuário não pode gerar o pré balancete.' : 'Seu usuário não tem acesso a esta aba.' });
+  return false;
+}
+// T37: Boletos e Conciliação ganharam item próprio no menu. Além do módulo financeiro, a rota
+// exige o módulo do item (boletos ou conciliacao, ação ver). Falha fechada: perfil ilegível recusa.
+async function _exigirModuloItem(req, res, modulo) {
+  if (req.authMode === 'internal') return true;
+  if (!SUPABASE_SERVICE_ROLE_KEY) { res.status(503).json({ erro: 'service_role_nao_configurada' }); return false; }
+  let perfil = null;
+  try { perfil = await lerPerfil(req.user && req.user.sub); } catch (e) {
+    res.status(503).json({ erro: 'permissao_indisponivel', detalhe: 'Não foi possível conferir suas permissões agora.' });
+    return false;
+  }
+  if (podeModulo(perfil, modulo, 'ver')) return true;
+  res.status(403).json({ erro: 'modulo_sem_acesso', detalhe: 'Seu usuário não tem acesso a esta tela.' });
   return false;
 }
 // Condomínios que quem chama pode ver: null = todos (GESTOR, acesso interno, sem carteira).
@@ -3945,7 +3960,7 @@ app.get('/api/financeiro/condominio/:idSuperlogica/pre-balancete', requireAuth, 
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Conciliação (T35), aba dentro do Financeiro. Só GET no Superlógica (extrato já importado
+// Conciliação (T35), item próprio do menu desde a T37 (módulos financeiro e conciliacao). Só GET no Superlógica (extrato já importado
 // pela equipe: conciliacao/index por condomínio e conta, e contabancos/index), no máximo
 // 2 chamadas ao mesmo tempo, cache de 10 min. Mesmas travas das rotas do Financeiro:
 // módulo financeiro (ver), acesso ao Superlógica e carteira (falha fechada).
@@ -3957,6 +3972,7 @@ async function _travasConciliacao(req, res, id) {
   if (!slModulo.idValido(id)) { res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' }); return false; }
   if (finConciliacao.NAO_CONDOMINIOS.has(id)) { res.status(400).json({ erro: 'nao_condominio', detalhe: 'Esse cadastro não é um condomínio.' }); return false; }
   if (!(await _exigirFinanceiro(req, res, 'ver'))) return false;
+  if (!(await _exigirModuloItem(req, res, 'conciliacao'))) return false;
   if (!(await exigirLeituraSuperlogica(req, res))) return false;
   if (!(await _exigirCarteira(req, res, id))) return false;
   if (!(await _exigirEscopoFinanceiro(req, res, id))) return false;
@@ -3978,6 +3994,7 @@ app.get('/api/financeiro/conciliacao/quadro', requireAuth, async (req, res) => {
   const carteira = String(req.query.carteira || '');
   if (carteira && !/^[1-9][0-9]{0,8}$/.test(carteira)) return res.status(400).json({ erro: 'carteira_invalida', detalhe: 'Carteira inválida.' });
   if (!(await _exigirFinanceiro(req, res, 'ver'))) return;
+  if (!(await _exigirModuloItem(req, res, 'conciliacao'))) return;
   if (!(await exigirLeituraSuperlogica(req, res))) return;
   let escopo;
   try { escopo = await _escopoFinanceiro(req); } catch (e) {

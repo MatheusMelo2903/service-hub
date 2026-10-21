@@ -9,52 +9,27 @@
 (function () {
   var PAINEL = 'entrada';
   if (typeof MODULOS_CATALOGO !== 'undefined' && !MODULOS_CATALOGO.entrada_documentos) {
-    MODULOS_CATALOGO.entrada_documentos = { label: 'Entrada de Documentos', acoes: ['ver', 'lancar'] };
+    MODULOS_CATALOGO.entrada_documentos = { label: 'Entrada de documentos', acoes: ['ver', 'lancar'] };
   }
-  if (typeof PAGE_META !== 'undefined') PAGE_META[PAINEL] = { title: 'Entrada de Documentos', sub: 'boletos, notas e guias para lançar' };
+  if (typeof PAGE_META !== 'undefined') PAGE_META[PAINEL] = { title: 'Entrada de documentos', sub: 'boletos, notas e guias para lançar' };
 
-  function podeVer() { return window.USER_ROLE === 'GESTOR' || (typeof temPermissao === 'function' ? temPermissao('entrada_documentos') : true); }
-  function podeLancar() { return window.USER_ROLE === 'GESTOR' || (typeof temPermissao === 'function' && !!window.USER_PERMS && temPermissao('entrada_documentos', 'lancar')); }
+  // T37: falha fechada, mesma regra do menu (index.html, podeAbrirPainel).
+  function podeVer() { return typeof window.podeAbrirPainel === 'function' && window.podeAbrirPainel(PAINEL); }
+  function podeLancar() { return podeVer() && (window.USER_ROLE === 'GESTOR' || (typeof temPermissao === 'function' && !!window.USER_PERMS && temPermissao('entrada_documentos', 'lancar'))); }
 
-  // 1. Menu (logo depois do Financeiro, ou de Cobrança) e visibilidade.
-  function criarMenu() {
-    if (document.getElementById('nav-entrada')) return;
-    var ref = document.getElementById('nav-fincontrole');
-    if (!ref) document.querySelectorAll('.nav-item').forEach(function (el) { if ((el.getAttribute('onclick') || '').indexOf("showPanel('cobranca')") >= 0) ref = el; });
-    if (!ref) return;
-    var item = document.createElement('div');
-    item.className = 'nav-item';
-    item.id = 'nav-entrada';
-    item.setAttribute('onclick', "showPanel('" + PAINEL + "')");
-    item.innerHTML = '<span class="nav-icon">⇣</span> Entrada de Documentos';
-    ref.insertAdjacentElement('afterend', item);
-  }
-  criarMenu();
-  function aplicarVisibilidade() {
-    var item = document.getElementById('nav-entrada');
-    if (item) item.style.display = podeVer() ? '' : 'none';
-    var p = document.getElementById('panel-' + PAINEL);
-    if (p && p.classList.contains('active') && !podeVer() && typeof showPanel === 'function') showPanel('dashboard');
-  }
-  if (typeof window.aplicarPermissoesSidebar === 'function') {
-    var origPerm = window.aplicarPermissoesSidebar;
-    window.aplicarPermissoesSidebar = function () { origPerm.apply(this, arguments); if (window.USER_PERMS) aplicarVisibilidade(); };
-  }
+  // 1. O item do menu é o antigo Notas Fiscais (index.html, nav-entrada); a visibilidade fica com
+  // aplicarVisibilidadePaineisFinanceiros e o showPanel do index.html recusa sem permissão.
+  function painelAtivo() { var p = document.getElementById('panel-' + PAINEL); return !!(p && p.classList.contains('active')); }
   if (typeof window.showPanel === 'function') {
     var origShow = window.showPanel;
-    window.showPanel = function (nome) {
-      if (nome === PAINEL && window.USER_PERMS && !podeVer()) nome = 'dashboard';
-      var r = origShow.apply(this, [nome].concat([].slice.call(arguments, 1)));
-      if (nome === PAINEL) entAbrir();
+    window.showPanel = function () {
+      var r = origShow.apply(this, arguments);
+      if (painelAtivo() && podeVer()) entAbrir();
       return r;
     };
   }
   document.addEventListener('auth:ready', function () {
-    setTimeout(function () {
-      aplicarVisibilidade();
-      var p = document.getElementById('panel-' + PAINEL);
-      if (p && p.classList.contains('active')) entAbrir();
-    }, 0);
+    setTimeout(function () { if (painelAtivo() && podeVer()) entAbrir(); }, 0);
   });
 
   // 2. Utilitários.
