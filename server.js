@@ -3179,6 +3179,17 @@ app.get('/api/unidades/busca', requireAuth, async (req, res) => {
 // alertas e alertas_config (Supabase, só via service_role). Detalhes em superlogica/alertas.js.
 // ─────────────────────────────────────────────────────────────────────────
 const slAlertas = require('./superlogica/alertas');
+const slAlertasOper = require('./superlogica/alertas-operacionais');
+// Alertas da T05 (contas a vencer, saldo, recorrentes) mais os operacionais da T08
+// (pagamento sem nota fiscal, manutenção periódica atrasada, consumo fora do padrão).
+async function calcularTodosAlertas(id, hoje, cfg) {
+  const cli = clienteSL();
+  const [a, o] = await Promise.all([
+    slAlertas.calcularAlertas(cli, id, hoje, cfg),
+    slAlertasOper.calcularOperacionais(cli, id, hoje).catch(() => ({ alertas: [], falhas: ['alertas operacionais'] })),
+  ]);
+  return { alertas: a.alertas.concat(o.alertas), falhas: a.falhas.concat(o.falhas), saldo_minimo: a.saldo_minimo };
+}
 const _cacheAlertas = slModulo.consulta.criarCache(5 * 60 * 1000, 300, 60 * 1000);
 const _verificandoCond = new Set();
 
@@ -3255,10 +3266,10 @@ app.get('/api/condominio/:idSuperlogica/alertas', requireAuth, async (req, res) 
     // forcar=1 (botão Atualizar) recalcula sem cache; resultado com falha de leitura não fica em cache.
     const chaveCache = 'alertas:' + id + ':' + hoje.toISOString().slice(0, 10) + ':' + cfg.saldo_minimo;
     let calc;
-    if (req.query.forcar === '1') calc = await slAlertas.calcularAlertas(clienteSL(), id, hoje, cfg);
+    if (req.query.forcar === '1') calc = await calcularTodosAlertas(id, hoje, cfg);
     else {
       calc = await _cacheAlertas.pegar(chaveCache, async () => {
-        const c = await slAlertas.calcularAlertas(clienteSL(), id, hoje, cfg);
+        const c = await calcularTodosAlertas(id, hoje, cfg);
         if (c.falhas.length) { const e = new Error('parcial'); e.parcial = c; throw e; }
         return c;
       }).catch((e) => { if (e && e.parcial) return e.parcial; throw e; });

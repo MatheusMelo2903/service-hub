@@ -109,7 +109,8 @@ async function dashSalvarNovoCondominio() {
 // fica guardado no servidor (tabela alertas). Rota: /api/condominio/:id/alertas.
 // ============================================================
 var alertasEstado = { seq: 0, idCarregado: null };
-var ALERTA_ROTULO = { conta_a_vencer: 'A vencer', saldo_baixo: 'Saldo', recorrente_nao_lancada: 'Recorrente' };
+var ALERTA_ROTULO = { conta_a_vencer: 'A vencer', saldo_baixo: 'Saldo', recorrente_nao_lancada: 'Recorrente',
+  sem_nota_fiscal: 'Sem nota', manutencao_atrasada: 'Manutenção', consumo_fora_padrao: 'Consumo' };
 
 function alertasEsc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -173,6 +174,8 @@ function alertasRender(j) {
     if (a.tipo === 'conta_a_vencer') extra = alertasBRL(d.valor) + (d.descricao ? ' · ' + d.descricao : '');
     if (a.tipo === 'saldo_baixo') extra = (d.conta || '') + ': ' + alertasBRL(d.saldo) + ' (limite ' + alertasBRL(d.limite) + ')';
     if (a.tipo === 'recorrente_nao_lancada') extra = 'último lançamento ' + (d.ultimo_vencimento || '') + ', ' + alertasBRL(d.valor_ultimo);
+    // T08: o servidor manda o resumo pronto (nota fiscal, manutenção e consumo).
+    if (!extra && d.resumo) extra = d.resumo;
     var cor = a.status === 'novo' ? 'var(--warning)' : a.status === 'visto' ? 'var(--muted)' : 'var(--success)';
     var botoes = '';
     if (a.id && a.status !== 'visto' && a.status !== 'resolvido') botoes += '<button class="btn btn-ghost" style="font-size:10px;padding:4px 8px" onclick="alertasMarcar(\'' + a.id + '\',\'visto\')">Visto</button>';
