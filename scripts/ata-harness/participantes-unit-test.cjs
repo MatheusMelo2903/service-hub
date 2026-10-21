@@ -32,5 +32,20 @@ r = P.conferirParticipantes('A Condômina Kátia, da unidade 203 J, votou.', pes
 check('Condômina com maiúscula e "203 J"', r.itens.some((i) => i.situacao === 'ok'), JSON.stringify(r.itens));
 r = P.conferirParticipantes('a condômina Sra. Kátia [sobrenome a confirmar], unidade J203, aceitou.', pessoas);
 check('marcador [sobrenome a confirmar] entre nome e unidade', r.itens.some((i) => i.situacao === 'ok'), JSON.stringify(r.itens));
+// C08: nome trocado pelo gate e marcas no meio
+r = P.conferirParticipantes("a Sra. [nome sem âncora na fonte: 'Kátia'], da unidade J203, votou.", pessoas);
+check('C08 nome marcado pelo gate volta para a conferência', r.itens.some((i) => /K.tia/.test(i.nome) && i.situacao === 'ok'), JSON.stringify(r.itens));
+r = P.conferirParticipantes('a Sra. Kátia [sobrenome a confirmar] [conferir: transcrição dizia Cátia], da unidade J203, votou.', pessoas);
+check('C08 duas marcas entre nome e unidade', r.itens.some((i) => i.situacao === 'ok'), JSON.stringify(r.itens));
+r = P.conferirParticipantes('a moradora Kátia, da unidade J-203, votou.', pessoas);
+check('C08 moradora e unidade com hífen', r.itens.some((i) => i.situacao === 'ok'), JSON.stringify(r.itens));
+r = P.conferirParticipantes('a proprietária Fernanda, do apartamento 101 bloco A, votou.', pessoas);
+check('C08 proprietária que não mora = nome_nao_bate', r.divergentes.some((i) => i.situacao === 'nome_nao_bate'), JSON.stringify(r.itens));
+r = P.conferirParticipantes('o morador da unidade 101 bloco A pediu a palavra.', pessoas);
+check('C08 morador sem nome não entra', r.itens.length === 0, JSON.stringify(r.itens));
+r = P.conferirParticipantes('O Sr. João, apartamento 101 e a Sra. Kátia, da unidade J203, falaram.', pessoas);
+check('C08 "101 e a" não vira unidade 101e', r.itens.some((i) => /Jo.o/.test(i.nome) && i.situacao === 'ok'), JSON.stringify(r.itens));
+s = P.conferirSindico("a síndica Sra. [nome sem âncora na fonte: 'Maria de Fátima'] abriu.", pessoas);
+check('C08 síndica marcada pelo gate confere', s && s.situacao === 'ok', JSON.stringify(s));
 console.log('\n===== RESULTADO: ' + ok + ' PASS, ' + fail + ' FAIL =====');
 process.exit(fail ? 1 : 0);

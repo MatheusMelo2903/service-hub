@@ -101,10 +101,20 @@ function nomeBate(nomeAta, nomesCadastro) {
 // Janela curta (até 15 caracteres) e conector antes da palavra unidade ("Sra. X, da unidade",
 // "Sr. X (apto 101)"): evita ligar a pessoa a uma unidade só citada na mesma frase.
 // Letra da unidade colada ao número ("J203", "203J") ou maiúscula isolada ("203 J").
-const RE_PAR = /((?:Sr\.|Sra\.|Dr\.|Dra\.|[Cc]ond[ôo]min[oa])\s+(?:\[[^\]]*\]\s+)?((?:[A-ZÀ-Ý][A-Za-zà-ÿ]+(?:\s+(?:d[aeo]s?\s+)?|\s*)){1,5}))(?:\s*\[[^\]]*\])*[^.;:\n\[]{0,15}?(?:\(|,|\bd[ao]\b|\bn[ao]\b)\s*(?:unidade|apartamento|apto\.?|ap\.?|casa|sala|lote)\s+(?:n[ºo°]\s*)?([A-Za-z]?\d{1,5}[A-Za-z]?(?:\s[A-Z](?=[\s,.;:)]|$))?(?:\s*(?:bloco|torre)\s*[A-Za-z0-9]{1,3})?)/g;
+const RE_PAR = /((?:Sr\.|Sra\.|Dr\.|Dra\.|[Cc]ond[ôo]min[oa]|[Mm]orador(?:a)?|[Pp]ropriet[áa]ri[oa]|[Ii]nquilin[oa])\s+(?:\[[^\]]*\]\s+)?((?:[A-ZÀ-Ý][A-Za-zà-ÿ]+(?:\s+(?:d[aeo]s?\s+)?|\s*)){1,5}))(?:\s*\[[^\]]*\])*[^.;:\n\[]{0,15}?(?:\(|,|\bd[ao]\b|\bn[ao]\b)\s*(?:unidade|apartamento|apto\.?|ap\.?|casa|sala|lote)\s+(?:n[ºo°]\s*)?([A-Za-z]?-?\d{1,5}(?:-?[A-Za-z](?![a-zà-ÿ]))?(?:\s[A-Z](?=[\s,.;:)]|$))?(?:\s*(?:bloco|torre)\s*[A-Za-z0-9]{1,3})?)/g;
+
+// C08: o gate de saída troca nome sem apoio por "[nome sem âncora na fonte: 'Kátia']" e o modelo
+// escreve "[sobrenome a confirmar]"; com isso o par nome e unidade sumia e o quadro não aparecia.
+// Antes de procurar os pares: o nome marcado pelo gate volta ao texto e as demais marcas saem.
+function semMarcas(txt) {
+  return String(txt || '')
+    .replace(/\[(?:nome sem âncora na fonte|voto atribuído a nome sem âncora):\s*['"]?([^\]'"]*)['"]?\]/g, '$1')
+    .replace(/\s*\[[^\]\n]{0,120}\]/g, '')
+    .replace(/[ \t]{2,}/g, ' ');
+}
 
 function conferirParticipantes(ataTxt, pessoas) {
-  const s = String(ataTxt || '');
+  const s = semMarcas(ataTxt);
   const vistos = new Set();
   const itens = [];
   let m;
@@ -134,7 +144,7 @@ function conferirParticipantes(ataTxt, pessoas) {
 
 // Síndico citado na ata (texto "síndic[oa] Sr./Sra. Nome") confere com sindicos/index.
 function conferirSindico(ataTxt, pessoas) {
-  const m = String(ataTxt || '').match(/s[íi]ndic[oa]\s*,?\s*(?:Sr\.|Sra\.)\s+((?:[A-ZÀ-Ý][a-zà-ÿ]+(?:\s+(?:d[aeo]s?\s+)?|\s*)){1,5})/);
+  const m = semMarcas(ataTxt).match(/s[íi]ndic[oa]\s*,?\s*(?:Sr\.|Sra\.)\s+((?:[A-ZÀ-Ý][a-zà-ÿ]+(?:\s+(?:d[aeo]s?\s+)?|\s*)){1,5})/);
   if (!m || !pessoas.sindicos.length) return null;
   const nome = limpar(m[1]);
   const bate = nomeBate(nome, pessoas.sindicos);
