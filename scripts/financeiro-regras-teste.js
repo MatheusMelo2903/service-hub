@@ -220,6 +220,14 @@ caso('Documento NFE e NFSE normalizados', () => {
   assert.strictEqual(U.documento({ st_documento_des: 'N 77' }), '77'); assert.strictEqual(U.documento({ st_documento_des: 'NORTE' }), 'NORTE');
   assert.strictEqual(U.valor('1.234,56'), 1234.56);
 });
+caso('R1a concessionária: mesma UC, mesmo valor e mesmo mês lançada duas vezes: alta', () => {
+  const o = { st_nome_con: 'ESCELSA', st_cpf_con: '28152650000171', st_documento_des: 'UC: 0.002.434.053.054-65', vl_valor_pdes: '232.02', apropriacao: [{ st_descricao_cont: 'Energia' }] };
+  const al = rodar([p(o), p({ ...o, dt_vencimento_pdes: '05/12/2026' })], [], ['R1']);
+  assert.strictEqual(al.length, 2); assert.ok(al.every((a) => a.gravidade === 'alta' && a.detalhe.includes('mesma UC')));
+});
+caso('R2 nota repetida com valor diferente e meses longe: sem alerta', () => {
+  assert.strictEqual(rodar([p({ st_documento_des: '139', dt_vencimento_pdes: '04/13/2026' }), p({ st_documento_des: '139', id_condominio_cond: '20', vl_valor_pdes: '808.50', dt_vencimento_pdes: '08/01/2026' })], [], ['R2']).length, 0);
+});
 
 // ---------- Dados reais da T23 (fora do git) ----------
 const REAIS = process.argv[2] || '/Users/matheusmelo/v8s/EXECUCAO/testes/T23/saida';

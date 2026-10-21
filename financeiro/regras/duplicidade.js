@@ -53,6 +53,11 @@ function r1Documento(itens, ctx) {
   ligar(porChave(lista, (it) => { const c = U.codigoBarras(it); return c ? it.id_condominio_cond + '|B|' + c : ''; }));
   // Concessionária usa o campo documento para a unidade consumidora (UC): só o código de barras vale para ela.
   ligar(porChave(lista, (it) => { const d = U.documento(it); return d && U.categoria(it) !== 'concessionaria' && !RX_DOC_NAO_NOTA.test(d) ? it.id_condominio_cond + '|D|' + U.fornecedorChave(it) + '|' + d : ''; }));
+  // Concessionária: a mesma UC com o mesmo valor no mesmo mês é a mesma conta lançada duas vezes.
+  ligar(porChave(lista, (it) => {
+    const d = U.documento(it); const v = U.data(it.dt_vencimento_pdes);
+    return d && v && U.categoria(it) === 'concessionaria' ? it.id_condominio_cond + '|U|' + U.fornecedorChave(it) + '|' + d + '|' + U.centavos(it.vl_valor_pdes) + '|' + v.slice(0, 7) : '';
+  }));
   const grupos = new Map();
   lista.forEach((it, i) => { const r = uf.achar(i); if (!grupos.has(r)) grupos.set(r, []); grupos.get(r).push(it); });
   const out = [];
@@ -68,9 +73,14 @@ function r1Documento(itens, ctx) {
     for (const it of g) {
       const outros = g.filter((o) => o !== it && String(o.id_despesa_des) !== String(it.id_despesa_des));
       const porBarras = outros.some((o) => U.codigoBarras(o) && U.codigoBarras(o) === U.codigoBarras(it));
-      out.push(A.deItem('R1', 'R1_DOCUMENTO', porBarras ? 'alta' : grav, it, ctx, {
+      const conc = U.categoria(it) === 'concessionaria';
+      // Diz a ligação de cada par (o grupo pode ser transitivo: A liga com B por barras e B com C por documento).
+      const ligacao = (o) => (U.codigoBarras(o) && U.codigoBarras(o) === U.codigoBarras(it) ? 'mesmo código de barras'
+        : (U.documento(o) && U.documento(o) === U.documento(it) && U.fornecedorChave(o) === U.fornecedorChave(it) ? (conc ? 'mesma UC, valor e mês' : 'mesmo documento')
+          : 'ligada por outro lançamento do grupo'));
+      out.push(A.deItem('R1', 'R1_DOCUMENTO', porBarras || conc ? 'alta' : grav, it, ctx, {
         grupo, relacionados: outros.map((o) => String(o.id_despesa_des)),
-        detalhe: (porBarras ? 'Mesmo código de barras' : 'Mesmo documento do mesmo fornecedor') + ' em ' + outros.map(rotulo).join('; '),
+        detalhe: 'Repetida em ' + outros.map((o) => rotulo(o) + ' [' + ligacao(o) + ']').join('; '),
       }));
     }
   }
@@ -131,6 +141,11 @@ function r2CondominioTrocado(itens, ctx) {
       const g = idx.map((i) => lista[i]);
       const conds = new Set(g.map((it) => String(it.id_condominio_cond)));
       if (conds.size < 2) continue;
+      if (!porBarras) { // nota repetida: só vale com mesmo valor ou vencimentos próximos (fornecedor pode reiniciar numeração)
+        const perto = (a, b) => U.centavos(a.vl_valor_pdes) === U.centavos(b.vl_valor_pdes) || Math.abs(U.dias(U.data(a.dt_vencimento_pdes), U.data(b.dt_vencimento_pdes)) ?? 999) <= 60;
+        const algum = g.some((a) => g.some((b) => String(a.id_condominio_cond) !== String(b.id_condominio_cond) && perto(a, b)));
+        if (!algum) continue;
+      }
       const grupo = 'R2-' + g.map((it) => it.id_parcela_pdes).sort().join('-');
       for (const it of g) {
         if (visto.has(it.id_parcela_pdes)) continue;

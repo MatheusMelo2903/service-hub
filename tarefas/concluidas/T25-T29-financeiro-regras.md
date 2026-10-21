@@ -20,10 +20,14 @@ Fora de tudo: ids 143, 144, 145, 160, 162 e o 167 (teste).
 1. scripts/financeiro-puxar.js: só GET, 3 chamadas simultâneas, 2 s de pausa em 429 ou erro, quebra a janela ao meio se o Superlógica devolver corpo que não é JSON. Liquidadas por quinzena, pendentes de uma vez, auditoria dos últimos 10 dias úteis.
 2. scripts/financeiro-rodar-regras.js: roda as regras sobre a pasta de dados e grava alertas.json.
 3. scripts/financeiro_planilha_erros.py: monta a planilha (Resumo por tipo, condomínio e analista; uma aba por tipo; Como ler).
-4. scripts/financeiro-regras-teste.js: 28 casos sintéticos e 5 com os JSON reais da T23.
+4. scripts/financeiro-regras-teste.js: 36 casos sintéticos e 5 com os JSON reais da T23 (41 ok).
 
 ## Resultado de 21/10 (dado real fora do git)
-30.062 parcelas de 01/04 a 21/10 e 251.458 linhas de auditoria (07/10 a 20/10): 24.550 casos em ~/Downloads/Financeiro_erros_2026-10-21.xlsx.
+31.591 parcelas (pagas de 01/04 a 21/10, pendentes vencidas desde 2025 e a vencer em 60 dias) e 251.458 linhas de auditoria (07/10 a 20/10), casos em ~/Downloads/Financeiro_erros_2026-10-21.xlsx.
+
+## Revisão 1 (testes/T25/revisao-1.md)
+0 GRAVE. Corrigidos os 4 MÉDIOS (anexos por despesa na R4 e R8, pendentes futuras e antigas, condomínio -1 na R9, linha digitável e documento alterado) e os MENORES 1 a 11.
+Conflito com a T24 (feat/financeiro-auditor): nenhum (arquivos diferentes; superlogica-dados.js mantém criarCliente).
 Os três casos de condomínio trocado do diagnóstico (Macovit doc 41483, VIVO R$ 79,99, Vix Ocupacional R$ 132,00) aparecem.
 
 ## Para a raia B (T24)
