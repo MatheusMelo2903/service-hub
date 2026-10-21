@@ -22,7 +22,12 @@
     const c = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
     return c && c.id_superlogica ? c : null;
   }
-  function travar() { window._enviandoConsumo = st.lendo > 0 || st.lancando; }
+  // Enquanto lê ou lança: trava a troca de condomínio e os filtros (tipo e mês).
+  function travar() {
+    const ocupado = st.lendo > 0 || st.lancando;
+    window._enviandoConsumo = ocupado;
+    ['consumo-tipo', 'consumo-mes', 'consumo-dia'].forEach((id) => { const el = $(id); if (el) el.disabled = ocupado; });
+  }
 
   // Mês de referência: o atual e os dois anteriores.
   function montarMeses() {
@@ -47,7 +52,7 @@
   // Unidades do condomínio com a última leitura do tipo e mês escolhidos.
   async function carregarUnidades() {
     const c = cond();
-    st.unidades = []; st.info = null;
+    st.unidades = []; st.info = null; st.infoParams = null;
     if (!c) { avisoTopo('Selecione um condomínio com código do Superlógica.'); return false; }
     const p = params();
     const r = await apiAuthFetch('/api/consumo/' + encodeURIComponent(c.id_superlogica) + '/unidades?tipo=' + encodeURIComponent(p.tipo) + '&mes=' + encodeURIComponent(p.mes));
@@ -55,6 +60,7 @@
     if (!r.ok) { avisoTopo(d.detalhe || 'Não foi possível ler as unidades agora.'); return false; }
     st.unidades = Array.isArray(d.unidades) ? d.unidades : [];
     st.info = d;
+    st.infoParams = p; // tipo e mês com que a lista foi lida: o lançamento usa estes
     const dia = $('consumo-dia');
     dia.max = d.ultimo_dia || 31;
     if (!dia.value || Number(dia.value) > Number(dia.max)) dia.value = d.corrente ? new Date().getDate() : d.ultimo_dia;
@@ -145,7 +151,7 @@
     const c = cond();
     const prontos = st.itens.filter((it) => it.status !== 'lendo' && !it.lancada);
     if (!c || !st.info || !prontos.length) { render(); return; }
-    const p = params();
+    const p = st.infoParams || params();
     const itens = prontos.map((it) => ({ chave: it.id, unidade: it.unidadeTxt, bloco: it.blocoTxt,
       id_unidade: it.escolhida ? it.id_unidade : null, leitura: it.leitura, varios_medidores: it.varios }));
     try {
@@ -250,7 +256,10 @@
     const msg = 'Lançar ' + marcadas.length + ' leitura(s) de ' + (st.info.nome_tipo || '') + ' em ' + (st.info.mes || '') + ' no Superlógica, condomínio ' + (c.nome || c.id_superlogica) + '?' +
       (comSusp ? '\n\n' + comSusp + ' delas têm suspeita e você marcou que conferiu.' : '');
     if (!window.confirm(msg)) return;
-    const p = params();
+    // Lança com o tipo e o mês da conferência; se os filtros mudaram, confere de novo antes.
+    const p = st.infoParams;
+    const agora = params();
+    if (!p || p.tipo !== agora.tipo || p.mes !== agora.mes) { toast('O tipo ou o mês mudou: aguarde a nova conferência e tente de novo.', 'err'); mudouFiltro(); return; }
     const dia = Number($('consumo-dia').value) || null;
     const logDiv = $('consumo-log');
     $('consumo-log-card').style.display = 'block';
@@ -267,7 +276,7 @@
           body: JSON.stringify({ tipo: p.tipo, mes: p.mes, dia, id_unidade: it.id_unidade, leitura: it.leitura,
             foto: it.b64 ? { mime: 'image/jpeg', base64: it.b64 } : undefined,
             substituir: cods.includes('ja_lancada'),
-            aceitar_suspeita: cods.includes('menor_que_anterior') || cods.includes('salto_alto'),
+            aceitar_suspeitas: cods.filter((x) => x === 'menor_que_anterior' || x === 'salto_alto'),
             confirmacao: 'LANCAR' }),
         });
         const d = await lerJson(r);

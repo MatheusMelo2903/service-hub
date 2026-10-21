@@ -88,5 +88,9 @@ t('resposta ilegível', r2.leitura === 'ilegível' && r2.unidade === null && r2.
 t('resposta texto solto', lerRespostaMedidor('Leitura: 1234,5').leitura === '1234,5');
 t('resposta com letras na leitura', lerRespostaMedidor('{"leitura":"12a4"}').leitura === 'ilegível');
 
+const comSeg = lista.map((u) => Object.assign({}, u, { seguinte: u.id_unidade === 5 ? 120 : null }));
+t('mes seguinte lançado', C.conferirLote(comSeg, [{ id_unidade: 5, leitura: '110' }])[0].suspeitas.map((s) => s.codigo).join() === 'mes_seguinte_lancado');
+t('refSeguinte', C.refSeguinte(C.mesRef('2026-09', new Date(Date.UTC(2026, 9, 21, 12))), new Date(Date.UTC(2026, 9, 21, 12))).corrente === true);
+t('graves', C.SUSPEITAS_GRAVES.join() === 'menor_que_anterior,salto_alto');
 console.log(ok + ' ok, ' + falha + ' falha');
 process.exit(falha ? 1 : 0);

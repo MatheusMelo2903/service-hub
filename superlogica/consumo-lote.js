@@ -147,7 +147,26 @@ function montarUnidades(j, ref) {
   return out.sort((a, b) => (a.bloco + ' ' + a.unidade).localeCompare(b.bloco + ' ' + b.unidade, 'pt-BR', { numeric: true }));
 }
 
-async function unidadesConsumo(cliente, id, tipo, ref) {
+// Mês seguinte ao de referência (para mês passado: a leitura dele já pode existir).
+function refSeguinte(ref, hoje) {
+  const ano = ref.mes === 12 ? ref.ano + 1 : ref.ano, mes = ref.mes === 12 ? 1 : ref.mes + 1;
+  return mesRef(ano + '-' + doisDig(mes), hoje);
+}
+
+// Lista do mês; para mês passado, cada unidade traz também a leitura do mês seguinte (seguinte).
+async function unidadesConsumo(cliente, id, tipo, ref, hoje) {
+  const lista = await unidadesDoMes(cliente, id, tipo, ref);
+  if (!ref.corrente) {
+    const prox = refSeguinte(ref, hoje);
+    if (!prox) throw new Error('mes_seguinte_invalido');
+    const seg = await unidadesDoMes(cliente, id, tipo, prox);
+    const porId = new Map(seg.map((u) => [u.id_unidade, u.atual]));
+    lista.forEach((u) => { u.seguinte = porId.has(u.id_unidade) ? porId.get(u.id_unidade) : null; });
+  }
+  return lista;
+}
+
+async function unidadesDoMes(cliente, id, tipo, ref) {
   let j;
   try { j = await cliente.get('consumo/index', { tipoLeitura: tipo, idCondominio: id, posicaoEm: ref.posicaoEm }); }
   catch (e) {
@@ -172,7 +191,10 @@ const TEXTOS = {
   menor_que_anterior: 'Leitura menor que a anterior.',
   salto_alto: 'Consumo acima de 3 vezes a média da unidade.',
   ja_lancada: 'Já existe leitura lançada neste mês para esta unidade.',
+  mes_seguinte_lancado: 'O mês seguinte já tem leitura: lançar este mês muda o consumo já calculado. Lance pelo Superlógica se for mesmo preciso.',
 };
+// Suspeitas que só passam se o leiturista aceitar cada uma na tela; mes_seguinte_lancado nunca passa.
+const SUSPEITAS_GRAVES = ['menor_que_anterior', 'salto_alto'];
 function suspeita(codigo, extra) { return { codigo, texto: TEXTOS[codigo] + (extra ? ' ' + extra : '') }; }
 const fmt = (n) => String(Math.round(n * 1000) / 1000).replace('.', ',');
 
@@ -201,6 +223,7 @@ function conferirLote(lista, itens) {
       o.media = u.media;
       o.atual_lancada = u.atual;
       if (u.atual != null) o.suspeitas.push(suspeita('ja_lancada', '(' + fmt(u.atual) + ')'));
+      if (u.seguinte != null) o.suspeitas.push(suspeita('mes_seguinte_lancado', '(' + fmt(u.seguinte) + ')'));
       if (valor != null && u.anterior != null) {
         o.consumo = Math.round((valor - u.anterior) * 10000) / 10000;
         if (valor < u.anterior) o.suspeitas.push(suspeita('menor_que_anterior', '(anterior ' + fmt(u.anterior) + ')'));
@@ -319,7 +342,7 @@ async function lancarLeitura(cred, cliente, { id, tipo, ref, dia, u, valor, foto
 }
 
 module.exports = {
-  TIPOS, SALTO_VEZES_MEDIA, MAX_FOTO_BYTES,
+  TIPOS, SALTO_VEZES_MEDIA, MAX_FOTO_BYTES, SUSPEITAS_GRAVES, refSeguinte,
   num, lerValor, mesRef, chaveUnidade, chaveBloco, casarUnidade, montarUnidades, unidadesConsumo,
   conferirLote, tipoImagem, guardarFoto, lancarLeitura,
 };

@@ -4418,7 +4418,28 @@ async function _exigirConsumo(req, res, id, acao) {
     if (!podeModulo(p, 'leitura_consumo', acao)) { res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso a essa função.' }); return false; }
   }
   if (!(await exigirLeituraSuperlogica(req, res))) return false;
+  if (acao === 'ler') return _carteiraEstrita(req, res, id);
   return _exigirCarteira(req, res, id);
+}
+// Para gravar: carteira conferida sem folga (erro ao ler a carteira recusa, como no arquivar).
+async function _carteiraEstrita(req, res, id) {
+  if (req.authMode === 'internal') return true;
+  if (!SUPABASE_SERVICE_ROLE_KEY) { res.status(503).json({ erro: 'service_role_nao_configurada' }); return false; }
+  try {
+    const perfil = await lerPerfil(req.user && req.user.sub);
+    if (!perfil) { res.status(403).json({ erro: 'acesso_negado' }); return false; }
+    if (perfil.role === 'GESTOR') return true;
+    const mapa = await lerCarteirasPerfis(perfil.id);
+    const minhas = (mapa && mapa[perfil.id]) || [];
+    if (!minhas.length) return true;
+    const r = slModulo.carteiras.condominiosDasCarteiras(await gruposCarteiras(), minhas);
+    if (r.ids_superlogica.includes(Number(id))) return true;
+    res.status(403).json({ erro: 'fora_da_carteira', detalhe: 'Esse condomínio não está na sua carteira.' });
+    return false;
+  } catch (e) {
+    res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível conferir sua carteira no Superlógica agora.' });
+    return false;
+  }
 }
 function _consumoParams(req, res, fonte) {
   const id = String(req.params.idSuperlogica || '');
@@ -4474,7 +4495,10 @@ app.post('/api/consumo/:idSuperlogica/lancar', requireAuth, express.json({ limit
   if (!P) return;
   if (b.confirmacao !== 'LANCAR') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme o lançamento na tela.' });
   // Trava antes de tudo: só condomínios liberados (padrão: só o de teste).
-  if (!_consumoLiberados().includes(P.id)) return res.status(423).json({ erro: 'lancamento_travado', detalhe: 'O lançamento de leituras ainda está travado para este condomínio pela administração. A conferência funciona normalmente.' });
+  if (!_consumoLiberados().includes(P.id)) {
+    auditoria.evento(req, 'consumo_recusado', { id_superlogica: P.id, motivo: 'lancamento_travado' }, true, 'condominio_nao_liberado');
+    return res.status(423).json({ erro: 'lancamento_travado', detalhe: 'O lançamento de leituras ainda está travado para este condomínio pela administração. A conferência funciona normalmente.' });
+  }
   if (!(await _exigirConsumo(req, res, P.id, 'ler'))) return;
   if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado' });
   const idUni = Number(b.id_unidade);
@@ -4503,12 +4527,22 @@ app.post('/api/consumo/:idSuperlogica/lancar', requireAuth, express.json({ limit
     let lista;
     try { lista = await slConsumo.unidadesConsumo(clienteSL(), P.id, P.tipo, P.ref); } catch (e) { return _erroConsumo(res, e, 'lancar'); }
     const u = lista.find((x) => x.id_unidade === idUni);
-    if (!u) return res.status(400).json({ erro: 'unidade_fora', detalhe: 'Essa unidade não é deste condomínio.' });
+    if (!u) {
+      auditoria.evento(req, 'consumo_recusado', { id_superlogica: P.id, id_unidade: idUni, motivo: 'unidade_fora' }, true, 'unidade_de_outro_condominio');
+      return res.status(400).json({ erro: 'unidade_fora', detalhe: 'Essa unidade não é deste condomínio.' });
+    }
     const conf = slConsumo.conferirLote(lista, [{ id_unidade: idUni, leitura: valor }])[0];
     const cods = conf.suspeitas.map((s) => s.codigo);
-    if (cods.includes('ja_lancada') && b.substituir !== true) return res.status(409).json({ erro: 'ja_lancada', detalhe: 'Já existe leitura neste mês para esta unidade. Marque substituir para trocar.', suspeitas: conf.suspeitas });
-    const graves = cods.filter((c) => c === 'menor_que_anterior' || c === 'salto_alto');
-    if (graves.length && b.aceitar_suspeita !== true) return res.status(409).json({ erro: 'suspeita', detalhe: 'Leitura suspeita: confira e marque que conferiu antes de lançar.', suspeitas: conf.suspeitas });
+    const recusar = (erro, detalhe) => {
+      auditoria.evento(req, 'consumo_recusado', { id_superlogica: P.id, id_unidade: idUni, motivo: erro, suspeitas: cods }, false);
+      return res.status(409).json({ erro, detalhe, suspeitas: conf.suspeitas });
+    };
+    if (cods.includes('mes_seguinte_lancado')) return recusar('mes_seguinte_lancado', 'O mês seguinte já tem leitura nesta unidade. Lance pelo Superlógica se for mesmo preciso.');
+    if (cods.includes('ja_lancada') && b.substituir !== true) return recusar('ja_lancada', 'Já existe leitura neste mês para esta unidade. Marque substituir para trocar.');
+    // Cada suspeita grave tem de ter sido vista e aceita na tela (lista de códigos).
+    const aceitas = Array.isArray(b.aceitar_suspeitas) ? b.aceitar_suspeitas.map(String) : [];
+    const naoAceitas = cods.filter((c) => slConsumo.SUSPEITAS_GRAVES.includes(c) && !aceitas.includes(c));
+    if (naoAceitas.length) return recusar('suspeita', 'Leitura suspeita: confira e marque que conferiu antes de lançar.');
     const r = await slConsumo.lancarLeitura(_credSL(), clienteSL(), { id: P.id, tipo: P.tipo, ref: P.ref, dia, u, valor, foto });
     _cacheConsumo.limpar(chaveCache);
     if (r.lista) _cacheConsumo.pegar(chaveCache, () => r.lista).catch(() => {});
