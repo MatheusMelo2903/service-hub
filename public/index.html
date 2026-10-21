@@ -155,6 +155,17 @@
   .cond-dropdown.prest-cond-lista { max-height: 360px; }
   .prest-cond-lista .cond-option.marcado { background: var(--gs-blue-light); }
   .prest-cond-lista .cond-option.atual .cond-name { color: var(--accent2); font-weight: 600; }
+  .prest-aj-cat { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .prest-aj-cab, .prest-aj-rub, .prest-aj-juntar { display: flex; align-items: center; gap: 10px; }
+  .prest-aj-cab { margin-bottom: 6px; }
+  .prest-aj-rub { padding: 3px 0 3px 12px; font-size: 12px; }
+  .prest-aj-cab input.prest-aj-nomecat { flex: 1; font-weight: 600; padding: 6px 10px; }
+  .prest-aj-rub input.prest-aj-nomerub { flex: 1; padding: 4px 8px; font-size: 12px; }
+  .prest-aj-juntar { padding: 6px 0 0 12px; }
+  .prest-aj-juntar input { flex: 1; padding: 4px 8px; font-size: 12px; }
+  .prest-aj-valor { font-family: var(--mono); font-size: 12px; white-space: nowrap; min-width: 110px; text-align: right; }
+  .prest-aj-chk { font-size: 11px; color: var(--muted); white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  .prest-aj-grupo { font-size: 11px; color: var(--gs-blue); padding: 4px 0 0 12px; }
   .prest-cond-info { margin-top: 8px; font-size: 11px; color: var(--muted); font-family: var(--mono); min-height: 14px; }
   .card.prest-card-principal { border: 1.5px solid var(--accent); box-shadow: var(--shadow-md); }
   .prest-btn-hero {
@@ -1537,6 +1548,18 @@
         </div>
         <div style="margin-top:14px">
           <button class="btn btn-ghost" onclick="prestacaoLimparTudo()" style="font-size:12px;padding:6px 12px">Limpar tudo</button>
+        </div>
+      </div>
+
+      <!-- Ajustar estrutura (T03): aparece depois de gerar, só com a ação prestacao_contas.ajustar_estrutura. -->
+      <div class="card" id="prest-ajuste" style="display:none">
+        <div class="card-header">
+          <span class="card-title">Ajustar estrutura</span>
+        </div>
+        <div class="hint" style="margin-bottom:12px">Os números não mudam. Categoria oculta continua no gráfico e nos totais, sem o slide de detalhamento. Rubrica oculta continua com o valor, sem o texto de composição, com a nota "não detalhado nesta apresentação". Para renomear, edite o nome.</div>
+        <div id="prest-ajuste-lista"></div>
+        <div style="margin-top:14px">
+          <button id="prest-btn-ajuste" class="btn btn-primary" onclick="prestacaoGerarComAjuste()">Gerar de novo com os ajustes</button>
         </div>
       </div>
 
@@ -5197,7 +5220,7 @@ const MODULOS_CATALOGO = {
   boletos:            { label: 'Boletos',             acoes: ['ver'] },
   conciliacao:        { label: 'Conciliação',         acoes: ['ver'] },
   notas_fiscais:      { label: 'Notas Fiscais',       acoes: ['ver'] },
-  prestacao_contas:   { label: 'Prestação de Contas', acoes: ['ver', 'gerar'] },
+  prestacao_contas:   { label: 'Prestação de Contas', acoes: ['ver', 'gerar', 'ajustar_estrutura'] },
   atas:               { label: 'Atas Condominiais',   acoes: ['ver', 'gerar', 'edital'] },
   leitura_consumo:    { label: 'Leitura de Consumo',  acoes: ['ver', 'ler'] },
   tarefas:            { label: 'Tarefas',             acoes: ['ver'] },
@@ -5354,7 +5377,7 @@ function renderPermissoesForm(u) {
       const c = (atual.acoes || []).includes(a);
       const travada = !atual.visivel || (!c && !tenhoAcao(modulo, a));
       return `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;font-size:11px;font-family:var(--mono);color:var(--text);cursor:pointer">
-        <input type="checkbox" data-modulo="${modulo}" data-acao="${a}" ${c ? 'checked' : ''} ${travada ? 'disabled' : ''}> ${esc(a)}
+        <input type="checkbox" data-modulo="${modulo}" data-acao="${a}" ${c ? 'checked' : ''} ${travada ? 'disabled' : ''}> ${esc(a.replace(/_/g, ' '))}
       </label>`;
     }).join('');
     const visTravada = !atual.visivel && !tenhoModulo(modulo);

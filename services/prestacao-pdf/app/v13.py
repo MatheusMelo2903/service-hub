@@ -245,6 +245,47 @@ def completar_composicao(comp_ia: dict, dados: dict, rascunho: dict, nome_hub: s
     return comp
 
 
+def _nome_limpo(v) -> str:
+    s = re.sub(r"[\u2010-\u2015]", " ", str(v or ""))  # sem travessao nos textos do deck
+    return re.sub(r"\s+", " ", s).strip()[:80]
+
+
+def sanear_estrutura(est, dados: dict) -> dict | None:
+    """Valida o "Ajustar estrutura" vindo do Hub contra os dados da extracao: so
+    categorias e rubricas que existem, juntar so dentro da mesma categoria. Nada
+    aqui muda numero; o montar.py confere que o total de cada categoria fica igual."""
+    if not isinstance(est, dict):
+        return None
+    cat_de = {r["nome"]: c["nome"] for c in dados.get("categorias", []) for r in c.get("rubricas", [])}
+    cats = {c["nome"] for c in dados.get("categorias", [])}
+    lista = lambda v: [x for x in v if isinstance(x, str)][:500] if isinstance(v, list) else []
+    out = {
+        "ocultar_categorias": sorted({c for c in lista(est.get("ocultar_categorias")) if c in cats}),
+        "ocultar_rubricas": sorted({r for r in lista(est.get("ocultar_rubricas")) if r in cat_de}),
+        "renomear": {}, "renomear_categorias": {}, "juntar": [],
+    }
+    for k, v in (est.get("renomear") or {}).items() if isinstance(est.get("renomear"), dict) else []:
+        if k in cat_de and _nome_limpo(v):
+            out["renomear"][k] = _nome_limpo(v)
+    for k, v in (est.get("renomear_categorias") or {}).items() if isinstance(est.get("renomear_categorias"), dict) else []:
+        if k in cats and _nome_limpo(v):
+            out["renomear_categorias"][k] = _nome_limpo(v)
+    usadas = set()
+    for g in (est.get("juntar") or [])[:100] if isinstance(est.get("juntar"), list) else []:
+        if not isinstance(g, dict):
+            continue
+        rubs = [r for r in dict.fromkeys(lista(g.get("rubricas"))) if r in cat_de and r not in usadas]
+        if len(rubs) < 2:
+            continue
+        if len({cat_de[r] for r in rubs}) != 1:
+            raise ErroPrestacao("Só dá para juntar rubricas da mesma categoria.")
+        usadas.update(rubs)
+        out["juntar"].append({"rubricas": rubs, "nome": _nome_limpo(g.get("nome"))})
+    if not any(out.values()):
+        return None
+    return out
+
+
 def nome_arquivo(dados: dict, comp: dict) -> str:
     def mmaa(k):
         y, m = k.split("-")

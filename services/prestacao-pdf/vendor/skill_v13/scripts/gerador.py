@@ -332,7 +332,13 @@ def _barras(s, lst, x0, y0, w, h, maxv=None, fsize=19, show_pct=True, total=None
     for i, (nome, v) in enumerate(lst):
         y = y0 + i*rh
         if i % 2 == 0: rect(s, x0-0.1, y, w+0.2, rh, CARD)
-        text(s, x0+0.05, y, name_w-0.15, rh, nome, fsize, TXT, True, anchor=MSO_ANCHOR.MIDDLE)
+        if '\n' in nome:
+            n1, n2 = nome.split('\n', 1)
+            tb = runs(s, x0+0.05, y, name_w-0.15, rh, [(n1, min(fsize, 15), True, TXT)], anchor=MSO_ANCHOR.MIDDLE)
+            p2 = tb.text_frame.add_paragraph(); r2 = p2.add_run(); r2.text = n2
+            r2.font.name = FONT; r2.font.size = Pt(11); r2.font.bold = False; r2.font.color.rgb = TXT2
+        else:
+            text(s, x0+0.05, y, name_w-0.15, rh, nome, fsize, TXT, True, anchor=MSO_ANCHOR.MIDDLE)
         bl = max(0.06, bar_w*abs(v)/maxv)
         rect(s, bar_x, y+rh*0.28, bl, rh*0.44, cols[i] if v >= 0 else RED, True, 0.3)
         text(s, bar_x+bar_w+0.1, y, val_w, rh, brl_acc(v), fsize, TXT, True, PP_ALIGN.RIGHT, MSO_ANCHOR.MIDDLE)
@@ -374,9 +380,13 @@ def s_receita_todas(D):
 
 def s_estrutura(D):
     s = novo_slide()
-    lst = [(c['curto'], c['total']) for c in CFG['despesas']]
+    # Categoria oculta no Hub: fica no grafico e nos totais, sem slide de detalhamento.
+    lst = [(c['curto'] + ('\n(não detalhado nesta apresentação)' if c.get('oculta') else ''), c['total']) for c in CFG['despesas']]
+    nd = sum(1 for c in CFG['despesas'] if not c.get('oculta'))
+    sub = (f"{len(lst)} categorias, cada uma detalhada a seguir" if nd == len(lst)
+           else f"{len(lst)} categorias, {nd} detalhada{'s' if nd != 1 else ''} a seguir")
     cabecalho(s, "06  •  ESTRUTURA DE DESPESAS", "Como a despesa", "foi distribuída",
-              f"Total gasto: {brl(D['desp'])}    •    {len(lst)} categorias, cada uma detalhada a seguir")
+              f"Total gasto: {brl(D['desp'])}    •    {sub}")
     _barras(s, lst, 0.6, 2.05, 12.13, 4.85, fsize=18, total=D['desp'])
     rodape(s)
 
@@ -467,7 +477,7 @@ def _desenha_rub(s, r, x, y, w, h, cor):
             if k < len(itens) - 1: parts.append(("  ·  ", COMP_PT, True, cor))
         runs(s, x+0.3, y+0.44, w-0.45, h-0.48, parts)
 
-def s_detalhe(cat, idx, ncat, D):
+def s_detalhe(cat, idx, ncat, D, num=None, ntot=None):
     nota = cat.get('nota')
     TOP, BASE = 2.05, 6.95
     disp1 = BASE - (TOP + (0.6 if nota else 0)); dispN = BASE - TOP
@@ -476,7 +486,7 @@ def s_detalhe(cat, idx, ncat, D):
     pc = cat['total']/D['desp']*100
     for pi, pag in enumerate(pags):
         s = novo_slide()
-        sec = f"07  •  DETALHAMENTO {idx+1} DE {ncat}" + (f"  •  PARTE {pi+1} DE {len(pags)}" if len(pags) > 1 else "")
+        sec = f"07  •  DETALHAMENTO {(idx if num is None else num)+1} DE {ncat if ntot is None else ntot}" + (f"  •  PARTE {pi+1} DE {len(pags)}" if len(pags) > 1 else "")
         text(s, 0.5, 0.3, 8.5, 0.35, sec, 14, GS_AZUL_CLA, True)
         runs(s, 0.5, 0.6, 8.4, 0.75, [(cat['t1'], 32, True, TXT), (" " + cat['t2'], 32, True, cor)])
         hline(s, 0.5, 1.33, 1.05, GS_AZUL, 3)
@@ -551,8 +561,10 @@ def montar(cfg, saida):
     resto = s_receita(D)
     if resto: s_receita_todas(D)
     s_estrutura(D)
-    for i, cat in enumerate(cfg['despesas']):
-        s_detalhe(cat, i, len(cfg['despesas']), D)
+    # Numeracao "DETALHAMENTO i DE n" conta so as detalhadas; a cor segue a posicao no grafico.
+    vis = [(i, cat) for i, cat in enumerate(cfg['despesas']) if not cat.get('oculta')]
+    for k, (i, cat) in enumerate(vis):
+        s_detalhe(cat, i, len(cfg['despesas']), D, k, len(vis))
     s_encerramento(D)
     prs.save(saida)
     return saida

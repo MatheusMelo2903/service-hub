@@ -2965,6 +2965,14 @@ require('./prestacao-v13')(app, {
     ? { base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }
     : null,
   podeUsarSuperlogica: SUPABASE_SERVICE_ROLE_KEY ? podeUsarSuperlogica : null,
+  // "Ajustar estrutura" da prestação: GESTOR ou quem tem a ação prestacao_contas.ajustar_estrutura
+  podeAjustarEstrutura: SUPABASE_SERVICE_ROLE_KEY ? async (userId) => {
+    const p = await lerPerfil(userId);
+    if (!p) return false;
+    if (p.role === 'GESTOR') return true;
+    const m = (p.permissoes || {}).prestacao_contas;
+    return !!(m && m.visivel === true && Array.isArray(m.acoes) && m.acoes.includes('ajustar_estrutura'));
+  } : null,
 });
 
 // ─────────────────────────────────────────────────────────────────────────

@@ -264,12 +264,18 @@ async def v13_montar(
     rascunho = payload.get("rascunho") or {}
     nome_hub = payload.get("nome") if isinstance(payload.get("nome"), str) else None
     comp_ia = payload.get("composicao_ia")
+    try:
+        estrutura = v13.sanear_estrutura(payload.get("estrutura"), dados)
+    except v13.ErroPrestacao as e:
+        raise _422(str(e), "estrutura")
     tmpdir = tempfile.mkdtemp(prefix="prest13m_")
     aviso = None
     try:
         origem = "automatica"
         if isinstance(comp_ia, dict):
             comp = v13.completar_composicao(comp_ia, dados, rascunho, nome_hub)
+            if estrutura:
+                comp["estrutura"] = estrutura
             try:
                 res = await run_in_threadpool(v13.montar, dados, comp, tmpdir)
                 origem = "ia"
@@ -283,12 +289,14 @@ async def v13_montar(
             comp = None
         if origem == "automatica":
             comp = v13.composicao_automatica(dados, rascunho, nome_hub)
+            if estrutura:
+                comp["estrutura"] = estrutura
             try:
                 res = await run_in_threadpool(v13.montar, dados, comp, tmpdir)
             except v13.ErroPrestacao as e:
                 _log("v13_montar_recusou", motivo=str(e)[:200])
                 raise _422(str(e), "montagem")
-        _log("v13_gerado", origem=origem, pdf_kb=len(res["pdf"]) // 1024,
+        _log("v13_gerado", origem=origem, pdf_kb=len(res["pdf"]) // 1024, estrutura=bool(estrutura),
              duracao_ms=int((time.perf_counter() - inicio_t) * 1000))
         return {
             "pptx_b64": base64.b64encode(res["pptx"]).decode("ascii"),
@@ -297,6 +305,16 @@ async def v13_montar(
             "composicao": origem,
             "aviso": aviso,
             "modo": dados.get("modo"),
+            "estrutura_aplicada": estrutura,
+            # Lista para a tela "Ajustar estrutura" (nomes e totais, nada mais).
+            "estrutura_base": [
+                {"nome": c["nome"], "total": round(c.get("total") or 0, 2),
+                 "rubricas": [{"chave": r["nome"],
+                               "nome": ((comp.get("rubricas") or {}).get(r["nome"]) or {}).get("nome") or r.get("nome_exibicao") or r["nome"],
+                               "total": round(r.get("total") or 0, 2)}
+                              for r in sorted(c.get("rubricas") or [], key=lambda r: -(r.get("total") or 0))]}
+                for c in sorted(dados.get("categorias") or [], key=lambda c: -(c.get("total") or 0))
+            ],
             "resumo": {
                 "saldo_anterior": dados.get("saldo_anterior"),
                 "receitas": round(sum(dados.get("receitas_mes") or []), 2),

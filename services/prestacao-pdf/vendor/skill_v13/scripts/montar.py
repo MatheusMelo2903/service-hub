@@ -37,6 +37,59 @@ NOME_PADRAO = {
 "Demissão - Rescisão": "Demissão e Rescisão", "Subscrição de Capital - Integralização de juros": "Integralização de juros (capital)",
 }
 
+OCULTO = "não detalhado nesta apresentação"
+
+def aplicar_estrutura(cats, est):
+    """Ajustes de estrutura pedidos no Hub (composicao.json["estrutura"]). Os numeros
+    nunca mudam: so muda como aparecem.
+      renomear {chave_rubrica: nome}          renomear_categorias {categoria: nome}
+      juntar [{rubricas: [chaves], nome}]     (dentro da mesma categoria; vira uma linha so)
+      ocultar_rubricas [chaves]               (a linha fica, com valor, sem a composicao)
+      ocultar_categorias [categorias]         (fica no grafico da distribuicao e nos totais,
+                                               sem o slide de detalhamento)"""
+    if not isinstance(est, dict) or not est:
+        return cats
+    ren = est.get('renomear') or {}
+    rencat = est.get('renomear_categorias') or {}
+    ocr = set(est.get('ocultar_rubricas') or [])
+    occ = set(est.get('ocultar_categorias') or [])
+    grupos = [g for g in (est.get('juntar') or []) if isinstance(g, dict)]
+    for c in cats:
+        antes = round(sum(r['valor'] for r in c['rubricas']), 2)
+        for r in c['rubricas']:
+            if isinstance(ren.get(r['chave']), str) and ren[r['chave']].strip():
+                r['nome'] = ren[r['chave']].strip()
+        for g in grupos:
+            chaves = [k for k in (g.get('rubricas') or []) if any(r['chave'] == k for r in c['rubricas'])]
+            if len(chaves) < 2:
+                continue
+            membros = [r for r in c['rubricas'] if r['chave'] in chaves]
+            pos = c['rubricas'].index(membros[0])
+            nome = (g.get('nome') or '').strip() or membros[0]['nome']
+            novo = dict(chave='+'.join(chaves), nome=nome, valor=round(sum(m['valor'] for m in membros), 2),
+                        comp='Reúne: ' + ', '.join(m['nome'] for m in membros) + '.', fecha=False,
+                        serie=[round(sum(x), 2) for x in zip(*[m['serie'] for m in membros])])
+            if all(m['chave'] in ocr for m in membros):
+                ocr.add(novo['chave'])
+            c['rubricas'] = [r for r in c['rubricas'] if r['chave'] not in chaves]
+            c['rubricas'].insert(pos, novo)
+        for r in c['rubricas']:
+            if r['chave'] in ocr:
+                r['comp'] = OCULTO[:1].upper() + OCULTO[1:] + '.'
+                r['fecha'] = False
+        c['rubricas'].sort(key=lambda r: -r['valor'])
+        depois = round(sum(r['valor'] for r in c['rubricas']), 2)
+        if abs(depois - antes) > 0.01:
+            sys.exit(f"Ajuste de estrutura mudou o total de {c['nome']}: {antes:.2f} x {depois:.2f}")
+        if isinstance(rencat.get(c['nome']), str) and rencat[c['nome']].strip():
+            novo_nome = rencat[c['nome']].strip()
+            c['curto'] = novo_nome
+            partes = novo_nome.split(' ', 1)
+            c['t1'], c['t2'] = partes[0], (partes[1] if len(partes) > 1 else '')
+        if c['nome'] in occ:
+            c['oculta'] = True
+    return cats
+
 def _titulo_padrao(cat):
     nome = cat.title()
     p = nome.split(' ', 1)
@@ -66,10 +119,11 @@ def montar_cfg(d, comp):
             if detalhado and not texto.strip():
                 sys.exit(f"Composicao vazia para a rubrica '{r['nome']}' ({c['nome']}). No modo detalhado toda rubrica precisa de texto.")
             nm = sum(1 for v in r['serie'] if abs(v) > 0.004)
-            rubs.append(dict(nome=rc.get('nome', NOME_PADRAO.get(r['nome'], r['nome'])), valor=r['total'],
+            rubs.append(dict(chave=r['nome'], nome=rc.get('nome', NOME_PADRAO.get(r['nome'], r['nome'])), valor=r['total'],
                              comp=texto.replace('{n}', str(nm)), fecha=bool(rc.get('fecha')), serie=r['serie']))
         cats.append(dict(nome=c['nome'], curto=cc.get('curto', pad[0]), t1=cc.get('t1', pad[1]), t2=cc.get('t2', pad[2]),
                          desc=cc.get('desc', pad[3]), nota=cc.get('nota'), total=c['total'], rubricas=rubs))
+    cats = aplicar_estrutura(cats, comp.get('estrutura'))
     receitas = sorted([(rnome.get(r['nome'], NOME_PADRAO.get(r['nome'], r['nome'])), r['total']) for r in d['receitas']], key=lambda x: -x[1])
     RT = round(sum(d['receitas_mes']), 2); DT = round(sum(d['despesas_mes']), 2)
     ini = d['periodo'][0]; fim = d['periodo'][-1]

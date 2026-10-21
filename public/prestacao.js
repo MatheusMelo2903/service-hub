@@ -1988,6 +1988,7 @@ async function prestacaoExecutarV13(btn) {
   var baixados = prestacaoBaixarResultado(r);
   (r.avisos || []).forEach(function(a) { toast(a, 'warn'); });
   if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
+  prestacaoMostrarAjuste(jobId, r);
   // Tira só os relatórios usados nesta geração (algum anexado durante a espera fica).
   prestacaoState.arquivos = (prestacaoState.arquivos || []).filter(function(f) { return arquivos.indexOf(f) < 0; });
   prestacaoRenderizarListaArquivos();
@@ -2062,6 +2063,7 @@ async function prestacaoGerarSuperlogica() {
     if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
     toast('Prestação gerada com os dados do Superlógica (' + (r.duracao_s || 0) + 's): '
       + baixados.join(' e ') + ' baixado' + (baixados.length > 1 ? 's' : '') + '.', 'ok');
+    prestacaoMostrarAjuste(jobId, r);
   } catch (err) {
     console.error('[prestacao superlogica]', err && err.message);
     toast(err && err.message ? err.message : String(err), 'err');
@@ -2362,3 +2364,166 @@ async function prestacaoGerar() {
 }
 
 
+
+// ============================================================
+// AJUSTAR ESTRUTURA (T03): só para quem tem a ação prestacao_contas.ajustar_estrutura.
+// Depois de gerar, lista categorias e rubricas da prestação. Dá para ocultar
+// categoria, ocultar rubrica, juntar rubricas da mesma categoria e renomear.
+// Os números nunca mudam: o servidor monta de novo com os mesmos dados
+// (sem Superlógica e sem IA) e o motor confere que cada total fica igual.
+// ============================================================
+var prestAjuste = { jobId: null, base: null, juntar: [] };
+
+function prestacaoPodeAjustar() {
+  return typeof temPermissao === 'function' ? temPermissao('prestacao_contas', 'ajustar_estrutura') : false;
+}
+
+function prestacaoEscAj(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Chamada depois de cada geração concluída.
+function prestacaoMostrarAjuste(jobId, r) {
+  var card = document.getElementById('prest-ajuste');
+  if (!card) return;
+  if (!r || !Array.isArray(r.estrutura_base) || !r.estrutura_base.length || !prestacaoPodeAjustar()) {
+    card.style.display = 'none';
+    return;
+  }
+  prestAjuste.jobId = jobId;
+  prestAjuste.base = r.estrutura_base;
+  var ap = r.estrutura_aplicada || {};
+  prestAjuste.juntar = (ap.juntar || []).map(function(g) { return { rubricas: g.rubricas.slice(), nome: g.nome || '' }; });
+  var occ = ap.ocultar_categorias || [], ocr = ap.ocultar_rubricas || [];
+  var ren = ap.renomear || {}, rencat = ap.renomear_categorias || {};
+  var html = '';
+  r.estrutura_base.forEach(function(c, ci) {
+    html += '<div class="prest-aj-cat" data-cat="' + ci + '">'
+      + '<div class="prest-aj-cab">'
+      + '<input type="text" class="prest-aj-nomecat" value="' + prestacaoEscAj(rencat[c.nome] || '') + '" placeholder="' + prestacaoEscAj(c.nome) + '" title="Renomear a categoria">'
+      + '<span class="prest-aj-valor">' + prestacaoFmtBRL(c.total) + '</span>'
+      + '<label class="prest-aj-chk"><input type="checkbox" class="prest-aj-ocat"' + (occ.indexOf(c.nome) >= 0 ? ' checked' : '') + '> Ocultar categoria</label>'
+      + '</div>';
+    c.rubricas.forEach(function(rb, ri) {
+      html += '<div class="prest-aj-rub" data-rub="' + ri + '">'
+        + '<label class="prest-aj-chk" title="Marcar para juntar"><input type="checkbox" class="prest-aj-sel"> juntar</label>'
+        + '<input type="text" class="prest-aj-nomerub" value="' + prestacaoEscAj(ren[rb.chave] || rb.nome) + '" data-original="' + prestacaoEscAj(rb.nome) + '">'
+        + '<span class="prest-aj-valor">' + prestacaoFmtBRL(rb.total) + '</span>'
+        + '<label class="prest-aj-chk"><input type="checkbox" class="prest-aj-orub"' + (ocr.indexOf(rb.chave) >= 0 ? ' checked' : '') + '> ocultar</label>'
+        + '</div>';
+    });
+    html += '<div class="prest-aj-juntar"><input type="text" class="prest-aj-nomegrupo" placeholder="Nome da linha que junta as marcadas">'
+      + '<button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" onclick="prestacaoJuntarMarcadas(' + ci + ')">Juntar marcadas</button></div>'
+      + '<div class="prest-aj-grupos" data-grupos="' + ci + '"></div>'
+      + '</div>';
+  });
+  document.getElementById('prest-ajuste-lista').innerHTML = html;
+  prestacaoRenderGrupos();
+  card.style.display = '';
+}
+
+function prestacaoRenderGrupos() {
+  (prestAjuste.base || []).forEach(function(c, ci) {
+    var el = document.querySelector('#prest-ajuste-lista [data-grupos="' + ci + '"]');
+    if (!el) return;
+    var chaves = c.rubricas.map(function(r) { return r.chave; });
+    var nomeDe = {};
+    c.rubricas.forEach(function(r) { nomeDe[r.chave] = r.nome; });
+    el.innerHTML = prestAjuste.juntar.map(function(g, gi) {
+      if (!g.rubricas.length || chaves.indexOf(g.rubricas[0]) < 0) return '';
+      return '<div class="prest-aj-grupo">Junta em "' + prestacaoEscAj(g.nome || nomeDe[g.rubricas[0]]) + '": '
+        + g.rubricas.map(function(k) { return prestacaoEscAj(nomeDe[k] || k); }).join(' + ')
+        + ' <button class="btn btn-ghost" style="font-size:11px;padding:2px 8px" onclick="prestacaoDesfazerGrupo(' + gi + ')">desfazer</button></div>';
+    }).join('');
+  });
+}
+
+function prestacaoJuntarMarcadas(ci) {
+  var bloco = document.querySelector('#prest-ajuste-lista [data-cat="' + ci + '"]');
+  var c = prestAjuste.base[ci];
+  if (!bloco || !c) return;
+  var emGrupo = {};
+  prestAjuste.juntar.forEach(function(g) { g.rubricas.forEach(function(k) { emGrupo[k] = true; }); });
+  var marcadas = [];
+  bloco.querySelectorAll('.prest-aj-rub').forEach(function(linha) {
+    var rb = c.rubricas[parseInt(linha.dataset.rub, 10)];
+    var sel = linha.querySelector('.prest-aj-sel');
+    if (sel && sel.checked && rb && !emGrupo[rb.chave]) marcadas.push(rb.chave);
+    if (sel) sel.checked = false;
+  });
+  if (marcadas.length < 2) { toast('Marque pelo menos duas rubricas desta categoria que ainda não estejam juntas.', 'warn'); return; }
+  var inp = bloco.querySelector('.prest-aj-nomegrupo');
+  prestAjuste.juntar.push({ rubricas: marcadas, nome: (inp && inp.value || '').trim().slice(0, 80) });
+  if (inp) inp.value = '';
+  prestacaoRenderGrupos();
+}
+
+function prestacaoDesfazerGrupo(gi) {
+  prestAjuste.juntar.splice(gi, 1);
+  prestacaoRenderGrupos();
+}
+
+function prestacaoColetarEstrutura() {
+  var est = { ocultar_categorias: [], ocultar_rubricas: [], juntar: prestAjuste.juntar.slice(), renomear: {}, renomear_categorias: {} };
+  (prestAjuste.base || []).forEach(function(c, ci) {
+    var bloco = document.querySelector('#prest-ajuste-lista [data-cat="' + ci + '"]');
+    if (!bloco) return;
+    if (bloco.querySelector('.prest-aj-ocat').checked) est.ocultar_categorias.push(c.nome);
+    var nc = bloco.querySelector('.prest-aj-nomecat').value.trim();
+    if (nc) est.renomear_categorias[c.nome] = nc.slice(0, 80);
+    bloco.querySelectorAll('.prest-aj-rub').forEach(function(linha) {
+      var rb = c.rubricas[parseInt(linha.dataset.rub, 10)];
+      if (!rb) return;
+      if (linha.querySelector('.prest-aj-orub').checked) est.ocultar_rubricas.push(rb.chave);
+      var nr = linha.querySelector('.prest-aj-nomerub').value.trim();
+      if (nr && nr !== rb.nome) est.renomear[rb.chave] = nr.slice(0, 80);
+    });
+  });
+  return est;
+}
+
+async function prestacaoGerarComAjuste() {
+  var btn = document.getElementById('prest-btn-ajuste');
+  if (!btn || prestacaoState.gerando || !prestAjuste.jobId) return;
+  var textoOriginal = btn.textContent;
+  prestacaoState.gerando = true;
+  btn.disabled = true;
+  prestacaoAtualizarBotao();
+  btn.textContent = 'Montando de novo...';
+  try {
+    var resp = await apiAuthFetch('/api/prestacao/v13/ajustar/' + encodeURIComponent(prestAjuste.jobId), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estrutura: prestacaoColetarEstrutura() }),
+    });
+    if (!resp.ok) {
+      var c = await resp.json().catch(function() { return {}; });
+      throw new Error(c.detalhe || ('Não foi possível ajustar (' + resp.status + ').'));
+    }
+    var jobId = (await resp.json()).jobId;
+    var r = await prestacaoAcompanharJob(jobId, btn);
+    if (r.status === 'error') throw new Error(r.detalhe || 'Não foi possível montar com os ajustes.');
+    var baixados = prestacaoBaixarResultado(r);
+    (r.avisos || []).forEach(function(a) { toast(a, 'warn'); });
+    if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
+    toast('Prestação com os ajustes: ' + baixados.join(' e ') + ' baixado' + (baixados.length > 1 ? 's' : '') + '.', 'ok');
+    prestacaoMostrarAjuste(jobId, r);
+  } catch (err) {
+    toast(err && err.message ? err.message : String(err), 'err');
+  } finally {
+    prestacaoState.gerando = false;
+    btn.disabled = false;
+    btn.textContent = textoOriginal;
+    prestacaoAtualizarBotao();
+  }
+}
+
+// Trocou de condomínio: o ajuste era da prestação do anterior.
+window.addEventListener('condominioAtivo:trocou', function() {
+  if (prestacaoState.gerando) return;
+  prestAjuste = { jobId: null, base: null, juntar: [] };
+  var card = document.getElementById('prest-ajuste');
+  if (card) card.style.display = 'none';
+});

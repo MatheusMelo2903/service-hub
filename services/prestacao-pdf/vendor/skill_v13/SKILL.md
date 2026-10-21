@@ -38,6 +38,18 @@ Copiar `rascunho.json` para `composicao.json` e reescrever o texto de cada rubri
 
 Estrutura de `composicao.json` em `references/fluxo-e-arquivos.md`.
 
+Ajustar estrutura (opcional, só quando o pedido for explícito): bloco `"estrutura"` em `composicao.json`. Os números nunca mudam; `montar.py` recusa se o total de alguma categoria mudar.
+```json
+"estrutura": {
+  "ocultar_categorias": ["DESPESAS FINANCEIRAS"],
+  "ocultar_rubricas": ["Obras-Melhorias"],
+  "juntar": [{"rubricas": ["Serviço de Jardinagem", "Serviços Prestados"], "nome": "Jardinagem e serviços"}],
+  "renomear": {"Serviço Assistência Técnica": "Assistência técnica"},
+  "renomear_categorias": {"SERVIÇOS": "Serviços contratados"}
+}
+```
+Categoria oculta: continua no gráfico da distribuição e nos totais com a nota "(não detalhado nesta apresentação)" e não ganha slide de detalhamento. Rubrica oculta: continua com nome e valor, sem a composição, com o texto "Não detalhado nesta apresentação.". Juntar só dentro da mesma categoria: vira uma linha com a soma. As chaves são os nomes de categoria e rubrica do `dados.json`.
+
 ### 4. Montar, auditar e converter
 ```bash
 python3 $S/montar.py dados.json composicao.json --saida "Nome - Prestação de Contas MMMAA a MMMAA.pptx" --pdf

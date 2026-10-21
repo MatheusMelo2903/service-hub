@@ -16,6 +16,8 @@
 //   POST /api/prestacao/v13/superlogica          JSON { id_superlogica, inicio, fim, nome, obs } -> 202 { jobId }
 //        (sem PDF: o servidor puxa os dados do Superlógica; ver superlogica-dados.js)
 //   GET  /api/prestacao/v13/status/:jobId        processing | done (arquivos) | error (detalhe)
+//   POST /api/prestacao/v13/ajustar/:jobId       JSON { estrutura } -> 202 { jobId } (refaz a montagem de uma
+//        prestação já gerada com o "Ajustar estrutura"; só com a ação prestacao_contas.ajustar_estrutura)
 //
 // Regras de estilo da composição: skills-server/prestacao-v13 (cópia das
 // references da skill; sincronizar com scripts/sincronizar-skill-prestacao.sh).
@@ -406,18 +408,70 @@ module.exports = function registrarPrestacaoV13(app, {
   requireAuth, ANTHROPIC_KEY, INTERNAL_API_SECRET, PRESTACAO_PDF_API_URL,
   superlogica = null,            // { base, appToken, accessToken } quando a conexão nativa está ligada
   podeUsarSuperlogica = null,    // async (userId) -> bool
+  podeAjustarEstrutura = null,   // async (userId) -> bool (ação prestacao_contas.ajustar_estrutura)
 }) {
   const jobs = new Map(); // jobId -> { dono, status, etapa, criadoEm, payload?, erro? }
   const clienteSL = superlogica && superlogica.appToken && superlogica.accessToken ? criarCliente(superlogica) : null;
 
   const donoDe = (req) => (req.user && req.user.sub) || (req.authMode === 'internal' ? 'internal' : 'anon');
+  async function podeAjustar(req) {
+    if (req.authMode === 'internal') return true;
+    if (!podeAjustarEstrutura) return false;
+    try { return !!(await podeAjustarEstrutura(req.user && req.user.sub)); } catch (e) { return false; }
+  }
 
   function agendarLimpeza(jobId) {
     const t = setTimeout(() => jobs.delete(jobId), LIMPEZA_MS);
     if (typeof t.unref === 'function') t.unref();
   }
 
-  async function executar(jobId, { corpo, contentType, nome, observacoes, fonteSL }) {
+  // Etapa 3 (montar, auditar e converter), usada na geração e no "Ajustar estrutura".
+  // base: o que a geração já tinha (números e composição); não chama Superlógica nem IA de novo.
+  async function montarEConcluir(jobId, base, { estrutura = null, avisosAntes = [], t0 = Date.now(), podeAjustar = false } = {}) {
+    const job = jobs.get(jobId);
+    const falhar = (detalhe, erro) => {
+      if (job) { job.status = 'error'; job.erro = { erro: erro || 'geracao_falhou', detalhe }; }
+      agendarLimpeza(jobId);
+    };
+    if (job) job.etapa = 'montando a apresentação';
+    const url = PRESTACAO_PDF_API_URL.replace(/\/+$/, '') + '/v13/montar';
+    const mon = await requisitar(url, {
+      headers: { 'X-Internal-Secret': INTERNAL_API_SECRET, 'Content-Type': 'application/json' },
+      corpo: JSON.stringify({ dados: base.dados, rascunho: base.rascunho, nome: base.nome, composicao_ia: base.composicaoIA, estrutura }),
+      // montar.py tem teto de 420s e o microserviço pode refazer com a composição
+      // automática; espera mais que o pior caso dos dois.
+      timeoutMs: 900000,
+    });
+    if (mon.status !== 200 || !mon.json || !mon.json.pdf_b64) {
+      if (mon.status === 422) return falhar(detalheDoErro(mon) || 'A apresentação não passou na conferência.', 'montagem');
+      return falhar('O serviço de geração não respondeu na montagem. Tente de novo em alguns minutos.', 'servico_indisponivel');
+    }
+    const avisos = avisosAntes.slice();
+    if (mon.json.aviso) avisos.push(mon.json.aviso);
+    if (job) {
+      job.status = 'done';
+      // Guardado só no servidor (some com o job): permite reajustar sem puxar tudo de novo.
+      job.base = base;
+      job.podeAjustar = podeAjustar;
+      job.payload = {
+        pdf_b64: mon.json.pdf_b64,
+        pptx_b64: mon.json.pptx_b64,
+        nome_arquivo: mon.json.nome_arquivo,
+        composicao: mon.json.composicao,
+        modo: mon.json.modo,
+        resumo: mon.json.resumo,
+        avisos,
+        duracao_s: Math.round((Date.now() - t0) / 1000),
+        estrutura_base: podeAjustar ? (mon.json.estrutura_base || null) : null,
+        estrutura_aplicada: podeAjustar ? (mon.json.estrutura_aplicada || null) : null,
+      };
+    }
+    console.log('[prestacao-v13] gerado modo=' + mon.json.modo + ' composicao=' + mon.json.composicao
+      + (estrutura ? ' estrutura=ajustada' : '') + ' s=' + Math.round((Date.now() - t0) / 1000));
+    agendarLimpeza(jobId);
+  }
+
+  async function executar(jobId, { corpo, contentType, nome, observacoes, fonteSL, podeAjustar }) {
     const job = jobs.get(jobId);
     const etapa = (e) => { if (job) job.etapa = e; };
     const falhar = (detalhe, erro) => {
@@ -493,39 +547,11 @@ module.exports = function registrarPrestacaoV13(app, {
     }
 
     // 3. Montar, auditar e converter (código da skill).
-    etapa('montando a apresentação');
-    const mon = await requisitar(base + '/v13/montar', {
-      headers: { 'X-Internal-Secret': INTERNAL_API_SECRET, 'Content-Type': 'application/json' },
-      corpo: JSON.stringify({ dados, rascunho, nome, composicao_ia: composicaoIA }),
-      // montar.py tem teto de 420s e o microserviço pode refazer com a composição
-      // automática; espera mais que o pior caso dos dois.
-      timeoutMs: 900000,
-    });
-    if (mon.status !== 200 || !mon.json || !mon.json.pdf_b64) {
-      if (mon.status === 422) return falhar(detalheDoErro(mon) || 'A apresentação não passou na conferência.', 'montagem');
-      return falhar('O serviço de geração não respondeu na montagem. Tente de novo em alguns minutos.', 'servico_indisponivel');
-    }
     const avisos = [];
-    if (mon.json.aviso) avisos.push(mon.json.aviso);
     if (motivoIA) avisos.push('A revisão de texto por IA não respondeu; a composição foi montada automaticamente.');
     else if (parcialIA) avisos.push('Parte das despesas ficou com a composição automática (a revisão por IA não respondeu nesse trecho).');
-    if (job) {
-      job.status = 'done';
-      job.payload = {
-        pdf_b64: mon.json.pdf_b64,
-        pptx_b64: mon.json.pptx_b64,
-        nome_arquivo: mon.json.nome_arquivo,
-        composicao: mon.json.composicao,
-        modo: mon.json.modo,
-        resumo: mon.json.resumo,
-        avisos,
-        duracao_s: Math.round((Date.now() - t0) / 1000),
-      };
-    }
-    console.log('[prestacao-v13] gerado modo=' + mon.json.modo + ' composicao=' + mon.json.composicao
-      + ' s=' + Math.round((Date.now() - t0) / 1000)
-      + (uso ? ' tokens_in=' + uso.input_tokens + ' cache_lido=' + (uso.cache_lido || 0) + ' tokens_out=' + uso.output_tokens : ''));
-    agendarLimpeza(jobId);
+    if (uso) console.log('[prestacao-v13] tokens_in=' + uso.input_tokens + ' cache_lido=' + (uso.cache_lido || 0) + ' tokens_out=' + uso.output_tokens);
+    await montarEConcluir(jobId, { dados, rascunho, nome, composicaoIA }, { avisosAntes: avisos, t0, podeAjustar: !!podeAjustar });
   }
 
   app.post('/api/prestacao/v13/iniciar', requireAuth, (req, res) => {
@@ -584,7 +610,7 @@ module.exports = function registrarPrestacaoV13(app, {
       const job = jobs.get(jobId);
       if (!job) return;
       job.status = 'processing';
-      executar(jobId, { corpo: Buffer.concat(partes), contentType, nome: nome || null, observacoes }).catch((e) => {
+      podeAjustar(req).then((pa) => executar(jobId, { corpo: Buffer.concat(partes), contentType, nome: nome || null, observacoes, podeAjustar: pa })).catch((e) => {
         const j = jobs.get(jobId);
         if (j && j.status === 'processing') {
           j.status = 'error';
@@ -629,9 +655,11 @@ module.exports = function registrarPrestacaoV13(app, {
     const observacoes = typeof b.obs === 'string' ? b.obs.trim().slice(0, 1000) : '';
     const jobId = crypto.randomUUID();
     jobs.set(jobId, { dono, status: 'processing', etapa: 'puxando os dados do Superlógica', criadoEm: Date.now() });
+    const pa = await podeAjustar(req);
     executar(jobId, {
       nome: nome || null,
       observacoes,
+      podeAjustar: pa,
       fonteSL: { idCondominio: idCond, inicio, fim, nome, fantasia: nome },
     }).catch((e) => {
       const j = jobs.get(jobId);
@@ -640,6 +668,41 @@ module.exports = function registrarPrestacaoV13(app, {
         j.erro = { erro: 'erro_inesperado', detalhe: 'Erro inesperado na geração. Tente de novo.' };
       }
       console.error('[prestacao-v13] erro inesperado:', e && e.message);
+      agendarLimpeza(jobId);
+    });
+    res.status(202).json({ jobId });
+  });
+
+  // "Ajustar estrutura" (ação prestacao_contas.ajustar_estrutura): monta de novo a
+  // prestação já gerada com categorias/rubricas ocultas, juntas ou renomeadas.
+  // Reaproveita os números e a composição da geração (sem Superlógica e sem IA).
+  // Corpo: { estrutura: { ocultar_categorias, ocultar_rubricas, juntar, renomear, renomear_categorias } }
+  app.post('/api/prestacao/v13/ajustar/:jobId', requireAuth, express.json({ limit: '50kb' }), async (req, res) => {
+    if (!INTERNAL_API_SECRET || !PRESTACAO_PDF_API_URL) return res.status(503).json({ erro: 'prestacao_api_nao_configurada' });
+    const dono = donoDe(req);
+    const origem = jobs.get(String(req.params.jobId || ''));
+    if (!origem || origem.dono !== dono || origem.status !== 'done' || !origem.base) {
+      return res.status(404).json({ erro: 'geracao_expirada', detalhe: 'Essa prestação não está mais disponível para ajuste. Gere de novo.' });
+    }
+    if (!(await podeAjustar(req))) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem permissão para ajustar a estrutura.' });
+    const est = req.body && req.body.estrutura;
+    if (!est || typeof est !== 'object' || Array.isArray(est)) return res.status(400).json({ erro: 'estrutura_invalida', detalhe: 'Ajuste vazio.' });
+    const ativos = [...jobs.values()].filter((j) => j.status === 'enviando' || j.status === 'processing');
+    if (ativos.filter((j) => j.dono === dono).length >= MAX_JOBS_ATIVOS_POR_USUARIO) {
+      return res.status(429).json({ erro: 'geracao_em_andamento', detalhe: 'Já existe uma prestação sendo gerada. Aguarde terminar.' });
+    }
+    if (ativos.length >= MAX_JOBS_ATIVOS_GERAL) {
+      return res.status(429).json({ erro: 'servidor_ocupado', detalhe: 'Muitas prestações sendo geradas agora. Tente de novo em alguns minutos.' });
+    }
+    const jobId = crypto.randomUUID();
+    jobs.set(jobId, { dono, status: 'processing', etapa: 'montando a apresentação', criadoEm: Date.now() });
+    montarEConcluir(jobId, origem.base, { estrutura: est, podeAjustar: true }).catch((e) => {
+      const j = jobs.get(jobId);
+      if (j && j.status === 'processing') {
+        j.status = 'error';
+        j.erro = { erro: 'erro_inesperado', detalhe: 'Erro inesperado na geração. Tente de novo.' };
+      }
+      console.error('[prestacao-v13] erro inesperado no ajuste:', e && e.message);
       agendarLimpeza(jobId);
     });
     res.status(202).json({ jobId });
