@@ -203,6 +203,26 @@ function testesUnitarios() {
   t('idsCondominio colchetes', C.idsCondominio('processos', [['COBRANCAS[0][ID_CONDOMINIO_COND]', '7']]).explicitos[0] === 7);
   t('idsCondominio -1 = todos', C.idsCondominio('unidades/index', [['idCondominio', '-1']]).todos === true);
   t('idsCondominio id só em condominios/', C.idsCondominio('cobranca/index', [['id', '5']]).explicitos.length === 0 && C.idsCondominio('condominios/get', [['id', '5']]).explicitos[0] === 5);
+  // Menor 1 da revisão 2: bandeira com "condominio" no nome e valor 0 ou 1 não é código de condomínio.
+  const vazioIds = (r) => r.explicitos.length === 0 && r.todos === false && r.invalidos.length === 0;
+  t('bandeira somenteCondominiosAtivos=1 ignorada', vazioIds(C.idsCondominio('unidades/index', [['somenteCondominiosAtivos', '1']])));
+  t('bandeira somenteCondominiosAtivos=0 não vira todos', vazioIds(C.idsCondominio('unidades/index', [['somenteCondominiosAtivos', '0']])));
+  t('bandeiras exibir, com, apenas, mostrar, incluir, fl_ e flag ignoradas', ['exibirCondominiosInativos', 'comCondominio', 'apenasCondominioAtual', 'MOSTRARCONDOMINIOS', 'incluirCondominios', 'FL_CONDOMINIO_ATIVO', 'flagCondominio', 'somente.condominios']
+    .every((n) => vazioIds(C.idsCondominio('unidades/index', [[n, '1']])) && vazioIds(C.idsCondominio('unidades/index', [[n, '0']]))));
+  t('bandeira com outro valor recusa', ['2', '136', '-1', '', ' 1', '1 ', '01', 'true', '1abc'].every((v) => {
+    const r = C.idsCondominio('unidades/index', [['somenteCondominiosAtivos', v]]);
+    return r.invalidos.length === 1 && r.explicitos.length === 0 && r.todos === false;
+  }));
+  t('bandeira com colchetes não é bandeira', C.idsCondominio('unidades/index', [['somente[ID_CONDOMINIO_COND]', '1']]).explicitos[0] === 1
+    && C.idsCondominio('unidades/index', [['somenteCondominios[0]', '1']]).invalidos.length === 1
+    && C.idsCondominio('unidades/index', [['contatos[0][somenteCondominios]', '1']]).explicitos[0] === 1);
+  t('nome sem prefixo de bandeira continua contando', C.idsCondominio('unidades/index', [['idCondominio', '1']]).explicitos[0] === 1
+    && C.idsCondominio('unidades/index', [['ID_CONDOMINIO_COND', '0']]).todos === true
+    && C.idsCondominio('unidades/index', [['condominioSomente', '1']]).explicitos[0] === 1);
+  t('bandeira junto com código conta só o código', (() => {
+    const r = C.idsCondominio('unidades/index', [['somenteCondominiosAtivos', '1'], ['idCondominio', '7']]);
+    return r.explicitos.length === 1 && r.explicitos[0] === 7 && r.invalidos.length === 0;
+  })());
   t('camposDoCorpo multipart', C.camposDoCorpo(Buffer.from('--x\r\nContent-Disposition: form-data; name="ID_CONDOMINIO_COND"\r\n\r\n42\r\n--x--'), 'multipart/form-data; boundary=x')[0][1] === '42');
   t('temModulo GESTOR', C.temModulo({ role: 'GESTOR' }, 'comparativo'));
   t('temModulo sem chave', !C.temModulo({ role: 'GERENTE', permissoes: {} }, 'comparativo'));

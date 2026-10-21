@@ -62,8 +62,12 @@
 
   // T09: a carteira do usuário (Carteira A, B...) limita a lista; GESTOR e quem não tem
   // carteira veem todos. A lista aparece na hora com todos e a carteira se aplica quando
-  // chega (até 8 s; se falhar, fica com todos). É filtro de tela, não barreira de acesso.
+  // chega (até 8 s; se falhar ou o servidor der 503, lista vazia e aviso). É filtro de tela, não barreira de acesso.
   var carteiraPedida = false;
+  function carteiraIndisponivel() {
+    if (typeof toast === 'function') toast('Carteira indisponível agora. Recarregue a página em instantes.', 'warn');
+    return { todas: false, ids_superlogica: [], carteiras: [], indisponivel: true };
+  }
   function carregarCarteira() {
     if (carteiraPedida || typeof apiAuthFetch !== 'function') return;
     carteiraPedida = true;
@@ -73,13 +77,12 @@
       .then(function (r) {
         if (r.ok) return r.json();
         // T18: 503 = o servidor não conseguiu conferir a carteira; não mostra todos (ele recusaria um a um).
-        if (r.status === 503) {
-          if (typeof toast === 'function') toast('Carteira indisponível agora. Recarregue a página em instantes.', 'warn');
-          return { todas: false, ids_superlogica: [], carteiras: [], indisponivel: true };
-        }
+        if (r.status === 503) return carteiraIndisponivel();
         return { todas: true };
       })
-      .catch(function () { return { todas: true }; })
+      // Erro de rede ou tempo esgotado (8 s): igual ao 503, lista vazia e aviso para recarregar.
+      // Vale também para GESTOR (fechado de propósito; recarregar resolve).
+      .catch(function () { return carteiraIndisponivel(); })
       .then(function (c) {
         if (t) clearTimeout(t);
         carteira = c || { todas: true };
