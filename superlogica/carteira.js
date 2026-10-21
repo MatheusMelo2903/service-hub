@@ -277,7 +277,7 @@ function negar(res, status, erro, detalhe) {
   res.status(status).json({ erro, detalhe });
 }
 
-// aoNegar(req, motivo, id): chamado em toda recusa 403 (fora_da_carteira, modulo_sem_acesso,
+// aoNegar(req, motivo, id): chamado em toda recusa 400, 403 ou 415 (fora_da_carteira, modulo_sem_acesso,
 // sem_condominio, condominio_invalido, caminho_invalido, tipo_nao_aceito), para a auditoria da
 // segurança registrar como suspeito. Erro dentro dele é ignorado.
 function criarCarteira({ lerPerfil, lerCarteirasPerfis, semColuna, gruposCarteiras, ativo, express, aoNegar }) {
