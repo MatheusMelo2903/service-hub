@@ -196,6 +196,8 @@
           o.suspeitas.map((s) => '<span class="consumo-chip warn">' + esc(s.texto) + '</span>').join('') +
           (o.avisos || []).map((a) => '<span class="consumo-chip">' + esc(a) + '</span>').join('') +
           (!o.suspeitas.length && !it.erro && it.conf ? '<span class="consumo-chip ok">Sem suspeita</span>' : '');
+      // Mês seguinte já lançado: o servidor sempre recusa, então nem deixa marcar.
+      const bloqueada = o.suspeitas.some((s) => s.codigo === 'mes_seguinte_lancado');
       const trava = it.status === 'lendo' || it.lancada || st.lancando ? ' disabled' : '';
       const lido = it.unidadeTxt || it.blocoTxt ? 'Na foto: ' + [it.unidadeTxt, it.blocoTxt].filter(Boolean).join(' ') : 'Unidade não identificada na foto';
       return '<tr data-id="' + esc(it.id) + '" class="' + (o.suspeitas.length && !it.lancada ? 'suspeita' : '') + '">' +
@@ -205,7 +207,7 @@
         '<td><input class="consumo-input" data-campo="leitura" inputmode="decimal" value="' + esc(it.leitura) + '"' + trava + '></td>' +
         '<td class="num">' + esc(fmt(o.anterior)) + '</td><td class="num">' + esc(fmt(o.consumo)) + '</td><td class="num">' + esc(fmt(o.media)) + '</td>' +
         '<td class="consumo-situacao">' + situacao + '</td>' +
-        '<td><input type="checkbox" data-campo="lancar"' + (it.lancar && !it.lancada ? ' checked' : '') + (trava || !liberado ? ' disabled' : '') + '></td>' +
+        '<td><input type="checkbox" data-campo="lancar"' + (it.lancar && !it.lancada ? ' checked' : '') + (trava || !liberado || bloqueada ? ' disabled' : '') + '></td>' +
         '<td><button class="consumo-remover" data-campo="remover" title="Tirar do lote"' + (st.lancando ? ' disabled' : '') + '>×</button></td></tr>';
     }).join('');
     $('consumo-resumo').textContent = st.itens.length + ' foto(s); ' + nSusp + ' com suspeita; ' + nMarc + ' marcada(s) para lançar' + (nLanc ? '; ' + nLanc + ' lançada(s)' : '') + '.';

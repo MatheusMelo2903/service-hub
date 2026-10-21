@@ -4487,7 +4487,7 @@ app.post('/api/consumo/:idSuperlogica/conferir', requireAuth, express.json({ lim
 });
 
 // POST /api/consumo/:id/lancar { tipo, mes, dia, id_unidade, leitura, foto?:{ mime, base64 },
-//   substituir?, aceitar_suspeita?, confirmacao:'LANCAR' } — grava UMA leitura no Superlógica.
+//   substituir?, aceitar_suspeitas?:[códigos], confirmacao:'LANCAR' } — grava UMA leitura no Superlógica.
 app.post('/api/consumo/:idSuperlogica/lancar', requireAuth, express.json({ limit: '22mb' }), async (req, res) => {
   res.set('Cache-Control', 'no-store');
   const b = req.body || {};
