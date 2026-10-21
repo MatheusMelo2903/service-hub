@@ -8,9 +8,11 @@
 4. Migration migrations/2026-10-20_007_alertas.sql (tabelas alertas e alertas_config, RLS ligado sem policy: só o servidor acessa). Aplicada SÓ no Supabase de teste.
 5. Dashboard: card "Alertas do condomínio" com Visto, Resolvido, Reabrir, ver resolvidos, limite de saldo e Atualizar; recarrega ao trocar o condomínio.
 
+6. Conserto do envio (achado no teste): o envio antigo usava campos que o Superlógica recusa ("Nenhuma parcela enviada", HTTP 206) e a tela contava como enviado sem criar nada. Agora usa os campos documentados (DT_VENCIMENTOPRIMEIRAPARCELA, ID_FORMA_PAG, APROPRIACAO) e só conta sucesso quando o corpo traz status 200 com o id da despesa.
+
 ## Testes
 
-scripts/despesas-alertas-harness.mjs: 29/29 (erros de entrada, 401, mais de 31 datas, mesmo documento é duplicata, documentos diferentes não, fornecedor inexistente, repetida na planilha, duplicata real lida de um condomínio real só em leitura, valor ou documento diferente não é duplicata, alertas reais, ciclo de saldo baixo no condomínio de teste 167). Envio real de despesa testado só no condomínio 167 (ver diário).
+scripts/despesas-alertas-harness.mjs: 29/29 (erros de entrada, 401, mais de 31 datas, mesmo documento é duplicata, documentos diferentes não, fornecedor inexistente, repetida na planilha, duplicata real lida de um condomínio real só em leitura, valor ou documento diferente não é duplicata, alertas reais, ciclo de saldo baixo no condomínio de teste 167). Envio real só no condomínio 167, no dev pelo Chrome: despesa enviada (307237), mesma linha de novo bloqueada como já lançada; validada e lançada por fora antes do envio, o envio travou. Despesas de teste criadas no 167: 307236, 307237, 307238 (conta 2.2.60, complemento "TESTE HUB T05 apagar").
 
 ## Limitações
 
