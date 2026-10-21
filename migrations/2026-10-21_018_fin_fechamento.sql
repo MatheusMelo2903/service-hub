@@ -27,6 +27,7 @@ create table if not exists public.fin_fechamento_marca (
   item            text not null check (item in ('pre_balancete', 'boletos', 'anexos')),
   ativo           boolean not null default true,
   pendencias      integer not null default 0,   -- pendências que existiam quando marcou
+  chaves          jsonb,                        -- quais pendências foram conferidas (a marca só vale para elas)
   observacao      text,
   marcado_por     uuid,
   marcado_por_email text,

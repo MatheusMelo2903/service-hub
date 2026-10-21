@@ -155,6 +155,43 @@ t('estado recusa cadastro que não é condomínio e mês inválido', () => {
   assert.throws(() => s.estado('136', '2026-13', {}), /competencia_invalida/);
 });
 
+t('marca por chaves: pendência trocada por outra de mesmo número perde a validade (revisão 1, M4)', () => {
+  const g = (ids) => ({ pode_fechar: false, pendencias: ids.length, falhas: [], grupos: [{ chave: 'sem_comprovante', titulo: 'Pagas sem comprovante', bloqueiam: ids.length, itens: ids.map((i) => ({ gravidade: 'media', tipo: 'R4_SEM_COMPROVANTE', id_parcela: i })) }] });
+  const marca = { ativo: true, pendencias: 2, chaves: F.chavesPendencias('pre_balancete', g(['1', '2'])), marcado_por_email: 'a@b.c' };
+  const e = base(); e.pre = g(['1']); e.marcas = { pre_balancete: marca };
+  assert.strictEqual(itemDe(F.montarFechamento(e), 'pre_balancete').situacao, 'conferido');
+  e.pre = g(['1', '3']);
+  const it = itemDe(F.montarFechamento(e), 'pre_balancete');
+  assert.strictEqual(it.situacao, 'pendente'); assert.strictEqual(it.marca.vencida, true);
+});
+t('anexos com escaneado só listado ou sem CNPJ no cadastro pedem conferência (revisão 1, m2)', () => {
+  const e = base(); e.anexos.resultado.resumo.escaneados_nao_lidos = 2; e.anexos.resultado.escaneados = [{ id_despesa: '1', arquivo: 'a.pdf' }, { id_despesa: '2', arquivo: 'b.pdf' }];
+  let it = itemDe(F.montarFechamento(e), 'anexos');
+  assert.strictEqual(it.situacao, 'pendente'); assert.ok(/escaneado/.test(it.trava)); assert.strictEqual(it.pode_marcar, true);
+  e.anexos.resultado.resumo.escaneados_nao_lidos = 0; e.anexos.resultado.escaneados = []; e.anexos.resultado.resumo.falhas = 1; e.anexos.resultado.pode_fechar = false;
+  it = itemDe(F.montarFechamento(e), 'anexos');
+  assert.strictEqual(it.pode_marcar, false);
+});
+t('motivo sem data com hífen e CNPJ de outro condomínio escondido para quem tem carteira (revisão 1, m3 e m4)', () => {
+  const d = [parcela('17', '500.00', '09/15/2026')];
+  const txt = 'Comprovante de pagamento\nPagador CNPJ ' + fmt(C_OUTRO) + '\nFavorecido ' + fmt(C_FORN) + '\nValor R$ 500,00\nData 10/09/2026';
+  const r = resultado([{ idDesp: '17', anexo: anexo(7, 'Comprovante'), reg: { leitura: 'texto', texto: txt, meta: {} } }], d);
+  const todos = JSON.stringify(r.despesas);
+  assert.ok(!/\d{4}-\d{2}-\d{2}/.test(r.despesas.map((x) => x.achados.map((a) => a.motivo).join(' ')).join(' ')));
+  const restr = JSON.stringify(A.paraTela(r, true));
+  assert.ok(!restr.includes(C_OUTRO) && !restr.includes(fmt(C_OUTRO)), 'CNPJ de fora vazou: ' + restr);
+  assert.ok(!JSON.stringify(A.paraTela(r, false)).includes('motivo_restrito'));
+  assert.ok(todos.length > 0);
+});
+t('conferência de mais de 24 meses atrás é recusada', () => {
+  const s = A.criarConferenciaAnexos({ cliente: () => ({ get: async () => [] }), cred: () => ({}) });
+  assert.throws(() => s.estado('136', '2023-01', {}), /competencia_antiga/);
+});
+t('limite por usuário para conferência nova', () => {
+  const s = A.criarConferenciaAnexos({ cliente: () => ({ get: async () => [] }), cred: () => ({}) });
+  assert.throws(() => s.estado('136', '2026-09', { podeIniciar: () => false }), /limite_usuario/);
+});
+
 // ── rotas: permissão, carteira e falha fechada (servidor de mentira, sem Superlógica) ──
 const express = require('express');
 const finPainel = require('../financeiro/painel');

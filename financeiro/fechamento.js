@@ -29,12 +29,33 @@ function ultimoDiaUtil(c, hoje) {
 function item(chave, titulo, resolver) {
   return { chave, titulo, situacao: 'pendente', trava: '', detalhe: '', pode_marcar: ITENS_MARCAVEIS.includes(chave), marca: null, resolver };
 }
-// Marca manual vale se não apareceu pendência nova depois dela.
-function aplicarMarca(it, marca, pendenciasAgora) {
+// Chaves das pendências de cada item (revisão 1, M4): a marca guarda as chaves que a pessoa
+// conferiu e só vale enquanto as pendências de agora estiverem todas entre elas.
+const MAX_CHAVES = 2000;
+const chavesDe = {
+  pre_balancete: (pre) => [].concat(...((pre && pre.grupos) || []).map((g) => (g.itens || []).filter((a) => a.gravidade !== 'baixa')
+    .map((a) => [g.chave, a.tipo || '', a.id_parcela || a.id_despesa || '', a.mexida || ''].join('|')))),
+  boletos: (bol) => ((bol && bol.alertas) || []).map((a) => [a.tipo || '', a.unidade_id || a.unidade || '', a.titulo || ''].join('|')),
+  anexos: (r) => {
+    if (!r) return [];
+    const k = [].concat(...(r.despesas || []).map((d) => (d.achados || []).filter((a) => a.gravidade !== 'baixa').map((a) => [d.id_despesa, a.tipo, a.arquivo || ''].join('|'))));
+    (r.escaneados || []).forEach((x) => k.push(['escaneado', x.id_despesa, x.arquivo].join('|')));
+    if (r.sem_cnpj_cadastro) k.push('sem_cnpj_cadastro');
+    return k;
+  },
+};
+function chavesPendencias(itemNome, dado) {
+  const l = [...new Set((chavesDe[itemNome] ? chavesDe[itemNome](dado) : []).map(String))].sort();
+  return l.length > MAX_CHAVES ? null : l;
+}
+function aplicarMarca(it, marca, pendenciasAgora, chavesAgora) {
   if (!it.pode_marcar || !marca || marca.ativo === false) return;
   it.marca = { por: marca.marcado_por_email || '', em: marca.marcado_em || '', observacao: marca.observacao || '', pendencias: marca.pendencias || 0 };
   if (it.situacao !== 'pendente') return;
-  if ((Number(marca.pendencias) || 0) >= pendenciasAgora) {
+  let vale;
+  if (Array.isArray(marca.chaves) && Array.isArray(chavesAgora)) { const ja = new Set(marca.chaves.map(String)); vale = chavesAgora.every((c) => ja.has(c)); }
+  else vale = (Number(marca.pendencias) || 0) >= pendenciasAgora;
+  if (vale) {
     it.situacao = 'conferido';
     it.detalhe = (it.detalhe ? it.detalhe + ' ' : '') + 'Conferido à mão por ' + (marca.marcado_por_email || 'usuário') + '.';
   } else {
@@ -101,7 +122,7 @@ function itemPre(pre, marca) {
   else if (pre.pode_fechar) { it.trava = 'Algumas leituras do Superlógica falharam; atualize o pré balancete.'; it.pode_marcar = false; return it; }
   else it.trava = (pre.grupos || []).filter((g) => g.bloqueiam).map((g) => g.bloqueiam + ' ' + g.titulo.toLowerCase()).join('; ') + '.';
   it.detalhe = (pre.parcelas_pagas || 0) + ' parcela(s) paga(s) no mês' + (pre.para_conferir ? '; ' + pre.para_conferir + ' item(ns) de gravidade baixa só para conferir' : '') + '.';
-  aplicarMarca(it, marca, pre.pendencias || 0);
+  aplicarMarca(it, marca, pre.pendencias || 0, chavesPendencias('pre_balancete', pre));
   return it;
 }
 
@@ -109,17 +130,17 @@ function itemBoletos(bol, marca) {
   const it = item('boletos', 'Boletos do mês conferidos', { painel: 'boletos', rotulo: 'Abrir Boletos' });
   if (falhou(bol)) { it.situacao = 'falha'; it.trava = 'Não foi possível ler os boletos agora.'; return it; }
   const r = bol.resumo || {};
-  if (!r.boletos) { it.trava = 'Nenhum boleto com vencimento no mês encontrado.'; it.pode_marcar = true; aplicarMarca(it, marca, 0); return it; }
+  if (!r.boletos) { it.trava = 'Nenhum boleto com vencimento no mês encontrado.'; it.pode_marcar = true; aplicarMarca(it, marca, 0, []); return it; }
   if (!r.alertas) it.situacao = 'ok';
   else it.trava = r.alertas + ' ponto(s) para conferir nos boletos (' + Object.keys(r.alertas_por_tipo || {}).map((k) => k.replace(/_/g, ' ') + ' ' + r.alertas_por_tipo[k]).join(', ') + ').';
   it.detalhe = r.boletos + ' boleto(s) em ' + (r.unidades_com_boleto || 0) + ' unidade(s), total ' + brl(r.valor_total) + '.';
-  aplicarMarca(it, marca, r.alertas || 0);
+  aplicarMarca(it, marca, r.alertas || 0, chavesPendencias('boletos', bol));
   return it;
 }
 
 function itemAnexos(anx, marca) {
   const it = item('anexos', 'Anexos das despesas conferidos', { aba: 'pre', rotulo: 'Ver a conferência dos anexos' });
-  if (!anx || anx.erro) { it.situacao = 'falha'; it.trava = 'Não foi possível conferir os anexos agora.'; return it; }
+  if (!anx || anx.erro) { it.situacao = 'falha'; it.trava = (anx && anx.motivo) || 'Não foi possível conferir os anexos agora.'; return it; }
   if (anx.calculando) {
     it.situacao = 'calculando';
     it.trava = 'Conferindo os anexos' + (anx.total ? ' (' + anx.feitos + ' de ' + anx.total + ')' : '') + '. A tela atualiza sozinha.';
@@ -128,16 +149,21 @@ function itemAnexos(anx, marca) {
   const r = anx.resultado || {};
   const s = r.resumo || {};
   if (r.cortado) { it.trava = 'O mês tem despesas demais para conferir de uma vez.'; it.pode_marcar = false; return it; }
-  if (r.pode_fechar) it.situacao = 'ok';
+  // Revisão 1, m2: escaneado só listado e cadastro sem CNPJ também pedem conferência (aceitam marca).
+  if (r.pode_fechar && !s.escaneados_nao_lidos && !r.sem_cnpj_cadastro) it.situacao = 'ok';
   else {
     const partes = [];
     if (s.para_conferir) partes.push(s.para_conferir + ' achado(s) em ' + s.despesas_com_achado + ' despesa(s)');
-    if (s.falhas) partes.push(s.falhas + ' anexo(s) que não deu para baixar');
+    if (s.falhas) partes.push(s.falhas + ' anexo(s) que não deu para baixar ou ler (atualize para tentar de novo)');
+    if (s.escaneados_nao_lidos) partes.push(s.escaneados_nao_lidos + ' escaneado(s) sem leitura para conferir à mão');
+    if (r.sem_cnpj_cadastro) partes.push('cadastro do condomínio sem CNPJ no Superlógica (pagador e tomador não conferidos)');
     it.trava = partes.join('; ') + '.';
+    // Falha de download ou leitura se resolve atualizando: não aceita marca.
+    if (s.falhas) it.pode_marcar = false;
   }
   it.detalhe = (s.anexos || 0) + ' anexo(s) de ' + (s.despesas || 0) + ' despesa(s); ' + (s.lidos_texto || 0) + ' lidos pelo texto, ' + (s.lidos_interna || 0) + ' escaneados lidos'
     + (s.escaneados_nao_lidos ? ', ' + s.escaneados_nao_lidos + ' escaneado(s) só listado(s)' : '') + '.';
-  aplicarMarca(it, marca, (s.para_conferir || 0) + (s.falhas || 0));
+  aplicarMarca(it, marca, (s.para_conferir || 0) + (s.escaneados_nao_lidos || 0) + (r.sem_cnpj_cadastro ? 1 : 0), chavesPendencias('anexos', r));
   return it;
 }
 
@@ -159,4 +185,4 @@ function montarFechamento(e) {
   };
 }
 
-module.exports = { montarFechamento, ultimoDiaUtil, ITENS_MARCAVEIS, aplicarMarca };
+module.exports = { montarFechamento, ultimoDiaUtil, ITENS_MARCAVEIS, aplicarMarca, chavesPendencias };

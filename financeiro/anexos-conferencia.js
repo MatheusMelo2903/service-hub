@@ -23,9 +23,12 @@ const PDF_MEMORIA_BYTES = 400 * 1024 * 1024;
 const MAX_BYTES = 15 * 1024 * 1024;    // anexo maior que isso não é baixado (fica listado)
 const MAX_BYTES_INTERNA = 7 * 1024 * 1024;
 const MAX_TEXTO = 20000;
-const MAX_CACHE = 6000;
+const MAX_CACHE = 3000;
 const TTL_RESULTADO = 10 * 60 * 1000;
 const MAX_PAGINAS_DESPESAS = 40;
+const MAX_TRABALHOS = 4;               // conferências rodando ao mesmo tempo no servidor
+const MESES_ATRAS = 24;                // conferência só até 24 meses para trás
+function limiteMeses() { const d = new Date(Date.now() - 3 * 3600000); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - MESES_ATRAS); return d.toISOString().slice(0, 10); }
 const NAO_CONDOMINIOS = new Set(['143', '144', '145', '160', '162']);
 // Fora da comparação de "CNPJ de outro condomínio": cadastros que não são condomínio e o 167 de teste.
 const FORA_COMPARACAO = new Set([...NAO_CONDOMINIOS, '167']);
@@ -114,10 +117,46 @@ async function extrairPdf(buf) {
     filho.on('close', () => {
       let m = null;
       try { m = JSON.parse(Buffer.concat(partes).toString('utf8')); } catch (e) { m = null; }
-      acabar(m && m.ok ? { texto: String(m.texto || ''), meta: m.meta || {} } : null);
+      // Revisão 1, M2: o leitor respondeu (com ou sem texto) é diferente de "não deu" (fila, tempo,
+      // memória, processo caído), que devolve null e vira falha passageira.
+      if (m && m.ok) return acabar({ texto: String(m.texto || ''), meta: m.meta || {} });
+      acabar(m && m.ok === false && !m.sem_leitor ? { texto: '', meta: {}, invalido: true } : null);
     });
     filho.stdin.on('error', () => acabar(null));
     filho.stdin.end(buf);
+  });
+}
+
+// ── download com teto real de bytes (revisão 1, M3) ───────────────────────
+// Mesmo GET da T32 (publico/downloadarquivo), mas corta quando o content-length ou a soma dos
+// pedaços passa de MAX_BYTES: status 413, tratado como falha sem nova tentativa.
+const https = require('https');
+function baixarLimitado({ base, appToken, accessToken }, a) {
+  return new Promise((resolve) => {
+    let fim = false;
+    const acabar = (v) => { if (!fim) { fim = true; resolve(v); } };
+    let url;
+    try {
+      url = new URL(String(base).replace(/\/+$/, '') + '/v2/condor/publico/downloadarquivo/');
+    } catch (e) { return acabar({ status: 0, corpo: Buffer.alloc(0) }); }
+    url.searchParams.set('id', String(a.id_arquivo_arq));
+    url.searchParams.set('hash', String(a.st_hash_arq || ''));
+    const r = https.request({ hostname: url.hostname, path: url.pathname + url.search, method: 'GET', headers: { app_token: appToken, access_token: accessToken } }, (resp) => {
+      if (Number(resp.headers['content-length']) > MAX_BYTES) { r.destroy(); return acabar({ status: 413, corpo: Buffer.alloc(0) }); }
+      const partes = [];
+      let total = 0;
+      resp.on('data', (c) => {
+        total += c.length;
+        if (total > MAX_BYTES) { r.destroy(); return acabar({ status: 413, corpo: Buffer.alloc(0) }); }
+        partes.push(c);
+      });
+      resp.on('error', () => acabar({ status: 0, corpo: Buffer.alloc(0) }));
+      resp.on('aborted', () => acabar({ status: 0, corpo: Buffer.alloc(0) }));
+      resp.on('end', () => acabar({ status: resp.statusCode, corpo: Buffer.concat(partes) }));
+    });
+    r.setTimeout(60000, () => { r.destroy(); acabar({ status: 504, corpo: Buffer.alloc(0) }); });
+    r.on('error', () => acabar({ status: 0, corpo: Buffer.alloc(0) }));
+    r.end();
   });
 }
 
@@ -141,7 +180,8 @@ function textoDaInterna(j) {
 }
 const MIME = { pdf: 'application/pdf', jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png' };
 const extDe = (a) => String(a.st_extensao_arq || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 8);
-const chaveDe = (a) => String(a.id_arquivo_arq) + ':' + String(a.st_hash_arq || '');
+// Hash só com letras, números, ponto e sublinhado (entra no filtro do banco); outro formato vira só o id.
+const chaveDe = (a) => String(a.id_arquivo_arq) + ':' + (/^[A-Za-z0-9._]{0,128}$/.test(String(a.st_hash_arq || '')) ? String(a.st_hash_arq || '') : 'x');
 const reais = (v) => Math.round((Number(v) || 0) * 100) / 100;
 const slData = (iso) => iso.slice(5, 7) + '/' + iso.slice(8, 10) + '/' + iso.slice(0, 4);
 const fimDoMes = (ano, mes) => new Date(Date.UTC(ano, mes, 0)).toISOString().slice(0, 10);
@@ -201,13 +241,16 @@ function montarResultado({ idCond, comp, itens, despesas, cnpjCond, outros, nome
     an.conferirDespesa(g.parcelas, res).forEach((a) => achados.push(Object.assign({ arquivo: '' }, a)));
     if (!achados.length) return;
     const tela = achados.map((a) => {
-      const def = ACHADOS[a.tipo] || { gravidade: 'media', titulo: a.tipo };
+      const def = ACHADOS[a.tipo] || { gravidade: 'media', titulo: String(a.tipo).replace(/_/g, ' ') };
       resumo.achados++;
       resumo.por_tipo[a.tipo] = (resumo.por_tipo[a.tipo] || 0) + 1;
       if (def.gravidade === 'baixa') resumo.so_informativo++; else resumo.para_conferir++;
       // CNPJ de outro condomínio: guarda os nomes à parte (quem só vê a própria carteira recebe sem eles).
       const outro = a.tipo === 'cnpj_outro_condominio';
-      return { tipo: a.tipo, titulo: def.titulo, gravidade: def.gravidade, motivo: String(a.motivo || '').slice(0, 300), arquivo: a.arquivo, leitura: a.leitura || '', outro_condominio: outro || undefined };
+      // Datas do motivo em DD/MM/AAAA (tela sem hífen); para quem tem carteira, CNPJ de outro condomínio sai do texto.
+      const motivo = String(a.motivo || '').replace(/(\d{4})-(\d{2})-(\d{2})/g, '$3/$2/$1').slice(0, 300);
+      const restrito = motivo.replace(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/g, (m) => (outros && outros.has(m.replace(/\D/g, '')) ? '[CNPJ de outro condomínio]' : m));
+      return { tipo: a.tipo, titulo: def.titulo, gravidade: def.gravidade, motivo, motivo_restrito: restrito !== motivo ? restrito : undefined, arquivo: a.arquivo, leitura: a.leitura || '', outro_condominio: outro || undefined };
     });
     resumo.despesas_com_achado++;
     const peso = { alta: 3, media: 2, baixa: 1 };
@@ -226,9 +269,12 @@ function montarResultado({ idCond, comp, itens, despesas, cnpjCond, outros, nome
 function paraTela(r, restrito) {
   const o = Object.assign({}, r);
   delete o.nomes_outros;
-  if (!restrito) return o;
-  o.despesas = r.despesas.map((d) => Object.assign({}, d, { achados: d.achados.map((a) => (a.outro_condominio
-    ? Object.assign({}, a, { motivo: 'O documento traz o CNPJ de outro condomínio e não o deste. Peça ao gestor para conferir.' }) : a)) }));
+  const limpar = (a) => { const x = Object.assign({}, a); delete x.motivo_restrito; return x; };
+  if (!restrito) { o.despesas = r.despesas.map((d) => Object.assign({}, d, { achados: d.achados.map(limpar) })); return o; }
+  o.despesas = r.despesas.map((d) => Object.assign({}, d, { achados: d.achados.map((a) => {
+    if (a.outro_condominio) return Object.assign(limpar(a), { motivo: 'O documento traz o CNPJ de outro condomínio e não o deste. Peça ao gestor para conferir.' });
+    return Object.assign(limpar(a), a.motivo_restrito ? { motivo: a.motivo_restrito } : {});
+  }) }));
   return o;
 }
 
@@ -296,48 +342,57 @@ function criarConferenciaAnexos(opcoes) {
     try { await b.upsert('fin_anexo_leitura', linhas, 'chave'); } catch (e) { log('[anexos] gravar cache falhou: ' + (e && e.message)); }
   }
 
-  // Baixa (até 3 tentativas, pausa de 2 s em 429 ou erro do servidor). null = não deu.
+  // Baixa (até 3 tentativas, pausa de 2 s em 429 ou erro do servidor). Devolve o arquivo,
+  // 'grande' (passou do teto de bytes) ou null (não deu).
   async function baixar(a) {
     for (let t = 1; t <= 3; t++) {
-      const r = await fila(() => an.baixarAnexo(opcoes.cred(), a));
+      const r = await fila(() => baixarLimitado(opcoes.cred(), a));
+      if (r.status === 413) return 'grande';
       if (r.status === 200 && an.corpoValido(r.corpo, extDe(a))) return r.corpo;
       if (r.status === 200 || (r.status >= 400 && r.status < 500 && r.status !== 429)) return null;
       await new Promise((ok) => setTimeout(ok, 2000 * t));
     }
     return null;
   }
+  const escaneado = (meta, ext, extra) => ({ leitura: 'escaneado', meta: Object.assign(meta, extra || {}), extensao: ext });
   // Lê um anexo. antigo: o que o cache tinha (escaneado ainda sem leitura interna).
-  // Devolve { reg, novo } (novo = vai para o cache do banco) ; reg.temporario = não guardar.
+  // Devolve { reg, novo } (novo = vai para o cache do banco); reg.temporario = não guardar.
   async function lerArquivo(a, idCond, ctx, antigo) {
     const ext = extDe(a);
     if (!MIME[ext]) return { reg: { leitura: 'nao_pdf', extensao: ext, meta: {} } };
-    if (Number(a.nm_tamanho_arq) > MAX_BYTES) return { reg: { leitura: 'falha', motivo: 'arquivo grande demais', temporario: true } };
+    const tam = Number(a.nm_tamanho_arq);
+    if (tam > MAX_BYTES) return { reg: { leitura: 'falha', motivo: 'arquivo grande demais', temporario: true } };
     if (!downloadOk()) { ctx.estado.limite_downloads = true; return { reg: { leitura: 'falha', motivo: 'limite de downloads por hora', temporario: true } }; }
     const buf = await baixar(a);
+    if (buf === 'grande') return { reg: { leitura: 'falha', motivo: 'arquivo grande demais', temporario: true } };
     if (!buf) return { reg: { leitura: 'falha', motivo: 'não foi possível baixar', temporario: true } };
     let meta = antigo && antigo.meta ? Object.assign({}, antigo.meta) : {};
     if (ext === 'pdf' && !antigo) {
       const x = await extrairPdf(buf);
-      if (x) meta = x.meta || {};
-      if (x && an.legivel(x.texto)) return { reg: { leitura: 'texto', texto: x.texto.slice(0, MAX_TEXTO), meta, extensao: ext }, novo: true };
+      // Revisão 1, M2: leitor ocupado, tempo ou memória estourados é falha passageira (não guarda).
+      if (!x) return { reg: { leitura: 'falha', motivo: 'leitura do PDF não terminou', temporario: true } };
+      meta = x.meta || {};
+      if (an.legivel(x.texto)) return { reg: { leitura: 'texto', texto: x.texto.slice(0, MAX_TEXTO), meta, extensao: ext }, novo: true };
     }
     // Escaneado ou imagem: leitura interna, com o limite do usuário, o teto geral e auditoria.
     delete meta.interna_tentada;
-    if (!ctx.lerInterna || buf.length > MAX_BYTES_INTERNA) return { reg: { leitura: 'escaneado', meta, extensao: ext }, novo: !antigo };
+    // Revisão 1, m1: grande demais para a leitura interna fica só listado, sem baixar de novo.
+    if (buf.length > MAX_BYTES_INTERNA) return { reg: escaneado(meta, ext, { interna_tentada: true }), novo: true };
+    if (!ctx.lerInterna) return { reg: escaneado(meta, ext), novo: !antigo };
+    if (!internaOk()) { ctx.estado.limite_interna = true; return { reg: escaneado(meta, ext), novo: !antigo }; }
     if (!ctx.podeInterna()) {
       if (!ctx.estado.avisou_limite) { ctx.estado.avisou_limite = true; ctx.auditar('limite_processamento', { tipo: 'anexo_interna', id_superlogica: idCond }, true, 'volume_alto'); }
       ctx.estado.limite_interna = true;
-      return { reg: { leitura: 'escaneado', meta, extensao: ext }, novo: !antigo };
+      return { reg: escaneado(meta, ext), novo: !antigo };
     }
-    if (!internaOk()) { ctx.estado.limite_interna = true; return { reg: { leitura: 'escaneado', meta, extensao: ext }, novo: !antigo }; }
     ctx.auditar('anexo_lido_interno', { id_superlogica: idCond, id_arquivo: String(a.id_arquivo_arq) });
     let rr = null;
     try { rr = await ctx.lerInterna({ mime: MIME[ext], base64: buf.toString('base64') }); } catch (e) { rr = null; }
     const t = rr && rr.status === 200 ? textoDaInterna(rr.corpo) : '';
     if (t) return { reg: { leitura: 'interna', texto: t, meta, extensao: ext }, novo: true };
-    // Erro passageiro da leitura interna (sem resposta, 5xx): tenta de novo outro dia. Ilegível: não tenta mais.
-    if (!rr || rr.status >= 500) return { reg: { leitura: 'escaneado', meta, extensao: ext }, novo: !antigo };
-    return { reg: { leitura: 'escaneado', meta: Object.assign(meta, { interna_tentada: true }), extensao: ext }, novo: true };
+    // Erro passageiro da leitura interna (sem resposta, 5xx): tenta de novo em outra conferência. Ilegível: não tenta mais.
+    if (!rr || rr.status >= 500) return { reg: escaneado(meta, ext), novo: !antigo };
+    return { reg: escaneado(meta, ext, { interna_tentada: true }), novo: true };
   }
 
   async function rodar(idCond, c, ctx, t) {
@@ -391,18 +446,25 @@ function criarConferenciaAnexos(opcoes) {
     const c = competencia(comp);
     if (!c) { const e = new Error('competencia_invalida'); e.status = 400; throw e; }
     if (NAO_CONDOMINIOS.has(String(idCond))) { const e = new Error('nao_condominio'); e.status = 400; throw e; }
+    if (c.inicio < limiteMeses()) { const e = new Error('competencia_antiga'); e.status = 400; throw e; }
     const k = String(idCond) + '|' + c.rotulo;
     let t = trabalhos.get(k);
     const velho = t && t.resultado && t.ate < Date.now();
     const pedeForcar = forcar && t && (t.resultado || t.erro) && Date.now() - t.criado > 60000;
     const errou = t && t.erro && Date.now() - t.criado > 60000;
     if (!t || velho || pedeForcar || errou) {
+      // Revisão 1, M1: teto de conferências rodando ao mesmo tempo (todos os usuários) e limite por
+      // usuário para começar conferência nova (consultar uma que já roda não conta).
+      const rodando = [...trabalhos.values()].filter((x) => !x.resultado && !x.erro).length;
+      if (rodando >= MAX_TRABALHOS) { const e = new Error('ocupado'); e.status = 429; throw e; }
+      if (ctx && ctx.podeIniciar && !ctx.podeIniciar()) { const e = new Error('limite_usuario'); e.status = 429; throw e; }
       const ctx2 = Object.assign({ podeInterna: () => false, auditar: () => {} }, ctx || {}, { estado: {} });
       t = { feitos: 0, total: 0, inicio: new Date().toISOString(), criado: Date.now(), resultado: null, erro: null, ate: 0 };
       t.promessa = rodar(String(idCond), c, ctx2, t).then((r) => { t.resultado = r; t.ate = Date.now() + TTL_RESULTADO; },
         (e) => { t.erro = e; log('[anexos] ' + k + ' falhou: ' + (e && e.message)); });
       trabalhos.set(k, t);
-      if (trabalhos.size > 300) trabalhos.delete(trabalhos.keys().next().value);
+      // Só sai do mapa trabalho terminado (o que ainda roda nunca é descartado).
+      if (trabalhos.size > 300) { for (const [kk, x] of trabalhos) { if (x.resultado || x.erro) { trabalhos.delete(kk); break; } } }
     }
     if (t.resultado) return { pronto: true, resultado: t.resultado };
     if (t.erro) { const e = new Error('falha_anexos'); e.status = 502; throw e; }

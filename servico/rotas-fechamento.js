@@ -13,6 +13,10 @@ const ESPERA_ROTA = 25000;
 const NAO_CONDOMINIOS = anexosConf.NAO_CONDOMINIOS;
 const hojeSP = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
 const ID = /^[1-9][0-9]{0,8}$/;
+const MOTIVO_429 = {
+  ocupado: 'Há muitas conferências de anexos rodando agora. Tente de novo em alguns minutos.',
+  limite_usuario: 'Você pediu muitas conferências de anexos nesta hora. Tente mais tarde.',
+};
 
 function criarRotasFechamento(app, d) {
   const { requireAuth, express, exigirFinanceiro, exigirModuloItem, exigirLeituraSuperlogica, exigirCarteira, exigirEscopoFinanceiro, escopoFinanceiro,
@@ -32,6 +36,12 @@ function criarRotasFechamento(app, d) {
     return {
       lerInterna: (arquivo) => processar.processarDocumentoFinanceiro({ arquivo }, req.user && req.user.sub),
       podeInterna: () => dentroDoLimite(req, 'anexo_interna', 120),
+      // Conferência nova de anexos (lista de despesas e downloads): até 40 por usuário por hora.
+      podeIniciar: () => {
+        const ok = dentroDoLimite(req, 'anexos_conferir', 40);
+        if (!ok) { try { auditoria.evento(req, 'limite_processamento', { tipo: 'anexos_conferir' }, true, 'volume_alto'); } catch (e) { /* segue */ } }
+        return ok;
+      },
       auditar: (acao, det, susp, motivo) => { try { auditoria.evento(req, acao, det, susp, motivo); } catch (e) { /* segue */ } },
     };
   }
@@ -67,7 +77,8 @@ function criarRotasFechamento(app, d) {
       if (s.calculando) return res.status(202).json({ calculando: true, feitos: s.feitos, total: s.total, desde: s.desde, detalhe: 'Conferindo os anexos. A tela tenta de novo sozinha.' });
       res.json(anexosConf.paraTela(s.resultado, acesso.escopo !== null));
     } catch (e) {
-      if (e && e.status === 400) return res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Escolha um mês que já começou.' });
+      if (e && e.status === 400) return res.status(400).json({ erro: 'competencia_invalida', detalhe: e.message === 'competencia_antiga' ? 'A conferência dos anexos vai até 24 meses para trás.' : 'Escolha um mês que já começou.' });
+      if (e && e.status === 429) return res.status(429).json({ erro: 'limite', detalhe: MOTIVO_429[e.message] || MOTIVO_429.ocupado });
       console.warn('[anexos] ' + v.id + ' ' + v.comp.rotulo + ' falhou: ' + (e && e.message));
       res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível conferir os anexos agora. Tente de novo em alguns minutos.' });
     }
@@ -76,7 +87,7 @@ function criarRotasFechamento(app, d) {
   async function lerMarcas(id, comp) {
     const b = banco();
     if (!b) return { disponivel: false, marcas: {} };
-    const linhas = await b.ler('fin_fechamento_marca?select=item,ativo,pendencias,observacao,marcado_por_email,marcado_em&id_superlogica=eq.' + id + '&competencia=eq.' + comp);
+    const linhas = await b.ler('fin_fechamento_marca?select=item,ativo,pendencias,chaves,observacao,marcado_por_email,marcado_em&id_superlogica=eq.' + id + '&competencia=eq.' + comp);
     const marcas = {};
     (linhas || []).forEach((l) => { if (l.ativo) marcas[l.item] = l; });
     return { disponivel: true, marcas };
@@ -87,7 +98,7 @@ function criarRotasFechamento(app, d) {
   // em segundo plano, nos caches de cada módulo, e a próxima chamada pega pronto).
   async function calcular(req, id, comp, forcar) {
     const ctx = ctxDe(req);
-    const anx = (() => { try { return anexos.estado(id, comp.rotulo, ctx, forcar); } catch (e) { return { erro: e.message }; } })();
+    const anx = (() => { try { return anexos.estado(id, comp.rotulo, ctx, forcar); } catch (e) { return { erro: e.message, motivo: MOTIVO_429[e.message] || (e.message === 'competencia_antiga' ? 'A conferência dos anexos vai até 24 meses para trás.' : '') }; } })();
     const todos = Promise.all([
       semErro(Promise.resolve().then(() => painelFin.preBalancete(id, comp.rotulo, forcar))),
       semErro(Promise.resolve().then(() => conciliacao.condominio(id, comp.rotulo, forcar))),
@@ -146,19 +157,28 @@ function criarRotasFechamento(app, d) {
     if (!(await travas(req, res, v.id, true))) return;
     const b = banco();
     if (!b) return res.status(503).json({ erro: 'marca_indisponivel', detalhe: 'Marcar como conferido só está liberado no ambiente de teste por enquanto.' });
-    let pendencias = 0;
+    // Pendências e chaves lidas pelo servidor (não pela tela): a marca só vale para elas.
+    let pendencias = 0, chaves = null;
     try {
-      if (itemNome === 'pre_balancete') pendencias = (await painelFin.preBalancete(v.id, v.comp.rotulo, false)).pendencias || 0;
-      else if (itemNome === 'boletos') pendencias = ((await boletos(v.id, v.comp.rotulo, false)).resumo || {}).alertas || 0;
-      else {
+      if (itemNome === 'pre_balancete') {
+        const pre = await painelFin.preBalancete(v.id, v.comp.rotulo, false);
+        pendencias = pre.pendencias || 0; chaves = fechamento.chavesPendencias('pre_balancete', pre);
+      } else if (itemNome === 'boletos') {
+        const bol = await boletos(v.id, v.comp.rotulo, false);
+        pendencias = (bol.resumo || {}).alertas || 0; chaves = bol.resumo && bol.resumo.boletos ? fechamento.chavesPendencias('boletos', bol) : [];
+      } else {
         const s = anexos.estado(v.id, v.comp.rotulo, ctxDe(req), false);
         if (!s.pronto) return res.status(409).json({ erro: 'calculando', detalhe: 'Espere terminar a conferência dos anexos para marcar.' });
-        pendencias = (s.resultado.resumo.para_conferir || 0) + (s.resultado.resumo.falhas || 0);
+        const rs = s.resultado.resumo;
+        if (rs.falhas) return res.status(409).json({ erro: 'falhas', detalhe: 'Há anexos que não deu para baixar ou ler. Atualize a conferência antes de marcar.' });
+        pendencias = (rs.para_conferir || 0) + (rs.escaneados_nao_lidos || 0) + (s.resultado.sem_cnpj_cadastro ? 1 : 0);
+        chaves = fechamento.chavesPendencias('anexos', s.resultado);
       }
     } catch (e) {
+      if (e && e.status === 429) return res.status(429).json({ erro: 'limite', detalhe: MOTIVO_429[e.message] || MOTIVO_429.ocupado });
       return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível conferir o item agora. Tente de novo em instantes.' });
     }
-    const linha = { id_superlogica: Number(v.id), competencia: v.comp.rotulo, item: itemNome, ativo: b0.conferido, pendencias, observacao: obs || null,
+    const linha = { id_superlogica: Number(v.id), competencia: v.comp.rotulo, item: itemNome, ativo: b0.conferido, pendencias, chaves, observacao: obs || null,
       marcado_por: (req.user && req.user.sub) || null, marcado_por_email: (req.user && req.user.email) || null, marcado_em: new Date().toISOString() };
     try { await b.upsert('fin_fechamento_marca', [linha], 'id_superlogica,competencia,item'); } catch (e) {
       console.warn('[fechamento] marca não gravada: ' + (e && e.message));

@@ -18,7 +18,7 @@ process.stdin.on('end', async () => {
   console.warn = () => {}; console.log = () => {};
   try { lib = require('pdfjs-dist/legacy/build/pdf.js'); } catch (e) { lib = null; } finally { console.warn = avisoOrig; console.log = logOrig; }
   const sair = (o) => { process.stdout.write(JSON.stringify(o), () => process.exit(0)); };
-  if (!lib) return sair({ ok: false });
+  if (!lib) return sair({ ok: false, sem_leitor: true });
   try {
     const doc = await lib.getDocument({ data: new Uint8Array(Buffer.concat(partes)), disableFontFace: true, isEvalSupported: false, useSystemFonts: false, verbosity: 0, stopAtErrors: false }).promise;
     const meta = {};
