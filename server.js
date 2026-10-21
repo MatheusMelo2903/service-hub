@@ -3532,6 +3532,8 @@ app.post('/api/cobranca/condominio/:idSuperlogica/segunda-via', requireAuth, exp
 // ─────────────────────────────────────────────────────────────────────────
 const slComparativo = require('./superlogica/comparativo');
 const _cacheComparativo = slModulo.consulta.criarCache(6 * 3600 * 1000, 600, 120 * 1000);
+// Fornecedores lê até 40 páginas seguidas: teto maior para não estourar em condomínio grande.
+const _cacheComparativoForn = slModulo.consulta.criarCache(6 * 3600 * 1000, 300, 300 * 1000);
 async function _rotaComparativo(req, res, tipo) {
   res.set('Cache-Control', 'no-store');
   const id = String(req.params.idSuperlogica || '');
@@ -3542,7 +3544,8 @@ async function _rotaComparativo(req, res, tipo) {
   const chave = tipo + ':' + id + ':' + hoje.getFullYear() + '-' + (hoje.getMonth() + 1);
   try {
     const fn = tipo === 'custos' ? slComparativo.custosCondominio : slComparativo.fornecedoresCondominio;
-    res.json(await _cacheComparativo.pegar(chave, () => fn(clienteSL(), id, hoje, 12)));
+    const cache = tipo === 'custos' ? _cacheComparativo : _cacheComparativoForn;
+    res.json(await cache.pegar(chave, () => fn(clienteSL(), id, hoje, 12)));
   } catch (e) {
     console.warn('[comparativo-' + tipo + '] ' + id + ' falhou: ' + (e && e.message));
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler esse condomínio no Superlógica agora.' });

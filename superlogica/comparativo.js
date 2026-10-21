@@ -37,10 +37,10 @@ async function paginas(cliente, rota, params, max) {
 async function contarUnidades(cliente, id, hoje) {
   try {
     const j = await cliente.get('consumo/index', { tipoLeitura: 1, idCondominio: id, posicaoEm: dataSL(hoje) });
-    if (Array.isArray(j) && j.length) return new Set(j.map((u) => String(u.id_unidade_uni))).size;
+    if (Array.isArray(j) && j.length) return new Set(j.filter((u) => u && u.id_unidade_uni).map((u) => String(u.id_unidade_uni))).size;
   } catch (e) { /* cai no unidades/index */ }
   const u = await paginas(cliente, 'unidades/index', { idCondominio: id }, 40);
-  return new Set(u.map((x) => String(x.id_unidade_uni))).size;
+  return new Set(u.filter((x) => x && x.id_unidade_uni).map((x) => String(x.id_unidade_uni))).size;
 }
 
 function linhasBalancete(bruto) {
@@ -62,8 +62,14 @@ async function custosCondominio(cliente, id, hoje, n) {
   const total = porConta.get('2') ? porConta.get('2').valor : 0;
   const cats = linhas.filter((l) => /^2\.\d+$/.test(l.conta));
   const catPessoal = cats.find((c) => /pessoal/.test(semAcento(c.descricao)));
-  const catConsumo = cats.find((c) => /consumo/.test(semAcento(c.descricao)));
-  const folhasConsumo = catConsumo ? linhas.filter((l) => l.folha && l.conta.startsWith(catConsumo.conta + '.')) : [];
+  const RE_CONSUMO = /agua|esgoto|saneamento|energia|\bluz\b|\bgas\b/;
+  const folhasDe = (c) => linhas.filter((l) => l.folha && l.conta.startsWith(c.conta + '.'));
+  // Categoria de consumo: a que tem folhas de água, energia ou gás (não basta o nome: há planos
+  // com "Material de Consumo"). Sem nenhuma, procura essas folhas em todas as categorias de
+  // despesa, menos investimento (a Energia Solar financiada não é conta de energia).
+  const candidatas = cats.filter((c) => !/material|investimento/.test(semAcento(c.descricao)) && folhasDe(c).some((l) => RE_CONSUMO.test(semAcento(l.descricao))));
+  const catConsumo = candidatas.find((c) => /consumo|concession|servicos? publicos/.test(semAcento(c.descricao))) || candidatas[0] || null;
+  const folhasConsumo = catConsumo ? folhasDe(catConsumo) : [];
   const soma = (re) => cent(folhasConsumo.filter((l) => re.test(semAcento(l.descricao))).reduce((s, l) => s + l.valor, 0));
   const v = {
     total: cent(total),
@@ -86,11 +92,20 @@ async function fornecedoresCondominio(cliente, id, hoje, n) {
   const p = periodo(hoje, n);
   const itens = await paginas(cliente, 'despesas/index', { idCondominio: id, comStatus: 'liquidadas', filtrarpor: 'liquidacao', dtInicio: dataSL(p.ini), dtFim: dataSL(p.fim) }, 40);
   const mapa = new Map();
+  const vistas = new Set();
+  let ignorados = 0;
   itens.forEach((d) => {
     if (String(d.fl_liquidado_pdes) !== '1') return;
+    // A paginação pode repetir parcela entre páginas: conta cada uma uma vez.
+    const idp = String(d.id_parcela_pdes || '') || [d.id_despesa_des, d.st_complemento_pdes, d.dt_liquidacao_pdes, d.vl_valor_pdes].join('|');
+    if (vistas.has(idp)) return;
+    vistas.add(idp);
     const nome = limpar(d.st_nome_con) || limpar(d.st_fantasia_con);
     if (!nome) return;
     const doc = String(d.st_cpf_con || '').replace(/\D/g, '');
+    // Comparativo é de fornecedor: pessoa física (salário, autônomo) e tributos ficam de fora.
+    const contasTxt = semAcento((Array.isArray(d.apropriacao) ? d.apropriacao : []).map((a) => a.st_descricao_cont).join(' '));
+    if (doc.length === 11 || /(salari|ferias|13 salario|decimo|rescis|adiantamento|inss|fgts|darf|irrf|\biss\b|\bpis\b|cofins|csll|imposto|tarifa|juros|pro.?labore|folha)/.test(contasTxt + ' ' + semAcento(nome))) { ignorados++; return; }
     const chave = doc.length === 14 ? 'cnpj:' + doc : 'nome:' + semAcento(nome).replace(/[^a-z0-9]+/g, ' ').trim();
     const apro = Array.isArray(d.apropriacao) ? d.apropriacao : [];
     const r = mapa.get(chave) || { chave, nome, cnpj: doc.length === 14 ? doc : '', total: 0, pagamentos: 0, contas: new Set() };
@@ -103,7 +118,7 @@ async function fornecedoresCondominio(cliente, id, hoje, n) {
     chave: r.chave, nome: r.nome, cnpj: r.cnpj, total: cent(r.total), pagamentos: r.pagamentos,
     media_mes: cent(r.total / n), contas: [...r.contas].slice(0, 4),
   })).sort((a, b) => b.total - a.total).slice(0, 300);
-  return { id_superlogica: Number(id), periodo: p.rotulo, meses: n, fornecedores: lista, cortado: !!itens.cortado };
+  return { id_superlogica: Number(id), periodo: p.rotulo, meses: n, fornecedores: lista, cortado: !!itens.cortado || mapa.size > 300, ignorados };
 }
 
 module.exports = { custosCondominio, fornecedoresCondominio, periodo };

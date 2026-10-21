@@ -8,6 +8,7 @@ Aba nova "Comparativo" (menu Gestão), JS em public/comparativo.js, servidor em 
 1. Escolha: meus condomínios (já filtrados pela carteira, T09) ou, para o GESTOR, qualquer carteira do Superlógica. Acima de 30 condomínios pede confirmação.
 2. Custo por unidade por mês nos últimos 12 meses fechados: despesa total, pessoal (categoria de pessoal do plano de contas), água e esgoto, energia e gás (contas da categoria de consumo). Um balancete do período inteiro por condomínio (uma chamada) e a quantidade de unidades. Em vermelho os 25% mais caros de cada coluna, em verde os 25% mais baratos.
 3. Fornecedores em comum: o mesmo fornecedor (CNPJ, ou nome quando não há CNPJ) pago em dois ou mais condomínios carregados, com média por mês e por unidade em cada um (até 20 condomínios).
+Categoria de consumo achada pelas contas de água, energia e gás (não só pelo nome); quando o plano de contas não tem a categoria, a tela diz "não identificado" em vez de "sem". Fornecedores: parcelas repetidas contam uma vez; pessoa física, folha e tributos ficam de fora.
 Rotas GET /api/comparativo/condominio/:id e .../fornecedores, cache de 6 horas, mesma regra de acesso e de carteira da cobrança.
 
 ## Testes com dados reais (out/2025 a set/2026)

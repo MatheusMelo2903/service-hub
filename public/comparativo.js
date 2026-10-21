@@ -57,12 +57,13 @@ var CMP_COLS = [['total', 'Despesa total'], ['pessoal', 'Pessoal'], ['agua', 'Á
 async function comparativoCarregar() {
   var conds = cmpEscolhidos();
   var info = document.getElementById('cmp-info');
-  if (conds.length > 30 && !cmpEstado.confirmouGrande) {
-    cmpEstado.confirmouGrande = true;
+  var escolha = document.getElementById('cmp-carteira').value;
+  if (conds.length > 30 && cmpEstado.confirmouGrande !== escolha) {
+    cmpEstado.confirmouGrande = escolha;
     info.textContent = 'São ' + conds.length + ' condomínios: a leitura pode levar alguns minutos. Clique em Carregar de novo para confirmar, ou escolha uma carteira menor.';
     return;
   }
-  cmpEstado.confirmouGrande = false;
+  cmpEstado.confirmouGrande = null;
   var seq = ++cmpEstado.seq;
   cmpEstado.custos = {};
   document.getElementById('cmp-forn').innerHTML = '';
@@ -114,14 +115,20 @@ function cmpRender() {
   html += ok.map(function (x) {
     var r = x.r;
     return '<tr><td>' + cmpEsc(x.cond.nome) + '</td><td class="n">' + r.unidades + '</td>'
-      + CMP_COLS.map(function (c) { var v = r.por_unidade_mes[c[0]]; return '<td class="n"' + cor(c[0], v) + '>' + (v ? cmpBRL(v) : '<span class="ficha-sub">sem</span>') + '</td>'; }).join('')
+      + CMP_COLS.map(function (c) {
+        var v = r.por_unidade_mes[c[0]];
+        // Plano de contas não reconhecido é diferente de não ter gasto.
+        var naoId = (c[0] === 'pessoal' && r.sem_categoria_pessoal) || (['agua', 'energia', 'gas'].indexOf(c[0]) >= 0 && r.sem_categoria_consumo);
+        var vazio = naoId ? '<span class="ficha-sub" title="O plano de contas desse condomínio não tem essa categoria com o nome esperado.">não identificado</span>' : '<span class="ficha-sub">sem</span>';
+        return '<td class="n"' + cor(c[0], v) + '>' + (v ? cmpBRL(v) : vazio) + '</td>';
+      }).join('')
       + '<td class="n">' + cmpBRL(r.totais.total) + '</td></tr>';
   }).join('');
   html += regs.filter(function (x) { return x.erro; }).map(function (x) {
     return '<tr><td>' + cmpEsc(x.cond.nome) + '</td><td colspan="' + (CMP_COLS.length + 2) + '" class="ficha-erro">' + cmpEsc(x.erro) + '</td></tr>';
   }).join('');
   html += '</table>';
-  document.getElementById('cmp-tabela').innerHTML = html;
+  document.getElementById('cmp-tabela').innerHTML = '<div style="overflow-x:auto">' + html + '</div>';
 }
 
 // Fornecedores em comum: o mesmo fornecedor (CNPJ, ou o nome quando não há CNPJ) pago
@@ -131,14 +138,17 @@ async function comparativoFornecedores() {
   var el = document.getElementById('cmp-forn');
   if (regs.length < 2) { el.innerHTML = '<div class="ficha-erro">Carregue pelo menos dois condomínios primeiro.</div>'; return; }
   if (regs.length > 20) { el.innerHTML = '<div class="ficha-erro">Para comparar fornecedores escolha uma carteira com até 20 condomínios.</div>'; return; }
+  if (cmpEstado.fornAndamento) return;
+  cmpEstado.fornAndamento = true;
   var seq = cmpEstado.seq;
   el.innerHTML = '<div class="cond-loading">Lendo os pagamentos de cada condomínio...</div>';
-  var mapa = {}, i = 0, falhas = [];
+  var mapa = {}, i = 0, falhas = [], parciais = [];
   async function trab() {
     while (i < regs.length) {
       var x = regs[i++];
       try {
         var f = await cmpJson('/api/comparativo/condominio/' + encodeURIComponent(x.cond.id_superlogica) + '/fornecedores');
+        if (f.cortado) parciais.push(x.cond.nome);
         f.fornecedores.forEach(function (fo) {
           var m = mapa[fo.chave] || (mapa[fo.chave] = { nome: fo.nome, cnpj: fo.cnpj, contas: {}, por: [] });
           fo.contas.forEach(function (c) { m.contas[c] = 1; });
@@ -148,19 +158,22 @@ async function comparativoFornecedores() {
     }
   }
   await Promise.all([trab(), trab()]);
+  cmpEstado.fornAndamento = false;
   if (seq !== cmpEstado.seq) return;
   var comuns = Object.keys(mapa).map(function (k) { return mapa[k]; }).filter(function (m) { return m.por.length >= 2; });
   comuns.sort(function (a, b) { return b.por.length - a.por.length || b.por.reduce(function (s, p) { return s + p.media_mes; }, 0) - a.por.reduce(function (s, p) { return s + p.media_mes; }, 0); });
   if (!comuns.length) { el.innerHTML = '<div class="ficha-sub">Nenhum fornecedor pago em dois ou mais desses condomínios.</div>'; return; }
   el.innerHTML = (falhas.length ? '<div class="ficha-erro">Não foi possível ler: ' + cmpEsc(falhas.join(', ')) + '</div>' : '')
-    + '<table class="ficha-tab"><tr><th>Fornecedor</th><th>Contas</th><th>Condomínio</th><th class="n">Média por mês</th><th class="n">Por unidade por mês</th></tr>'
+    + (parciais.length ? '<div class="ficha-sub">Leitura parcial (pagamentos demais no período): ' + cmpEsc(parciais.join(', ')) + '</div>' : '')
+    + '<div class="ficha-sub">Ficam de fora pessoa física, folha de pagamento e tributos.</div>'
+    + '<div style="overflow-x:auto"><table class="ficha-tab"><tr><th>Fornecedor</th><th>Contas</th><th>Condomínio</th><th class="n">Média por mês</th><th class="n">Por unidade por mês</th></tr>'
     + comuns.slice(0, 80).map(function (m) {
       m.por.sort(function (a, b) { return (b.por_unidade || 0) - (a.por_unidade || 0); });
       return m.por.map(function (p, k) {
         return '<tr>' + (k === 0 ? '<td rowspan="' + m.por.length + '">' + cmpEsc(m.nome) + '</td><td rowspan="' + m.por.length + '" class="ficha-sub">' + cmpEsc(Object.keys(m.contas).slice(0, 3).join(', ')) + '</td>' : '')
           + '<td>' + cmpEsc(p.cond) + '</td><td class="n">' + cmpBRL(p.media_mes) + '</td><td class="n">' + (p.por_unidade != null ? cmpBRL(Math.round(p.por_unidade * 100) / 100) : '') + '</td></tr>';
       }).join('');
-    }).join('') + '</table>';
+    }).join('') + '</table></div>';
 }
 
 document.addEventListener('auth:ready', function () {
