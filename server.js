@@ -2955,8 +2955,11 @@ app.post('/api/admin/usuarios/convidar',
 app.get('/api/admin/usuarios',
   requireAuth, requireServiceRoleKey, requireGestaoUsuarios,
   async (req, res) => {
-    const r = await supabaseAdminRequest('GET',
+    let r = await supabaseAdminRequest('GET',
       '/rest/v1/profiles?select=id,email,nome,role,pode_convidar,permissoes,bloqueado,concede,criado_em,atualizado_em&order=criado_em.asc');
+    // Reserva: banco ainda sem a coluna concede (migration 013) lista sem ela.
+    if (r.status === 400) r = await supabaseAdminRequest('GET',
+      '/rest/v1/profiles?select=id,email,nome,role,pode_convidar,permissoes,bloqueado,criado_em,atualizado_em&order=criado_em.asc');
     if (r.status !== 200 || !Array.isArray(r.body)) return res.status(r.status).json(r.body);
     // T16: ações restritas só aparecem para quem também as tem (ninguém descobre quem audita).
     const minhas = (req.gestor && req.gestor.permissoes && req.gestor.permissoes.configuracoes && req.gestor.permissoes.configuracoes.acoes) || [];
