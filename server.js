@@ -1631,7 +1631,9 @@ const _GATE_NAO_NOME = new Set([
   // substantivos comuns que a ata capitaliza (achado da 2a rodada real, T01)
   'presidencia', 'regiao', 'banco', 'prefeitura', 'cartorio', 'justica', 'tribunal', 'estado',
   'municipio', 'governo', 'receita', 'federal', 'previdencia', 'codigo', 'civil', 'convencao',
-  'regimento', 'interno', 'artigo', 'lei', 'processo'
+  'regimento', 'interno', 'artigo', 'lei', 'processo',
+  // tipo de assembleia (o usuário informa só a sigla AGO/AGE; a ata escreve por extenso)
+  'geral', 'ordinaria', 'extraordinaria', 'reuniao', 'diretoria', 'moradores'
 ].map((s) => _normLoose(s)));
 
 // Prefixos dos marcadores que o PRÓPRIO gate cria. Detectados na re-execução (idempotência):

@@ -179,6 +179,10 @@ check('T01-D: nome fabricado na mesma frase continua CRITICO', rT4.gate.veredict
 const rT5 = gateDeSaida('Submetida a votação a escolha entre os sistemas, um (1) voto foi registrado a favor do bolsão.', 'votacao do sistema, um voto para o bolsao');
 check('T01-E: "Submetida" sem outro nome NAO vira voto critico', rT5.gate.veredicto !== 'critico', JSON.stringify(rT5.gate.flags.map((f) => f.tipo + '/' + f.trecho)));
 
+// Tipo de assembleia por extenso não é nome (o usuário informa só a sigla).
+const rT6 = gateDeSaida('Realizou-se a Assembleia Geral Ordinária do condomínio.', 'tipo AGO, boa noite a todos');
+check('T01-F: "Assembleia Geral Ordinária" NAO marcada', rT6.gate.flags.length === 0, JSON.stringify(rT6.gate.flags.map((f) => f.trecho)));
+
 console.log('\n===== IDEMPOTENCIA: Gate(Gate(ata)) =====');
 const r2 = gateDeSaida(r.ata, transcricao);
 check('texto e ponto fixo (Gate(Gate(ata)).ata === Gate(ata).ata)', r2.ata === r.ata, 'texto mudou na 2a passada');

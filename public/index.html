@@ -4137,7 +4137,7 @@ async function gerarAtaIA() {
       avisos.push(payload.conferencia.divergencias + ' ponto(s) em que o áudio divergiu dos documentos, marcados com [conferir: ...]');
     }
     if (payload.conferencia && payload.conferencia.valores_so_documento > 0) {
-      avisos.push(payload.conferencia.valores_so_documento + ' valor(es) da ata vieram só dos documentos e não foram ditos na reunião; confira se foram apresentados');
+      avisos.push(payload.conferencia.valores_so_documento + ' valor(es) da ata vieram dos documentos sem aparecer em número na transcrição; confira se foram apresentados na reunião');
     }
     if (Array.isArray(payload.documentos)) {
       payload.documentos.filter(d => d.falhou).forEach(d => avisos.push('o documento ' + d.nome + ' não pôde ser lido e ficou fora'));
