@@ -88,9 +88,10 @@ async function verificarImportacao(cliente, id, linhas) {
   const datas = [...new Set(linhas.map((l) => l.vencimento))];
   const porData = new Map();
   await emParalelo(datas, 4, async (dt) => {
-    // filtro padrão do despesas/index é o VENCIMENTO (inclui as já pagas daquele vencimento)
-    const itens = await lerComCache('desp:' + id + ':' + dt, () =>
-      todasPaginas(cliente, 'despesas/index', { idCondominio: id, comStatus: 'todas', dtInicio: dt, dtFim: dt }, MAX_PAG_DATA, true));
+    // filtro padrão do despesas/index é o VENCIMENTO (inclui as já pagas daquele vencimento).
+    // SEM cache de propósito: a despesa recém enviada tem que aparecer na conferência seguinte
+    // (achado no teste do dev: com cache, reenviar logo depois passava). Só o fornecedor tem cache.
+    const itens = await todasPaginas(cliente, 'despesas/index', { idCondominio: id, comStatus: 'todas', dtInicio: dt, dtFim: dt }, MAX_PAG_DATA, true);
     porData.set(dt, itens);
   });
   // 2) fornecedores (um GET por código distinto)
