@@ -44,5 +44,16 @@ t('concede com restrita recusado', !P.concedeBemFormado({ configuracoes: ['ver_c
 t('concede lista recusado', !P.concedeBemFormado([]));
 t('concede nome estranho recusado', !P.concedeBemFormado({ 'a b': ['ver'] }));
 
+// T18 encaixe: módulos novos no concede e todas_carteiras só pelo dono
+const raiane2 = Object.assign({}, raiane, { concede: { cobranca: ['ver', 'segunda_via'], ficha_condominio: ['ver'], comparativo: ['ver'], configuracoes: ['todas_carteiras'] } });
+t('raiane da cobranca segunda via', P.conferirMudanca(raiane2, antes, Object.assign({}, antes, { cobranca: { visivel: true, acoes: ['segunda_via'] } })).ok);
+t('raiane mostra ficha e comparativo', P.conferirMudanca(raiane2, antes, Object.assign({}, antes, { ficha_condominio: { visivel: true, acoes: [] }, comparativo: { visivel: true, acoes: [] } })).ok);
+t('raiane sem concede de cobranca nao da', !P.conferirMudanca(raiane, antes, Object.assign({}, antes, { cobranca: { visivel: true, acoes: ['segunda_via'] } })).ok);
+t('raiane nao da todas_carteiras nem com concede', !P.conferirMudanca(raiane2, antes, Object.assign({}, antes, { configuracoes: { visivel: false, acoes: ['todas_carteiras'] } })).ok);
+t('gestor comum nao da todas_carteiras', !P.conferirMudanca(gestor2, antes, Object.assign({}, antes, { configuracoes: { visivel: false, acoes: ['todas_carteiras'] } })).ok);
+t('dono da todas_carteiras', P.conferirMudanca(dono, antes, Object.assign({}, antes, { configuracoes: { visivel: false, acoes: ['todas_carteiras'] } })).ok);
+t('concede com todas_carteiras recusado', !P.concedeBemFormado({ configuracoes: ['todas_carteiras'] }));
+t('raiane nao edita quem ve todas as carteiras', !P.podeEditarAlvo(raiane2, { id: 'tc', role: 'OPERACIONAL', permissoes: { configuracoes: { visivel: false, acoes: ['todas_carteiras'] } } }).ok);
+
 console.log(ok + '/' + (ok + falha));
 process.exit(falha ? 1 : 0);

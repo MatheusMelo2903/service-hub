@@ -107,7 +107,7 @@ function criarRotasSeguranca(app, d) {
       tentou_liberar_acesso_restrito: 'Tentou dar ou tirar um acesso restrito', volume_alto: 'Volume de processamento acima do normal',
       acesso_liberado: 'Liberou ou tirou acesso de outra pessoa', liberou_transcricao_livre: 'Liberou a transcrição livre para outra pessoa',
       caminho_antigo_fechado: 'Tentou gerar prestação pelo caminho desativado', transcricao_de_outro_condominio: 'Tentou usar transcrição de outro condomínio',
-      usuario_bloqueado: 'Usuário bloqueado tentou entrar', removeu_usuario: 'Removeu um usuário', convidou_usuario: 'Convidou um usuário',
+      usuario_bloqueado: 'Usuário bloqueado tentou entrar', fora_da_carteira: 'Tentou abrir condomínio fora da carteira', modulo_sem_acesso: 'Tentou abrir módulo sem acesso', removeu_usuario: 'Removeu um usuário', convidou_usuario: 'Convidou um usuário',
     };
     const resumo = (s) => {
       const d = s.detalhe || {};

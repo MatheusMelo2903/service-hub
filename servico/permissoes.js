@@ -6,7 +6,8 @@
 // mostrar o módulo). Nunca mexem em GESTOR, no dono, em si mesmos, em quem tem ação
 // restrita nem em quem também pode liberar acessos.
 
-const RESTRITAS = ['ver_chaves', 'ver_auditoria', 'auditoria_total'];
+// todas_carteiras (T18, ver todas as carteiras) também: só o dono dá ou tira, nunca vai no concede.
+const RESTRITAS = ['ver_chaves', 'ver_auditoria', 'auditoria_total', 'todas_carteiras'];
 const NOME = /^[a-z_]{1,40}$/;
 
 const acoesDe = (perms, m) => {

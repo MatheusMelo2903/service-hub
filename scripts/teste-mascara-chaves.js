@@ -3,7 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 const ini = src.indexOf('function temVerChaves');
-const fim = src.indexOf("app.use('/api/superlogica'");
+// A partir da T18 a carteira é criada antes do proxy: o trecho termina nela.
+const fimCarteira = src.indexOf('const carteiraT18', ini);
+const fim = fimCarteira > 0 ? fimCarteira : src.indexOf("app.use('/api/superlogica'");
 if (ini < 0 || fim < 0) throw new Error('trechos não achados no server.js');
 const { temVerChaves, mascararSensiveis, campoSensivel, listaTemVerChaves } = new Function(src.slice(ini, fim) + '; return { temVerChaves, mascararSensiveis, campoSensivel, listaTemVerChaves };')();
 
