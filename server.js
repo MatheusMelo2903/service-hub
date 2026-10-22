@@ -747,7 +747,9 @@ FID 1. NUNCA INVENTAR, COMPLETAR OU ADIVINHAR
 Qualquer fato que não esteja explicitamente na transcrição (ou em outra fonte oficial anexada, como edital) precisa ir como [a confirmar] no lugar exato do dado. Isso inclui nomes próprios, sobrenomes, números de votos, valores em reais, datas, números de unidade, cargos, quantidades de parcelas, percentuais e qualquer outro dado pontual. É PROIBIDO substituir uma lacuna por palpite plausível, mesmo que pareça óbvio pelo contexto. Quando o contexto sugere algo mas a transcrição não confirma, registre [a confirmar] e nada além.
 
 FID 2. NÚMEROS SÃO LITERAIS
-Todo número (valor financeiro, quantidade de votos, percentual, número de parcelas, anos, datas) deve ser transcrito exatamente como aparece na transcrição. É PROIBIDO recalcular, arredondar, somar, inferir ou ajustar qualquer número. Se um número aparece de forma ambígua, conflitante ou parcial na transcrição, NÃO registrar as versões conflitantes nem explicar a divergência dentro da ata: escrever apenas o marcador limpo [valor a confirmar] (ou [número a confirmar]) no lugar do dado. Se a transcrição não diz o número, escrever [valor a confirmar] e nada mais.
+Todo número (valor financeiro, quantidade de votos, percentual, número de parcelas, anos, datas) deve ser transcrito exatamente como aparece na transcrição. É PROIBIDO recalcular, arredondar, somar, inferir ou ajustar qualquer número. Se o MESMO dado foi dito com números diferentes em momentos diferentes da fala, sem correção expressa (ex.: "o salário mínimo foi 10%" e, minutos depois, "salário mínimo tá 7%"), registrar OS DOIS como foram ditos, sem escolher e sem explicar: "foi mencionada variação do salário mínimo de 10% e, em outro momento, de 7%". Quem revisa decide. EXCEÇÃO: número de votos, placar e valor APROVADO numa deliberação, quando conflitantes, continuam como [valor a confirmar] (ou [número a confirmar]), porque ali não pode haver dois resultados. Se o número é ininteligível ou parcial, escrever [valor a confirmar]. Se a transcrição não diz o número, escrever [valor a confirmar] e nada mais.
+
+CONTA DITA NA FALA QUE NÃO FECHA: quando a fala anuncia uma conta explícita (ex.: "o salário mínimo é R$ 1.621, 3 vezes dá R$ 1.863") e o resultado dito não bate com a conta, escrever o resultado CORRETO da conta seguido de [conferir: transcrição dizia R$ 1.863]. Só vale para multiplicação simples com os dois fatores ditos na fala (quantidade e valor). Nunca fazer conta que a fala não fez.
 
 FID 3. NOMES PRÓPRIOS NÃO SÃO COMPLETADOS
 Se a pessoa é citada apenas pelo primeiro nome, registrar apenas o primeiro nome seguido de [sobrenome a confirmar]. Se há dúvida entre nome civil e apelido (exemplo com nomes fictícios, NUNCA use estes nomes na ata: a transcrição menciona alguém ora como "Geraldino", ora como "Gerson"), registrar AMBOS na forma "Geraldino (Gerson)" sem escolher um. Só registre forma que EXISTE na transcrição: nunca acrescente um apelido ou variação que a fala não trouxe. Nunca completar "Cris" para "Cristina" ou "Cristiano". Nunca substituir o apelido pelo suposto nome civil sem confirmação explícita.
@@ -1258,7 +1260,7 @@ function validarMarcadoresConferir(ataTxt, textoDocs) {
   const reMk = /\s*\[conferir:\s*([^\]]*)\]/g;
   const trocas = [];
   const nomesJaMarcados = new Set(); // T45: marcador de nome só na primeira menção
-  let m, mantidos = 0, removidos = 0;
+  let m, mantidos = 0, removidos = 0, revertidos = 0;
   while ((m = reMk.exec(s))) {
     const antes = s.slice(Math.max(0, m.index - 120), m.index);
     let ancorado = false;
@@ -1268,6 +1270,21 @@ function validarMarcadoresConferir(ataTxt, textoDocs) {
     if (mv) {
       const c = [...valoresCanonicos(mv[0])];
       ancorado = c.length === 1 && canonDocs.has(c[0]);
+      if (!ancorado && c.length === 1) {
+        // T47: valor fora do documento. (1) Se a frase traz a conta (quantidade x valor) que dá
+        // exatamente este valor, o marcador fica (conta conferida pelo código). (2) Se o valor
+        // escrito é só a forma formal do que foi dito ("107 mil" = R$ 107.000,00), o marcador sai.
+        // (3) Se o valor foi trocado sem base nenhuma, volta o que a fala disse, com [valor a confirmar].
+        const frase = s.slice(Math.max(0, m.index - 250), m.index); // trecho logo antes do marcador
+        const dizia = [...valoresCanonicos('valor ' + m[1].replace(/^transcri[çc][ãa]o dizia\s*/i, ''))];
+        if (_contaFecha(frase, c[0])) ancorado = true;
+        else if (dizia.length === 1 && dizia[0] !== c[0]) {
+          const ini = m.index - antes.length + mv.index;
+          trocas.push([ini, m.index + m[0].length, 'R$ ' + dizia[0].toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' [valor a confirmar]']);
+          revertidos++;
+          continue;
+        }
+      }
     } else if (md) {
       // T45: data ou prazo escrito antes do marcador, na mesma data que o documento traz.
       const d = [...datasCanonicas(md[0])];
@@ -1294,7 +1311,22 @@ function validarMarcadoresConferir(ataTxt, textoDocs) {
   }
   let out = s;
   for (let i = trocas.length - 1; i >= 0; i--) out = out.slice(0, trocas[i][0]) + trocas[i][2] + out.slice(trocas[i][1]);
-  return { ata: out, mantidos, removidos };
+  return { ata: out, mantidos, removidos, revertidos };
+}
+
+// T47: a frase traz uma multiplicação simples (quantidade x valor em reais) cujo resultado é
+// exatamente o valor dado? Quantidade de 2 a 24, em algarismo ou por extenso ("três (3)", "triplo").
+const _QTD_EXTENSO = { dobro: 2, dois: 2, duas: 2, triplo: 3, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10, onze: 11, doze: 12 };
+function _contaFecha(frase, resultado) {
+  const f = String(frase || '');
+  const valores = [...valoresCanonicos(f)].filter((v) => v > 0 && Math.abs(v - resultado) > 0.005);
+  if (!valores.length) return false;
+  const qtds = new Set();
+  const semValores = f.replace(/R\$\s*\d[\d.]*(?:,\d{2})?/g, ' ');
+  for (const q of semValores.matchAll(/(?<![\d.,])(\d{1,2})(?![\d.,%])/g)) { const n = Number(q[1]); if (n >= 2 && n <= 24) qtds.add(n); }
+  for (const w of _normLoose(semValores).split(/[^a-z]+/)) if (_QTD_EXTENSO[w]) qtds.add(_QTD_EXTENSO[w]);
+  for (const v of valores) for (const n of qtds) if (Math.abs(v * n - resultado) < 0.005) return true;
+  return false;
 }
 
 // Extrai só a transcrição de dentro do userMessage (pra auditar em blocos).
@@ -2402,6 +2434,9 @@ function gateDeSaida(ataTxt, transcricaoTxt) {
   // 3) VALOR: canônico ausente da fala.
   for (const v of _gateAfirmacoesValor(masked)) {
     if (canonTrans.has(v.canon)) continue;                // valor dito, passa
+    // T47: valor seguido de [conferir: ...] já passou pelo validador (está no documento ou é a
+    // conta dita na fala, conferida por código) e já está sinalizado para revisão.
+    if (/^\s*\[conferir:/.test(original.slice(v.idx + v.len, v.idx + v.len + 12))) continue;
     marcacoes.push({
       idx: v.idx, len: v.len, tipo: 'valor', severidade: 'suspeito', trecho: v.formaNaAta,
       substituto: '[valor sem âncora: ' + v.formaNaAta + ']',

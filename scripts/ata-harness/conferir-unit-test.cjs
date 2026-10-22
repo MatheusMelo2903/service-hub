@@ -34,5 +34,18 @@ check('nome repetido: marcador só na primeira menção', r.mantidos === 1 && r.
 r = validarMarcadoresConferir('laudo da ON Soluções em Engenharia [conferir: transcrição dizia On Soluções], por R$ 17.386,54 [conferir: transcrição dizia R$17,47]; nova menção à ON Soluções em Engenharia [conferir: transcrição dizia Om].', DOC2);
 check('valor sempre mantém; nome só na primeira vez', r.mantidos === 2 && r.removidos === 1, r.ata);
 
+// T47: conta dita na fala que não fecha
+r = validarMarcadoresConferir('o salário mínimo vigente é de R$ 1.621,00 e o seu triplo corresponde a R$ 4.863,00 [conferir: transcrição dizia R$ 1.863].', DOC2);
+check('conta que fecha (3 x 1.621 = 4.863) mantém o marcador', r.mantidos === 1 && /R\$ 4\.863,00 \[conferir: transcrição dizia R\$ 1\.863\]/.test(r.ata), r.ata);
+
+r = validarMarcadoresConferir('honorário de três (3) salários mínimos de R$ 1.621,00, totalizando R$ 4.863,00 [conferir: transcrição dizia R$ 1.863].', DOC2);
+check('quantidade por extenso também confere', r.mantidos === 1, r.ata);
+
+r = validarMarcadoresConferir('o salário mínimo é de R$ 1.621,00 e o triplo seria R$ 5.000,00 [conferir: transcrição dizia R$ 1.863].', DOC2);
+check('conta errada do gerador volta ao que foi dito, com [valor a confirmar]', r.revertidos === 1 && /triplo seria R\$ 1\.863,00 \[valor a confirmar\]\./.test(r.ata), r.ata);
+
+r = validarMarcadoresConferir('cobrança de R$ 107.000,00 [conferir: transcrição dizia 107 mil].', DOC2);
+check('forma formal do mesmo valor perde só o marcador', r.removidos === 1 && /R\$ 107\.000,00\./.test(r.ata), r.ata);
+
 console.log('\n===== RESULTADO: ' + ok + ' PASS, ' + fail + ' FAIL =====');
 process.exit(fail ? 1 : 0);
