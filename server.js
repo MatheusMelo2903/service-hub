@@ -627,7 +627,7 @@ registrar exatamente assim, mesmo que não feche 12 meses redondos.
 
 3. NOMES PRÓPRIOS
 NUNCA expandir apelidos em nomes completos.
-- Dani NÃO É Daniel
+- Tamires NÃO É Tamara
 - Cris NÃO É Cristina nem Cristiano
 - Bel NÃO É Isabel
 Preservar o nome exatamente como aparece na transcrição.
@@ -642,12 +642,12 @@ Aplicação consistente em TODAS as menções (corpo do texto E bloco de assinat
     explícita) → usar "[Sra. a confirmar]" ou "[Sr. a confirmar]" + Nome
 (c) Sem nenhuma pista → usar "[Sr./Sra. a confirmar]" + Nome
 
-Exemplo real Happy Days: Dari e Dani não têm gênero confirmado por pronome explícito
+Exemplo (nomes fictícios, só para ilustrar; NUNCA use estes nomes na ata): Tâmara e Tamires não têm gênero confirmado por pronome explícito
 na transcrição. Mesmo que o nome "pareça" feminino, escrever:
-- No corpo: "[Sra. a confirmar] Dari recebeu dezenove (19) votos"
-- Na assinatura: "Conselheira titular da Torre 1 – [Sra. a confirmar] Dari [sobrenome a confirmar]"
+- No corpo: "[Sra. a confirmar] Tâmara recebeu dezenove (19) votos"
+- Na assinatura: "Conselheira titular da Torre 1 – [Sra. a confirmar] Tâmara [sobrenome a confirmar]"
 
-NÃO escrever "Sra. Dari" como se fosse fato confirmado. NÃO omitir o tratamento. A
+NÃO escrever "Sra. Tâmara" como se fosse fato confirmado. NÃO omitir o tratamento. A
 marca "[Sra./Sr. a confirmar]" sinaliza ao usuário que o gênero precisa ser validado.
 
 5. ANTI-INVENÇÃO
@@ -690,19 +690,19 @@ Quando o speaker conta votos, atribui ao nome errado, percebe o engano, corrige 
 atribuição e em seguida recomeça uma NOVA contagem para o outro candidato — isso
 é DUAS contagens distintas para DUAS pessoas diferentes, NÃO uma contagem única.
 
-Exemplo real desta administradora (Happy Days 18/05/2026):
-Transcrição: "1, 2, ... 19 pra Dani. É Dari, desculpa. 1, 2, ... 21 para Dani."
+Exemplo (nomes fictícios, só para ilustrar; NUNCA use estes nomes na ata):
+Transcrição: "1, 2, ... 19 pra Tamires. É Tâmara, desculpa. 1, 2, ... 21 para Tamires."
 
 Leitura correta:
-(a) "19 pra Dani" — o contador atribuiu 19 votos a "Dani" por engano.
-(b) "É Dari, desculpa" — correção da ATRIBUIÇÃO: esses 19 votos eram da Dari, não da
-    Dani.
-(c) "1, 2, ... 21 para Dani" — NOVA contagem, agora corretamente para Dani, totalizando
+(a) "19 pra Tamires" — o contador atribuiu 19 votos a "Tamires" por engano.
+(b) "É Tâmara, desculpa" — correção da ATRIBUIÇÃO: esses 19 votos eram da Tâmara, não da
+    Tamires.
+(c) "1, 2, ... 21 para Tamires" — NOVA contagem, agora corretamente para Tamires, totalizando
     21 votos.
 
-Resultado: Dari = 19 votos, Dani = 21 votos. São DUAS pessoas distintas (Dari é
-candidata da Torre 1, Dani da Torre 2 — confirmação adiante na transcrição:
-"Torre 1 — Dari. Dani Torre 2, Presidente.").
+Resultado: Tâmara = 19 votos, Tamires = 21 votos. São DUAS pessoas distintas (Tâmara é
+candidata da Torre 1, Tamires da Torre 2 — confirmação adiante na transcrição:
+"Torre 1 — Tâmara. Tamires Torre 2, Presidente.").
 
 Regra de ouro: a frase "é X, desculpa" corrige a ATRIBUIÇÃO do número anterior (esse
 número vai para X), e a contagem subsequente é uma NOVA apuração para o nome
@@ -717,7 +717,7 @@ mesmo número também ao candidato Y é INVENTAR — viola a regra 5 (anti-inven
 Quando não houver número explícito para um candidato, registrar APENAS a eleição e
 marcar "[número de votos a confirmar]" — nunca repetir o número de outro candidato
 como chute. Por outro lado, quando a transcrição confirma números DIFERENTES para
-candidatos diferentes (ex: Dari 19 e Dani 21), registrar AMBOS literalmente.`;
+candidatos diferentes (ex: Tâmara 19 e Tamires 21), registrar AMBOS literalmente.`;
 
 // Regras de fidelidade factual à transcrição (Tarefa ata-fidelidade-v3).
 // Vêm DEPOIS das regras anti-erro no system prompt para ganhar precedência por ordem.
@@ -750,7 +750,7 @@ FID 2. NÚMEROS SÃO LITERAIS
 Todo número (valor financeiro, quantidade de votos, percentual, número de parcelas, anos, datas) deve ser transcrito exatamente como aparece na transcrição. É PROIBIDO recalcular, arredondar, somar, inferir ou ajustar qualquer número. Se um número aparece de forma ambígua, conflitante ou parcial na transcrição, NÃO registrar as versões conflitantes nem explicar a divergência dentro da ata: escrever apenas o marcador limpo [valor a confirmar] (ou [número a confirmar]) no lugar do dado. Se a transcrição não diz o número, escrever [valor a confirmar] e nada mais.
 
 FID 3. NOMES PRÓPRIOS NÃO SÃO COMPLETADOS
-Se a pessoa é citada apenas pelo primeiro nome, registrar apenas o primeiro nome seguido de [sobrenome a confirmar]. Se há dúvida entre nome civil e apelido (caso real: a transcrição menciona alguém ora como "Wellington", ora como "Eriton"), registrar AMBOS na forma "Wellington (Eriton)" sem escolher um. Nunca completar "Cris" para "Cristina" ou "Cristiano". Nunca substituir o apelido pelo suposto nome civil sem confirmação explícita.
+Se a pessoa é citada apenas pelo primeiro nome, registrar apenas o primeiro nome seguido de [sobrenome a confirmar]. Se há dúvida entre nome civil e apelido (exemplo com nomes fictícios, NUNCA use estes nomes na ata: a transcrição menciona alguém ora como "Geraldino", ora como "Gerson"), registrar AMBOS na forma "Geraldino (Gerson)" sem escolher um. Só registre forma que EXISTE na transcrição: nunca acrescente um apelido ou variação que a fala não trouxe. Nunca completar "Cris" para "Cristina" ou "Cristiano". Nunca substituir o apelido pelo suposto nome civil sem confirmação explícita.
 
 FID 4. VARREDURA PRÉ FECHAMENTO
 Antes de finalizar a ata, varrer a transcrição inteira item por item e garantir que nenhum fato relevante foi omitido. Atenção especial obrigatória a: composição da arrecadação (taxa de condomínio, fundo de reserva, multas, juros), valor total arrecadado no período, número de meses de superávit no exercício, renegociações com concessionárias (CESAN, EDP, Vivo, NET), impacto de obras específicas em meses específicos do período, parcelamentos de inadimplência, esclarecimentos técnicos ou jurídicos dados a condôminos. Se a transcrição menciona, a ata REGISTRA.
@@ -782,11 +782,17 @@ Antes de escrever que um número é o valor de algo (valor atual, valor proposto
 FID 13. CADA ARGUMENTO COM QUEM O DISSE
 Em debate com posições opostas, cada argumento fica com quem o disse. Nunca mover a fala de quem fez uma objeção para o lado de quem defendeu a proposta, nem o contrário. Se não estiver claro quem disse, escreva "foi mencionado que" sem atribuir a um lado.
 
-FID 14. NÚMERO DITO COM CLAREZA NÃO LEVA MARCADOR
-[a confirmar], [valor a confirmar] e semelhantes servem SÓ para dado ambíguo, conflitante, incompleto, inaudível ou ausente. Percentual, valor, quantidade ou data dita de forma clara na fala entra limpo, sem marcador. Exemplo do que é ERRADO: "o salário mínimo teria variado 10% [a confirmar]" quando a fala disse claramente "o salário mínimo foi 10%". Marcador em dado claro polui a ata e esconde os pontos que realmente precisam de conferência.
+FID 14. DADO DITO COM CLAREZA NÃO LEVA MARCADOR
+[a confirmar], [valor a confirmar], [nome a confirmar] e semelhantes servem SÓ para dado ambíguo, conflitante, incompleto, inaudível ou ausente. Percentual, valor, quantidade, data ou NOME (de empresa ou pessoa) dito de forma clara na fala entra limpo, sem marcador. Exemplo: a fala diz "a garantidora de vocês, a Servusbank" e "aqueles de plástico que são R$ 30": escrever Servusbank e R$ 30,00 sem marcador. Exemplo do que é ERRADO: "o salário mínimo teria variado 10% [a confirmar]" quando a fala disse claramente "o salário mínimo foi 10%". Marcador em dado claro polui a ata e esconde os pontos que realmente precisam de conferência.
 
 FID 15. RESULTADO DE CADA ITEM É EXATO
-Distinguir sempre: (a) aprovado (houve votação ou concordância expressa), (b) rejeitado (houve votação e a maioria foi contra), (c) não deliberado ou adiado (o assunto foi discutido mas não houve votação, ou ficou para depois), (d) retirado de pauta. Só escrever "não foi aprovado" ou "rejeitado" quando houve votação contrária. Discussão sem votação vira "não houve deliberação, ficando o assunto adiado" ou a forma que a fala sustentar.`;
+Distinguir sempre: (a) aprovado (houve votação ou concordância expressa), (b) rejeitado (houve votação e a maioria foi contra), (c) não deliberado ou adiado (o assunto foi discutido mas não houve votação, ou ficou para depois), (d) retirado de pauta. Só escrever "não foi aprovado" ou "rejeitado" quando houve votação contrária. Discussão sem votação vira "não houve deliberação, ficando o assunto adiado" ou a forma que a fala sustentar. No ENCERRAMENTO E PRÓXIMOS PASSOS, item sem votação aparece como "não deliberado" ou "adiado", nunca na lista do que foi deliberado ou aprovado.
+
+FID 16. PRESENÇA E QUÓRUM SÓ COM CONTAGEM EXPLÍCITA
+Número de presentes, quórum ou número de unidades representadas só entra se a fala fizer a contagem de presentes de forma explícita. Número lido do edital (horário "19 horas", data, artigo de lei) NUNCA vira número de presentes. Sem contagem explícita: "[quórum a confirmar]" ou "conforme lista de presença".
+
+FID 17. QUEM DISSE O QUÊ
+Atribuir uma fala a uma pessoa (síndica, conselheira, condômino, administradora) só quando o falante estiver claro pela própria fala (se apresenta, é chamado pelo nome, responde a quem perguntou). Pista contrária vale: quem fala da síndica na terceira pessoa ("fica a sabedoria dela") NÃO é a síndica. Sem falante claro, escrever "foi mencionado que" ou "um condômino observou que". Sugestão relevante dita no debate (ex.: consultar a empresa atual sobre contrato com peças incluídas) é registrada com quem a fez, se claro.`;
 
 // Prompt do segundo passe (auditoria de fidelidade).
 // Roda Sonnet 4.6 sem fallback Opus — auditoria deve ser leve. Se falhar, devolvemos
@@ -803,7 +809,7 @@ PROCEDIMENTO:
 (a) Liste mentalmente cada número (valor em reais, quantidade de votos, percentual, parcelas, datas), cada nome próprio (incluindo sobrenomes) e cada fato pontual que aparece na ata.
 (b) Para cada item da lista, verifique se a transcrição sustenta literalmente esse item.
 (c) Se a transcrição NÃO sustenta o item, substitua o dado pela marcação limpa entre colchetes, mantendo a estrutura da frase e SEM explicar o motivo. Exemplos concretos:
-    "Sr. Wellington (Eriton) Pabodo" vira "Sr. Wellington (Eriton) [sobrenome a confirmar]" se Pabodo não aparece na transcrição.
+    "Sr. Geraldino (Gerson) Pabodo" vira "Sr. Geraldino (Gerson) [sobrenome a confirmar]" se Pabodo não aparece na transcrição (nomes fictícios, só para ilustrar).
     "vinte e três (23) votos" vira "[número de votos a confirmar] votos" se a transcrição não confirma esse número exato.
     "R$ 762.000,00" vira "R$ [valor a confirmar]" se a transcrição não confirma esse valor.
 (c.1) ATENÇÃO, esta é a distinção que a auditoria vinha errando: os passos (b) e (c) valem SOMENTE para NÚMEROS, NOMES PRÓPRIOS e FATOS PONTUAIS (datas, votos, valores, quórum, presença, desfecho). NÃO valem para VOCABULÁRIO. Termo técnico que o passe anterior corrigiu de um erro de transcrição (por exemplo insuflamento, corrediço, síndico, subsíndico, assembleia, conselho consultivo, regimento interno, lavanderia, conforme o GLOSSÁRIO DE TERMOS CONDOMINIAIS anexado abaixo) é correção LEGÍTIMA e deve ser PRESERVADA. É PROIBIDO rebaixar esse termo para [a confirmar] só porque a palavra corrigida não aparece literal na transcrição bruta, já que a transcrição automática erra vocabulário. Só marque um termo quando ele não tiver correspondência no glossário nem sentido claro no contexto condominial.
@@ -876,7 +882,8 @@ FORMATO DE SAÍDA: APENAS um array JSON, sem texto antes ou depois, sem cercas d
 {"tipo":"substituir","de":"<trecho copiado EXATAMENTE da ata>","para":"<trecho corrigido>"}
 
 REGRAS DA ÂNCORA (crítico):
-- Copie a âncora LETRA POR LETRA da ata, com a mesma pontuação, acentos e maiúsculas. Entre 40 e 250 caracteres. Tem que existir UMA única vez na ata.
+- Copie a âncora LETRA POR LETRA da ata, com a mesma pontuação, acentos e maiúsculas. Entre 40 e 120 caracteres (curta: o fim da frase basta). Tem que existir UMA única vez na ata.
+- Seja econômico: uma operação por lacuna (ou uma para várias lacunas do mesmo ponto), sem repetir a âncora no texto.
 - Use como âncora o FIM de uma frase do item certo (terminando no ponto final), para o texto novo entrar entre duas frases. Nunca ancore no meio de um número, nome ou marcador.
 - O "texto" começa com espaço quando continua o mesmo parágrafo. Escreva frases completas, no mesmo estilo da ata (prosa corrida, (i)(ii)(iii) quando for lista, valores R$ X.XXX,XX).
 - "substituir" só para corrigir um dado DIVERGENTE que a lacuna aponta (valor, nome, data, atribuição de fala). O "de" deve ser o menor trecho que contém o erro (até 300 caracteres), e o "para" mantém tudo o que estava certo nele.
@@ -941,8 +948,9 @@ function aplicarTrechos(ata, ops) {
 async function inserirLacunasPorTrecho(ata, listaLacunas, modelo, chamar, extraSys) {
   const sys = PROMPT_INSERCAO_TRECHOS + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '') + (extraSys ? '\n\n---\n\n' + extraSys : '');
   const msg = '=== ATA ATUAL ===\n' + ata + '\n\n=== LACUNAS ===\n' + listaLacunas + '\n\nDevolva só o array JSON de operações.';
-  const r = await chamar(modelo, 8000, sys, msg);
+  const r = await chamar(modelo, 16000, sys, msg);
   if (!r || !r.ok || !r.texto) return null;
+  if (r.raw && r.raw.stop_reason === 'max_tokens') return null; // lista cortada: cai na reescrita
   const t = r.texto;
   const a = t.indexOf('['), b = t.lastIndexOf(']');
   if (a < 0 || b <= a) return null;
@@ -1296,10 +1304,12 @@ function extrairTranscricao(um) {
 }
 
 // Número de blocos pela carga da transcrição (1 a 3). Fracionar só ajuda em ata longa.
+// T47: a partir de 15 mil caracteres já divide em 2 (as partes rodam ao mesmo tempo; parte
+// menor = conferência mais atenta e mais rápida). 3 partes acima de 60 mil.
 function numBlocosAuditoria(transcricao) {
   const c = transcricao.length;
-  if (c < 40000) return 1;
-  if (c < 90000) return 2;
+  if (c < 15000) return 1;
+  if (c < 60000) return 2;
   return 3;
 }
 
@@ -2092,6 +2102,7 @@ const _GATE_NAO_NOME = new Set([
   'supremo', 'superior', 'constituicao', 'sumula', 'vinculante', 'ministerio', 'publico',
   'nacional', 'republica', 'camara', 'senado', 'policia', 'bombeiros', 'procon', 'defensoria',
   'decreto', 'inciso', 'paragrafo', 'resolucao', 'portaria', 'norma', 'tecnica', 'brasileira',
+  'anotacao', 'responsabilidade', 'registro', 'certificado', 'laudo', 'vistoria', 'seguro',
   // tipo de assembleia (o usuário informa só a sigla AGO/AGE; a ata escreve por extenso)
   'geral', 'ordinaria', 'extraordinaria', 'reuniao', 'diretoria', 'moradores'
 ].map((s) => _normLoose(s)));
@@ -2292,10 +2303,20 @@ function _gateAfirmacoesPlacar(masked) {
 // MARCAÇÃO (idx, len, substituto). Aplica direita->esquerda (preserva offsets) e deriva as
 // flags da MESMA lista aplicada (TRAVA 1). Verifica que toda marcação entrou no texto; se
 // alguma falhou, veredicto nunca é 'limpo'.
+// T47: "Anotação de Responsabilidade Técnica (ART)", "Supremo Tribunal Federal (STF)": expansão
+// de sigla cujas iniciais batem com a sigla entre parênteses não é nome a conferir. Mascara com
+// espaços do mesmo tamanho (os índices continuam valendo).
+function _gateMascararSiglas(txt) {
+  return String(txt).replace(/((?:[A-ZÀ-ÖØ-Þ][a-zà-öø-ÿ]+\s+(?:(?:d[aeo]s?|e)\s+)?){2,8})\(([A-Z]{2,8})\)/g, (m, exp, sigla) => {
+    const iniciais = exp.trim().split(/\s+/).filter((w) => /^[A-ZÀ-ÖØ-Þ]/.test(w)).map((w) => _normLoose(w)[0].toUpperCase()).join('');
+    return iniciais.endsWith(sigla) ? ' '.repeat(exp.length) + m.slice(exp.length) : m;
+  });
+}
+
 function gateDeSaida(ataTxt, transcricaoTxt) {
   const original = String(ataTxt);
   const transcricao = String(transcricaoTxt || '');
-  const masked = _gateMascararColchetes(original);
+  const masked = _gateMascararSiglas(_gateMascararColchetes(original));
 
   const flagsExistentes = _gateFlagsProprias(original); // idempotência: re-emite sem remarcar
   const nomes = _gateAfirmacoesNome(masked);            // afirmação isolada (suspeito)
@@ -2561,8 +2582,11 @@ function agendarLimpezaJob(jobId) {
 // 'pulada_teto') e a ata segue sem a consolidação daquele passe, nunca aborta a geração inteira.
 // T46: 8 = 7 de antes + 1 da inserção por trecho (pior caso: ela falha e cai na reescrita).
 const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 8;
-const INSERCAO_POR_TRECHO = process.env.ATA_INSERCAO_POR_TRECHO !== '0'; // desliga com ATA_INSERCAO_POR_TRECHO=0
-const ATRASO_BLOCOS_AUDITORIA_MS = 10000; // T44: auditorias 2 e 3 começam 10s depois da 1
+// Ligada só depois de validada no teste real (T46). Liga com ATA_INSERCAO_POR_TRECHO=1.
+const INSERCAO_POR_TRECHO = process.env.ATA_INSERCAO_POR_TRECHO === '1';
+// T47: sem espera entre as partes. O cache só cobre as regras (as partes têm a ata na mensagem),
+// então a economia de esperar era de centavos e custava 10 s.
+const ATRASO_BLOCOS_AUDITORIA_MS = 0;
 
 // Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
 // PRIMEIRA passada Sonnet que retornar texto; a validação é só aviso, nunca bloqueia
@@ -2590,8 +2614,21 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
   let system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_DETALHAMENTO_MAXIMO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
   // T44: etapa atual da geração, lida pela consulta de status para a tela mostrar o andamento.
-  const marcarEtapa = (etapa) => { const j = atasJobs.get(jobId); if (j && j.status === 'processing') j.etapa = etapa; };
-  const concluir = (payload) => { const j = atasJobs.get(jobId); if (j) { j.status = 'done'; j.payload = payload; } agendarLimpezaJob(jobId); };
+  // T47: guarda também quanto tempo cada etapa levou, para medir com número exato.
+  const t0Job = Date.now();
+  const temposEtapas = {};
+  let etapaAtual = 'iniciando', etapaDesde = t0Job;
+  const marcarEtapa = (etapa) => {
+    const agora = Date.now();
+    temposEtapas[etapaAtual] = Math.round(((temposEtapas[etapaAtual] || 0) * 1000 + (agora - etapaDesde)) / 100) / 10;
+    etapaAtual = etapa; etapaDesde = agora;
+    const j = atasJobs.get(jobId); if (j && j.status === 'processing') j.etapa = etapa;
+  };
+  const fecharTempos = () => { marcarEtapa('fim'); delete temposEtapas.fim; temposEtapas.total = Math.round((Date.now() - t0Job) / 100) / 10; return temposEtapas; };
+  const concluir = (payload) => {
+    if (payload && typeof payload === 'object') { payload.tempos = fecharTempos(); console.log('[ata tempos] ' + JSON.stringify(payload.tempos)); }
+    const j = atasJobs.get(jobId); if (j) { j.status = 'done'; j.payload = payload; } agendarLimpezaJob(jobId);
+  };
   // httpStatus (não 'status') pra NÃO colidir com o campo status do job. A rota /status
   // faz Object.assign({ status:'error' }, j.erro); se o erro trouxesse 'status', ele
   // sobrescreveria 'error' e o front ficava em polling infinito sem ver a falha.

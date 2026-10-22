@@ -58,10 +58,12 @@ function montarMensagemAta(dados, transcricao) {
 // modelo, tentativas, telemetria ou erro técnico do serviço.
 function limparResultadoAta(p) {
   const r = p || {};
-  const docs = Array.isArray(r.documentos) ? r.documentos.map((x) => ({ nome: x && x.nome, falhou: !!(x && x.falhou), truncado: !!(x && x.truncado) })) : undefined;
+  const docs = Array.isArray(r.documentos) ? r.documentos.map((x) => ({ nome: x && x.nome, falhou: !!(x && x.falhou), truncado: !!(x && x.truncado), imagens_falharam: (x && x.imagens_falharam) || 0 })) : undefined;
   const conf = r.conferencia ? { divergencias: r.conferencia.divergencias || 0, valores_so_documento: r.conferencia.valores_so_documento || 0 } : undefined;
   const gate = r.gate && Array.isArray(r.gate.flags) ? { flags: r.gate.flags } : undefined;
-  return { ata: r.ata, avisos: Array.isArray(r.avisos) ? r.avisos : [], gate, documentos: docs, participantes: r.participantes, conferencia: conf };
+  // T47: tempos por etapa (só segundos, sem detalhe técnico) para medir a velocidade da geração.
+  const tempos = r.tempos && typeof r.tempos === 'object' ? r.tempos : undefined;
+  return { ata: r.ata, avisos: Array.isArray(r.avisos) ? r.avisos : [], gate, documentos: docs, participantes: r.participantes, conferencia: conf, tempos };
 }
 function limparErroAta(e) {
   const erro = e && e.erro;

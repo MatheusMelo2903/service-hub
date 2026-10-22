@@ -885,6 +885,12 @@ async function gerarAtaIA() {
     if (!texto) throw new Error('engine retornou ata vazia');
 
     _ataTextoGerado = texto;
+    // T47: tempo de cada etapa da geração, para acompanhar a velocidade.
+    if (payload.tempos && payload.tempos.total) {
+      const nomes = { documentos: 'apresentação', escrevendo: 'escrita', conferindo: 'conferência', completando: 'complemento', revisando: 'revisão de nomes' };
+      const partes = Object.keys(nomes).filter((k) => payload.tempos[k]).map((k) => nomes[k] + ' ' + Math.round(payload.tempos[k]) + 's');
+      toast('Ata gerada em ' + Math.round(payload.tempos.total) + 's' + (partes.length ? ' (' + partes.join(', ') + ')' : ''), 'ok');
+    }
     const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     document.getElementById('ata-gerada-conteudo').innerHTML = renderAtaBlocos(texto, escHtml);
     document.getElementById('ata-gerada-modal').style.display = 'flex';
