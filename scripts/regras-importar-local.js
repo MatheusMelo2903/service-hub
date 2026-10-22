@@ -62,6 +62,7 @@ function storageUpload(bucket, caminho, buffer, tipo) {
 async function principal() {
   const arquivo = process.argv[2];
   const semPdf = process.argv.includes('--sem-pdf');
+  const soPdf = process.argv.includes('--so-pdf'); // só copia os PDFs que faltam (textos já importados)
   if (!arquivo || !SUPABASE_URL || !CHAVE || !SL.appToken) { console.error('Uso: railway run ... node scripts/regras-importar-local.js <arquivo.json> (faltam variáveis ou arquivo)'); process.exit(1); }
   const dados = JSON.parse(fs.readFileSync(arquivo, 'utf8'));
   const blocos = dados.condominios || {};
@@ -82,6 +83,7 @@ async function principal() {
   const somar = (alvo, obj) => Object.entries(obj || {}).forEach(([k, v]) => { if (typeof v === 'number') alvo[k] = (alvo[k] || 0) + v; });
   const soma = { documentos: {}, notificacoes: {}, comunicados: {}, atas_geradas: {} };
   for (const l of linhas) {
+    if (soPdf) break;
     if (!l.id_superlogica || I.SLUGS_IGNORADOS[l.slug]) continue;
     try {
       const r = await I.importarCondominio(banco, { slug: l.slug, idSL: Number(l.id_superlogica), cnpj: l.cnpj || null, criadoPor: null }, blocos[l.slug]);
