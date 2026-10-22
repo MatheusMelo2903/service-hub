@@ -49,3 +49,8 @@ Ficam no trabalho da prestação (pasta Em andamento) via Trabalhos.anexar. Teto
 
 ## Resultado da busca automática (22/10/2026, testado pelo Mac)
 Automático com PDF oficial: só municipal de Vitória. Manual: federal (hCaptcha), estadual (Turnstile), trabalhista (imagem), FGTS (o Consultar por programa cai no ShieldSquare com hCaptcha; no navegador da pessoa passa), Serra, Vila Velha (imagem), Cariacica (reCAPTCHA). TJES funciona sem verificação mas só entrega HTML (sem PDF): manual pela regra atual. Nenhum site aceita CNPJ no link: a tela copia o CNPJ. Vitória precisa ser testada uma vez a partir do servidor em nuvem.
+
+## Estado (22/10/2026 20:30)
+No dev (deploy b19fb9d3): servidor, busca, tela e alertas. Migração 022 aplicada no teste.
+Testado no dev: GET /api/certidoes em Casablanca (Serra, 0 automáticas) e em 4 condomínios de Vitória (municipal automática); busca automática de Vitória pelo servidor em nuvem deu certo (Edifício Splendor, negativa, validade 21/12/2026, 10 s). Painel abre na Prestação com o CNPJ e as 6 linhas.
+Falta: decisão do Matheus sobre a Falência (PDF montado pelo Hub a partir da página oficial do TJES); teste completo de ponta a ponta com PDFs reais (arrastar, gerar, aguardando, baixar tudo); produção junto com as migrações 007 a 022.
