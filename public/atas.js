@@ -693,7 +693,19 @@ function limparAtaConfirmar() {
   limparAta();
 }
 
+// T49: limpar a tela não encerra a ata guardada na pasta Em andamento; ela continua lá.
+// Só a tela deixa de apontar para ela, então a próxima geração cria outro trabalho.
 function limparAta() {
+  ataLimparTela();
+  // O cabeçalho (nome, CNPJ, endereço, síndico) volta do cadastro do condomínio ativo.
+  _ataCadastro = null;
+  if (typeof ataCadastroCarregar === 'function') ataCadastroCarregar();
+}
+
+// Tudo que limparAta zera, menos a releitura do cadastro. Separado para a ata reaberta da
+// pasta poder limpar a tela sem disparar uma leitura do cadastro que sobrescreveria os campos.
+function ataLimparTela() {
+  _ataTrabalho = null; _ataRegras = null; _ataRevisao = null; _ataRestauradaCond = '';
   document.getElementById('ata-cond').value = '';
   document.getElementById('ata-data').value = '';
   document.getElementById('ata-sindico').value = '';
@@ -717,9 +729,6 @@ function limparAta() {
   const modalAta = document.getElementById('ata-gerada-modal'); if (modalAta) modalAta.style.display = 'none';
   // A conferência com a convenção da ata anterior também sai.
   const confRegras = document.getElementById('regras-conf-ata'); if (confRegras) confRegras.remove();
-  // O cabeçalho (nome, CNPJ, endereço, síndico) volta do cadastro do condomínio ativo.
-  _ataCadastro = null;
-  if (typeof ataCadastroCarregar === 'function') ataCadastroCarregar();
 }
 
 // ============================================================
@@ -905,11 +914,27 @@ async function gerarAtaIA() {
     const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     document.getElementById('ata-gerada-conteudo').innerHTML = renderAtaBlocos(texto, escHtml);
     document.getElementById('ata-gerada-modal').style.display = 'flex';
+    // T49: a sessão da pasta Em andamento. Nova geração do mesmo condomínio atualiza o mesmo
+    // trabalho; outro condomínio (ou depois de encerrar ou limpar) abre um trabalho novo.
+    const idSLAta = ataCondominioEscolhido();
+    try {
+      ataGarantirBotaoEncerrar();
+      if (!_ataTrabalho || _ataTrabalho.idSL !== idSLAta) _ataTrabalho = ataNovaSessao(null, idSLAta);
+      _ataRevisao = { participantes: null, avisos: [] };
+      _ataRegras = null;
+      ataRegrasInstalarCaptura();
+    } catch (eSessao) { /* guardar é um extra: a ata segue normal */ }
     // Regras: conferência com a convenção em segundo plano, num cartão à parte (regras-ata.js).
     // Só lê a ata pronta; erro lá nunca chega aqui.
     try {
-      if (typeof window.regrasConferirAta === 'function') window.regrasConferirAta({ idSuperlogica: ataCondominioEscolhido(), textoAta: texto,
-        editalTexto: editaisAnexos.map(function (e) { return e.texto; }).join('\n\n'), transcricaoId: _ataTranscricaoId || null });
+      if (typeof window.regrasConferirAta === 'function') {
+        window.regrasConferirAta({ idSuperlogica: idSLAta, textoAta: texto,
+          editalTexto: editaisAnexos.map(function (e) { return e.texto; }).join('\n\n'), transcricaoId: _ataTranscricaoId || null });
+        // T49: acompanha o cartão para guardar o resultado junto com a ata.
+        const cartaoRegras = document.getElementById('regras-conf-ata');
+        _ataRegras = { estado: cartaoRegras && cartaoRegras.style.display === 'none' ? 'oculta' : 'pendente', cartao: cartaoRegras,
+          idSL: idSLAta, transcricaoId: _ataTranscricaoId || null, geradoEm: new Date().toISOString(), resultado: null, mensagem: '' };
+      }
     } catch (eRegras) { /* a conferência é só um extra */ }
     // avisos não bloqueantes da validação (ex.: revisar assinaturas). A ata foi entregue.
     const avisos = Array.isArray(payload.avisos) ? payload.avisos.slice() : [];
@@ -939,6 +964,11 @@ async function gerarAtaIA() {
     addHistorico('Ata gerada: ' + cond + ' · ' + data + (avisos.length ? ' (com avisos)' : ''));
     if (avisos.length) toast('Ata gerada. Pontos para revisar: ' + avisos.join('; '), 'warn');
     else toast('Ata gerada. Revise antes de baixar.', 'ok');
+    // T49: guarda na pasta Em andamento. Falha aqui só avisa; a ata continua na tela.
+    try {
+      _ataRevisao = { participantes: part || null, avisos: avisos };
+      if (_ataTrabalho) ataTrabalhoGuardar(_ataTrabalho);
+    } catch (eGuardar) { toast('Não foi possível guardar a ata na pasta Em andamento', 'warn'); }
   } catch (e) {
     toast('Falha ao gerar ata: ' + (e.message || 'erro'), 'err');
   } finally {
@@ -949,9 +979,11 @@ async function gerarAtaIA() {
   }
 }
 
+// T49: fechar só esconde a janela. A ata segue guardada na pasta Em andamento.
 function fecharAtaGerada() {
   document.getElementById('ata-gerada-modal').style.display = 'none';
   if (window.ArquivarSL) ArquivarSL.esconder('ata-arquivar');
+  try { ataAvisarAoFechar(); } catch (e) { /* aviso é só um extra */ }
 }
 
 // T12: manda o PDF desta ata para os documentos do condomínio no Superlógica.
@@ -1223,6 +1255,7 @@ function baixarAtaPDF() {
     nome = (nome ? 'Ata_' + nome : 'ata') + '.pdf';
     doc.save(nome);
     toast('✓ PDF gerado: ' + nome, 'ok');
+    ataSugerirEncerrar();
   } catch (e) {
     toast('Erro ao gerar PDF: ' + (e && e.message ? e.message : e), 'err');
   }
@@ -1330,6 +1363,7 @@ function baixarAtaWord() {
     document.body.removeChild(a);
     setTimeout(() => URL.revokeObjectURL(url), 1500);
     toast('✓ Word (.docx) gerado: ' + nome, 'ok');
+    ataSugerirEncerrar();
   }).catch((e) => {
     toast('Erro ao gerar Word: ' + (e && e.message ? e.message : e), 'err');
   });
@@ -1372,6 +1406,11 @@ async function ataCadastroCarregar(forcar) {
     if (seq !== _ataCadastroSeq) return; // trocou no meio
     if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
     _ataCadastro = { ok: true, id: cond.id_superlogica, dados: j };
+    // T49: ata reaberta da pasta: os campos ficam como estavam na geração (o cadastro não sobrescreve).
+    if (_ataRestauradaCond && _ataRestauradaCond === String(cond.id_superlogica)) {
+      if (st) { st.textContent = 'Ata reaberta da pasta Em andamento: nome, CNPJ, endereço e síndico ficaram como estavam na geração.'; st.style.color = 'var(--muted)'; }
+      return;
+    }
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
     set('ata-cond', j.nome || j.nome_fantasia || cond.nome);
     set('ata-cnpj', j.cnpj);
@@ -1387,6 +1426,8 @@ async function ataCadastroCarregar(forcar) {
     }
   } catch (e) {
     if (seq !== _ataCadastroSeq) return;
+    // T49: ata reaberta já traz o cadastro da geração; uma falha de leitura agora não o desfaz.
+    if (_ataRestauradaCond && _ataRestauradaCond === String(cond.id_superlogica) && _ataCadastro && _ataCadastro.ok) return;
     _ataCadastro = { ok: false, id: cond.id_superlogica };
     if (st) { st.textContent = 'Não foi possível ler o cadastro agora (' + (e.message || 'erro') + '). Preencha à mão ou pelo edital.'; st.style.color = 'var(--danger)'; }
   }
@@ -1418,8 +1459,11 @@ function ataMostrarConferenciaParticipantes(part) {
 window.addEventListener('condominioAtivo:trocou', function () {
   const tinha = ['ata-transcricao', 'ata-participantes', 'ata-data', 'ata-local'].some(function (k) { const el = document.getElementById(k); return el && el.value.trim(); })
     || (typeof _ataDocsApoio !== 'undefined' && _ataDocsApoio.length) || _editalDropzoneTexto;
+  // T49: a troca não encerra a ata guardada; só a tela deixa de apontar para ela.
+  const guardada = !!(_ataTrabalho && (_ataTrabalho.id || _ataTrabalho.pendentes > 0));
   limparAta();
-  if (tinha) toast('Ata em andamento descartada: o condomínio mudou.', 'info');
+  if (guardada) toast('A ata do condomínio anterior ficou na pasta Em andamento.', 'info');
+  else if (tinha) toast('Ata em andamento descartada: o condomínio mudou.', 'info');
 });
 // O seletor pode completar o código do Superlógica de um ativo antigo (dispara só changed).
 window.addEventListener('condominioAtivo:changed', function () {
@@ -1429,3 +1473,342 @@ window.addEventListener('condominioAtivo:changed', function () {
 });
 document.addEventListener('auth:ready', function () { const p = document.getElementById('panel-atas'); if (p && p.classList.contains('active')) ataCondInit(); });
 setTimeout(function () { const p = document.getElementById('panel-atas'); if (p && p.classList.contains('active') && window.AUTH_TOKEN) ataCondInit(); }, 0);
+
+// ============================================================
+// PASTA EM ANDAMENTO (T49)
+// A ata gerada fica guardada no servidor (trabalhos.js) para não se perder ao fechar a janela,
+// trocar de aba, recarregar ou entrar por outro computador. Sai só com "Encerrar" ou em 7 dias.
+// Guarda o necessário para reabrir a revisão igual: texto, campos, conferências e avisos.
+// Não guarda áudio nem imagens dos documentos; a transcrição em texto só vai para quem tem
+// transcrição livre (quem não vê a transcrição continua sem ver ao reabrir).
+// ============================================================
+let _ataTrabalho = null;        // sessão da ata na tela: { id, idSL, fila, pendentes, falhou, encerrada, avisouFalha }
+let _ataRegras = null;          // conferência com a convenção: { estado, cartao, idSL, transcricaoId, geradoEm, resultado, mensagem }
+let _ataRevisao = null;         // o que a revisão mostra além do texto: { participantes, avisos }
+let _ataRestauradaCond = '';    // condomínio da ata reaberta: o cadastro não sobrescreve os campos dela
+const ATA_TRAB_MAX_BYTES = 2.8 * 1024 * 1024; // folga abaixo dos 3 MB do servidor
+const ATA_TRAB_MAX_EDITAL = 200000;
+
+function ataNovaSessao(id, idSL) {
+  return { id: id || null, idSL: idSL ? String(idSL) : '', fila: Promise.resolve(), pendentes: 0, falhou: false, encerrada: false, avisouFalha: false };
+}
+
+// Título da pastinha: "Ata AGO Happy Days Manguinhos 21/10/2026". Travessão e hífen solto viram espaço.
+function ataTrabalhoTitulo(campos) {
+  const cond = campos.condominio || (((typeof getCondominioAtivo === 'function') && getCondominioAtivo()) || {}).nome || 'condomínio';
+  return ('Ata ' + (campos.tipo || '') + ' ' + cond + ' ' + (campos.data || ''))
+    .replace(/\s+[-–—]\s+|[–—]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 150);
+}
+
+// Retrato da tela no momento (síncrono). Devolve { titulo, dados } ou null sem ata gerada.
+// O tamanho é conferido aqui: passando do limite, sai primeiro a transcrição em texto
+// (o código dela continua) e depois o edital; o texto da ata nunca sai.
+function ataTrabalhoPacote() {
+  if (!_ataTextoGerado) return null;
+  const v = (id) => String((document.getElementById(id) || {}).value || '');
+  const campos = {
+    condominio: v('ata-cond').trim(), cnpj: v('ata-cnpj').trim(), endereco: v('ata-endereco').trim(), sindico: v('ata-sindico').trim(),
+    data: v('ata-data').trim(), tipo: v('ata-tipo'), local: v('ata-local').trim(), participantes: v('ata-participantes')
+  };
+  const livre = ataTranscricaoLivre();
+  const textoTr = livre ? v('ata-transcricao') : '';
+  const info = document.getElementById('ata-file-info');
+  const nomeAudio = document.getElementById('audio-file-nome');
+  const dados = {
+    versao: 1,
+    geradoEm: new Date().toISOString(),
+    texto: _ataTextoGerado,
+    campos: campos,
+    cadastroOk: !!(_ataCadastro && _ataCadastro.ok),
+    transcricao: {
+      id: _ataTranscricaoId || null,
+      texto: textoTr,
+      igualOriginal: livre && !!_ataTranscricaoOriginal && _ataTranscricaoOriginal === textoTr,
+      original: livre && _ataTranscricaoOriginal && _ataTranscricaoOriginal !== textoTr ? _ataTranscricaoOriginal : '',
+      info: info ? String(info.textContent || '').slice(0, 300) : '',
+      nomeArquivo: nomeAudio ? String(nomeAudio.textContent || '').slice(0, 200) : ''
+    },
+    edital: {
+      nome: _editalDropzoneNome || '',
+      texto: String(_editalDropzoneTexto || '').slice(0, ATA_TRAB_MAX_EDITAL)
+    },
+    documentos: (_ataDocsApoio || []).filter((d) => d.status === 'ok').map((d) => ({ nome: d.nome, tipo: d.tipo, paginas: d.paginas })),
+    revisao: _ataRevisao ? { participantes: _ataRevisao.participantes || null, avisos: (_ataRevisao.avisos || []).slice(0, 50) } : null,
+    regras: _ataRegras ? { estado: _ataRegras.estado, resultado: _ataRegras.resultado || null, idSL: _ataRegras.idSL || '',
+      transcricaoId: _ataRegras.transcricaoId || null, geradoEm: _ataRegras.geradoEm || '', mensagem: _ataRegras.mensagem || '' } : null
+  };
+  const tamanho = () => new Blob([JSON.stringify(dados)]).size;
+  if (tamanho() > ATA_TRAB_MAX_BYTES) { dados.transcricao.texto = ''; dados.transcricao.original = ''; dados.transcricao.igualOriginal = false; }
+  if (tamanho() > ATA_TRAB_MAX_BYTES) { dados.edital.texto = ''; }
+  if (tamanho() > ATA_TRAB_MAX_BYTES) return null;
+  return { titulo: ataTrabalhoTitulo(campos), dados: dados };
+}
+
+// Grava (cria ou atualiza) na fila da sessão: uma gravação por vez, para a segunda usar o id
+// devolvido pela primeira e nunca criar dois trabalhos para a mesma ata. Devolve true se gravou.
+function ataTrabalhoGuardar(sessao) {
+  if (!sessao || sessao !== _ataTrabalho || sessao.encerrada) return Promise.resolve(false);
+  if (!window.Trabalhos || typeof Trabalhos.salvar !== 'function') return Promise.resolve(false);
+  let pacote = null;
+  try { pacote = ataTrabalhoPacote(); } catch (e) { pacote = null; }
+  if (!pacote) {
+    if (_ataTextoGerado) toast('Não foi possível guardar a ata na pasta Em andamento', 'warn');
+    return Promise.resolve(false);
+  }
+  sessao.pendentes++;
+  const p = sessao.fila.then(async () => {
+    if (sessao.encerrada) return false;
+    try {
+      const id = await Trabalhos.salvar('ata', { id: sessao.id || undefined, idSuperlogica: sessao.idSL || null, titulo: pacote.titulo, dados: pacote.dados });
+      if (id && !sessao.encerrada) sessao.id = id;
+      sessao.falhou = false;
+      return true;
+    } catch (e) {
+      sessao.falhou = true;
+      // Um aviso por ata basta; a ata continua funcionando na tela.
+      if (!sessao.avisouFalha) { sessao.avisouFalha = true; toast('Não foi possível guardar a ata na pasta Em andamento', 'warn'); }
+      return false;
+    } finally { sessao.pendentes--; }
+  });
+  sessao.fila = p.catch(() => false);
+  return p;
+}
+
+// Atualiza o trabalho da tela (ex.: a conferência com a convenção terminou depois da geração).
+function ataTrabalhoAtualizar() {
+  if (_ataTrabalho && (_ataTrabalho.id || _ataTrabalho.pendentes > 0)) ataTrabalhoGuardar(_ataTrabalho);
+}
+
+function ataAvisarAoFechar() {
+  const s = _ataTrabalho;
+  if (!s || !_ataTextoGerado) return;
+  const msg = 'A ata ficou na pasta Em andamento, no topo. Clique lá para voltar.';
+  if (s.id || s.pendentes > 0) { toast(msg, 'info'); return; }
+  // A gravação anterior falhou: tenta mais uma vez antes de a pessoa sair da janela.
+  s.avisouFalha = true;
+  ataTrabalhoGuardar(s).then((ok) => {
+    toast(ok ? msg : 'Não foi possível guardar a ata na pasta Em andamento. Baixe o PDF ou o Word antes de sair da página.', ok ? 'info' : 'warn');
+  });
+}
+
+function ataSugerirEncerrar() {
+  try {
+    if (_ataTrabalho && (_ataTrabalho.id || _ataTrabalho.pendentes > 0)) toast('Quando terminar, clique em Encerrar para tirar a ata da pasta Em andamento.', 'info');
+  } catch (e) { /* aviso é só um extra */ }
+}
+
+// Botão "Encerrar" na janela de revisão, criado aqui para não mexer no index.html.
+function ataGarantirBotaoEncerrar() {
+  if (document.getElementById('ata-btn-encerrar')) return;
+  const fechar = document.querySelector('#ata-gerada-modal button[onclick="fecharAtaGerada()"]');
+  if (!fechar || !fechar.parentNode) return;
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.id = 'ata-btn-encerrar';
+  b.className = 'btn btn-ghost';
+  b.style.cssText = 'font-size:12px;padding:6px 12px';
+  b.title = 'Tira a ata da pasta Em andamento. Use quando terminar.';
+  b.textContent = '✓ Encerrar';
+  if (!window.Trabalhos) b.style.display = 'none';
+  b.addEventListener('click', ataEncerrarTrabalho);
+  fechar.parentNode.style.flexWrap = 'wrap';
+  fechar.parentNode.style.justifyContent = 'flex-end';
+  fechar.parentNode.insertBefore(b, fechar);
+}
+
+// Encerrar: espera a gravação em curso, pergunta e tira da pasta. Só então fecha a janela.
+async function ataEncerrarTrabalho() {
+  const b = document.getElementById('ata-btn-encerrar');
+  const s = _ataTrabalho;
+  const fecharJanela = () => {
+    document.getElementById('ata-gerada-modal').style.display = 'none';
+    if (window.ArquivarSL) ArquivarSL.esconder('ata-arquivar');
+  };
+  if (!s) { fecharJanela(); return; }
+  if (b) b.disabled = true;
+  try {
+    try { await s.fila; } catch (e) { /* a fila nunca rejeita */ }
+    if (!s.id) {
+      // Nada guardado na pasta: só fecha, e a sessão acaba para não gravar depois.
+      s.encerrada = true;
+      if (_ataTrabalho === s) _ataTrabalho = null;
+      fecharJanela();
+      return;
+    }
+    const ok = await Trabalhos.encerrar(s.id, { perguntar: true });
+    if (!ok) return;
+    s.encerrada = true;
+    if (_ataTrabalho === s) _ataTrabalho = null;
+    fecharJanela();
+    toast('Ata encerrada e retirada da pasta Em andamento.', 'ok');
+  } finally { if (b) b.disabled = false; }
+}
+
+// Conferência com a convenção: guarda o resultado (dados, não o HTML) para reabrir sem
+// processar de novo. regras-ata.js não avisa quando termina, então as duas funções dele
+// são envolvidas aqui, sem mudar o que fazem. Só vale para o cartão da ata atual.
+function ataRegrasMarcarPronta(cartao, resultado) {
+  if (!_ataRegras || _ataRegras.cartao !== cartao || _ataRegras.estado === 'pronta') return;
+  _ataRegras.estado = 'pronta';
+  _ataRegras.resultado = resultado || null;
+  _ataRegras.mensagem = '';
+  ataTrabalhoAtualizar();
+}
+
+function ataRegrasInstalarCaptura() {
+  if (ataRegrasInstalarCaptura.feito) return;
+  if (typeof window.regrasAtaRender !== 'function' || typeof window.regrasAtaBuscar !== 'function') return;
+  ataRegrasInstalarCaptura.feito = true;
+  const render = window.regrasAtaRender;
+  window.regrasAtaRender = function (c, j) {
+    const r = render.apply(this, arguments);
+    try { ataRegrasMarcarPronta(c, j); } catch (e) { /* guardar é só um extra */ }
+    return r;
+  };
+  const buscar = window.regrasAtaBuscar;
+  window.regrasAtaBuscar = async function (o, seq, c) {
+    try { return await buscar.apply(this, arguments); }
+    finally {
+      try {
+        const atual = typeof regrasAtaSeq === 'undefined' || seq === regrasAtaSeq;
+        if (atual && _ataRegras && _ataRegras.cartao === c && _ataRegras.estado === 'pendente') {
+          // Sem acesso a cartão fica escondido; erro deixa só a mensagem no cartão.
+          if (c.style.display === 'none') _ataRegras.estado = 'oculta';
+          else { _ataRegras.estado = 'indisponivel'; _ataRegras.mensagem = String((c.lastElementChild || {}).textContent || '').slice(0, 300); }
+          ataTrabalhoAtualizar();
+        }
+      } catch (e) { /* guardar é só um extra */ }
+    }
+  };
+}
+
+// Reabre o cartão da conferência como estava. Se a conferência não tinha terminado quando a
+// ata foi guardada, procura o resultado já gravado no servidor (sem processar de novo).
+function ataRegrasRestaurar(r) {
+  if (!r || r.estado === 'oculta' || typeof regrasAtaCartao !== 'function') return;
+  const c = regrasAtaCartao();
+  if (!c) return;
+  c.style.display = '';
+  _ataRegras = { estado: r.estado, cartao: c, idSL: r.idSL || '', transcricaoId: r.transcricaoId || null, geradoEm: r.geradoEm || '', resultado: r.resultado || null, mensagem: r.mensagem || '' };
+  const titulo = typeof regrasAtaTitulo === 'function' ? regrasAtaTitulo() : '';
+  const escR = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const msgCartao = (m) => { c.innerHTML = titulo + '<div style="color:var(--muted);font-family:var(--mono)">' + escR(m) + '</div>'; };
+  if (r.estado === 'pronta' && r.resultado && typeof regrasAtaRender === 'function') { regrasAtaRender(c, r.resultado, r.idSL); return; }
+  if (r.estado === 'indisponivel') { msgCartao(r.mensagem || 'Conferência indisponível. A ata não foi afetada.'); return; }
+  msgCartao('Buscando a conferência com a convenção...');
+  ataRegrasBuscarGuardada(_ataRegras, c, msgCartao);
+}
+
+async function ataRegrasBuscarGuardada(r, c, msgCartao) {
+  let achou = null;
+  try {
+    if (r.transcricaoId && r.idSL) {
+      const resp = await apiAuthFetch('/api/regras/' + encodeURIComponent(r.idSL) + '/conferencias-ata?limite=10', { cache: 'no-store' });
+      const j = await resp.json().catch(() => ({}));
+      const desde = Date.parse(r.geradoEm || '') - 10 * 60000;
+      if (resp.ok) achou = (j.conferencias || []).find((x) => String(x.transcricao_id || '') === String(r.transcricaoId) && (isNaN(desde) || Date.parse(x.criado_em) >= desde)) || null;
+    }
+  } catch (e) { achou = null; }
+  if (!_ataRegras || _ataRegras.cartao !== c) return; // a tela mudou enquanto buscava
+  if (achou && typeof regrasAtaRender === 'function') {
+    const resultado = { itens: Array.isArray(achou.itens) ? achou.itens : [], resumo: achou.resumo || '' };
+    regrasAtaRender(c, resultado, r.idSL);
+    ataRegrasMarcarPronta(c, resultado);
+    return;
+  }
+  msgCartao('A conferência com a convenção não ficou pronta antes de a ata ser guardada. A ata não foi afetada.');
+}
+
+// Reabre a ata guardada. A pastinha já trocou o condomínio (o que limpou a tela) e abriu o
+// painel de Atas antes de chamar aqui. Repõe campos, transcrição (respeitando a permissão),
+// edital, texto e a janela de revisão com as conferências, pronta para copiar, baixar e arquivar.
+async function ataTrabalhoRestaurar(t) {
+  const d = (t && t.dados) || {};
+  if (!d.texto) throw new Error('Esta ata guardada está vazia.');
+  if (window._gerandoAta) throw new Error('Aguarde a ata em geração terminar antes de abrir outra.');
+  if (window._lendoEditalAta || _ataDocsLendo) throw new Error('Aguarde terminar a leitura do edital e dos documentos.');
+  const btnCancelar = document.getElementById('btn-cancelar-audio');
+  if (btnCancelar && btnCancelar.style.display && btnCancelar.style.display !== 'none') throw new Error('Aguarde a transcrição do áudio terminar antes de abrir outra ata.');
+  const idSL = t.id_superlogica != null ? String(t.id_superlogica) : '';
+  const at = (typeof getCondominioAtivo === 'function') ? getCondominioAtivo() : null;
+  if (idSL && (!at || String(at.id_superlogica) !== idSL)) throw new Error('O condomínio desta ata não está selecionado.');
+
+  // A mesma ata já está na tela: só mostra a janela de novo, como estava.
+  if (_ataTrabalho && _ataTrabalho.id === t.id && _ataTextoGerado) {
+    document.getElementById('ata-gerada-modal').style.display = 'flex';
+    ataGarantirBotaoEncerrar();
+    return;
+  }
+  // Algo preenchido na tela que não está guardado na pasta: confirma antes de substituir.
+  const temNaTela = ['ata-transcricao', 'ata-participantes', 'ata-data', 'ata-local'].some(function (k) { const el = document.getElementById(k); return el && el.value.trim(); })
+    || _ataDocsApoio.length || _editalDropzoneTexto || _ataTextoGerado;
+  if (temNaTela && !(_ataTrabalho && _ataTrabalho.id) && !confirm('Abrir esta ata tira da tela o que está preenchido agora, que não está guardado. Continuar?')) return;
+
+  ataLimparTela();
+  if (window.ArquivarSL) ArquivarSL.esconder('ata-arquivar');
+  // Descarta leituras do cadastro em andamento: chegariam depois e sobrescreveriam os campos.
+  _ataCadastroSeq++;
+  _ataRestauradaCond = idSL;
+  _ataCadastro = (d.cadastroOk && at && idSL) ? { ok: true, id: at.id_superlogica, dados: null } : null;
+  const st = document.getElementById('ata-cadastro-status');
+  if (st) { st.textContent = 'Ata reaberta da pasta Em andamento: nome, CNPJ, endereço e síndico ficaram como estavam na geração.'; st.style.color = 'var(--muted)'; }
+
+  // Campos do cartão Condomínio e reunião e participantes.
+  const c = d.campos || {};
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val == null ? '' : String(val); };
+  set('ata-cond', c.condominio); set('ata-cnpj', c.cnpj); set('ata-endereco', c.endereco); set('ata-sindico', c.sindico);
+  set('ata-data', c.data); set('ata-local', c.local); set('ata-participantes', c.participantes);
+  const tipoEl = document.getElementById('ata-tipo');
+  if (tipoEl && c.tipo && Array.from(tipoEl.options).some((o) => o.value === c.tipo)) tipoEl.value = c.tipo;
+
+  // Transcrição: o código guardado no servidor sempre volta; o texto só para quem tem transcrição livre.
+  const tr = d.transcricao || {};
+  _ataTranscricaoId = tr.id || null;
+  ataPrepararCaixaTranscricao();
+  const nomeAudio = document.getElementById('audio-file-nome');
+  if (nomeAudio) nomeAudio.textContent = tr.nomeArquivo || '';
+  const info = document.getElementById('ata-file-info');
+  if (ataTranscricaoLivre()) {
+    set('ata-transcricao', tr.texto || '');
+    _ataTranscricaoOriginal = tr.igualOriginal ? (tr.texto || '') : (tr.original || '');
+    if (info) info.textContent = tr.info || '';
+  } else {
+    _ataTranscricaoOriginal = '';
+    set('ata-transcricao', '');
+    if (_ataTranscricaoId && info) info.textContent = tr.info || '✓ Transcrição guardada no sistema.';
+  }
+
+  // Edital lido (texto, para uma nova geração). Documentos da assembleia não voltam: só os nomes.
+  const ed = d.edital || {};
+  _editalDropzoneTexto = ed.texto || '';
+  _editalDropzoneNome = ed.nome || '';
+  const edSt = document.getElementById('edital-status');
+  if (edSt && _editalDropzoneTexto) { edSt.textContent = '✓ Edital guardado com a ata' + (_editalDropzoneNome ? ': ' + _editalDropzoneNome : '') + '.'; edSt.style.color = 'var(--muted)'; }
+
+  // Texto da ata e janela de revisão como estava.
+  _ataTextoGerado = String(d.texto);
+  const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  document.getElementById('ata-gerada-conteudo').innerHTML = renderAtaBlocos(_ataTextoGerado, escHtml);
+  const rev = d.revisao || {};
+  _ataRevisao = { participantes: rev.participantes || null, avisos: Array.isArray(rev.avisos) ? rev.avisos : [] };
+  if (_ataRevisao.participantes) ataMostrarConferenciaParticipantes(_ataRevisao.participantes);
+  _ataTrabalho = ataNovaSessao(t.id, idSL);
+  ataRegrasInstalarCaptura();
+  try { ataRegrasRestaurar(d.regras); } catch (e) { /* a conferência é só um extra */ }
+  ataGarantirBotaoEncerrar();
+  document.getElementById('ata-gerada-modal').style.display = 'flex';
+
+  const docs = Array.isArray(d.documentos) ? d.documentos : [];
+  toast('Ata reaberta da pasta Em andamento.' + (docs.length ? ' Para gerar de novo com a apresentação, anexe os documentos outra vez.' : ''), 'ok');
+  if (_ataRevisao.avisos.length) toast('Pontos para revisar: ' + _ataRevisao.avisos.join('; '), 'warn');
+}
+
+// Registro na pastinha e limpeza da sessão quando a ata é encerrada por lá.
+try {
+  if (window.Trabalhos && typeof Trabalhos.registrar === 'function') Trabalhos.registrar('ata', { nome: 'Ata', painel: 'atas', restaurar: ataTrabalhoRestaurar });
+} catch (e) { /* sem pastinha, a ata funciona como antes */ }
+window.addEventListener('trabalhos:encerrado', function (ev) {
+  const id = ev && ev.detail && ev.detail.id;
+  if (_ataTrabalho && id && _ataTrabalho.id === id) { _ataTrabalho.encerrada = true; _ataTrabalho = null; }
+});
+try { ataGarantirBotaoEncerrar(); } catch (e) { /* o botão é criado de novo ao abrir a revisão */ }
