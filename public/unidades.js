@@ -135,6 +135,9 @@ function renderPreviewUnidades(processed, filename) {
     html += '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:12px">... mais ' + (processed.length - 8) + ' unidades</td></tr>';
   }
   table.innerHTML = html;
+  // T49: a pré visualização final pronta é uma etapa da conferência; guarda na pasta Em andamento.
+  _uniTrabArquivoPrevia = filename;
+  uniTrabEtapaPronta(filename);
 }
 
 // ============================================================
@@ -1445,6 +1448,8 @@ function abrirRevisao(contatos, sourceName, linhasOrigem) {
   var card = document.getElementById('revisao-unidades');
   card.style.display = 'block';
   card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  // T49: revisão aberta já vai para a pasta Em andamento (mesmo trabalho quando vem da prévia do mesmo documento).
+  uniTrabEtapaPronta(_revisaoSource);
 }
 
 // Abre a revisao a partir do resultado do Normalizador IA (familia B).
@@ -1588,6 +1593,7 @@ function renderRevisao() {
 function filtrarRevisao(valor) {
   _revisaoFiltro = valor;
   renderRevisao();
+  uniTrabAgendar(1500);
 }
 
 // Ajuste manual do papel: vira confianca alta (decidido pelo humano) e redesenha a tela.
@@ -1599,14 +1605,18 @@ function mudarPapelRevisao(id, papel) {
   c.confianca = 'alta';
   c.motivo = 'Ajustado manualmente';
   renderRevisao();
+  // T49: cada papel decidido é trabalho do analista; grava logo (pequeno atraso junta trocas seguidas).
+  uniTrabAgendar(600);
 }
 
 function descartarRevisao() {
+  uniTrabGuardarPendente();
   _revisaoContatos = null;
   _revisaoSource = '';
   _revisaoFiltro = 'todos';
   document.getElementById('revisao-unidades').style.display = 'none';
   toast('Revisão descartada', 'ok');
+  uniTrabAposDescartar();
 }
 
 // Confirma a revisao: emite linhas de 26 colunas dos contatos mantidos, monta o
@@ -1934,6 +1944,10 @@ async function enviarUnidades() {
     if (totalErr === 0) toast(putOk + ' unidades criadas com sucesso! ✓', 'ok');
     else toast(putOk + ' criadas, ' + totalErr + ' com erro', 'warn');
   }
+
+  // T49: só um envio completo, sem nenhuma falha (nem de inquilino ou dependente), tira a
+  // conferência da pasta Em andamento. Parado ou com erro, ela fica guardada para conferir.
+  if (!parou && totalErr === 0 && inqFail === 0 && depFail === 0) uniTrabEncerrarAposEnvio();
 }
 function pararImportacaoUnidades() {
   state.unidades.shouldStop = true;
@@ -2044,12 +2058,10 @@ async function enviarContatoExtra(condId, idUnidade, contato, logDiv, contexto) 
   return { ok: false, msg: msgErr };
 }
 
-// Trocou de condomínio (T02): planilha, revisão e prévia eram do anterior. Descarta tudo.
-// (A troca fica travada enquanto a importação roda: ver condTrocaBloqueada.)
-window.addEventListener('condominioAtivo:trocou', function() {
+// Limpa a tela de unidades inteira (prévia do documento, revisão, pré visualização e log),
+// sem aviso. Usada na troca de condomínio e antes de reabrir um trabalho guardado.
+function limparTelaUnidades() {
   var u = state.unidades;
-  var tinha = (u.raw && u.raw.length) || (u.processed && u.processed.length) || _revisaoContatos
-    || (typeof _normalizarRows !== 'undefined' && _normalizarRows);
   u.raw = []; u.headers = []; u.processed = []; u.shouldStop = false;
   _revisaoContatos = null; _revisaoSource = ''; _revisaoFiltro = 'todos';
   var ids = { 'preview-unidades': 'none', 'revisao-unidades': 'none', 'normalizar-preview': 'none',
@@ -2058,8 +2070,365 @@ window.addEventListener('condominioAtivo:trocou', function() {
   ['unidades-table', 'revisao-table', 'normalizar-table', 'uni-log'].forEach(function(id) {
     var el = document.getElementById(id); if (el) el.innerHTML = '';
   });
+  // A tabela de erros do envio anterior não pode aparecer junto de outra conferência.
+  var tabErros = document.querySelector('#preview-unidades .uni-erros-tabela');
+  if (tabErros) tabErros.remove();
   if (typeof _normalizarRows !== 'undefined') { _normalizarRows = null; _normalizarSourceName = ''; }
   var st = document.getElementById('normalizar-status');
   if (st) { st.textContent = ''; st.style.color = ''; }
+}
+
+// Trocou de condomínio (T02): planilha, revisão e prévia eram do anterior. Descarta tudo.
+// (A troca fica travada enquanto a importação roda: ver condTrocaBloqueada.)
+window.addEventListener('condominioAtivo:trocou', function(ev) {
+  // T49: antes de limpar, grava o que faltava no trabalho do condomínio anterior e solta a
+  // tela dele. O trabalho continua na pasta Em andamento; a troca não encerra nada.
+  uniTrabGuardarPendente({ cond: ev && ev.detail ? ev.detail.de : null });
+  uniTrabSoltar();
+  var u = state.unidades;
+  var tinha = (u.raw && u.raw.length) || (u.processed && u.processed.length) || _revisaoContatos
+    || (typeof _normalizarRows !== 'undefined' && _normalizarRows);
+  limparTelaUnidades();
   if (tinha) toast('Unidades carregadas descartadas: o condomínio mudou.', 'info');
 });
+
+// ============================================================
+// T49: CONFERÊNCIA GUARDADA NA PASTA "EM ANDAMENTO"
+//
+// O analista gasta tempo corrigindo a prévia do documento fora do padrão e decidindo
+// papéis. Esse trabalho não pode sumir ao recarregar, trocar de condomínio ou fechar.
+// A tela é gravada no servidor (window.Trabalhos, tipo 'unidades') em cada etapa:
+// prévia pronta e correções, revisão aberta e cada papel, pré visualização final.
+// Só sai da pasta com Encerrar, com envio completo sem falha ou após 7 dias sem mexer.
+//
+// Um trabalho = um documento. As camadas da tela (prévia do documento, revisão e pré
+// visualização) entram no trabalho quando vêm do mesmo arquivo (_uniTrab.arquivo).
+// "Época" é a identidade da tela: Limpar, troca de condomínio, Encerrar e reabrir mudam
+// a época; o id do trabalho fica preso à época em que foi criado, então uma gravação
+// que termina depois da troca nunca cola o id antigo na tela nova.
+// O arquivo original nunca é guardado, só as linhas já lidas.
+// ============================================================
+var _uniTrabArquivoPrevia = '';   // arquivo de onde veio a pré visualização final
+var _uniTrab = {
+  epoca: 0,
+  ids: {},            // época → id do trabalho guardado
+  arquivo: '',        // documento ao qual a tela atual pertence
+  timer: null,        // gravação agendada (atraso para não gravar a cada tecla)
+  fila: Promise.resolve(), // gravações em série: a primeira cria o id, as seguintes atualizam
+  restaurando: false,
+  pausado: false,     // depois de Encerrar ou de enviar: não guarda até começar outra etapa
+  gravando: false,
+  erro: '',
+  avisado: -1,        // época em que já avisou falha ao guardar (não repete o aviso)
+  salvoEm: null,
+  registrado: false
+};
+// Limite do servidor para os dados de um trabalho (3 MB), com folga para o título e o resto.
+var UNI_TRAB_MAX_BYTES = 3 * 1024 * 1024 - 4096;
+
+function uniTrabIdAtual() { return _uniTrab.ids[_uniTrab.epoca] || null; }
+
+// Agenda a gravação da tela atual. Várias chamadas seguidas viram uma só.
+function uniTrabAgendar(ms) {
+  if (_uniTrab.restaurando || _uniTrab.pausado || !_uniTrab.arquivo) return;
+  if (_uniTrab.timer) clearTimeout(_uniTrab.timer);
+  var ep = _uniTrab.epoca;
+  _uniTrab.timer = setTimeout(function() { _uniTrab.timer = null; uniTrabEnfileirar(ep); }, ms || 0);
+}
+
+// Uma etapa ficou pronta (prévia do documento, revisão aberta ou pré visualização final).
+// Documento diferente do que está guardado vira trabalho novo, e o anterior fica intacto
+// na pasta (sem gravar por cima dele o que já é de outro arquivo).
+function uniTrabEtapaPronta(arquivo) {
+  if (_uniTrab.restaurando || !arquivo) return;
+  if (_uniTrab.pausado || _uniTrab.arquivo !== arquivo) uniTrabSoltar();
+  _uniTrab.pausado = false;
+  _uniTrab.arquivo = arquivo;
+  uniTrabAgendar(0);
+}
+
+// Solta a tela do trabalho guardado (o trabalho continua na pasta) e cancela o que estava agendado.
+function uniTrabSoltar() {
+  if (_uniTrab.timer) { clearTimeout(_uniTrab.timer); _uniTrab.timer = null; }
+  _uniTrab.epoca++;
+  _uniTrab.erro = '';
+  _uniTrab.salvoEm = null;
+  uniTrabBarra();
+}
+
+// Se havia gravação agendada, monta já o pedido com a tela como está (antes de ela ser
+// limpa) e põe na fila. Usado antes de Limpar, Descartar e troca de condomínio.
+// o.cond: condomínio a usar no lugar do ativo (na troca, o ativo já é o novo).
+function uniTrabGuardarPendente(o) {
+  if (!_uniTrab.timer) return;
+  clearTimeout(_uniTrab.timer); _uniTrab.timer = null;
+  if (_uniTrab.pausado || _uniTrab.restaurando) return;
+  var p = uniTrabPedido(o);
+  if (p) uniTrabEnfileirar(_uniTrab.epoca, p);
+}
+
+// Depois de um Descartar: se ainda sobrou algo do documento na tela, guarda o que sobrou;
+// se não sobrou nada, só solta a tela e o trabalho fica como estava na pasta.
+function uniTrabAposDescartar() {
+  if (_uniTrab.restaurando) return;
+  if (uniTrabFoto()) uniTrabAgendar(800); else uniTrabSoltar();
+}
+
+// Fotografia da tela: só o necessário para voltar à mesma etapa, com as mesmas linhas,
+// papéis e filtros. Devolve null quando não há nada do documento atual na tela.
+function uniTrabFoto() {
+  var nome = _uniTrab.arquivo;
+  if (!nome) return null;
+  var dados = { versao: 1, arquivo: nome, etapa: '', normalizar: null, revisao: null, previa: null };
+  var n = typeof fotoNormalizado === 'function' ? fotoNormalizado() : null;
+  if (n && n.arquivo === nome) dados.normalizar = n;
+  var prevEl = document.getElementById('preview-unidades');
+  var prevVisivel = !!(prevEl && prevEl.style.display !== 'none');
+  var u = state.unidades;
+  if (prevVisivel && _uniTrabArquivoPrevia === nome && u.raw && u.raw.length && u.processed && u.processed.length) {
+    // O processado é refeito a partir das linhas ao reabrir (mesma função do envio).
+    dados.previa = { arquivo: nome, cabecalho: u.headers || [], linhas: u.raw };
+  }
+  var cardRev = document.getElementById('revisao-unidades');
+  var revVisivel = !!(cardRev && cardRev.style.display !== 'none');
+  if (_revisaoContatos && _revisaoContatos.length && _revisaoSource === nome && (revVisivel || dados.previa)) {
+    dados.revisao = {
+      arquivo: _revisaoSource, contatos: uniTrabCompactar(_revisaoContatos),
+      filtro: _revisaoFiltro, linhasOrigem: _revisaoLinhasOrigem, visivel: revVisivel
+    };
+  }
+  dados.etapa = dados.previa ? 'previa'
+    : (dados.revisao && dados.revisao.visivel) ? 'revisao'
+    : dados.normalizar ? 'normalizar' : '';
+  return dados.etapa ? dados : null;
+}
+
+// Lista de objetos vira { campos, linhas }: os nomes dos campos não se repetem a cada
+// pessoa, o que deixa a conferência de condomínios grandes bem abaixo do limite.
+function uniTrabCompactar(lista) {
+  var campos = [], pos = {};
+  lista.forEach(function(o) {
+    Object.keys(o).forEach(function(k) { if (!(k in pos)) { pos[k] = campos.length; campos.push(k); } });
+  });
+  return { campos: campos, linhas: lista.map(function(o) {
+    return campos.map(function(k) { return o[k] === undefined ? null : o[k]; });
+  }) };
+}
+function uniTrabExpandir(c) {
+  if (!c || !Array.isArray(c.campos) || !Array.isArray(c.linhas)) return [];
+  return c.linhas.map(function(l) {
+    var o = {};
+    c.campos.forEach(function(k, i) { if (l[i] !== null && l[i] !== undefined) o[k] = l[i]; });
+    return o;
+  });
+}
+
+// Monta o pedido de gravação (dados, condomínio e título) com a tela como está agora.
+function uniTrabPedido(o) {
+  var dados = uniTrabFoto();
+  if (!dados) return null;
+  var cond = o && ('cond' in o) ? o.cond : (typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null);
+  var idSL = cond && cond.id_superlogica ? String(cond.id_superlogica) : null;
+  var nomeCond = cond ? (cond.nome || cond.nome_fantasia || '') : '';
+  return { dados: dados, idSL: idSL, titulo: ['Unidades', nomeCond, dados.arquivo].filter(Boolean).join(' ') };
+}
+
+function uniTrabEnfileirar(ep, fixo) {
+  _uniTrab.fila = _uniTrab.fila.then(function() { return uniTrabGravar(ep, fixo); }).catch(function() {});
+  return _uniTrab.fila;
+}
+
+// Grava na pasta. Sem pedido pronto, fotografa a tela na hora (pega a última correção).
+// O id usado é o da época do pedido, então uma gravação da tela anterior atualiza o
+// trabalho anterior, e nunca cria um segundo trabalho para o mesmo documento.
+async function uniTrabGravar(ep, fixo) {
+  if (!window.Trabalhos || !window.AUTH_TOKEN) return;
+  var p = fixo;
+  if (!p) {
+    if (ep !== _uniTrab.epoca || _uniTrab.pausado || _uniTrab.restaurando) return;
+    p = uniTrabPedido();
+    if (!p) return;
+  }
+  var json = JSON.stringify(p.dados);
+  var bytes = typeof TextEncoder !== 'undefined' ? new TextEncoder().encode(json).length : json.length * 2;
+  if (bytes > UNI_TRAB_MAX_BYTES) {
+    if (ep === _uniTrab.epoca) {
+      _uniTrab.erro = 'a conferência passou do limite de 3 MB para guardar';
+      if (_uniTrab.avisado !== ep) { _uniTrab.avisado = ep; toast('Esta conferência é grande demais para a pasta Em andamento. Não feche a tela até enviar.', 'warn'); }
+      uniTrabBarra();
+    }
+    return;
+  }
+  _uniTrab.gravando = true;
+  uniTrabBarra();
+  try {
+    var id = await Trabalhos.salvar('unidades', { id: _uniTrab.ids[ep] || undefined, idSuperlogica: p.idSL, titulo: p.titulo, dados: p.dados });
+    if (id) _uniTrab.ids[ep] = id;
+    if (ep === _uniTrab.epoca) { _uniTrab.salvoEm = new Date(); _uniTrab.erro = ''; }
+  } catch (e) {
+    if (ep === _uniTrab.epoca) {
+      _uniTrab.erro = (e && e.message) || 'falha ao guardar';
+      if (_uniTrab.avisado !== ep) { _uniTrab.avisado = ep; toast('Não foi possível guardar a conferência na pasta Em andamento: ' + _uniTrab.erro, 'warn'); }
+    }
+  } finally {
+    _uniTrab.gravando = false;
+    uniTrabBarra();
+  }
+}
+
+// Grava já o que estava agendado e espera a fila terminar.
+async function uniTrabDescarregar() {
+  if (_uniTrab.timer) { clearTimeout(_uniTrab.timer); _uniTrab.timer = null; uniTrabEnfileirar(_uniTrab.epoca); }
+  try { await _uniTrab.fila; } catch (_) {}
+}
+
+// Faixa no topo da tela de unidades: diz que a conferência está guardada e traz o Encerrar.
+// Criada aqui (e não no index.html) para o recurso ficar todo neste arquivo.
+function uniTrabBarra() {
+  var painel = document.getElementById('panel-unidades');
+  if (!painel) return;
+  var barra = document.getElementById('uni-trab-barra');
+  if (!barra) {
+    barra = document.createElement('div');
+    barra.id = 'uni-trab-barra';
+    barra.style.cssText = 'display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;padding:8px 12px;border:1px solid var(--gs-blue-mid,var(--border));background:var(--gs-blue-light,var(--bg3));border-radius:8px;font-size:12px;font-family:var(--mono);color:var(--text)';
+    barra.title = 'Fica guardada até você encerrar, até o envio ao Superlógica terminar sem erro ou por 7 dias sem mexer.';
+    barra.innerHTML = '<span>📁</span><span id="uni-trab-texto" style="flex:1;min-width:200px"></span>'
+      + '<button type="button" id="uni-trab-encerrar" class="btn btn-ghost" style="font-size:11px;padding:4px 10px">Encerrar</button>';
+    var banner = document.getElementById('banner-cond-unidades');
+    if (banner && banner.parentNode === painel) painel.insertBefore(barra, banner.nextSibling);
+    else painel.insertBefore(barra, painel.firstChild);
+    document.getElementById('uni-trab-encerrar').addEventListener('click', uniTrabEncerrarTela);
+  }
+  var id = uniTrabIdAtual();
+  var texto = document.getElementById('uni-trab-texto');
+  var btn = document.getElementById('uni-trab-encerrar');
+  barra.style.display = (id || _uniTrab.gravando || _uniTrab.erro) ? 'flex' : 'none';
+  btn.style.display = id ? '' : 'none';
+  if (_uniTrab.erro) {
+    texto.style.color = 'var(--warn,#e0a82e)';
+    texto.textContent = 'Não foi possível guardar na pasta Em andamento (' + _uniTrab.erro + '). Não feche a tela; o sistema tenta de novo na próxima alteração.';
+  } else if (_uniTrab.gravando && !_uniTrab.salvoEm) {
+    texto.style.color = '';
+    texto.textContent = 'Guardando a conferência na pasta Em andamento...';
+  } else {
+    var hora = _uniTrab.salvoEm ? ' às ' + _uniTrab.salvoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+    texto.style.color = '';
+    texto.textContent = 'Conferência guardada na pasta Em andamento' + hora + '. Pode recarregar ou fechar e voltar pelo topo do Hub.';
+  }
+}
+
+// Botão Encerrar da faixa: tira da pasta (com a confirmação do próprio Trabalhos).
+// Espera gravações em curso para o trabalho não ser recriado logo depois de apagado.
+async function uniTrabEncerrarTela() {
+  if (!uniTrabIdAtual() || !window.Trabalhos) return;
+  var tinhaPendente = !!_uniTrab.timer;
+  if (_uniTrab.timer) { clearTimeout(_uniTrab.timer); _uniTrab.timer = null; }
+  try { await _uniTrab.fila; } catch (_) {}
+  var id = uniTrabIdAtual();
+  if (!id) return;
+  var ok = await Trabalhos.encerrar(id, { perguntar: true });
+  if (ok) toast('Trabalho encerrado. O que está na tela não é mais guardado.', 'ok');
+  else if (tinhaPendente) uniTrabAgendar(0);
+}
+
+// Envio ao Superlógica terminou sem falha: encerra sem perguntar e para de guardar
+// esta tela (a pré visualização do que já foi enviado não volta para a pasta).
+async function uniTrabEncerrarAposEnvio() {
+  if (_uniTrab.timer) { clearTimeout(_uniTrab.timer); _uniTrab.timer = null; }
+  _uniTrab.pausado = true;
+  try { await _uniTrab.fila; } catch (_) {}
+  var id = uniTrabIdAtual();
+  if (!id || !window.Trabalhos) return;
+  if (await Trabalhos.encerrar(id)) toast('Envio concluído: a conferência saiu da pasta Em andamento.', 'info');
+}
+
+// Reabre um trabalho guardado (chamado pela pasta depois de trocar o condomínio e abrir
+// o painel). Monta cada camada com os dados guardados e volta para a etapa em que estava.
+async function uniTrabRestaurar(t) {
+  if (state.unidades && state.unidades.importing) throw new Error('Aguarde a importação de unidades terminar.');
+  var d = (t && t.dados) || {};
+  if (d.versao !== 1 || !d.etapa) throw new Error('Este trabalho não tem dados para reabrir.');
+  // O que estava na tela antes (outro documento) termina de gravar no trabalho dele.
+  await uniTrabDescarregar();
+  uniTrabSoltar();
+  _uniTrab.restaurando = true;
+  try {
+    limparTelaUnidades();
+    if (typeof restaurarNormalizado === 'function') restaurarNormalizado(d.normalizar || null);
+
+    if (d.revisao) {
+      // O id vai dentro do onchange da tabela: força número para não virar código na tela.
+      _revisaoContatos = uniTrabExpandir(d.revisao.contatos).map(function(c, i) {
+        c.id = Number(c.id) || (i + 1);
+        return c;
+      });
+      _revisaoSource = d.revisao.arquivo || d.arquivo;
+      _revisaoFiltro = d.revisao.filtro || 'todos';
+      _revisaoLinhasOrigem = typeof d.revisao.linhasOrigem === 'number' ? d.revisao.linhasOrigem : _revisaoContatos.length;
+      renderRevisao();
+      document.getElementById('revisao-unidades').style.display = d.revisao.visivel ? 'block' : 'none';
+    }
+
+    if (d.previa && Array.isArray(d.previa.linhas) && d.previa.linhas.length) {
+      var u = state.unidades;
+      u.headers = d.previa.cabecalho || NORMALIZAR_HEADERS;
+      u.raw = d.previa.linhas;
+      u.processed = processUnidadesDataUnificada(u.headers, u.raw);
+      var bar = document.getElementById('uni-progress');
+      if (bar) bar.style.width = '0%';
+      var btnEnviar = document.getElementById('btn-enviar-uni');
+      if (btnEnviar) btnEnviar.disabled = false;
+      renderPreviewUnidades(u.processed, d.previa.arquivo || d.arquivo);
+    }
+
+    _uniTrab.arquivo = d.arquivo;
+    _uniTrab.ids[_uniTrab.epoca] = t.id;
+    _uniTrab.pausado = false;
+    _uniTrab.erro = '';
+    _uniTrab.salvoEm = t.atualizado_em ? new Date(t.atualizado_em) : null;
+    if (_uniTrab.salvoEm && isNaN(_uniTrab.salvoEm)) _uniTrab.salvoEm = null;
+  } finally {
+    _uniTrab.restaurando = false;
+  }
+  uniTrabBarra();
+
+  var alvo = { normalizar: 'normalizar-preview', revisao: 'revisao-unidades', previa: 'preview-unidades' }[d.etapa];
+  var rotulo = { normalizar: 'prévia do documento', revisao: 'revisão de papéis', previa: 'pré visualização final' }[d.etapa];
+  setTimeout(function() {
+    var el = document.getElementById(alvo);
+    if (el && el.style.display !== 'none') el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 150);
+  toast('Conferência reaberta na ' + rotulo + ' de ' + d.arquivo + '.', 'ok');
+  // A checagem de unidades que já existem no Superlógica é refeita com os dados de hoje.
+  if (d.normalizar && typeof conferirNormalizadoSuperlogica === 'function') conferirNormalizadoSuperlogica();
+}
+
+// Encerrado (pela faixa, pela pasta ou depois do envio): solta a tela e para de guardá-la.
+window.addEventListener('trabalhos:encerrado', function(ev) {
+  var id = ev && ev.detail && ev.detail.id;
+  if (id && id === uniTrabIdAtual()) { uniTrabSoltar(); _uniTrab.pausado = true; }
+});
+
+// Limpar da pré visualização (botão do index.html): roda antes do clique (fase de captura)
+// para gravar o pendente com a tela inteira; depois só solta a tela, sem encerrar.
+document.addEventListener('click', function(ev) {
+  var b = ev.target && ev.target.closest ? ev.target.closest('#preview-unidades button') : null;
+  if (!b || String(b.getAttribute('onclick') || '').indexOf("clearFile('unidades')") === -1) return;
+  uniTrabGuardarPendente();
+  uniTrabSoltar();
+}, true);
+
+// Saindo da aba ou fechando: tenta gravar já o que estava esperando o atraso.
+document.addEventListener('visibilitychange', function() {
+  if (document.hidden && _uniTrab.timer) { clearTimeout(_uniTrab.timer); _uniTrab.timer = null; uniTrabEnfileirar(_uniTrab.epoca); }
+});
+
+// trabalhos.js carrega depois deste arquivo: registra quando a página terminar de montar.
+function uniTrabRegistrar() {
+  if (_uniTrab.registrado || !window.Trabalhos) return;
+  _uniTrab.registrado = true;
+  Trabalhos.registrar('unidades', { nome: 'Importação de unidades', painel: 'unidades', restaurar: uniTrabRestaurar });
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', uniTrabRegistrar);
+else setTimeout(uniTrabRegistrar, 0);
