@@ -432,6 +432,8 @@ async function processarDocNormalizar(file) {
     status.style.color = avisos.length ? 'var(--warn,#e0a82e)' : 'var(--success)';
     toast('Normalizado: ' + rows.length + ' linhas' + (avisos.length ? ' (com avisos)' : ''), avisos.length ? 'warn' : 'ok');
     setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
+    // T49: prévia pronta já vai para a pasta Em andamento (unidades.js).
+    if (typeof uniTrabEtapaPronta === 'function') uniTrabEtapaPronta(file.name);
     conferirNormalizadoSuperlogica();
   } catch (e) {
     if (geracao !== _normalizarGeracao) return;
@@ -488,6 +490,8 @@ async function conferirNormalizadoSuperlogica(fresco) {
   }
   validarNormalizado();
   renderPreviewNormalizado();
+  // T49: guarda o resultado da conferência junto da prévia.
+  if (typeof uniTrabAgendar === 'function') uniTrabAgendar(1000);
 }
 
 const _NORM_COR = { erro: 'var(--danger)', duvida: 'var(--warn,#e0a82e)', existe: '#7c5cff', ok: 'var(--success)' };
@@ -593,6 +597,8 @@ function aoEditarCelulaNormalizada(e) {
   // Mexeu no que a conferência usa: o resultado antigo não vale mais para esta linha.
   if ([1, 2, 5, 6, 7].indexOf(c) !== -1 && m && m.conf) { m.conf = null; m.confDesatualizada = true; }
   validarNormalizado();
+  // T49: correção guardada na pasta Em andamento, com atraso para não gravar a cada célula.
+  if (typeof uniTrabAgendar === 'function') uniTrabAgendar(2000);
   // Redesenha depois do clique terminar (senão o clique em ✕, filtro ou botão se perde)
   // e devolve o foco para a célula para onde a pessoa foi (Tab ou clique).
   const destino = e.relatedTarget && e.relatedTarget.dataset && e.relatedTarget.dataset.c != null
@@ -614,6 +620,7 @@ function removerLinhaNormalizada(i) {
   if (!_normalizarRows.length) { descartarNormalizado(); return; }
   validarNormalizado();
   renderPreviewNormalizado();
+  if (typeof uniTrabAgendar === 'function') uniTrabAgendar(1000);
 }
 
 function removerExistentesNormalizado() {
@@ -627,11 +634,13 @@ function removerExistentesNormalizado() {
   validarNormalizado();
   renderPreviewNormalizado();
   toast(n + ' linhas removidas', 'ok');
+  if (typeof uniTrabAgendar === 'function') uniTrabAgendar(1000);
 }
 
 function filtrarNormalizado(v) {
   _normalizarFiltro = v;
   renderPreviewNormalizado();
+  if (typeof uniTrabAgendar === 'function') uniTrabAgendar(1500);
 }
 
 // Para a tela de revisão (unidades.js): situação de cada linha da prévia, na mesma ordem.
@@ -652,6 +661,8 @@ function situacaoLinhasNormalizado() {
 }
 
 function descartarNormalizado() {
+  // T49: grava antes o que faltava; depois do descarte guarda só o que sobrou (ou solta a tela).
+  if (typeof uniTrabGuardarPendente === 'function') uniTrabGuardarPendente();
   _normalizarGeracao++;
   _normalizarRows = null;
   _normalizarMeta = [];
@@ -662,6 +673,58 @@ function descartarNormalizado() {
   document.getElementById('normalizar-status').textContent = '';
   document.getElementById('normalizar-status').style.color = '';
   toast('Descartado', 'ok');
+  if (typeof uniTrabAposDescartar === 'function') uniTrabAposDescartar();
+}
+
+// T49: o que a prévia precisa para voltar igual depois de recarregar (sem o arquivo original).
+// meta por linha: [dúvidas, resultado da conferência, conferência desatualizada].
+function fotoNormalizado() {
+  if (!_normalizarRows || !_normalizarRows.length) return null;
+  const ci = _normalizarConfInfo;
+  return {
+    arquivo: _normalizarSourceName,
+    linhas: _normalizarRows,
+    meta: _normalizarRows.map((_, i) => {
+      const m = _normalizarMeta[i] || {};
+      return [m.duvidas || [], m.conf || null, m.confDesatualizada ? 1 : 0];
+    }),
+    avisos: _normalizarAvisos || [],
+    conferencia: ci && !ci.carregando ? ci : null,
+    filtro: _normalizarFiltro
+  };
+}
+
+// T49: remonta a prévia a partir do que foi guardado (null limpa a prévia sem aviso).
+// Cancela qualquer processamento em curso para a resposta antiga não sobrescrever.
+function restaurarNormalizado(n) {
+  _normalizarGeracao++;
+  const pw = document.getElementById('normalizar-progress-wrap');
+  if (pw) pw.style.display = 'none';
+  const st = document.getElementById('normalizar-status');
+  if (!n || !Array.isArray(n.linhas) || !n.linhas.length) {
+    _normalizarRows = null; _normalizarMeta = []; _normalizarAvisos = []; _normalizarConfInfo = null;
+    _normalizarSourceName = ''; _normalizarFiltro = 'todas';
+    const box = document.getElementById('normalizar-preview');
+    if (box) box.style.display = 'none';
+    if (st) { st.textContent = ''; st.style.color = ''; }
+    return false;
+  }
+  _normalizarRows = n.linhas.map((r) => NORMALIZAR_HEADERS.map((_, k) => (r && r[k] != null ? String(r[k]) : '')));
+  _normalizarMeta = _normalizarRows.map((_, i) => {
+    const m = (Array.isArray(n.meta) && n.meta[i]) || [];
+    return { duvidas: Array.isArray(m[0]) ? m[0].map(String) : [], conf: m[1] && typeof m[1] === 'object' ? m[1] : null, confDesatualizada: !!m[2] };
+  });
+  _normalizarAvisos = Array.isArray(n.avisos) ? n.avisos.map(String) : [];
+  // Resumo da conferência entra no HTML da prévia: só campos conhecidos e com o tipo certo.
+  const cg = n.conferencia && typeof n.conferencia === 'object' ? n.conferencia : null;
+  _normalizarConfInfo = !cg ? null : cg.erro ? { erro: String(cg.erro) }
+    : { idSuperlogica: String(cg.idSuperlogica || ''), nome: String(cg.nome || ''), total: Number(cg.total) || 0, truncado: !!cg.truncado, linhasConferidas: Number(cg.linhasConferidas) || 0 };
+  _normalizarSourceName = String(n.arquivo || '');
+  _normalizarFiltro = ['todas', 'problema', 'duvida', 'existe', 'ok'].indexOf(n.filtro) !== -1 ? n.filtro : 'todas';
+  validarNormalizado();
+  renderPreviewNormalizado();
+  if (st) { st.textContent = '✓ Conferência reaberta: ' + _normalizarRows.length + ' linhas. Revise abaixo.'; st.style.color = 'var(--success)'; }
+  return true;
 }
 
 function baixarPlanilhaNormalizada() {
