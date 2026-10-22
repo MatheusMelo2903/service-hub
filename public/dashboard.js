@@ -95,7 +95,7 @@ async function dashSalvarNovoCondominio() {
 // fica guardado no servidor (tabela alertas). Rota: /api/condominio/:id/alertas.
 // ============================================================
 var alertasEstado = { seq: 0, idCarregado: null };
-var ALERTA_ROTULO = { conta_a_vencer: 'A vencer', saldo_baixo: 'Saldo', recorrente_nao_lancada: 'Recorrente',
+var ALERTA_ROTULO = { mandato_vencendo: 'Mandato', advertencia_vencida: 'Advertência', conta_a_vencer: 'A vencer', saldo_baixo: 'Saldo', recorrente_nao_lancada: 'Recorrente',
   sem_nota_fiscal: 'Sem nota', manutencao_atrasada: 'Manutenção', consumo_fora_padrao: 'Consumo' };
 
 function alertasEsc(s) {

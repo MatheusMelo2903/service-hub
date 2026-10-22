@@ -3578,7 +3578,9 @@ async function calcularTodosAlertas(id, hoje, cfg, forcar) {
     slAlertas.calcularAlertas(cli, id, hoje, cfg),
     slAlertasOper.calcularOperacionais(cli, id, hoje, { forcar: !!forcar, prazos }).catch(() => ({ alertas: [], falhas: ['alertas operacionais'] })),
   ]);
-  return { alertas: a.alertas.concat(o.alertas), falhas: a.falhas.concat(o.falhas), saldo_minimo: a.saldo_minimo };
+  // Regras do condomínio: mandato vencendo e advertência com prazo vencido (servico/regras/alertas-regras.js).
+  const rg = await require('./servico/regras/alertas-regras').gerarAlertasRegras(supabaseAdminRequest, id, hoje).catch(() => ({ alertas: [], falhas: ['regras do condomínio'] }));
+  return { alertas: a.alertas.concat(o.alertas, rg.alertas), falhas: a.falhas.concat(o.falhas, rg.falhas), saldo_minimo: a.saldo_minimo };
 }
 const _cacheAlertas = slModulo.consulta.criarCache(5 * 60 * 1000, 300, 60 * 1000);
 const _verificandoCond = new Set();
@@ -4532,6 +4534,7 @@ const depsRegras = {
 // REGRAS_ROTAS (o orquestrador liga cada frente aqui)
 require('./servico/regras/rotas-consulta').criarRotasConsulta(app, depsRegras);
 require('./servico/regras/rotas-importar').criarRotasImportar(app, depsRegras);
+require('./servico/regras/rotas-ata').criarRotasAta(app, depsRegras);
 
 // ─────────────────────────────────────────────────────────────────────────
 // POST /api/condominio/:id/documentos (T12) — arquiva no Superlógica a ata ou a
