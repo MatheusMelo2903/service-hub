@@ -14,6 +14,9 @@ const PADRAO = {
   medidor: 'claude-sonnet-5-5',            // primeira leitura da foto do medidor (T20)
   medidor_reforco: 'claude-sonnet-5-5',    // releitura da foto marcada (T20)
   entrada_documento: 'claude-sonnet-5-5',  // documento escaneado da entrada de documentos (T33)
+  regras: 'claude-sonnet-5-5',             // consulta, notificação e conferência com base no regimento e na convenção
+  regras_leitura: 'claude-sonnet-5-5',     // leitura de PDF escaneado de convenção, regimento ou ata enviado ao acervo
+  regras_extracao: 'claude-haiku-5-5',     // mandatos e resumo de ata (campos simples)
 };
 
 // Nomes de variável que já existiam antes da T42 (continuam valendo).

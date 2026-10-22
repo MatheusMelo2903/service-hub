@@ -16,7 +16,7 @@ const PRECOS_PADRAO = {
   'claude-opus-4-7': [5, 25, 0.5, 6.25], // [a confirmar] na tabela oficial
 };
 
-const FUNCOES = ['atas', 'comunicados', 'edital', 'medidores', 'unidades', 'prestacao', 'entrada_documentos', 'outros'];
+const FUNCOES = ['atas', 'comunicados', 'edital', 'medidores', 'unidades', 'prestacao', 'entrada_documentos', 'regras', 'outros'];
 const LIMITE_PADRAO_USD = 200;
 const MAX_PENDENTES = 100;      // gravações em voo; acima disso descarta com log (nunca acumula memória)
 const PRAZO_GRAVACAO_MS = 8000;
