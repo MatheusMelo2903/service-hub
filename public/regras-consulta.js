@@ -104,7 +104,7 @@
     var cab = [];
     cab.push('<b>' + esc(TIPOS[f.tipo] || 'Documento') + '</b>');
     if (f.rotulo) cab.push('<b>' + esc(f.rotulo) + '</b>');
-    if (f.documento) cab.push(esc(f.documento));
+    if (f.documento && String(f.documento).toLowerCase() !== String(TIPOS[f.tipo] || '').toLowerCase()) cab.push(esc(f.documento));
     if (f.data) cab.push(esc(dataBR(f.data)));
     if (f.pagina) cab.push('página ' + esc(f.pagina));
     var botao = f.documento_id ? '<button class="btn btn-ghost rc-btn-doc" data-rc-cond="' + esc(idCond) + '" data-rc-doc="' + esc(f.documento_id) + '" data-rc-pag="' + esc(f.pagina || '') + '">Abrir documento</button>' : '';

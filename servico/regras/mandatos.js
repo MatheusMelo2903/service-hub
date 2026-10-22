@@ -152,7 +152,8 @@ async function extrairMandatos(deps, idSL, opts) {
   const content = (regras.length ? 'TRECHOS DA CONVENÇÃO E DO REGIMENTO:\n\n' + trechosParaPrompt(regras) + '\n\n' : '')
     + (dataAta ? 'Data da assembleia: ' + dataAta + '\n\n' : '') + '<ata>\n' + texto.slice(0, MAX_TEXTO) + '\n</ata>';
   const r = await chamarModelo({
-    modelo: modelos.modelo('regras_extracao'), maxTokens: 2000, system: SYSTEM, content, timeoutMs: 120000,
+    // Esforço baixo e folga de saída: com orçamento curto o modelo gastava tudo pensando e voltava vazio.
+    modelo: modelos.modelo('regras_extracao'), maxTokens: 6000, esforco: 'low', system: SYSTEM, content, timeoutMs: 120000,
     rotulo: 'regras_mandatos', usuario: o.usuario || null, condominio: String(idSL), funcao: 'regras',
   });
   if (!r || !r.ok) return { ok: false, erro: (r && r.erro) || 'falha_processamento' };

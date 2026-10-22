@@ -132,7 +132,8 @@ async function main() {
     t('sem hífen nem travessão na carta', !/[-–—]/.test(r.texto), r.texto.match(/.{0,20}[-–—].{0,20}/));
     t('sem < > na carta', !/[<>]/.test(r.texto));
     t('fecho no fim', /Atenciosamente,\n\nA Administração do Victoria Bay$/.test(r.texto), r.texto.slice(-80));
-    t('pedido único ao modelo com trechos', d.pedidos.length === 1 && /<trecho id="11"/.test(d.pedidos[0].content) && d.pedidos[0].funcao === 'regras');
+    const principais = d.pedidos.filter((p) => /<trecho id=/.test(String(p.content)));
+    t('um pedido principal ao modelo com trechos (mais a busca de sinônimos)', principais.length === 1 && /<trecho id="11"/.test(principais[0].content) && principais[0].funcao === 'regras');
   }
 
   // 2. Citação inventada some da carta (e o artigo que o modelo escreveu sem fundamento vira [a confirmar]).
@@ -215,7 +216,7 @@ async function main() {
     t('importado do CondGPT encontrado pelo texto', r.historico.some((h) => h.id === 7 && h.origem === 'condgpt'), r.historico);
     t('linha de outra unidade fica fora', !r.historico.some((h) => h.id === 8));
     t('linha de outro condomínio fica fora', !r.historico.some((h) => h.id === 9));
-    t('histórico vai ao modelo', /Advertência por barulho/.test(d.pedidos[0].content));
+    t('histórico vai ao modelo', d.pedidos.some((p) => /Advertência por barulho/.test(String(p.content))));
     t('grafias da unidade', JSON.stringify(N.grafiasUnidade({ unidade: '101', bloco: 'A' })) === JSON.stringify(['101 A', 'A 101', 'A101', '101A']));
   }
 

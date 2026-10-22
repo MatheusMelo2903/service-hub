@@ -247,7 +247,7 @@ async function resumirAta(deps, texto, ctx) {
   if (t.length < 80) return null;
   try {
     const r = await deps.chamarModelo({
-      modelo: deps.modelos.modelo('regras_extracao'), maxTokens: 1500, system: SYSTEM_RESUMO_ATA,
+      modelo: deps.modelos.modelo('regras_extracao'), maxTokens: 4000, esforco: 'low', system: SYSTEM_RESUMO_ATA,
       content: '=== ATA ===\n' + t.slice(0, 80000) + '\n=== FIM DA ATA ===\n\nEscreva o resumo seguindo o formato.',
       timeoutMs: 120000, rotulo: 'regras_resumo_ata', usuario: (ctx && ctx.usuario) || null, condominio: (ctx && ctx.idSL) || null, funcao: 'regras',
     });
