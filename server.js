@@ -771,7 +771,22 @@ FID 9. FIDELIDADE AO QUE FOI DITO: NÃO REORGANIZAR ENTRE ITENS
 A IA NÃO deve mover, antecipar, repetir nem realocar conteúdo entre os itens de pauta por conta própria para "organizar" a ata. O critério é fidelidade absoluta ao que foi realmente dito na assembleia: se um assunto foi de fato mencionado em mais de um momento da reunião, a ata registra em cada momento onde ele foi dito, mantendo a repetição real. PROIBIDO mover uma menção de um item para outro, duplicar uma menção que ocorreu só uma vez, ou inventar menção que não ocorreu. Exemplo do que é ERRADO: deslocar a frase sobre vagas remanescentes do conselho (dita no Item 4) para dentro do Item 2. Cada fato fica no item em que foi efetivamente tratado.
 
 FID 10. NUNCA OMITIR ITEM, SERVIÇO OU INFORMAÇÃO DA TRANSCRIÇÃO
-É PROIBIDO deixar de fora da ata qualquer item, serviço, valor ou informação que estava na transcrição só porque a palavra veio grafada errada, sem sentido ou difícil de entender. Omitir é violação grave de fidelidade. O procedimento correto quando o termo veio errado: (1) se houver caso mapeado ou correspondência clara no glossário, corrigir para o termo do glossário (FID 8); (2) se NÃO conseguir corrigir com segurança, MANTER o item na lista e marcar o trecho problemático como [termo a confirmar: 'texto original da transcrição'] (FID 7). Em nenhuma hipótese o item some. Exemplo real: "insufuco com varita" (provável insuflamento) deve aparecer na lista de serviços como insuflamento (se o contexto confirmar) ou como [termo a confirmar: 'insufuco com varita']; jamais ser simplesmente removido da ata.`;
+É PROIBIDO deixar de fora da ata qualquer item, serviço, valor ou informação que estava na transcrição só porque a palavra veio grafada errada, sem sentido ou difícil de entender. Omitir é violação grave de fidelidade. O procedimento correto quando o termo veio errado: (1) se houver caso mapeado ou correspondência clara no glossário, corrigir para o termo do glossário (FID 8); (2) se NÃO conseguir corrigir com segurança, MANTER o item na lista e marcar o trecho problemático como [termo a confirmar: 'texto original da transcrição'] (FID 7). Em nenhuma hipótese o item some. Exemplo real: "insufuco com varita" (provável insuflamento) deve aparecer na lista de serviços como insuflamento (se o contexto confirmar) ou como [termo a confirmar: 'insufuco com varita']; jamais ser simplesmente removido da ata.
+
+FID 11. CONVERSA PARALELA, BRINCADEIRA E BASTIDOR NÃO VIRAM FATO
+Comentário paralelo, piada, ironia, conversa sobre a própria redação ou assinatura da ata, conversa de bastidor e frase solta sem relação com a deliberação NÃO entram na ata como fato, proposta ou decisão. Antes de registrar uma frase, confirme que ela faz parte do assunto em debate. Exemplo real: no fim de um item sobre honorário, alguém comentou sobre quem ia assinar a ata ("é 2 para ela e 1 para mim"); isso NÃO é divisão de honorário e NÃO entra na ata. Na dúvida se a frase é parte da deliberação, não registre como decisão.
+
+FID 12. CONTEXTO DO NÚMERO ANTES DE LIGAR A UM CAMPO
+Antes de escrever que um número é o valor de algo (valor atual, valor proposto, saldo, total), confirme na fala que ele se refere exatamente àquilo. Número dito como exemplo, simulação, hipótese, conversão ("três salários mínimos dá hoje uns R$ 4.000"), comparação ou conta de cabeça é registrado COMO foi dito (ex.: "citou, como exemplo, que o valor equivalente hoje seria de pouco mais de R$ 4.000,00"), nunca como o valor atual de outro campo. Exemplo real do que é ERRADO: a fala disse "por exemplo, hoje é de R$ 4.000 e pouco" ao calcular a PROPOSTA de três salários mínimos, e a ata escreveu que o honorário ATUAL era de R$ 4.000,00.
+
+FID 13. CADA ARGUMENTO COM QUEM O DISSE
+Em debate com posições opostas, cada argumento fica com quem o disse. Nunca mover a fala de quem fez uma objeção para o lado de quem defendeu a proposta, nem o contrário. Se não estiver claro quem disse, escreva "foi mencionado que" sem atribuir a um lado.
+
+FID 14. NÚMERO DITO COM CLAREZA NÃO LEVA MARCADOR
+[a confirmar], [valor a confirmar] e semelhantes servem SÓ para dado ambíguo, conflitante, incompleto, inaudível ou ausente. Percentual, valor, quantidade ou data dita de forma clara na fala entra limpo, sem marcador. Exemplo do que é ERRADO: "o salário mínimo teria variado 10% [a confirmar]" quando a fala disse claramente "o salário mínimo foi 10%". Marcador em dado claro polui a ata e esconde os pontos que realmente precisam de conferência.
+
+FID 15. RESULTADO DE CADA ITEM É EXATO
+Distinguir sempre: (a) aprovado (houve votação ou concordância expressa), (b) rejeitado (houve votação e a maioria foi contra), (c) não deliberado ou adiado (o assunto foi discutido mas não houve votação, ou ficou para depois), (d) retirado de pauta. Só escrever "não foi aprovado" ou "rejeitado" quando houve votação contrária. Discussão sem votação vira "não houve deliberação, ficando o assunto adiado" ou a forma que a fala sustentar.`;
 
 // Prompt do segundo passe (auditoria de fidelidade).
 // Roda Sonnet 4.6 sem fallback Opus — auditoria deve ser leve. Se falhar, devolvemos
@@ -827,6 +842,9 @@ REGRAS DE SAÍDA:
 - RECONHEÇA valores ditos de forma INFORMAL na fala e normalize para R$ X.XXX,XX na lacuna: "X mil" / "X mil reais" (ex.: "21 mil" vira R$ 21.000,00), "X reais" / "X conto" (ex.: "quinhentos reais" vira R$ 500,00), valor por extenso ("dois mil e quinhentos" vira R$ 2.500,00, "quatrocentos" vira R$ 400,00), e "R$" antes de informal ("R$ 21 mil" vira R$ 21.000,00). Um valor dito informalmente na fala e AUSENTE da ata É uma lacuna, tanto quanto um valor formal.
 - CUIDADO pra não confundir com NÃO valores: ano ("dois mil e vinte e seis"), quantidade de pessoas, votos, unidades ou parcelas não são valores monetários. Só trate como valor o que a fala apresenta como quantia em dinheiro (reais).
 - Ignore diferenças de estilo, ordem ou redação; aponte só FATO faltando ou número/nome divergente.
+- NÃO aponte como lacuna: conversa paralela, piada, ironia, comentário sobre a redação ou a assinatura da ata, conversa de bastidor ou frase solta fora do assunto em debate.
+- Valor dito como EXEMPLO, simulação, conversão ou conta de cabeça: se apontar, diga isso na lacuna ("citado como exemplo de quanto daria a proposta"), nunca como valor atual ou oficial de algo.
+- Se a ata atribui uma fala ao lado errado do debate (quem defendeu x quem objetou), aponte como divergência.
 - Se ESTE trecho já está integralmente refletido na ata, responda EXATAMENTE: NENHUMA LACUNA`;
 
 const PROMPT_INSERCAO_LACUNAS = `Você recebe uma ATA condominial já redigida e uma LISTA DE LACUNAS (fatos ditos na assembleia que faltaram na ata).
@@ -841,6 +859,8 @@ REGRAS:
 - ANTI-INVENÇÃO ABSOLUTA: insira só o que a lacuna afirma. Se estiver incerto, insira com [a confirmar]. Nunca invente.
 - Fidelidade: sem hífen ou travessão no corpo (exceto endereço, linha de assinatura, título de anexo). NUNCA comente a transcrição, a gravação ou o processo de redação dentro da ata.
 - Se uma "lacuna" já estiver na ata, ignore (não duplique).
+- CONTEXTO DA LACUNA É LEI: valor citado como exemplo, simulação ou conta entra como exemplo ("citou, como exemplo, que..."), nunca como valor atual ou decisão. Lacuna que, ao ler o item, se revelar conversa paralela, piada ou comentário fora do assunto NÃO é inserida.
+- Número dito com clareza entra sem marcador; [a confirmar] só para dado ambíguo ou conflitante.
 - Devolva APENAS a ata completa corrigida, do cabeçalho até a última linha de assinatura. Nada antes, nada depois, sem comentários.`;
 
 // ─── DOCUMENTOS DA ASSEMBLEIA (T01, 2026-10-20) ─────────────────────────────
@@ -885,6 +905,14 @@ DOC 3. O DOCUMENTO NÃO CRIA FATO DA ASSEMBLEIA. Nunca registrar como aprovado, 
 
 DOC 4. DETALHAMENTO PELO DOCUMENTO, SÓ ONDE A FALA TRATOU. Só quando a TRANSCRIÇÃO mostra que um assunto foi apresentado nesta reunião (alguém falando dele) e o documento detalha esse mesmo assunto, a ata pode trazer os números e nomes do documento para ele, na forma literal do documento. Nunca acrescentar número, saldo, total ou rubrica do documento em item onde a fala não tratou daquele assunto. Na dúvida, não use o documento para acrescentar: use só para corrigir a forma do que a fala citou (DOC 2).
 
+DOC 4A. CONDIÇÕES COMPLETAS DO ASSUNTO TRATADO. Quando a fala tratou de uma proposta ou orçamento e o documento traz as condições dele (opções à vista e parcelada, número e valor de parcelas, total de cada opção, valor por unidade ou apartamento, escopo), registrar TODAS as condições do documento para essa proposta, na forma literal, e não só a que foi citada em voz. Isso é detalhar o que foi apresentado na tela, não criar fato: o resultado (aprovação, teto, escolha) continua vindo só da fala.
+
+DOC 4B. NOME COMO ESTÁ NO DOCUMENTO. Empresa, fornecedor ou marca que aparece no documento é escrita na forma completa do documento (ex.: o documento traz "Quality Plus / Italínea", a ata escreve "Quality Plus / Italínea", não só "Quality Plus").
+
+DOC 4C. DATAS E PRAZOS TAMBÉM SEGUEM A DOC 2. Data, prazo, vigência ou fim de mandato que o documento escreve e a fala diz diferente (ex.: documento "30/06/2027", fala "30 de julho de 2027") usa a forma do documento seguida de [conferir: transcrição dizia X].
+
+DOC 4D. MARCADOR UMA VEZ SÓ POR NOME. O [conferir: transcrição dizia X] de um nome de empresa ou pessoa vai SÓ na primeira vez que o nome aparece na ata. Nas menções seguintes, escrever só o nome na forma do documento, sem marcador.
+
 DOC 5. ANTI-INVENÇÃO CONTINUA ABSOLUTA. Dado que não está nem na transcrição nem nos documentos nem no edital vira [a confirmar]. Nunca recalcular, somar ou arredondar número do documento.
 
 DOC 6. IMAGENS DOS SLIDES E PÁGINAS. Trechos marcados [imagem do slide N] ou [imagem da página N] trazem o texto que aparecia DENTRO de uma imagem (print, orçamento escaneado, tabela colada) e valem como documento escrito. Trechos [descrição visual: ...] só descrevem uma foto ou figura: servem de contexto para entender o assunto, NUNCA como fonte de número, nome, empresa ou fato da ata.`;
@@ -912,7 +940,7 @@ NUNCA invente, complete, corrija ou some dado. Trecho ilegível vira [ilegível]
 // Prompt da conferência pré geração: transcrição x documentos. Lista só divergências.
 const PROMPT_CONFERENCIA_DOCS = `Você confere a TRANSCRIÇÃO de uma assembleia de condomínio contra os DOCUMENTOS ESCRITOS apresentados nela (apresentação, prestação de contas, orçamentos, propostas).
 
-Tarefa: listar cada VALOR em reais, NOME DE EMPRESA ou NOME PRÓPRIO citado na transcrição que corresponde claramente a um dado do documento, mas aparece na fala de forma DIFERENTE do documento (número próximo porém diferente, empresa ou pessoa com grafia ou nome ouvido errado).
+Tarefa: listar cada VALOR em reais, NOME DE EMPRESA, NOME PRÓPRIO ou DATA/PRAZO citado na transcrição que corresponde claramente a um dado do documento, mas aparece na fala de forma DIFERENTE do documento (número próximo porém diferente, empresa ou pessoa com grafia ou nome ouvido errado, data ou mês diferente).
 
 REGRAS:
 CONF 1. Uma divergência por linha, no formato exato:
@@ -1104,23 +1132,56 @@ function _ocultarValoresFala(txt, canons) {
 // Regra: o marcador só fica se o dado IMEDIATAMENTE antes dele (valor R$ ou nome capitalizado)
 // existir no texto dos documentos; senão o marcador sai e o dado fica para o gate julgar contra
 // as fontes. O conteúdo é limpo para a forma curta "[conferir: transcrição dizia X]".
+// T45: datas em forma canônica (AAAA-MM-DD) para comparar "30/06/2027" com "30 de junho de 2027".
+const _MESES = { janeiro: 1, fevereiro: 2, marco: 3, março: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
+const _RE_DATA_FIM = /(\d{1,2})(?:º|°)?\s+de\s+([A-Za-zçÇ]+)\s+de\s+(\d{4})\s*$|(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*$/i;
+function datasCanonicas(txt) {
+  const out = new Set();
+  const s = String(txt || '');
+  const add = (d, mes, ano) => {
+    d = Number(d); mes = Number(mes); ano = Number(ano);
+    if (ano < 100) ano += 2000;
+    if (d >= 1 && d <= 31 && mes >= 1 && mes <= 12 && ano >= 1900 && ano <= 2100) out.add(ano + '-' + String(mes).padStart(2, '0') + '-' + String(d).padStart(2, '0'));
+  };
+  for (const m of s.matchAll(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?!\d)/g)) add(m[1], m[2], m[3]);
+  for (const m of s.matchAll(/(\d{1,2})(?:º|°)?\s+de\s+([A-Za-zçÇ]+)\s+de\s+(\d{4})/gi)) {
+    const mes = _MESES[m[2].toLowerCase()];
+    if (mes) add(m[1], mes, m[3]);
+  }
+  return out;
+}
+
 function validarMarcadoresConferir(ataTxt, textoDocs) {
   const s = String(ataTxt);
   const canonDocs = valoresCanonicos(textoDocs || '');
+  const datasDocs = datasCanonicas(textoDocs || '');
   const reMk = /\s*\[conferir:\s*([^\]]*)\]/g;
   const trocas = [];
+  const nomesJaMarcados = new Set(); // T45: marcador de nome só na primeira menção
   let m, mantidos = 0, removidos = 0;
   while ((m = reMk.exec(s))) {
     const antes = s.slice(Math.max(0, m.index - 120), m.index);
     let ancorado = false;
+    let chaveNome = '';
     const mv = antes.match(/R\$\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?\s*$/);
+    const md = mv ? null : antes.match(_RE_DATA_FIM);
     if (mv) {
       const c = [...valoresCanonicos(mv[0])];
       ancorado = c.length === 1 && canonDocs.has(c[0]);
+    } else if (md) {
+      // T45: data ou prazo escrito antes do marcador, na mesma data que o documento traz.
+      const d = [...datasCanonicas(md[0])];
+      ancorado = d.length === 1 && datasDocs.has(d[0]);
     } else {
-      const mn = antes.match(/((?:[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.&]*\s*){1,4})$/);
-      const palavras = mn ? mn[1].trim().split(/\s+/).map((w) => w.replace(/[.,;:]+$/, '')).filter((w) => w.length >= 3 && !_SUFIXOS_NORM.has(_normLoose(w))) : [];
+      // T45: nome com conectivo no meio ("ON Soluções em Engenharia") é lido inteiro.
+      const mn = antes.match(/((?:[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ.&\/]*(?:\s+(?:de|da|do|das|dos|em|e)\s+|\s*)){1,6})$/);
+      const palavras = mn ? mn[1].trim().split(/\s+/).map((w) => w.replace(/[.,;:]+$/, '')).filter((w) => w.length >= 3 && !/^(das|dos)$/i.test(w) && !_SUFIXOS_NORM.has(_normLoose(w))) : [];
       ancorado = palavras.length > 0 && palavras.every((w) => existeLiteral(w, textoDocs || ''));
+      if (ancorado) chaveNome = palavras.map((w) => _normLoose(w)).join(' ');
+    }
+    if (ancorado && chaveNome) {
+      if (nomesJaMarcados.has(chaveNome)) ancorado = false; // repetido: o nome fica, o marcador sai
+      else nomesJaMarcados.add(chaveNome);
     }
     let novo = '';
     if (ancorado) {
@@ -1936,6 +1997,10 @@ const _GATE_NAO_NOME = new Set([
   'presidencia', 'regiao', 'banco', 'prefeitura', 'cartorio', 'justica', 'tribunal', 'estado',
   'municipio', 'governo', 'receita', 'federal', 'previdencia', 'codigo', 'civil', 'convencao',
   'regimento', 'interno', 'artigo', 'lei', 'processo',
+  // T45: instituições e termos jurídicos por extenso (o áudio costuma dizer a sigla: "STF")
+  'supremo', 'superior', 'constituicao', 'sumula', 'vinculante', 'ministerio', 'publico',
+  'nacional', 'republica', 'camara', 'senado', 'policia', 'bombeiros', 'procon', 'defensoria',
+  'decreto', 'inciso', 'paragrafo', 'resolucao', 'portaria', 'norma', 'tecnica', 'brasileira',
   // tipo de assembleia (o usuário informa só a sigla AGO/AGE; a ata escreve por extenso)
   'geral', 'ordinaria', 'extraordinaria', 'reuniao', 'diretoria', 'moradores'
 ].map((s) => _normLoose(s)));
@@ -2516,9 +2581,13 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
       // distintivas do nome). Na ata real a conferência listou variações da PRÓPRIA fala
       // ("DM Mantas" x "ADN Mantas") como se fossem do documento; isso agora é descartado.
       const canonDocsConf = valoresCanonicos(textoDocs);
+      const datasDocsConf = datasCanonicas(textoDocs);
       conferencia = (conferencia ? conferencia.split('\n') : []).filter((l) => {
         const ld = ((l.match(/documento:\s*([^|]*)/i) || [])[1] || '').replace(/["“”']/g, '').trim();
         if (!ld) return false;
+        // T45: linha de data só segue se a data do documento existe de fato no documento.
+        const dd = [...datasCanonicas(ld)];
+        if (dd.length) return dd.every((d) => datasDocsConf.has(d));
         const vd = [...valoresCanonicos('valor ' + ld)];
         if (vd.length) return vd.every((v) => canonDocsConf.has(v));
         const palavras = ld.split(/\s+/).filter((w) => w.length >= 3 && /[A-Za-zÀ-ÿ]/.test(w));
@@ -2605,7 +2674,10 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
         // como lacuna (a ata usa a forma do documento + [conferir: transcrição dizia X]).
         if (canonConferencia.has(mnc.canon)) continue;
         vistos.add(mnc.canon);
-        gapsDet.push('LACUNA (' + fmtBRL(mnc.canon) + '): valor dito na assembleia, confira se entra em algum item — "' + mnc.trecho + '"');
+        // T45: a lacuna automática diz que o valor pode ser só exemplo ou comentário. Antes, todo
+        // valor dito virava "confira se entra em algum item" e a inserção chegou a gravar um valor
+        // de exemplo ("hoje é de R$ 4.000 e pouco") como honorário atual.
+        gapsDet.push('LACUNA (' + fmtBRL(mnc.canon) + '): valor dito na assembleia. Insira SOMENTE se fizer parte de um assunto tratado, no sentido exato da fala (valor real, proposta, exemplo, simulação ou conta); se for exemplo, registre como exemplo; se for comentário paralelo, NÃO insira. Trecho: "' + mnc.trecho + '"');
       }
       numGapsDet = gapsDet.length;
       const gapList = [lacunas, gapsDet.join('\n')].filter(Boolean).join('\n').trim();
