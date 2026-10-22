@@ -4535,6 +4535,7 @@ const depsRegras = {
 require('./servico/regras/rotas-consulta').criarRotasConsulta(app, depsRegras);
 require('./servico/regras/rotas-importar').criarRotasImportar(app, depsRegras);
 require('./servico/regras/rotas-ata').criarRotasAta(app, depsRegras);
+require('./servico/regras/rotas-notificacao').criarRotasNotificacao(app, depsRegras);
 
 // ─────────────────────────────────────────────────────────────────────────
 // POST /api/condominio/:id/documentos (T12) — arquiva no Superlógica a ata ou a
