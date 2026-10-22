@@ -853,12 +853,25 @@ REGRAS:
 const DOCS_APOIO_MAX = 6;                         // documentos por geração
 const DOCS_APOIO_MAX_ESCANEADOS = 3;              // PDFs escaneados lidos pela IA por geração
 const DOCS_APOIO_MAX_PDF_B64 = 11 * 1024 * 1024;  // ~8MB de PDF em base64
-const DOCS_APOIO_MAX_CHARS_DOC = 80000;           // texto por documento (corta e avisa)
-const DOCS_APOIO_MAX_CHARS_TOTAL = 150000;        // texto somado dos documentos
+const DOCS_APOIO_MAX_CHARS_DOC = 120000;          // texto por documento (corta e avisa); T43: apresentação de até 60 slides
+const DOCS_APOIO_MAX_CHARS_TOTAL = 180000;        // texto somado dos documentos
+// T43: imagens dos slides e páginas (fotos, prints de orçamento, tabelas coladas como imagem).
+// O front manda JPEG reduzido; aqui são lidas em blocos paralelos antes da geração.
+const DOCS_APOIO_MAX_IMAGENS_DOC = 90;
+const DOCS_APOIO_MAX_IMAGENS = 160;
+const DOCS_APOIO_MAX_IMG_B64 = 5 * 1024 * 1024;        // por imagem (limite da leitura visual)
+const DOCS_APOIO_MAX_IMGS_B64_TOTAL = 52 * 1024 * 1024; // soma das imagens (rota aceita 64mb)
+const DOCS_APOIO_IMGS_POR_CHAMADA = 12;                // imagens por chamada de leitura
+const DOCS_APOIO_LEITURAS_PARALELAS = 4;               // chamadas de leitura ao mesmo tempo
 // Teto SEPARADO de chamadas de apoio (leitura de escaneado + conferência). Não mexe no teto
 // do motor (MAX_CHAMADAS_ANTHROPIC_POR_ATA) para não roubar orçamento da auditoria.
-// Pior caso: 3 leituras de escaneado + 1 conferência = 4.
+// Pior caso: 3 leituras de escaneado + 1 conferência = 4. T43: soma 1 chamada por bloco de
+// imagens (no máximo 160 / 12 = 14), calculado por geração em tetoApoioDaAta.
 const MAX_CHAMADAS_APOIO_POR_ATA = 4;
+function tetoApoioDaAta(documentos) {
+  const blocos = (documentos || []).reduce((n, d) => n + Math.ceil(((d && d.imagens) || []).length / DOCS_APOIO_IMGS_POR_CHAMADA), 0);
+  return MAX_CHAMADAS_APOIO_POR_ATA + blocos;
+}
 
 const REGRAS_DOCUMENTOS_APOIO = `REGRAS DOS DOCUMENTOS DA ASSEMBLEIA (APRESENTAÇÃO, PRESTAÇÃO DE CONTAS, ORÇAMENTOS, PROPOSTAS)
 
@@ -872,7 +885,9 @@ DOC 3. O DOCUMENTO NÃO CRIA FATO DA ASSEMBLEIA. Nunca registrar como aprovado, 
 
 DOC 4. DETALHAMENTO PELO DOCUMENTO, SÓ ONDE A FALA TRATOU. Só quando a TRANSCRIÇÃO mostra que um assunto foi apresentado nesta reunião (alguém falando dele) e o documento detalha esse mesmo assunto, a ata pode trazer os números e nomes do documento para ele, na forma literal do documento. Nunca acrescentar número, saldo, total ou rubrica do documento em item onde a fala não tratou daquele assunto. Na dúvida, não use o documento para acrescentar: use só para corrigir a forma do que a fala citou (DOC 2).
 
-DOC 5. ANTI-INVENÇÃO CONTINUA ABSOLUTA. Dado que não está nem na transcrição nem nos documentos nem no edital vira [a confirmar]. Nunca recalcular, somar ou arredondar número do documento.`;
+DOC 5. ANTI-INVENÇÃO CONTINUA ABSOLUTA. Dado que não está nem na transcrição nem nos documentos nem no edital vira [a confirmar]. Nunca recalcular, somar ou arredondar número do documento.
+
+DOC 6. IMAGENS DOS SLIDES E PÁGINAS. Trechos marcados [imagem do slide N] ou [imagem da página N] trazem o texto que aparecia DENTRO de uma imagem (print, orçamento escaneado, tabela colada) e valem como documento escrito. Trechos [descrição visual: ...] só descrevem uma foto ou figura: servem de contexto para entender o assunto, NUNCA como fonte de número, nome, empresa ou fato da ata.`;
 
 // Prompt da leitura de PDF escaneado (sem camada de texto). Só transcreve, não interpreta.
 const PROMPT_LEITURA_DOC_ESCANEADO = `Você recebe um PDF escaneado (imagem) de um documento apresentado numa assembleia de condomínio: apresentação, prestação de contas, orçamento ou proposta.
@@ -880,6 +895,19 @@ const PROMPT_LEITURA_DOC_ESCANEADO = `Você recebe um PDF escaneado (imagem) de 
 Tarefa: transcrever o TEXTO do documento, página por página, de forma fiel. Números exatamente como impressos (R$ 1.234,56), nomes de empresas e pessoas exatamente como escritos. Tabelas viram linhas de texto com as colunas separadas por " | ". Comece cada página com "PÁGINA N".
 
 NUNCA invente, complete ou corrija dado. Trecho ilegível vira [ilegível]. Não resuma, não comente, não explique. Devolva só o texto transcrito.`;
+
+// T43: prompt da leitura visual das imagens de slides e páginas. Só transcreve; descrição de foto
+// fica separada e marcada para nunca virar fato da ata (regra DOC 6).
+const PROMPT_LEITURA_IMAGENS_DOC = `Você recebe imagens tiradas de uma apresentação ou documento mostrado numa assembleia de condomínio. Cada imagem vem antes identificada como "IMAGEM k (slide N)" ou "IMAGEM k (página N)", às vezes com o texto já extraído daquele slide ou página para contexto.
+
+Tarefa, para CADA imagem, na ordem:
+1. Transcrever fielmente TODO texto legível que aparece DENTRO da imagem: títulos, tabelas, orçamentos, propostas, prints de tela, planilhas, gráficos (rótulos e valores). Números exatamente como aparecem (R$ 1.234,56), nomes de empresas e pessoas exatamente como escritos. Tabela vira uma linha por linha da tabela, colunas separadas por " | ".
+2. Se a imagem é página inteira e o texto dela já veio no contexto, transcreva mesmo assim só o que estiver em imagem dentro da página ou o que faltar no contexto (tabelas, prints, valores). Não repita o contexto inteiro.
+3. Se a imagem tiver foto ou figura sem texto relevante (obra, equipamento, área comum, problema estrutural), escreva UMA linha curta e objetiva começando por "[descrição visual: " e terminando com "]". Sem opinião, sem supor causa, valor ou marca que não esteja visível.
+4. Logotipos, ícones e enfeites: ignore.
+
+FORMATO OBRIGATÓRIO: comece cada bloco com a linha exata "IMAGEM k:" (k é o número dado) e depois o conteúdo. Imagem sem nada útil: "IMAGEM k: (sem conteúdo relevante)".
+NUNCA invente, complete, corrija ou some dado. Trecho ilegível vira [ilegível]. Não resuma, não comente, não explique.`;
 
 // Prompt da conferência pré geração: transcrição x documentos. Lista só divergências.
 const PROMPT_CONFERENCIA_DOCS = `Você confere a TRANSCRIÇÃO de uma assembleia de condomínio contra os DOCUMENTOS ESCRITOS apresentados nela (apresentação, prestação de contas, orçamentos, propostas).
@@ -902,7 +930,7 @@ function normalizarDocumentosApoio(lista) {
   if (!Array.isArray(lista)) return { docs: [], erro: 'documentos deve ser uma lista' };
   if (lista.length > DOCS_APOIO_MAX) return { docs: [], erro: 'no máximo ' + DOCS_APOIO_MAX + ' documentos por ata' };
   const docs = [];
-  let escaneados = 0;
+  let escaneados = 0, totalImagens = 0, totalImgB64 = 0;
   for (const d of lista) {
     if (!d || typeof d !== 'object') continue;
     const nome = String(d.nome || 'documento.pdf').replace(/[\u0000-\u001f\u007f\[\]]/g, ' ').trim().slice(0, 120) || 'documento.pdf';
@@ -913,10 +941,99 @@ function normalizarDocumentosApoio(lista) {
       if (!/^[A-Za-z0-9+/=\s]+$/.test(b64.slice(0, 2000)) || !/^JVBER/.test(b64.replace(/\s+/g, '').slice(0, 8))) return { docs: [], erro: 'o documento ' + nome + ' não é um PDF válido' };
       if (++escaneados > DOCS_APOIO_MAX_ESCANEADOS) return { docs: [], erro: 'no máximo ' + DOCS_APOIO_MAX_ESCANEADOS + ' PDFs escaneados por ata' };
     }
-    if (!texto.trim() && !b64) continue;
-    docs.push({ nome, texto: texto.slice(0, DOCS_APOIO_MAX_CHARS_DOC), truncado: texto.length > DOCS_APOIO_MAX_CHARS_DOC, pdfBase64: b64 || null, origem: b64 ? 'leitura_ia' : 'texto' });
+    // T43: imagens dos slides ou páginas. Só JPEG, PNG, WEBP ou GIF de verdade (confere a assinatura).
+    const imagens = [];
+    if (d.imagens != null) {
+      if (!Array.isArray(d.imagens)) return { docs: [], erro: 'imagens do documento ' + nome + ' inválidas' };
+      if (d.imagens.length > DOCS_APOIO_MAX_IMAGENS_DOC) return { docs: [], erro: 'o documento ' + nome + ' passa de ' + DOCS_APOIO_MAX_IMAGENS_DOC + ' imagens' };
+      for (const im of d.imagens) {
+        const r = _normalizarImagemDoc(im);
+        if (!r) return { docs: [], erro: 'uma imagem do documento ' + nome + ' é inválida' };
+        totalImagens++; totalImgB64 += r.base64.length;
+        if (totalImagens > DOCS_APOIO_MAX_IMAGENS) return { docs: [], erro: 'no máximo ' + DOCS_APOIO_MAX_IMAGENS + ' imagens somando os documentos' };
+        if (totalImgB64 > DOCS_APOIO_MAX_IMGS_B64_TOTAL) return { docs: [], erro: 'as imagens dos documentos passam do limite de tamanho' };
+        imagens.push(r);
+      }
+    }
+    if (!texto.trim() && !b64 && !imagens.length) continue;
+    docs.push({ nome, tipo: d.tipo === 'pptx' ? 'pptx' : 'pdf', texto: texto.slice(0, DOCS_APOIO_MAX_CHARS_DOC), truncado: texto.length > DOCS_APOIO_MAX_CHARS_DOC, pdfBase64: b64 || null, imagens, origem: b64 ? 'leitura_ia' : (imagens.length ? 'texto_e_imagens' : 'texto') });
   }
   return { docs };
+}
+
+// T43: valida uma imagem vinda do front. Devolve { ref, mime, base64 } ou null.
+const _ASSINATURA_IMG = { 'image/jpeg': /^\/9j\//, 'image/png': /^iVBORw0KGgo/, 'image/webp': /^UklGR/, 'image/gif': /^R0lGOD/ };
+function _normalizarImagemDoc(im) {
+  if (!im || typeof im !== 'object') return null;
+  const mime = String(im.mime || '');
+  const assinatura = _ASSINATURA_IMG[mime];
+  const b64 = typeof im.base64 === 'string' ? im.base64.replace(/\s+/g, '') : '';
+  if (!assinatura || !b64 || b64.length > DOCS_APOIO_MAX_IMG_B64 || !assinatura.test(b64)) return null;
+  if (!/^[A-Za-z0-9+/=]+$/.test(b64.slice(0, 4000))) return null;
+  const ref = String(im.ref || '').replace(/[^0-9A-Za-zÀ-ÿ ,]/g, '').trim().slice(0, 60) || 'imagem';
+  return { ref, mime, base64: b64 };
+}
+
+// T43: lê as imagens de um documento em blocos paralelos e encaixa o resultado no texto, logo
+// depois do slide ou página de onde a imagem veio. Bloco que falha não derruba os outros: só
+// conta em doc.imagensFalharam. Nunca lança.
+async function lerImagensDocumento(doc, chamarApoio) {
+  const imgs = doc.imagens || [];
+  if (!imgs.length) return;
+  // Texto de cada slide ou página para dar contexto à leitura (cortado curto).
+  const trechos = {};
+  String(doc.texto || '').split(/(?=\[(?:slide|página) \d+\])/).forEach((t) => {
+    const m = t.match(/^\[(slide|página) (\d+)\]/);
+    if (m) trechos[m[2]] = t.slice(m[0].length).trim();
+  });
+  const unidade = doc.tipo === 'pptx' ? 'slide' : 'página';
+  const numDe = (ref) => ((String(ref).match(/\d+/) || [])[0] || '');
+  const blocos = [];
+  for (let i = 0; i < imgs.length; i += DOCS_APOIO_IMGS_POR_CHAMADA) blocos.push(imgs.slice(i, i + DOCS_APOIO_IMGS_POR_CHAMADA).map((im, j) => ({ im, k: i + j + 1 })));
+  const lidas = {}; // k -> texto
+  let falhas = 0;
+  const lerBloco = async (bloco) => {
+    const content = [];
+    bloco.forEach(({ im, k }) => {
+      const ctx = trechos[numDe(im.ref)] || '';
+      content.push({ type: 'text', text: 'IMAGEM ' + k + ' (' + im.ref + ')' + (ctx ? '. Texto já extraído deste ' + unidade + ', só para contexto: ' + ctx.slice(0, 700) : '') });
+      content.push({ type: 'image', source: { type: 'base64', media_type: im.mime, data: im.base64 } });
+    });
+    content.push({ type: 'text', text: 'Transcreva cada imagem conforme as regras, no formato "IMAGEM k:".' });
+    try {
+      const r = await chamarApoio(MODELO_DA_ATA, 12000, PROMPT_LEITURA_IMAGENS_DOC, content);
+      if (!r || !r.ok || !r.texto) { falhas += bloco.length; return; }
+      if (r.raw && r.raw.stop_reason === 'max_tokens') doc.truncado = true;
+      const partes = r.texto.split(/^\s*IMAGEM\s+(\d+)\s*:/m);
+      for (let i = 1; i < partes.length; i += 2) lidas[Number(partes[i])] = (partes[i + 1] || '').trim();
+    } catch (e) { falhas += bloco.length; }
+  };
+  // Fila com no máximo N chamadas ao mesmo tempo (evita limite de taxa da leitura).
+  const fila = blocos.slice();
+  await Promise.all(Array.from({ length: Math.min(DOCS_APOIO_LEITURAS_PARALELAS, fila.length) }, async () => {
+    while (fila.length) await lerBloco(fila.shift());
+  }));
+  // Encaixa cada leitura logo depois do slide ou página dela (ou no fim, se não achar).
+  const porNumero = {};
+  imgs.forEach((im, idx) => {
+    const t = lidas[idx + 1];
+    if (!t || /^\(sem conteúdo relevante\)\.?$/i.test(t)) return;
+    const n = numDe(im.ref);
+    (porNumero[n] = porNumero[n] || []).push('[imagem d' + (unidade === 'slide' ? 'o slide ' : 'a página ') + (im.ref.replace(/^\D+/, '')) + '] ' + t);
+  });
+  let texto = String(doc.texto || '');
+  const usados = new Set();
+  texto = texto.split(/(?=\[(?:slide|página) \d+\])/).map((t) => {
+    const m = t.match(/^\[(?:slide|página) (\d+)\]/);
+    if (!m || !porNumero[m[1]]) return t;
+    usados.add(m[1]);
+    return t.replace(/\s*$/, '') + '\n' + porNumero[m[1]].join('\n') + '\n';
+  }).join('');
+  Object.keys(porNumero).filter((n) => !usados.has(n)).forEach((n) => { texto += '\n' + porNumero[n].join('\n'); });
+  doc.texto = texto.slice(0, DOCS_APOIO_MAX_CHARS_DOC);
+  if (texto.length > DOCS_APOIO_MAX_CHARS_DOC) doc.truncado = true;
+  doc.imagensLidas = Object.keys(lidas).length;
+  doc.imagensFalharam = falhas;
 }
 
 // Lê um PDF escaneado mandando o PDF como documento ao Claude. Devolve o texto ou ''.
@@ -2354,9 +2471,10 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
   const fonteGateBase = userMessage + '\n' + CONTEXTO_GRUPO_SERVICE;
   let fonteGate = fonteGateBase;
   let _chamadasApoio = 0;
+  const tetoApoio = tetoApoioDaAta(documentos);
   const chamarApoio = (modelo, maxTokens, sys, msg) => {
-    if (++_chamadasApoio > MAX_CHAMADAS_APOIO_POR_ATA) {
-      throw new Error('TETO_APOIO: teto de ' + MAX_CHAMADAS_APOIO_POR_ATA + ' chamadas de apoio por geração atingido');
+    if (++_chamadasApoio > tetoApoio) {
+      throw new Error('TETO_APOIO: teto de ' + tetoApoio + ' chamadas de apoio por geração atingido');
     }
     const m = trocaModelo(modelo);
     return chamarAnthropicAta(m, maxTokens, sys, msg, false, ctxCusto).then((r) => somarUso(m, r));
@@ -2374,8 +2492,14 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
         } catch (e) { d.falhou = true; }
         d.pdfBase64 = null; // libera memória: o PDF não é mais necessário
       }));
+      // 1b) T43: imagens dos slides e páginas, documento por documento (cada um já lê em paralelo).
+      for (const d of documentos.filter((x) => x.imagens && x.imagens.length)) {
+        await lerImagensDocumento(d, chamarApoio);
+        d.qtdImagens = d.imagens.length;
+        d.imagens = null; // libera memória
+      }
       const { bloco, textoIncluido } = montarBlocoDocumentos(documentos);
-      docsInfo = documentos.map((d) => ({ nome: d.nome, origem: d.origem, caracteres: (d.texto || '').length, truncado: !!d.truncado, falhou: !!d.falhou }));
+      docsInfo = documentos.map((d) => ({ nome: d.nome, origem: d.origem, caracteres: (d.texto || '').length, truncado: !!d.truncado, falhou: !!d.falhou, imagens: d.qtdImagens || 0, imagens_lidas: d.imagensLidas || 0, imagens_falharam: d.imagensFalharam || 0 }));
       if (!bloco) return;
       textoDocs = textoIncluido;
       fonteNomes = transcricaoBase + '\n' + textoDocs;
@@ -2633,8 +2757,8 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
 }
 
 // POST dispara a geração em background e responde JÁ com o jobId (request curto).
-// limit 36mb (T01): até 3 PDFs escaneados de 8MB em base64 (~11MB cada) mais a transcrição.
-app.post('/api/atas/gerar', requireAuth, express.json({ limit: '36mb' }), async (req, res) => {
+// limit 64mb (T01, T43): imagens dos slides e páginas (até ~52MB em base64) mais a transcrição.
+app.post('/api/atas/gerar', requireAuth, express.json({ limit: '64mb' }), async (req, res) => {
   if (!ANTHROPIC_KEY || !ATA_SKILL_MD) { console.error('[ata] gerador sem configuração'); return res.status(503).json({ erro: 'indisponivel', detalhe: 'A geração de atas está indisponível no momento.' }); }
   const b = req.body || {};
   const p = await perfilDe(req);

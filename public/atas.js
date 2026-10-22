@@ -359,43 +359,29 @@ async function extrairTextoPdf(arrayBuffer) {
 }
 
 // ============================================================
-// DOCUMENTOS DA ASSEMBLEIA (T01) — PDFs de apoio da ata
+// DOCUMENTOS DA ASSEMBLEIA (T01, T43) — PDF ou PowerPoint de apoio da ata
 // ============================================================
-// Cada PDF tem o texto extraído aqui no navegador (pdf.js, sem custo). PDF escaneado (sem
-// camada de texto) vai em base64 e o servidor lê com o Claude. O servidor trata o texto destes
-// documentos como fonte oficial prioritária de números, empresas e nomes (ver server.js,
-// REGRAS_DOCUMENTOS_APOIO). Limites espelham os do servidor.
+// PDF: texto de cada página pela camada de texto; páginas com imagem viram foto para leitura
+// visual. PowerPoint (.pptx): lido direto do arquivo, sem converter (ata-leitura-docs.js). O
+// servidor trata o texto destes documentos como fonte oficial prioritária de números, empresas
+// e nomes (ver server.js, REGRAS_DOCUMENTOS_APOIO). Limites espelham os do servidor.
 const ATA_DOCS_MAX = 6;
-const ATA_DOCS_MAX_ESCANEADOS = 3;
-const ATA_DOCS_MAX_BYTES_ESCANEADO = 8 * 1024 * 1024;
-const ATA_DOCS_MAX_CHARS_DOC = 80000;          // igual ao servidor (DOCS_APOIO_MAX_CHARS_DOC)
-const ATA_DOCS_MAX_CORPO = 34 * 1024 * 1024;   // abaixo do limite de 36mb da rota
-let _ataDocsApoio = []; // { id, nome, texto, pdfBase64, paginas, status }
+const ATA_DOCS_MAX_CHARS_DOC = 120000;         // igual ao servidor (DOCS_APOIO_MAX_CHARS_DOC)
+const ATA_DOCS_MAX_CORPO = 62 * 1024 * 1024;   // abaixo do limite de 64mb da rota
+let _ataDocsApoio = []; // { id, nome, texto, imagens, paginas, status, tipo, avisos }
 let _ataDocsSeq = 0;
-let _ataDocsLendo = false; // uma leitura por vez: evita passar do limite de escaneados
+let _ataDocsLendo = false; // uma leitura por vez: o orçamento de imagens é somado em ordem
 
-// Lê um PDF: texto por página e número de páginas. Usa o mesmo loader do pdf.js.
-async function _ataDocLerPdf(arrayBuffer) {
-  const pdfjsLib = await carregarPdfjs();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  let texto = '';
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    texto += '[página ' + i + '] ' + content.items.map(it => it.str).join(' ') + '\n';
-  }
-  return { texto: texto.trim(), paginas: pdf.numPages };
+// Identifica o tipo do arquivo anexado pelo nome e pelo tipo informado pelo navegador.
+function _ataDocTipo(file) {
+  const nome = (file.name || '').toLowerCase();
+  if (file.type === 'application/pdf' || /\.pdf$/.test(nome)) return 'pdf';
+  if (/\.pptx$/.test(nome) || file.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') return 'pptx';
+  if (/\.(ppt|pps|ppsx|key|odp)$/.test(nome)) return 'ppt_antigo';
+  return '';
 }
 
-function _ataDocBase64(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => { const v = String(r.result || ''); const i = v.indexOf(','); resolve(i >= 0 ? v.slice(i + 1) : v); };
-    r.onerror = () => reject(new Error('falha ao ler arquivo'));
-    r.readAsDataURL(file);
-  });
-}
-
+// Lê cada arquivo anexado (PDF ou PowerPoint), um por vez, mostrando o progresso na lista.
 async function anexarDocsAssembleia(event) {
   const input = event && event.target;
   const files = Array.from((input && input.files) || []);
@@ -405,31 +391,30 @@ async function anexarDocsAssembleia(event) {
   try {
   for (const file of files) {
     if (_ataDocsApoio.length >= ATA_DOCS_MAX) { toast('No máximo ' + ATA_DOCS_MAX + ' documentos por ata', 'warn'); break; }
-    const ehPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
-    if (!ehPdf) { toast(file.name + ': use PDF', 'err'); continue; }
-    const doc = { id: ++_ataDocsSeq, nome: file.name, texto: '', pdfBase64: '', paginas: 0, status: 'lendo' };
+    const tipo = _ataDocTipo(file);
+    if (tipo === 'ppt_antigo') { toast(file.name + ': abra no PowerPoint e salve como .pptx ou exporte em PDF', 'err'); continue; }
+    if (!tipo) { toast(file.name + ': use PDF ou PowerPoint (.pptx)', 'err'); continue; }
+    const doc = { id: ++_ataDocsSeq, nome: file.name, texto: '', imagens: [], paginas: 0, status: 'lendo', tipo, progresso: '', avisos: [] };
     _ataDocsApoio.push(doc);
     renderAtaDocs();
+    const orc = ataNovoOrcamento(_ataDocsApoio.filter(d => d.id !== doc.id));
+    const progresso = (txt) => { doc.progresso = txt; renderAtaDocs(); };
     try {
-      const lido = await _ataDocLerPdf(await file.arrayBuffer());
+      const lido = tipo === 'pptx' ? await ataLerPptx(file, orc, progresso) : await ataLerPdfCompleto(await file.arrayBuffer(), orc, progresso);
       doc.paginas = lido.paginas;
-      const util = lido.texto.replace(/\[página \d+\]/g, '').replace(/\s+/g, '');
-      // Escaneado: quase nenhum texto por página. Vai como PDF para o servidor ler.
-      if (util.length < 30 * Math.max(1, lido.paginas)) { // menos de 30 letras por página: sem camada de texto
-        const escaneados = _ataDocsApoio.filter(d => d.pdfBase64).length;
-        if (escaneados >= ATA_DOCS_MAX_ESCANEADOS) throw new Error('no máximo ' + ATA_DOCS_MAX_ESCANEADOS + ' PDFs escaneados por ata');
-        if (file.size > ATA_DOCS_MAX_BYTES_ESCANEADO) throw new Error('PDF escaneado acima de 8MB');
-        doc.pdfBase64 = await _ataDocBase64(file);
-        doc.texto = '';
-        doc.status = 'escaneado';
-      } else {
-        doc.texto = lido.texto.slice(0, ATA_DOCS_MAX_CHARS_DOC);
-        doc.status = 'ok';
-        if (lido.texto.length > ATA_DOCS_MAX_CHARS_DOC) toast(file.name + ': documento longo, só o início será usado', 'warn');
-      }
+      doc.imagens = lido.imagens;
+      doc.texto = lido.texto.slice(0, ATA_DOCS_MAX_CHARS_DOC);
+      if (lido.texto.length > ATA_DOCS_MAX_CHARS_DOC) doc.avisos.push('documento longo, só o início do texto será usado');
+      if (lido.ocultos) doc.avisos.push(lido.ocultos + ' slide(s) oculto(s) ignorado(s)');
+      if (lido.naoSuportadas) doc.avisos.push(lido.naoSuportadas + ' imagem(ns) em formato que só o PDF lê; se tiver tabela colada do Excel, anexe também o PDF exportado');
+      if (orc.descartadas) doc.avisos.push(orc.descartadas + ' imagem(ns) acima do limite ficaram fora');
+      const util = doc.texto.replace(/\[(página|slide) \d+\]/g, '').replace(/\s+/g, '');
+      if (!util && !doc.imagens.length) throw new Error('nenhum conteúdo encontrado no arquivo');
+      doc.status = 'ok';
+      doc.avisos.forEach(a => toast(file.name + ': ' + a, 'warn'));
     } catch (e) {
       _ataDocsApoio = _ataDocsApoio.filter(d => d.id !== doc.id);
-      toast(file.name + ': ' + (e && e.message ? e.message : 'não foi possível ler o PDF'), 'err');
+      toast(file.name + ': ' + (e && e.message ? e.message : 'não foi possível ler o arquivo'), 'err');
     }
     renderAtaDocs();
   }
@@ -437,21 +422,27 @@ async function anexarDocsAssembleia(event) {
 }
 
 function removerDocAssembleia(id) {
+  if (_ataDocsLendo && _ataDocsApoio.some(d => d.id === id && d.status === 'lendo')) { toast('Aguarde terminar a leitura deste arquivo', 'warn'); return; }
   _ataDocsApoio = _ataDocsApoio.filter(d => d.id !== id);
   renderAtaDocs();
 }
 
+// Lista dos documentos anexados com páginas ou slides e quantas imagens vão para leitura.
 function renderAtaDocs() {
   const lista = document.getElementById('ata-docs-lista');
   if (!lista) return;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   lista.innerHTML = _ataDocsApoio.map(d => {
-    let info = 'lendo...';
-    if (d.status === 'ok') info = d.paginas + ' pág. · ' + d.texto.length.toLocaleString('pt-BR') + ' caracteres';
-    if (d.status === 'escaneado') info = d.paginas + ' pág. · escaneado, será lido no servidor ao gerar';
+    const unidade = d.tipo === 'pptx' ? 'slide' : 'pág.';
+    let info = 'lendo' + (d.progresso ? ' ' + d.progresso : '') + '...';
+    if (d.status === 'ok') {
+      info = d.paginas + ' ' + unidade + (d.tipo === 'pptx' && d.paginas !== 1 ? 's' : '') + ' · ' + d.texto.length.toLocaleString('pt-BR') + ' caracteres';
+      if (d.imagens.length) info += ' · ' + d.imagens.length + ' ' + (d.imagens.length > 1 ? 'imagens' : 'imagem') + ' para leitura ao gerar';
+    }
+    const icone = d.tipo === 'pptx' ? '📊' : '📄';
     return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px">' +
-      '<span style="flex:1;font-size:12px;font-family:var(--mono);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ' + esc(d.nome) + '</span>' +
-      '<span style="font-size:11px;font-family:var(--mono);color:' + (d.status === 'escaneado' ? 'var(--warning)' : 'var(--muted)') + '">' + esc(info) + '</span>' +
+      '<span style="flex:1;font-size:12px;font-family:var(--mono);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + icone + ' ' + esc(d.nome) + '</span>' +
+      '<span style="font-size:11px;font-family:var(--mono);color:' + (d.avisos && d.avisos.length ? 'var(--warning)' : 'var(--muted)') + '" title="' + esc((d.avisos || []).join('; ')) + '">' + esc(info) + '</span>' +
       '<button class="pauta-remove" title="Remover" onclick="removerDocAssembleia(' + d.id + ')">×</button></div>';
   }).join('');
 }
@@ -729,12 +720,13 @@ async function gerarAtaIA() {
         transcricao_id: usarTexto ? undefined : (_ataTranscricaoId || undefined),
         transcricao_texto: usarTexto ? trans : undefined,
         id_superlogica: ataCondominioEscolhido(),
-        // T01: documentos da assembleia. Texto extraído aqui; escaneado vai como PDF (base64).
-        documentos: _ataDocsApoio.filter(d => d.status === 'ok' || d.status === 'escaneado').map(d => (
-          d.pdfBase64 ? { nome: d.nome, texto: '', pdf_base64: d.pdfBase64 } : { nome: d.nome, texto: d.texto }
-        ))
+        // T01/T43: documentos da assembleia. Texto extraído aqui; imagens vão para leitura no servidor.
+        documentos: _ataDocsApoio.filter(d => d.status === 'ok').map(d => ({
+          nome: d.nome, tipo: d.tipo, texto: d.texto,
+          imagens: (d.imagens || []).map(im => ({ ref: im.ref, mime: im.mime, base64: im.base64 }))
+        }))
       });
-    if (corpoAta.length > ATA_DOCS_MAX_CORPO) throw new Error('os documentos anexados passam do limite de tamanho; remova algum PDF escaneado');
+    if (corpoAta.length > ATA_DOCS_MAX_CORPO) throw new Error('os documentos anexados passam do limite de tamanho; remova algum arquivo');
     const resp = await apiAuthFetch('/api/atas/gerar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -759,7 +751,7 @@ async function gerarAtaIA() {
     // AbortController de 15s por consulta pra um request pendurado não travar o laço.
     let payload = null;
     let errosSeguidos = 0;
-    const prazoMax = Date.now() + (_ataDocsApoio.some(d => d.pdfBase64) ? 35 : 25) * 60 * 1000;
+    const prazoMax = Date.now() + (_ataDocsApoio.some(d => d.imagens && d.imagens.length) ? 35 : 25) * 60 * 1000;
     for (;;) {
       await new Promise((r) => setTimeout(r, 4000));
       if (Date.now() > prazoMax) throw new Error('tempo esgotado, tente novamente');
@@ -806,6 +798,7 @@ async function gerarAtaIA() {
     if (Array.isArray(payload.documentos)) {
       payload.documentos.filter(d => d.falhou).forEach(d => avisos.push('o documento ' + d.nome + ' não pôde ser lido e ficou fora'));
       payload.documentos.filter(d => d.truncado).forEach(d => avisos.push('o documento ' + d.nome + ' é muito longo e foi usado só em parte'));
+      payload.documentos.filter(d => d.imagens_falharam).forEach(d => avisos.push(d.imagens_falharam + ' imagem(ns) de ' + d.nome + ' não puderam ser lidas'));
     }
     // T07: participantes citados que não bateram com o cadastro (nome e unidade)
     const part = payload.participantes;
