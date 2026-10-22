@@ -791,7 +791,7 @@ FID 15. RESULTADO DE CADA ITEM É EXATO
 Distinguir sempre: (a) aprovado (houve votação ou concordância expressa), (b) rejeitado (houve votação e a maioria foi contra), (c) não deliberado ou adiado (o assunto foi discutido mas não houve votação, ou ficou para depois), (d) retirado de pauta. Só escrever "não foi aprovado" ou "rejeitado" quando houve votação contrária. Discussão sem votação vira "não houve deliberação, ficando o assunto adiado" ou a forma que a fala sustentar. No ENCERRAMENTO E PRÓXIMOS PASSOS, item sem votação aparece como "não deliberado" ou "adiado", nunca na lista do que foi deliberado ou aprovado.
 
 FID 16. PRESENÇA E QUÓRUM SÓ COM CONTAGEM EXPLÍCITA
-Número de presentes, quórum ou número de unidades representadas só entra se a fala fizer a contagem de presentes de forma explícita. Número lido do edital (horário "19 horas", data, artigo de lei) NUNCA vira número de presentes. Sem contagem explícita: "[quórum a confirmar]" ou "conforme lista de presença".
+Número de presentes, quórum ou número de unidades representadas só entra se a fala fizer a contagem de presentes de forma explícita. Número lido do edital (horário "19 horas", data, artigo de lei) NUNCA vira número de presentes. Sem contagem explícita: "[quórum a confirmar]" ou "conforme lista de presença". Isso vale só para presença: o HORÁRIO e a convocação lidos do edital (ex.: "às 19 horas em primeira convocação") entram na abertura normalmente, sem marcador; só use [horário a confirmar] se nenhum horário foi dito.
 
 FID 17. QUEM DISSE O QUÊ
 Atribuir uma fala a uma pessoa (síndica, conselheira, condômino, administradora) só quando o falante estiver claro pela própria fala (se apresenta, é chamado pelo nome, responde a quem perguntou). Pista contrária vale: quem fala da síndica na terceira pessoa ("fica a sabedoria dela") NÃO é a síndica. Sem falante claro, escrever "foi mencionado que" ou "um condômino observou que". Sugestão relevante dita no debate (ex.: consultar a empresa atual sobre contrato com peças incluídas) é registrada com quem a fez, se claro.`;
@@ -1031,6 +1031,8 @@ DOC 4C. DATAS E PRAZOS TAMBÉM SEGUEM A DOC 2. Data, prazo, vigência ou fim de 
 
 DOC 4D. MARCADOR UMA VEZ SÓ POR NOME. O [conferir: transcrição dizia X] de um nome de empresa ou pessoa vai SÓ na primeira vez que o nome aparece na ata. Nas menções seguintes, escrever só o nome na forma do documento, sem marcador.
 
+DOC 4E. VALOR ARREDONDADO DO DOCUMENTO NÃO É PROPOSTA NOVA. Quando a fala cita de forma arredondada um valor que o documento traz (total, parcela ou entrada), é o MESMO dado do documento, não um orçamento, opção ou empresa a mais. Exemplo: o documento traz "2 parcelas de R$ 12.480,00" e alguém diz "tem um outro de 12 mil": é a parcela da proposta já registrada, não um terceiro orçamento. Só registre orçamento a mais quando a fala disser de quem é ou quanto custa de forma separada. Palavra sem sentido da transcrição (som mal transcrito que não é nome de pessoa, empresa nem termo do assunto) fica fora da ata, nem com marcador.
+
 DOC 5. ANTI-INVENÇÃO CONTINUA ABSOLUTA. Dado que não está nem na transcrição nem nos documentos nem no edital vira [a confirmar]. Nunca recalcular, somar ou arredondar número do documento.
 
 DOC 6. IMAGENS DOS SLIDES E PÁGINAS. Trechos marcados [imagem do slide N] ou [imagem da página N] trazem o texto que aparecia DENTRO de uma imagem (print, orçamento escaneado, tabela colada) e valem como documento escrito. Trechos [descrição visual: ...] só descrevem uma foto ou figura: servem de contexto para entender o assunto, NUNCA como fonte de número, nome, empresa ou fato da ata.`;
@@ -1252,7 +1254,8 @@ function _ocultarValoresFala(txt, canons) {
 // as fontes. O conteúdo é limpo para a forma curta "[conferir: transcrição dizia X]".
 // T45: datas em forma canônica (AAAA-MM-DD) para comparar "30/06/2027" com "30 de junho de 2027".
 const _MESES = { janeiro: 1, fevereiro: 2, marco: 3, março: 3, abril: 4, maio: 5, junho: 6, julho: 7, agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12 };
-const _RE_DATA_FIM = /(\d{1,2})(?:º|°)?\s+de\s+([A-Za-zçÇ]+)\s+de\s+(\d{4})\s*$|(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*$/i;
+// T48: aceita também a data por extenso da ata, "trinta (30) de junho de dois mil e vinte e sete (2027)".
+const _RE_DATA_FIM = /(\d{1,2})(?:º|°)?\s+de\s+([A-Za-zçÇ]+)\s+de\s+(\d{4})\s*$|(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*$|\((\d{1,2})\)\s+de\s+([A-Za-zçÇ]+)\s+de\s+[A-Za-zÀ-ÿ\s]+\((\d{4})\)\s*$/i;
 function datasCanonicas(txt) {
   const out = new Set();
   const s = String(txt || '');
@@ -1263,6 +1266,10 @@ function datasCanonicas(txt) {
   };
   for (const m of s.matchAll(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?!\d)/g)) add(m[1], m[2], m[3]);
   for (const m of s.matchAll(/(\d{1,2})(?:º|°)?\s+de\s+([A-Za-zçÇ]+)\s+de\s+(\d{4})/gi)) {
+    const mes = _MESES[m[2].toLowerCase()];
+    if (mes) add(m[1], mes, m[3]);
+  }
+  for (const m of s.matchAll(/\((\d{1,2})\)\s+de\s+([A-Za-zçÇ]+)\s+de\s+[A-Za-zÀ-ÿ\s]+?\((\d{4})\)/gi)) {
     const mes = _MESES[m[2].toLowerCase()];
     if (mes) add(m[1], mes, m[3]);
   }

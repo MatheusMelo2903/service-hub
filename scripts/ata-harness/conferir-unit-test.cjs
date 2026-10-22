@@ -47,5 +47,12 @@ check('conta errada do gerador volta ao que foi dito, com [valor a confirmar]', 
 r = validarMarcadoresConferir('cobrança de R$ 107.000,00 [conferir: transcrição dizia 107 mil].', DOC2);
 check('forma formal do mesmo valor perde só o marcador', r.removidos === 1 && /R\$ 107\.000,00\./.test(r.ata), r.ata);
 
+// T48: data por extenso, no formato padrão da ata
+r = validarMarcadoresConferir('mandato complementar até trinta (30) de junho de dois mil e vinte e sete (2027) [conferir: transcrição dizia 30 de julho de 2027].', DOC2);
+check('data por extenso igual à do documento mantém o marcador', r.mantidos === 1 && /\(2027\) \[conferir: transcrição dizia 30 de julho de 2027\]/.test(r.ata), r.ata);
+
+r = validarMarcadoresConferir('mandato até trinta (30) de julho de dois mil e vinte e sete (2027) [conferir: transcrição dizia 30 de julho].', DOC2);
+check('data por extenso fora do documento perde o marcador', r.removidos === 1 && !/conferir/.test(r.ata), r.ata);
+
 console.log('\n===== RESULTADO: ' + ok + ' PASS, ' + fail + ' FAIL =====');
 process.exit(fail ? 1 : 0);
