@@ -54,3 +54,6 @@ Automático com PDF oficial: só municipal de Vitória. Manual: federal (hCaptch
 No dev (deploy b19fb9d3): servidor, busca, tela e alertas. Migração 022 aplicada no teste.
 Testado no dev: GET /api/certidoes em Casablanca (Serra, 0 automáticas) e em 4 condomínios de Vitória (municipal automática); busca automática de Vitória pelo servidor em nuvem deu certo (Edifício Splendor, negativa, validade 21/12/2026, 10 s). Painel abre na Prestação com o CNPJ e as 6 linhas.
 Falta: decisão do Matheus sobre a Falência (PDF montado pelo Hub a partir da página oficial do TJES); teste completo de ponta a ponta com PDFs reais (arrastar, gerar, aguardando, baixar tudo); produção junto com as migrações 007 a 022.
+
+## Falência (TJES) automática (22/10/2026 20:50)
+Implementada (PDF montado pelo Hub a partir da página oficial, sem biblioteca e sem custo), testada do Mac (emitiu a do Casablanca). Do servidor em nuvem o TJES responde 403 na primeira etapa: bloqueio por IP de servidor. Não contornamos: desligada por padrão; CERTIDOES_TJES_AUTOMATICO=1 religa. Automática hoje: só municipal de Vitória (funciona do servidor em nuvem).

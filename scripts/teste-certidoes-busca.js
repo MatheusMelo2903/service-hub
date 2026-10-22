@@ -3,6 +3,9 @@
 // com ViewState, chave e CNPJ trocados por valores fictícios.
 // Confere: links, tipos manuais (sem tocar na rede), leitura dos campos ocultos do ASP.NET,
 // montagem de cada requisição, cookies, PDF oficial, desvio para verificação de robô e fila.
+// T50: a Falência automática fica desligada por padrão (o TJES recusa o servidor em nuvem);
+// o teste liga a variável antes de carregar o módulo para cobrir o fluxo inteiro.
+process.env.CERTIDOES_TJES_AUTOMATICO = '1';
 const busca = require('../servico/certidoes-busca');
 const { _interno } = busca;
 

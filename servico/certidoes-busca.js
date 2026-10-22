@@ -29,7 +29,11 @@ const MAX_REDIRECIONAMENTOS = 3;
 // Tipos com pelo menos um caminho automático de verdade. 'municipal' só é automático
 // para Vitória; use ehAutomatica(tipo, cidade) quando a cidade importar.
 // 'falencia' vale para qualquer cidade (o TJES atende o estado todo).
-const TIPOS_AUTOMATICOS = new Set(['municipal', 'falencia']);
+// Falência (TJES): o fluxo funciona de IP comum, mas o TJES recusa (403) pedidos que saem do
+// servidor em nuvem (testado no dev em 22/10/2026). Não contornamos bloqueio: fica manual, e
+// CERTIDOES_TJES_AUTOMATICO=1 religa se o servidor passar a ter acesso.
+const TJES_AUTO = process.env.CERTIDOES_TJES_AUTOMATICO === '1';
+const TIPOS_AUTOMATICOS = new Set(TJES_AUTO ? ['municipal', 'falencia'] : ['municipal']);
 const CIDADES_AUTOMATICAS = new Set(['vitoria']);
 
 const LINKS = {
@@ -85,7 +89,7 @@ function limparCnpj(cnpj) {
 }
 
 function ehAutomatica(tipo, cidade) {
-  if (tipo === 'falencia') return true;
+  if (tipo === 'falencia') return TJES_AUTO;
   if (tipo !== 'municipal') return false;
   return CIDADES_AUTOMATICAS.has(normalizarCidade(cidade));
 }
@@ -563,6 +567,8 @@ async function buscar(tipo, { cnpj, nome, cidade } = {}, opcoes = {}) {
     throw erro('manual', 'Tipo de certidão desconhecido: ' + tipo + '.');
   } else if (tipo !== 'falencia') {
     throw erro('manual', MOTIVO_MANUAL[tipo]);
+  } else if (!TJES_AUTO && !opcoes.fetch) {
+    throw erro('manual', 'O TJES recusa pedidos do servidor em nuvem. Emita pelo botão Emitir.');
   }
 
   const doc = limparCnpj(cnpj);
