@@ -96,7 +96,7 @@ async function dashSalvarNovoCondominio() {
 // ============================================================
 var alertasEstado = { seq: 0, idCarregado: null };
 var ALERTA_ROTULO = { mandato_vencendo: 'Mandato', advertencia_vencida: 'Advertência', conta_a_vencer: 'A vencer', saldo_baixo: 'Saldo', recorrente_nao_lancada: 'Recorrente',
-  sem_nota_fiscal: 'Sem nota', manutencao_atrasada: 'Manutenção', consumo_fora_padrao: 'Consumo' };
+  sem_nota_fiscal: 'Sem nota', manutencao_atrasada: 'Manutenção', consumo_fora_padrao: 'Consumo', certidao_vencendo: 'Certidão', certidao_vencida: 'Certidão' };
 
 function alertasEsc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');

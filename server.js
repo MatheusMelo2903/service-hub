@@ -3997,7 +3997,9 @@ async function calcularTodosAlertas(id, hoje, cfg, forcar) {
   ]);
   // Regras do condomínio: mandato vencendo e advertência com prazo vencido (servico/regras/alertas-regras.js).
   const rg = await require('./servico/regras/alertas-regras').gerarAlertasRegras(supabaseAdminRequest, id, hoje).catch(() => ({ alertas: [], falhas: ['regras do condomínio'] }));
-  return { alertas: a.alertas.concat(o.alertas, rg.alertas), falhas: a.falhas.concat(o.falhas, rg.falhas), saldo_minimo: a.saldo_minimo };
+  // T50: certidão guardada vencendo em até 15 dias ou vencida (servico/certidoes.js).
+  const ct = await require('./servico/certidoes').gerarAlertasCertidoes(supabaseAdminRequest, id, hoje).catch(() => ({ alertas: [], falhas: ['certidões'] }));
+  return { alertas: a.alertas.concat(o.alertas, rg.alertas, ct.alertas), falhas: a.falhas.concat(o.falhas, rg.falhas, ct.falhas), saldo_minimo: a.saldo_minimo };
 }
 const _cacheAlertas = slModulo.consulta.criarCache(5 * 60 * 1000, 300, 60 * 1000);
 const _verificandoCond = new Set();
@@ -5631,6 +5633,14 @@ app.post('/api/previsao/gerar-pdf',
     console.error('[previsao/gerar-pdf] erro inesperado:', e.message);
     return res.status(500).json({ erro: 'erro_interno' });
   }
+});
+
+// T50: certidões negativas do condomínio (Prestação de Contas). Detalhes em servico/certidoes.js.
+// app.param('idSuperlogica') já confere a carteira; cada rota confere a leitura do Superlógica.
+require('./servico/certidoes').criarRotasCertidoes(app, {
+  requireAuth, express, banco: supabaseAdminRequest, exigirLeituraSuperlogica,
+  storageUpload: supabaseStorageUpload, storageSignedUrl: supabaseStorageSignedUrl, storageDelete: supabaseStorageDelete,
+  buscarCadastro: (id) => slModulo.buscarCadastro(clienteSL(), id),
 });
 
 // T49: trabalhos em andamento (pastinha). Detalhes em servico/trabalhos.js.
