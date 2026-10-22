@@ -1047,6 +1047,9 @@
     <div class="nav-item" id="nav-comunicados" style="display:none" onclick="showPanel('comunicados')">
       <span class="nav-icon">✉</span> Comunicados e Multas
     </div>
+    <div class="nav-item" id="nav-regras" style="display:none" onclick="showPanel('regras')">
+      <span class="nav-icon">§</span> Regras do Condomínio
+    </div>
     <div class="nav-item" onclick="showPanel('cobranca')">
       <span class="nav-icon">$</span> Cobrança
     </div>
@@ -1760,6 +1763,23 @@
     </div>
 
     <!-- FICHA DO CONDOMÍNIO (T04): consulta só de leitura, JS em public/condominio.js -->
+    <!-- REGRAS DO CONDOMÍNIO (substitui o CondGPT): cada parte monta a própria tela no seu contêiner.
+         JS: regras.js (abas), regras-consulta.js, regras-notificacao.js, regras-acervo.js, regras-ata.js, regras-importar.js -->
+    <div class="panel" id="panel-regras">
+      <div class="tabs" style="margin-bottom:12px">
+        <div class="tab active" id="regras-tab-consulta" onclick="regrasAba('consulta')">Consultar regras</div>
+        <div class="tab" id="regras-tab-notificacao" onclick="regrasAba('notificacao')">Notificações e multas</div>
+        <div class="tab" id="regras-tab-acervo" onclick="regrasAba('acervo')">Documentos</div>
+        <div class="tab" id="regras-tab-mandatos" onclick="regrasAba('mandatos')">Mandatos</div>
+        <div class="tab" id="regras-tab-importar" style="display:none" onclick="regrasAba('importar')">Importar do sistema antigo</div>
+      </div>
+      <div id="regras-consulta" class="regras-parte"></div>
+      <div id="regras-notificacao" class="regras-parte" style="display:none"></div>
+      <div id="regras-acervo" class="regras-parte" style="display:none"></div>
+      <div id="regras-mandatos" class="regras-parte" style="display:none"></div>
+      <div id="regras-importar" class="regras-parte" style="display:none"></div>
+    </div>
+
     <!-- T10: comunicados e multas (grava no Superlógica só com confirmação; só GESTOR e GERENTE) -->
     <div class="panel" id="panel-comunicados">
       <div class="card">
@@ -2690,6 +2710,7 @@ const PAGE_META = {
   consumo:       { title: 'Leitura de Consumo', sub: 'fotos de medidores → Superlógica' },
   condominio:    { title: 'Ficha do Condomínio', sub: 'consulta ao Superlógica, só leitura' },
   comunicados:   { title: 'Comunicados e Multas', sub: 'grava no Superlógica só com confirmação' },
+  regras:        { title: 'Regras do Condomínio', sub: 'convenção, regimento, atas e notificações' },
   cobranca:      { title: 'Cobrança', sub: 'inadimplência por carteira, acordo e 2ª via' },
   comparativo:   { title: 'Comparativo', sub: 'custo por unidade e fornecedores entre condomínios' },
   seguranca:     { title: 'Segurança', sub: 'uso do sistema por pessoa' },
@@ -2701,7 +2722,8 @@ var PAINEL_MODULOS = {
   fincontrole: ['financeiro'],
   boletos:     ['boletos', 'financeiro'],
   conciliacao: ['conciliacao', 'financeiro'],
-  entrada:     ['entrada_documentos']
+  entrada:     ['entrada_documentos'],
+  regras:      ['regras']
 };
 // Nomes antigos de tela (guardados no navegador) que mudaram de lugar.
 var PAINEL_ALIAS = { financeiro: 'conciliacao', nf: 'entrada' };
@@ -3773,6 +3795,7 @@ const MODULOS_CATALOGO = {
   conciliacao:        { label: 'Conciliação (precisa também do Financeiro)', acoes: ['ver'] },
   prestacao_contas:   { label: 'Prestação de Contas', acoes: ['ver', 'gerar', 'ajustar_estrutura'] },
   atas:               { label: 'Atas Condominiais',   acoes: ['ver', 'gerar', 'edital', 'transcricao_livre'] },
+  regras:             { label: 'Regras do Condomínio', acoes: ['ver', 'consultar', 'notificar', 'gerenciar'] },
   leitura_consumo:    { label: 'Leitura de Consumo',  acoes: ['ver', 'ler'] },
   tarefas:            { label: 'Tarefas',             acoes: ['ver'] },
   configuracoes:      { label: 'Configurações',       acoes: ['ver', 'editar', 'convidar', 'ver_chaves', 'ver_auditoria'] }
@@ -4177,6 +4200,12 @@ async function deletarUsuario(userId, email) {
 <script src="/ata-leitura-docs.js"></script>
 <script src="/atas.js"></script>
 <script src="/comunicados.js"></script>
+<script src="/regras.js"></script>
+<script src="/regras-consulta.js"></script>
+<script src="/regras-importar.js"></script>
+<script src="/regras-ata.js"></script>
+<script src="/regras-notificacao.js"></script>
+<script src="/regras-acervo.js"></script>
 <script src="/relatorio.js"></script>
 <script src="/financeiro.js"></script>
 <script src="/financeiro-fechamento.js"></script>

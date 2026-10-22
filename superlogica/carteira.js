@@ -65,6 +65,9 @@ const REGRAS = [
   { re: /^\/despesas\/verificar\/?$/i, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '1mb' } },
   { re: /^\/comunicados\/publicar\/?$/i, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '100kb' } },
   { re: /^\/multas\/registrar\/?$/i, metodo: 'POST', corpo: { campo: 'id_superlogica', limite: '100kb' } },
+  // Regras do condomínio: a conferência da ata só exige a carteira (o módulo é o de Atas, conferido na rota).
+  { re: /^\/regras\/([^/]+)\/(conferir-ata|conferencias-ata)\/?$/i },
+  { re: /^\/regras\/(\d+)(\/|$)/i, modulo: 'regras' },
 ];
 // Caminho decodificado pedaço a pedaço. null = codificação inválida ou pedaço com barra
 // codificada (%2F), que não é caminho de rota nenhuma (quem chama responde 400).

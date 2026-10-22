@@ -888,6 +888,12 @@ async function gerarAtaIA() {
     const escHtml = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     document.getElementById('ata-gerada-conteudo').innerHTML = renderAtaBlocos(texto, escHtml);
     document.getElementById('ata-gerada-modal').style.display = 'flex';
+    // Regras: conferência com a convenção em segundo plano, num cartão à parte (regras-ata.js).
+    // Só lê a ata pronta; erro lá nunca chega aqui.
+    try {
+      if (typeof window.regrasConferirAta === 'function') window.regrasConferirAta({ idSuperlogica: ataCondominioEscolhido(), textoAta: texto,
+        editalTexto: editaisAnexos.map(function (e) { return e.texto; }).join('\n\n'), transcricaoId: _ataTranscricaoId || null });
+    } catch (eRegras) { /* a conferência é só um extra */ }
     // avisos não bloqueantes da validação (ex.: revisar assinaturas). A ata foi entregue.
     const avisos = Array.isArray(payload.avisos) ? payload.avisos.slice() : [];
     // T01: divergências áudio x documento e trechos sem âncora marcados na ata.
@@ -943,6 +949,8 @@ function abrirArquivarAta() {
   const textoNaHora = _ataTextoGerado;
   ArquivarSL.mostrar('ata-arquivar', {
     tipo: 'ata',
+    // Regras do condomínio: a ata arquivada também entra no acervo do Hub (texto como foi gerado).
+    extra: { texto_ata: textoNaHora, data_ata: data },
     titulo: ('ATA ASSEMBLEIA ' + tipo + ' ' + dataTitulo).replace(/\s+/g, ' ').trim(),
     idSuperlogica: cond && cond.id_superlogica,
     nomeCond: (cond && cond.nome) || (document.getElementById('ata-cond') || {}).value || '',

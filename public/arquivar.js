@@ -55,7 +55,7 @@
       var resp = await apiAuthFetch('/api/condominio/' + encodeURIComponent(o.idSuperlogica) + '/documentos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tipo: o.tipo, titulo: titulo, pdf_base64: b64, forcar: !!forcar })
+        body: JSON.stringify(Object.assign({}, o.extra || {}, { tipo: o.tipo, titulo: titulo, pdf_base64: b64, forcar: !!forcar }))
       });
       var j = await resp.json().catch(function () { return {}; });
       if (resp.status === 409) {

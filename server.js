@@ -3074,6 +3074,13 @@ async function supabaseStorageSignedUrl(bucket, objectPath, expiresIn = 600) {
   return SUPABASE_URL.replace(/\/$/, '') + '/storage/v1' + rel;
 }
 
+// Apaga um objeto do Storage (acervo de regras: documento apagado pela tela). 404 conta como apagado.
+async function supabaseStorageDelete(bucket, objectPath) {
+  const r = await supabaseAdminRequest('DELETE', `/storage/v1/object/${bucket}/${objectPath}`);
+  if (r.status >= 400 && r.status !== 404) throw new Error('storage_delete_status_' + r.status);
+  return true;
+}
+
 // POST /api/admin/usuarios/convidar
 // Body: { email, role: 'GERENTE'|'OPERACIONAL', nome? }
 // Envia magic link de convite via GoTrue. O profile é criado automaticamente pelo
@@ -3711,7 +3718,9 @@ async function calcularTodosAlertas(id, hoje, cfg, forcar) {
     slAlertas.calcularAlertas(cli, id, hoje, cfg),
     slAlertasOper.calcularOperacionais(cli, id, hoje, { forcar: !!forcar, prazos }).catch(() => ({ alertas: [], falhas: ['alertas operacionais'] })),
   ]);
-  return { alertas: a.alertas.concat(o.alertas), falhas: a.falhas.concat(o.falhas), saldo_minimo: a.saldo_minimo };
+  // Regras do condomínio: mandato vencendo e advertência com prazo vencido (servico/regras/alertas-regras.js).
+  const rg = await require('./servico/regras/alertas-regras').gerarAlertasRegras(supabaseAdminRequest, id, hoje).catch(() => ({ alertas: [], falhas: ['regras do condomínio'] }));
+  return { alertas: a.alertas.concat(o.alertas, rg.alertas), falhas: a.falhas.concat(o.falhas, rg.falhas), saldo_minimo: a.saldo_minimo };
 }
 const _cacheAlertas = slModulo.consulta.criarCache(5 * 60 * 1000, 300, 60 * 1000);
 const _verificandoCond = new Set();
@@ -4650,6 +4659,26 @@ app.post('/api/multas/registrar', requireAuth, express.json({ limit: '100kb' }),
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// Regras do condomínio (substitui o CondGPT): acervo de convenção, regimento e atas, consulta
+// com citação conferida, notificação e multa com histórico, conferência da ata (só aviso),
+// mandatos e importação do acervo antigo. Rotas em servico/regras/rotas-*.js, contrato em
+// tarefas/em-andamento/regras-condominio.md. Todas as dependências passam por aqui.
+// ─────────────────────────────────────────────────────────────────────────
+const depsRegras = {
+  requireAuth, express, banco: supabaseAdminRequest, perfilDe, podeModulo, temAcao, exigirCarteira: _exigirCarteira,
+  carteiraT18, exigirLeituraSuperlogica, exigirEscritaSuperlogica, superlogicaNativa, clienteSL, credSL: _credSL, auditoria,
+  dentroDoLimite, chamarModelo: require('./servico/modelo').chamarModelo, modelos,
+  storageUpload: supabaseStorageUpload, storageSignedUrl: supabaseStorageSignedUrl, storageDelete: supabaseStorageDelete,
+  slComunicados, slModulo, buscarCadastro: (id) => slModulo.buscarCadastro(clienteSL(), id),
+};
+// REGRAS_ROTAS (o orquestrador liga cada frente aqui)
+require('./servico/regras/rotas-consulta').criarRotasConsulta(app, depsRegras);
+require('./servico/regras/rotas-importar').criarRotasImportar(app, depsRegras);
+require('./servico/regras/rotas-ata').criarRotasAta(app, depsRegras);
+require('./servico/regras/rotas-notificacao').criarRotasNotificacao(app, depsRegras);
+require('./servico/regras/rotas-acervo').criarRotasAcervo(app, depsRegras);
+
+// ─────────────────────────────────────────────────────────────────────────
 // POST /api/condominio/:id/documentos (T12) — arquiva no Superlógica a ata ou a
 // prestação de contas gerada no Hub (documentos do condomínio, sem publicar para os
 // condôminos). Body JSON: { tipo: 'ata'|'prestacao', titulo, pdf_base64, forcar? }.
@@ -4698,6 +4727,13 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
   const r = await D.enviarDocumento({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }, id, titulo, buf);
   console.log('[documentos] ' + (req.user && req.user.email ? req.user.email : req.authMode) + ' arquivou ' + b.tipo + ' no condomínio ' + id + ': ' + (r.ok ? 'ok id ' + r.id : 'falhou ' + r.status + ' formato ' + r.formato));
   if (!r.ok) return res.status(502).json({ erro: 'falha_envio', detalhe: 'O Superlógica não confirmou o recebimento do documento' + (r.msg ? ': ' + r.msg : '.') + ' Confira nos documentos do condomínio antes de tentar de novo.' });
+  // Regras do condomínio: a ata arquivada entra também no acervo do Hub (consulta, mandatos,
+  // conferência). Em segundo plano; falha aqui nunca muda a resposta do arquivamento.
+  if (b.tipo === 'ata' && typeof b.texto_ata === 'string' && b.texto_ata.trim().length >= 200 && b.texto_ata.length <= 2000000) {
+    const dm = String(b.data_ata || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    require('./servico/regras/acervo').arquivarAtaNoAcervo(depsRegras, { idSL: id, titulo, data_documento: dm ? dm[3] + '-' + dm[2] + '-' + dm[1] : null,
+      pdfBuffer: buf, texto: b.texto_ata, criado_por: (req.user && req.user.sub) || null }).catch(() => {});
+  }
   res.json({ ok: true, titulo, id_superlogica: Number(id), id_documento: r.id || null, publicado: r.publicado == null ? null : !['', '0'].includes(r.publicado) });
 });
 
