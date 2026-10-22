@@ -201,7 +201,7 @@ function blocoExemplo() {
   });
 
   await teste('ata gerada no CondGPT só entra se não houver ata na mesma data', () => {
-    const geradas = F.tabelas.regras_documentos.filter((d) => /ata gerada no CondGPT/.test(d.observacao || ''));
+    const geradas = F.tabelas.regras_documentos.filter((d) => /ata gerada no sistema antigo/.test(d.observacao || ''));
     assert.strictEqual(geradas.length, 1);
     assert.strictEqual(geradas[0].data_documento, '2025-03-05');
     assert.strictEqual(r1.atas_geradas.mesma_data, 1);
@@ -215,7 +215,7 @@ function blocoExemplo() {
     const velha = regs.find((d) => /22h/.test(d.texto));
     assert.strictEqual(nova.vigente, true);
     assert.strictEqual(velha.vigente, false);
-    regs.forEach((d) => assert.ok(/duas versões no CondGPT, conferir qual vale/.test(d.observacao)));
+    regs.forEach((d) => assert.ok(/duas versões no sistema antigo, conferir qual vale/.test(d.observacao)));
     assert.strictEqual(velha.data_documento, '2015-03-10');
     const conv = F.tabelas.regras_documentos.find((d) => d.tipo === 'convencao');
     assert.strictEqual(conv.vigente, true);

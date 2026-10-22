@@ -50,7 +50,7 @@ function conferirFundamentos(fundamentos, trechosPorId) {
 function trechosParaPrompt(trechos) {
   return trechos.map((t) => {
     const doc = [t.tipo, t.titulo_documento, t.data_documento].filter(Boolean).join(' | ');
-    return '<trecho id="' + (t.trecho_id || t.id) + '" documento="' + doc.replace(/"/g, "'") + '" rotulo="' + String(t.rotulo || '').replace(/"/g, "'") + '"' + (t.pagina ? ' pagina="' + t.pagina + '"' : '') + '>\n' + t.texto + '\n</trecho>';
+    return '<trecho id="' + (t.trecho_id || t.id) + '" documento="' + doc.replace(/"/g, "'") + '" rotulo="' + String(t.rotulo || '').replace(/"/g, "'") + '"' + (t.pagina ? ' pagina="' + t.pagina + '"' : '') + '>\n' + String(t.texto || '').replace(/</g, '‹').replace(/>/g, '›') + '\n</trecho>';
   }).join('\n\n');
 }
 

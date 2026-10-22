@@ -15,11 +15,16 @@ const ENVIOS_POR_HORA = 40;
 const TAREFA_VALIDADE_MS = 2 * 3600 * 1000;
 
 // Documento como vai para a tela: sem caminho do arquivo nem hash, com os sinais que a tela usa.
+// Observação sem o marcador interno da cópia do PDF (caminho no sistema antigo), que é só do servidor.
+function _obsParaTela(o) {
+  const t = String(o || '').split(/\s*[;|]\s*/).filter((x) => x && !/condgpt/i.test(x)).join('; ').trim();
+  return t || null;
+}
 function docParaTela(d) {
   return {
     id: d.id, tipo: d.tipo, titulo: d.titulo, data_documento: d.data_documento, vigente: d.vigente, origem: d.origem,
     tem_arquivo: !!d.arquivo_path, tem_texto: d.hash_texto === undefined ? undefined : !!d.hash_texto, arquivo_bytes: d.arquivo_bytes || null,
-    resumo: d.resumo || null, observacao: d.observacao || null, criado_em: d.criado_em, atualizado_em: d.atualizado_em || null,
+    resumo: d.resumo || null, observacao: _obsParaTela(d.observacao), criado_em: d.criado_em, atualizado_em: d.atualizado_em || null,
   };
 }
 
@@ -149,14 +154,18 @@ function criarRotasAcervo(app, deps) {
   // tarefa e a tela pergunta em /envios/:tarefa até ficar pronto (leitura leva minutos).
   app.post('/api/regras/:idSuperlogica/documentos', requireAuth, async (req, res, next) => {
     res.set('Cache-Control', 'no-store');
-    try { if (await exigirCond(req, res, 'gerenciar')) next(); } catch (e) { erroInterno(res, 'enviar', e); }
+    try {
+      if (!(await exigirCond(req, res, 'gerenciar'))) return;
+      // Limite conferido antes de ler o corpo (até 70 MB), para pedidos em excesso não gastarem memória.
+      if (!dentroDoLimite(req, 'regras_envio', ENVIOS_POR_HORA)) {
+        auditoria.evento(req, 'limite_processamento', { tipo: 'regras_envio', id_superlogica: Number(req.params.idSuperlogica) }, true, 'volume_alto');
+        return res.status(429).json({ erro: 'limite', detalhe: 'Muitos envios nesta hora. Tente mais tarde.' });
+      }
+      next();
+    } catch (e) { erroInterno(res, 'enviar', e); }
   }, express.json({ limit: '70mb' }), async (req, res) => {
     const idSL = Number(req.params.idSuperlogica);
     const b = req.body || {};
-    if (!dentroDoLimite(req, 'regras_envio', ENVIOS_POR_HORA)) {
-      auditoria.evento(req, 'limite_processamento', { tipo: 'regras_envio', id_superlogica: idSL }, true, 'volume_alto');
-      return res.status(429).json({ erro: 'limite', detalhe: 'Muitos envios nesta hora. Tente mais tarde.' });
-    }
     if (typeof b.pdf_base64 !== 'string' || !b.pdf_base64.length) return res.status(400).json({ erro: 'arquivo_ausente', detalhe: 'O PDF não veio.' });
     if (b.pdf_base64.length > Math.ceil(A.MAX_PDF_BYTES / 3) * 4 + 8) return res.status(413).json({ erro: 'arquivo_grande', detalhe: 'O PDF passa de 50 MB. Divida o arquivo em partes.' });
     const buf = Buffer.from(b.pdf_base64, 'base64');

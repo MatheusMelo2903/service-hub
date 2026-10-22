@@ -23,8 +23,8 @@ const TEMPO_DOWNLOAD_MS = 120000;
 // Slugs que não entram (duplicata errada com o CNPJ da própria administradora).
 const SLUGS_IGNORADOS = { viladeitaunas: 'duplicata errada com o CNPJ da administradora; o certo é spazioviladeitaunas' };
 const CNPJ_ADMINISTRADORA = '24902992000100';
-const OBS_DUAS_VERSOES = 'duas versões no CondGPT, conferir qual vale';
-const OBS_ATA_GERADA = 'ata gerada no CondGPT';
+const OBS_DUAS_VERSOES = 'duas versões no sistema antigo, conferir qual vale';
+const OBS_ATA_GERADA = 'ata gerada no sistema antigo';
 const RE_SLUG = /^[a-z0-9_-]{1,80}$/i;
 const RE_PATH_PDF = /^([a-z0-9_-]{1,80})\/[A-Za-z0-9_.-]{1,120}\.pdf$/i;
 
@@ -270,7 +270,7 @@ function montarMapa(condominios, listaSL, existentes) {
     if (achados.length > 1 && achados.some((a) => a.ativo)) achados = achados.filter((a) => a.ativo);
     if (achados.length === 1) return Object.assign(base, { id_superlogica: achados[0].id, nome_superlogica: achados[0].nome, situacao: 'ok', observacao: 'pelo CNPJ' });
     if (achados.length > 1) return Object.assign(base, { id_superlogica: null, nome_superlogica: achados.map((a) => a.nome + ' (' + a.id + ')').join(', '), situacao: 'ambiguo', observacao: 'mais de um condomínio com este CNPJ no Superlógica' });
-    return Object.assign(base, { id_superlogica: null, nome_superlogica: null, situacao: 'sem_correspondencia', observacao: cnpj ? 'CNPJ não encontrado no Superlógica' : 'sem CNPJ no CondGPT' });
+    return Object.assign(base, { id_superlogica: null, nome_superlogica: null, situacao: 'sem_correspondencia', observacao: cnpj ? 'CNPJ não encontrado no Superlógica' : 'sem CNPJ no sistema antigo' });
   });
 }
 
@@ -351,7 +351,7 @@ async function importarDocumentos(banco, ctx, docs, existentes, datasAta) {
         id_superlogica: ctx.idSL, condgpt_slug: ctx.slug, cnpj: ctx.cnpj || null, tipo,
         titulo: tituloDocumento(tipo, d.nome).slice(0, 300), data_documento: data, vigente: tipo === 'ata' ? true : v.vigente,
         origem: ORIGEM, texto, resumo: textoSeguro(d.resumo).trim() || null,
-        observacao: juntarObs(path ? 'condgpt_pdf:' + path : null, v.obs, texto.trim() ? null : 'sem texto no CondGPT'),
+        observacao: juntarObs(path ? 'condgpt_pdf:' + path : null, v.obs, texto.trim() ? null : 'sem texto no sistema antigo'),
         criado_por: ctx.criadoPor || null,
       });
       if (r.duplicado) c.duplicados++;
@@ -417,7 +417,7 @@ async function importarComunicados(banco, ctx, com) {
         id_superlogica: ctx.idSL, condgpt_slug: ctx.slug, cnpj: ctx.cnpj || null, tipo: 'outro',
         titulo: ('Comunicado: ' + (limpar(htmlParaTexto(m.titulo)) || 'sem título')).slice(0, 300),
         data_documento: quando ? quando.slice(0, 10) : null, vigente: true, origem: ORIGEM, texto,
-        observacao: 'comunicado do CondGPT', criado_por: ctx.criadoPor || null,
+        observacao: 'comunicado do sistema antigo', criado_por: ctx.criadoPor || null,
       });
       if (r.duplicado) c.duplicados++; else c.novos++;
     } catch (e) { c.erros++; erros.push('Comunicado: ' + String(e && e.message).slice(0, 80)); }
