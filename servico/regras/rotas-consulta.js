@@ -58,9 +58,16 @@ function criarRotasConsulta(app, deps) {
   }
   // Condomínios que têm documento no acervo (lista curta de ids distintos).
   async function comAcervo() {
-    const r = await banco('GET', '/rest/v1/regras_documentos?id_superlogica=not.is.null&select=id_superlogica&order=id_superlogica.asc&limit=10000');
-    if (r.status !== 200 || !Array.isArray(r.body)) throw new Error('acervo_falhou_' + r.status);
-    return [...new Set(r.body.map((d) => String(d.id_superlogica)))];
+    // O banco devolve no máximo 1000 linhas por vez: lê em páginas (só convenção e regimento,
+    // que bastam para saber quem tem acervo e são poucas linhas).
+    const ids = new Set();
+    for (let pagina = 0; pagina < 20; pagina++) {
+      const r = await banco('GET', '/rest/v1/regras_documentos?id_superlogica=not.is.null&tipo=in.(convencao,regimento)&select=id_superlogica&order=id.asc&limit=1000&offset=' + pagina * 1000);
+      if (r.status !== 200 || !Array.isArray(r.body)) throw new Error('acervo_falhou_' + r.status);
+      r.body.forEach((d) => ids.add(String(d.id_superlogica)));
+      if (r.body.length < 1000) break;
+    }
+    return [...ids].sort((a, b) => Number(a) - Number(b));
   }
 
   // Lista da comparação: os ids pedidos (só os da carteira) ou, sem ids, a carteira inteira;
