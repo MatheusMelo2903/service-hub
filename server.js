@@ -946,14 +946,16 @@ function aplicarTrechos(ata, ops) {
   return { ata: out, aplicadas: aceitos.length, falhas };
 }
 
-// Pede as operações ao modelo e aplica. Devolve { ata, aplicadas, falhas } ou null se a resposta
-// não veio ou não é JSON (quem chama cai na reescrita inteira).
-async function inserirLacunasPorTrecho(ata, listaLacunas, modelo, chamar, extraSys) {
-  const sys = PROMPT_INSERCAO_TRECHOS + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '') + (extraSys ? '\n\n---\n\n' + extraSys : '');
-  const msg = '=== ATA ATUAL ===\n' + ata + '\n\n=== LACUNAS ===\n' + listaLacunas + '\n\nDevolva só o array JSON de operações.';
+// Pede as operações ao modelo e aplica. Se alguma operação não achar o ponto na ata, faz UMA
+// segunda rodada curta sobre a ata já atualizada, pedindo só o que ainda falta (o modelo ignora
+// lacuna que já está na ata). Devolve { ata, operacoes, aplicadas, falhas, rodadas } ou null se a
+// primeira resposta não veio ou não é JSON (quem chama cai na reescrita inteira).
+async function _rodadaTrechos(ata, listaLacunas, modelo, chamar, sys, segunda) {
+  const aviso = segunda ? '\n\nATENÇÃO: parte destas lacunas JÁ FOI inserida na ata abaixo. Gere operações SÓ para as que ainda faltam, com âncora copiada da ata ATUAL abaixo.' : '';
+  const msg = '=== ATA ATUAL ===\n' + ata + '\n\n=== LACUNAS ===\n' + listaLacunas + aviso + '\n\nDevolva só o array JSON de operações.';
   const r = await chamar(modelo, 16000, sys, msg);
   if (!r || !r.ok || !r.texto) return null;
-  if (r.raw && r.raw.stop_reason === 'max_tokens') return null; // lista cortada: cai na reescrita
+  if (r.raw && r.raw.stop_reason === 'max_tokens') return null; // lista cortada
   const t = r.texto;
   const a = t.indexOf('['), b = t.lastIndexOf(']');
   if (a < 0 || b <= a) return null;
@@ -963,6 +965,20 @@ async function inserirLacunasPorTrecho(ata, listaLacunas, modelo, chamar, extraS
   const res = aplicarTrechos(ata, ops);
   res.operacoes = ops.length;
   return res;
+}
+async function inserirLacunasPorTrecho(ata, listaLacunas, modelo, chamar, extraSys) {
+  const sys = PROMPT_INSERCAO_TRECHOS + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '') + (extraSys ? '\n\n---\n\n' + extraSys : '');
+  const r1 = await _rodadaTrechos(ata, listaLacunas, modelo, chamar, sys, false);
+  if (!r1) return null;
+  const total = { ata: r1.ata, operacoes: r1.operacoes, aplicadas: r1.aplicadas, falhas: r1.falhas, rodadas: 1 };
+  if (r1.falhas > 0 && r1.aplicadas > 0) {
+    let r2 = null;
+    try { r2 = await _rodadaTrechos(r1.ata, listaLacunas, modelo, chamar, sys, true); }
+    catch (e) { if (/TETO_CHAMADAS/.test(String(e && e.message))) throw e; r2 = null; }
+    total.rodadas = 2;
+    if (r2) { total.ata = r2.ata; total.operacoes += r2.operacoes; total.aplicadas += r2.aplicadas; total.falhas = r2.falhas; }
+  }
+  return total;
 }
 
 // ─── DOCUMENTOS DA ASSEMBLEIA (T01, 2026-10-20) ─────────────────────────────
@@ -2617,9 +2633,9 @@ function agendarLimpezaJob(jobId) {
 // se a 8ª chamada estourar o teto, a etapa 3 falha ABERTA (try/catch próprio, telemetria
 // 'pulada_teto') e a ata segue sem a consolidação daquele passe, nunca aborta a geração inteira.
 // T46: 8 = 7 de antes + 1 da inserção por trecho (pior caso: ela falha e cai na reescrita).
-const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 8;
-// Ligada só depois de validada no teste real (T46). Liga com ATA_INSERCAO_POR_TRECHO=1.
-const INSERCAO_POR_TRECHO = process.env.ATA_INSERCAO_POR_TRECHO === '1';
+const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 9; // + 2a rodada da inserção por trecho
+// T46 validada na Casablanca (20 s contra 52 s, mesmos valores). Reescrita inteira fica de reserva.
+const INSERCAO_POR_TRECHO = process.env.ATA_INSERCAO_POR_TRECHO !== '0'; // ligada; desliga com ATA_INSERCAO_POR_TRECHO=0
 // T47: sem espera entre as partes. O cache só cobre as regras (as partes têm a ata na mensagem),
 // então a economia de esperar era de centavos e custava 10 s.
 const ATRASO_BLOCOS_AUDITORIA_MS = 0;
@@ -2856,16 +2872,21 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
         if (INSERCAO_POR_TRECHO) {
           try { porTrecho = await inserirLacunasPorTrecho(texto, gapList, MODELO_DA_ATA, chamar, extraSysDocs); }
           catch (e) { if (/TETO_CHAMADAS/.test(String(e && e.message))) throw e; porTrecho = null; }
-          insercaoTrecho = porTrecho ? { operacoes: porTrecho.operacoes, aplicadas: porTrecho.aplicadas, falhas: porTrecho.falhas } : { falhou: true };
+          insercaoTrecho = porTrecho ? { operacoes: porTrecho.operacoes, aplicadas: porTrecho.aplicadas, falhas: porTrecho.falhas, rodadas: porTrecho.rodadas } : { falhou: true };
         }
-        const trechoValeu = porTrecho && (porTrecho.operacoes === 0 || (porTrecho.aplicadas > 0 && porTrecho.falhas <= porTrecho.aplicadas / 2)) && aceitaInsercao(porTrecho.ata);
-        const inserida = trechoValeu ? null : await inserirLacunasNaAta(texto, gapList, MODELO_DA_ATA, chamar, extraSysDocs);
+        // Vale se tudo casou (depois da 2a rodada, quando houve). Se ainda sobrou operação sem
+        // ponto na ata, a reescrita inteira parte da ata JÁ com o que entrou (não perde nada).
+        const trechoValeu = porTrecho && porTrecho.falhas === 0 && aceitaInsercao(porTrecho.ata);
+        const baseReescrita = porTrecho && porTrecho.aplicadas > 0 && aceitaInsercao(porTrecho.ata) ? porTrecho.ata : texto;
+        const inserida = trechoValeu ? null : await inserirLacunasNaAta(baseReescrita, gapList, MODELO_DA_ATA, chamar, extraSysDocs);
         if (trechoValeu) { ataFinal = porTrecho.ata; etapa = porTrecho.operacoes === 0 ? 'insercao_trecho_nada_a_inserir' : 'insercao_trecho'; }
         else if (aceitaInsercao(inserida)) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
         else {
           // inserção Sonnet quebrou OU tentou condensar → mantém original e tenta OPUS (último recurso).
           etapa = inserida ? 'insercao_sonnet_condensou_usou_original' : 'insercao_sonnet_quebrou_usou_original';
-          const opus = await inserirLacunasNaAta(texto, gapList, modelos.modelo('ata_ultimo_recurso'), chamar, extraSysDocs);
+          // T46: o que a inserção por trecho já encaixou não se perde se o resto falhar.
+          if (baseReescrita !== texto) { ataFinal = baseReescrita; etapa += '_com_trechos'; }
+          const opus = await inserirLacunasNaAta(baseReescrita, gapList, modelos.modelo('ata_ultimo_recurso'), chamar, extraSysDocs);
           if (aceitaInsercao(opus)) { ataFinal = opus; etapa = 'insercao_opus'; usouOpus = true; }
         }
       }
