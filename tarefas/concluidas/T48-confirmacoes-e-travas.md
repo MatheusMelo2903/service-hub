@@ -13,3 +13,6 @@ scripts/teste-balancete.js 74 certos (inclui 94 sem variável recusado); teste-c
 
 ## Antes de produção
 Conferir no banco de produção as migrações 007 a 020 (alertas, carteiras, módulos e prazos, auditoria, financeiro, entrada, avisos, fechamento, custo, regras). Revisar permissões de quem não é GESTOR no mesmo dia.
+
+## Segunda parte (mesmo dia)
+Confirmação também em ações internas que perdem trabalho ou mandam email: "Limpar tudo" da Ata (só pergunta se há algo na tela; a troca de condomínio continua limpando sem perguntar), "Limpar tudo" da Prestação, "Descartar" na Entrada de documentos e "Enviar convite" (email e cargo).

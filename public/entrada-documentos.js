@@ -316,6 +316,8 @@
   };
   window.entDescartar = async function () {
     if (!est.atual) return;
+    // T48: tira o documento da fila; confirma antes.
+    if (!confirm('Descartar este documento da fila? Ele não será lançado.')) return;
     try {
       await api('/api/entrada/' + encodeURIComponent(est.atual.id) + '/descartar', { method: 'POST' });
       toast('Documento descartado.', 'ok');

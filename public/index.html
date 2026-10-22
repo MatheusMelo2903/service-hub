@@ -1514,7 +1514,7 @@
           <label class="prest-formato-opcao"><input type="radio" name="prest-formato" value="pptx"> Somente PowerPoint</label>
         </div>
         <div style="margin-top:14px">
-          <button class="btn btn-ghost" onclick="prestacaoLimparTudo()" style="font-size:12px;padding:6px 12px">Limpar tudo</button>
+          <button class="btn btn-ghost" onclick="if(confirm('Limpar tudo da prestação? Os arquivos, o período e os ajustes saem da tela.')) prestacaoLimparTudo()" style="font-size:12px;padding:6px 12px">Limpar tudo</button>
         </div>
       </div>
 
@@ -1737,7 +1737,7 @@
       </div>
 
       <div style="display:flex;justify-content:flex-end;gap:10px;margin-bottom:20px">
-        <button class="btn btn-ghost" onclick="limparAta()">✕ Limpar tudo</button>
+        <button class="btn btn-ghost" onclick="limparAtaConfirmar()">✕ Limpar tudo</button>
         <button class="btn btn-primary" id="btn-gerar-ata" onclick="gerarAtaIA()">📄 Gerar ata</button>
       </div>
       
@@ -3920,6 +3920,8 @@ async function enviarConvite() {
   const btn   = document.getElementById('conv-submit');
   erro.textContent = '';
   if (!email || !/.+@.+\..+/.test(email)) { erro.textContent = 'Email inválido'; return; }
+  // T48: o convite manda email real e cria o acesso; confirma email e cargo antes.
+  if (!confirm('Enviar convite para ' + email + ' como ' + role + '? A pessoa recebe um email para criar a senha.')) return;
   btn.disabled = true; btn.textContent = 'Enviando...';
   try {
     const resp = await apiAuthFetch('/api/admin/usuarios/convidar', {

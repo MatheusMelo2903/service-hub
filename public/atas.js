@@ -684,6 +684,15 @@ function aplicarCamposExtraidos(json) {
   if (json.local) document.getElementById('ata-local').value = String(json.local);
 }
 
+// T48: o botão "Limpar tudo" confirma antes, porque apaga transcrição, edital e documentos.
+// A troca de condomínio chama limparAta() direto, sem perguntar.
+function limparAtaConfirmar() {
+  const tem = ['ata-transcricao', 'ata-participantes', 'ata-data', 'ata-local'].some(function (k) { const el = document.getElementById(k); return el && el.value.trim(); })
+    || (typeof _ataDocsApoio !== 'undefined' && _ataDocsApoio.length) || _editalDropzoneTexto;
+  if (tem && !confirm('Limpar tudo da ata? A transcrição, o edital e os documentos anexados saem da tela e não dá para desfazer.')) return;
+  limparAta();
+}
+
 function limparAta() {
   document.getElementById('ata-cond').value = '';
   document.getElementById('ata-data').value = '';
