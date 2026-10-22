@@ -129,6 +129,7 @@ function setAudioProgress(pct, label, log) {
 const AUDIO_COMPRESS_THRESHOLD = 60 * 1024 * 1024; // 60 MB
 let _ffmpeg = null;
 let _ffmpegProgressCb = null;
+let _ffmpegVivoCb = null;
 
 function _injectScript(src) {
   return new Promise((resolve, reject) => {
@@ -149,38 +150,93 @@ async function carregarFfmpeg() {
   await _injectScript('/vendor/ffmpeg/util.js');
   const ff = new window.FFmpegWASM.FFmpeg();
   ff.on('progress', ({ progress }) => { if (_ffmpegProgressCb) _ffmpegProgressCb(progress); });
+  // T44: cada linha de log do compressor também conta como sinal de vida para o vigia.
+  ff.on('log', () => { if (_ffmpegVivoCb) _ffmpegVivoCb(); });
   await ff.load({ coreURL: '/vendor/ffmpeg/ffmpeg-core.js', wasmURL: '/vendor/ffmpeg/ffmpeg-core.wasm' });
   _ffmpeg = ff;
   return ff;
 }
 
-// Comprime só se o arquivo for grande. Retorna { file, comprimido, origMB?, novoMB? }.
+// T44: compressão à prova de travamento. Em computador com pouca memória (comum em Windows),
+// o compressor do navegador podia travar sem dar erro e a tela ficava carregando para sempre.
+// Agora: (1) arquivo grande demais para comprimir com folga de memória vai original; (2) se o
+// compressor não carregar a tempo, ou ficar sem avançar, é encerrado e o original sobe; (3)
+// qualquer falha da compressão também cai no envio do original. O envio original passa pelo
+// servidor em fluxo, sem limite de memória no navegador.
+const AUDIO_COMPRESS_MAX = 350 * 1024 * 1024;       // acima disso não comprime no navegador
+const AUDIO_COMPRESS_CARGA_MS = 90 * 1000;          // tempo máximo para carregar o compressor
+const AUDIO_COMPRESS_PARADO_MS = 45 * 1000;         // compressor sem avançar por 45s = travado
+
+// Decide se vale comprimir neste computador. Memória informada pelo navegador (Chrome e Edge)
+// abaixo de 4 GB não comprime arquivo acima de 150 MB.
+function audioPodeComprimir(file) {
+  if (file.size < AUDIO_COMPRESS_THRESHOLD) return false;
+  if (file.size > AUDIO_COMPRESS_MAX) return false;
+  const memGB = navigator.deviceMemory;
+  if (memGB && memGB < 4 && file.size > 150 * 1024 * 1024) return false;
+  return true;
+}
+
+// Comprime só se o arquivo for grande e o computador aguentar. Nunca trava: se a compressão
+// falhar ou parar, devolve o original. Retorna { file, comprimido, origMB?, novoMB? }.
 async function comprimirAudioSeGrande(file, sig) {
   if (file.size < AUDIO_COMPRESS_THRESHOLD) return { file, comprimido: false };
   const origMB = (file.size / 1048576).toFixed(1);
+  if (!audioPodeComprimir(file)) {
+    setAudioProgress(2, 'Áudio grande (' + origMB + 'MB), enviando o arquivo original...', 'Envio direto, sem otimizar neste computador.');
+    return { file, comprimido: false };
+  }
   setAudioProgress(2, 'Áudio grande (' + origMB + 'MB), otimizando para upload...', 'Carregando compressor (única vez)...');
-  const ff = await carregarFfmpeg();
-  _ffmpegProgressCb = (p) => {
-    const pct = Math.max(2, Math.min(99, Math.round(p * 100)));
-    setAudioProgress(pct, 'Áudio grande, otimizando para upload... ' + pct + '%', 'Comprimindo (mono 64k 16kHz)...');
-  };
+  let ff = null;
+  let ultimoSinal = Date.now();
+  let vigia = null;
+  const acComp = new AbortController();
+  const onAbortExterno = () => acComp.abort();
+  if (sig) sig.addEventListener('abort', onAbortExterno, { once: true });
   try {
+    // Carrega o compressor com prazo: rede lenta ou navegador sem memória não prende a tela.
+    ff = await Promise.race([
+      carregarFfmpeg(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('compressor demorou para carregar')), AUDIO_COMPRESS_CARGA_MS))
+    ]);
+    _ffmpegProgressCb = (p) => {
+      ultimoSinal = Date.now();
+      const pct = Math.max(2, Math.min(99, Math.round(p * 100)));
+      setAudioProgress(pct, 'Áudio grande, otimizando para upload... ' + pct + '%', 'Comprimindo (mono 64k 16kHz)...');
+    };
+    _ffmpegVivoCb = () => { ultimoSinal = Date.now(); };
+    // Vigia: sem progresso por 45s, encerra o compressor e segue com o original.
+    vigia = setInterval(() => {
+      if (Date.now() - ultimoSinal > AUDIO_COMPRESS_PARADO_MS) { clearInterval(vigia); vigia = null; acComp.abort(); try { ff.terminate(); } catch (e) { /* já encerrado */ } }
+    }, 5000);
     const { fetchFile } = window.FFmpegUtil;
-    await ff.writeFile('in', await fetchFile(file));
+    await ff.writeFile('in', await fetchFile(file), { signal: acComp.signal });
+    ultimoSinal = Date.now();
     // SETTING TRAVADO (aprovado 2026-07-07): mono, 16 kHz, 64 kbps mp3. Não expor ao usuário.
-    await ff.exec(['-i', 'in', '-ac', '1', '-ar', '16000', '-b:a', '64k', '-f', 'mp3', 'out.mp3'], -1, sig ? { signal: sig } : undefined);
+    await ff.exec(['-i', 'in', '-ac', '1', '-ar', '16000', '-b:a', '64k', '-f', 'mp3', 'out.mp3'], -1, { signal: acComp.signal });
     const data = await ff.readFile('out.mp3');
     await ff.deleteFile('in').catch(() => {});
     await ff.deleteFile('out.mp3').catch(() => {});
+    if (!data || !data.length) throw new Error('compressão sem resultado');
     const nome = file.name.replace(/\.[^.]+$/, '') + '.mp3';
     const novo = new File([data], nome, { type: 'audio/mpeg' });
     const novoMB = (novo.size / 1048576).toFixed(1);
     setAudioProgress(15, 'Otimizado: ' + origMB + 'MB → ' + novoMB + 'MB', 'Compressão concluída ✓');
     return { file: novo, comprimido: true, origMB, novoMB };
   } catch (e) {
-    _ffmpeg = null; // instância pode ter sido terminada; força reload limpo na próxima
-    throw e;
-  } finally { _ffmpegProgressCb = null; }
+    // Cancelamento do usuário continua cancelando; qualquer outra falha segue com o original.
+    if (sig && sig.aborted) throw e;
+    console.warn('compressão do áudio não concluiu, enviando o original:', e && e.message);
+    try { if (ff) ff.terminate(); } catch (e2) { /* já encerrado */ }
+    _ffmpeg = null; // força recarga limpa na próxima vez
+    setAudioProgress(5, 'Otimização não concluiu neste computador, enviando o arquivo original (' + origMB + 'MB)...', 'Envio direto.');
+    return { file, comprimido: false };
+  } finally {
+    if (vigia) clearInterval(vigia);
+    if (sig) sig.removeEventListener('abort', onAbortExterno);
+    _ffmpegProgressCb = null;
+    _ffmpegVivoCb = null;
+  }
 }
 
 // fetch com timeout de etapa (via AbortController). Marca err.__timeout=true no estouro,
@@ -200,6 +256,41 @@ async function fetchComTimeout(url, opts, ms, signalExterno) {
     clearTimeout(timer);
     if (signalExterno) signalExterno.removeEventListener('abort', onAbort);
   }
+}
+
+// T44: envio em partes. Abre a sessão, manda cada parte (com nova tentativa só na parte que
+// falhou) e pede ao servidor para juntar e enviar à transcrição. Devolve o arquivo_id.
+const AUDIO_PARTE_BYTES = 40 * 1024 * 1024;
+async function enviarAudioEmPartes(arquivo, nomeOriginal, sig, comRetry, authH, pctIni) {
+  const total = Math.ceil(arquivo.size / AUDIO_PARTE_BYTES);
+  const tamMB = (arquivo.size / 1048576).toFixed(1);
+  const ini = await comRetry(async () => {
+    const r = await fetchComTimeout('/api/audio/partes/iniciar', { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, authH()),
+      body: JSON.stringify({ total, nome: (nomeOriginal || '').slice(0, 180) }) }, 30 * 1000, sig);
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 400 || r.status === 403) { const e = new Error(j.detalhe || 'Não foi possível enviar o áudio'); e.__timeout = true; throw e; }
+    if (!r.ok || !j.sessao) throw new Error(j.detalhe || 'Falha ao preparar o envio');
+    return j.sessao;
+  }, 'Preparação do envio');
+  for (let i = 0; i < total; i++) {
+    const parte = arquivo.slice(i * AUDIO_PARTE_BYTES, Math.min(arquivo.size, (i + 1) * AUDIO_PARTE_BYTES));
+    const pct = pctIni + Math.round((30 - pctIni) * i / total);
+    setAudioProgress(pct, 'Enviando arquivo (' + tamMB + 'MB): parte ' + (i + 1) + ' de ' + total + '...', 'Enviando em partes...');
+    await comRetry(async () => {
+      // Prazo por parte: 40 MB a pelo menos 0,25 MB/s (internet bem lenta) cabe em ~3 min.
+      const r = await fetchComTimeout('/api/audio/partes/' + encodeURIComponent(ini) + '/parte/' + i,
+        { method: 'POST', headers: Object.assign({ 'content-type': 'application/octet-stream' }, authH()), body: parte }, 4 * 60 * 1000, sig);
+      if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 8000)); throw new Error('muitos envios seguidos'); }
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 404) { const e = new Error(j.detalhe || 'O envio expirou. Envie o áudio de novo.'); e.__timeout = true; throw e; }
+      if (!r.ok || !j.ok) throw new Error(j.detalhe || 'Falha ao enviar parte do áudio');
+    }, 'Envio da parte ' + (i + 1));
+  }
+  setAudioProgress(29, 'Juntando as partes do áudio...', 'Finalizando envio...');
+  const r = await fetchComTimeout('/api/audio/partes/' + encodeURIComponent(ini) + '/finalizar', { method: 'POST', headers: authH() }, 6 * 60 * 1000, sig);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.arquivo_id) throw new Error(j.detalhe || 'Falha no envio');
+  return j.arquivo_id;
 }
 
 async function processarArquivoAudio(file) {
@@ -241,12 +332,16 @@ async function processarArquivoAudio(file) {
 
     // PASSO 1: envio (retry só em falha rápida; timeout de etapa de 6 min)
     setAudioProgress(comp.comprimido ? 18 : 5, 'Enviando arquivo (' + tamMB + 'MB)...', comp.comprimido ? 'Enviando versão otimizada...' : 'Enviando...');
-    const arquivoId = await comRetry(async () => {
-      const r = await fetchComTimeout(AUDIO_ENVIAR_URL, { method: 'POST', headers: Object.assign({ 'x-nome-arquivo': encodeURIComponent(file.name || '').slice(0, 180) }, authH()), body: arquivo }, 6 * 60 * 1000, sig);
+    // T44: até 40 MB sobe num pedido só; acima disso, em partes de 40 MB (cada pedido curto,
+    // à prova do limite de tempo da borda mesmo em internet lenta).
+    const arquivoId = arquivo.size <= AUDIO_PARTE_BYTES
+      ? await comRetry(async () => {
+      const r = await fetchComTimeout(AUDIO_ENVIAR_URL, { method: 'POST', headers: Object.assign({ 'x-nome-arquivo': encodeURIComponent(file.name || '').slice(0, 180) }, authH()), body: arquivo }, Math.max(6 * 60 * 1000, Math.round(arquivo.size / (0.4 * 1048576)) * 1000), sig);
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.arquivo_id) throw new Error(j.detalhe || 'Falha no envio');
       return j.arquivo_id;
-    }, 'Envio');
+      }, 'Envio')
+      : await enviarAudioEmPartes(arquivo, file.name, sig, comRetry, authH, comp.comprimido ? 18 : 5);
     setAudioProgress(30, 'Arquivo enviado! Iniciando transcrição...', 'Envio concluído ✓');
 
     // PASSO 2: inicia a transcrição (retry só em falha rápida; timeout 30s)
@@ -625,6 +720,12 @@ function limparAta() {
 // Ver server.js (app.post('/api/atas/gerar', ...)) e skills-server/ata-condominial.md.
 
 let _ataTextoGerado = '';
+// T44: etapa da geração informada pelo servidor, mostrada no botão enquanto gera.
+let _ataEtapa = '';
+const ATA_ETAPAS = {
+  iniciando: 'Preparando', documentos: 'Lendo a apresentação', escrevendo: 'Escrevendo a ata',
+  conferindo: 'Conferindo com a reunião', completando: 'Completando trechos', revisando: 'Revisando nomes'
+};
 
 async function gerarAtaIA() {
   const cond    = document.getElementById('ata-cond').value.trim();
@@ -698,12 +799,13 @@ async function gerarAtaIA() {
   btn.disabled = true;
   window._gerandoAta = true; // trava a troca de condomínio até terminar (condTrocaBloqueada)
   const geracaoT0 = Date.now();
+  _ataEtapa = '';
   btn.textContent = '⏳ Gerando ata... 0s';
   const progTimer = setInterval(() => {
     const seg = Math.round((Date.now() - geracaoT0) / 1000);
-    btn.textContent = `⏳ Gerando ata... ${seg}s`;
+    btn.textContent = '⏳ ' + (ATA_ETAPAS[_ataEtapa] || 'Gerando ata') + '... ' + seg + 's';
   }, 1000);
-  toast('Gerando ata... pode levar até 1 minuto', 'info');
+  toast('Gerando ata... reunião longa pode levar alguns minutos', 'info');
 
   try {
     // Geração ASSÍNCRONA (job + polling). Antes era uma requisição longa única, mas
@@ -774,7 +876,7 @@ async function gerarAtaIA() {
       }
       errosSeguidos = 0;
       const body = await st.json().catch(() => ({}));
-      if (body.status === 'processing') continue;
+      if (body.status === 'processing') { if (body.etapa) _ataEtapa = body.etapa; continue; }
       if (body.status === 'error') throw new Error(body.detalhe || body.erro || ('HTTP ' + body.status));
       if (body.status === 'done') { payload = body; break; }
     }

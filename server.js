@@ -2404,6 +2404,7 @@ function agendarLimpezaJob(jobId) {
 // se a 8ª chamada estourar o teto, a etapa 3 falha ABERTA (try/catch próprio, telemetria
 // 'pulada_teto') e a ata segue sem a consolidação daquele passe, nunca aborta a geração inteira.
 const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 7;
+const ATRASO_BLOCOS_AUDITORIA_MS = 10000; // T44: auditorias 2 e 3 começam 10s depois da 1
 
 // Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
 // PRIMEIRA passada Sonnet que retornar texto; a validação é só aviso, nunca bloqueia
@@ -2430,6 +2431,8 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
   const documentos = Array.isArray(documentosEntrada) ? documentosEntrada : [];
   let system = ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_DETALHAMENTO_MAXIMO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '');
   const tentativas = [];
+  // T44: etapa atual da geração, lida pela consulta de status para a tela mostrar o andamento.
+  const marcarEtapa = (etapa) => { const j = atasJobs.get(jobId); if (j && j.status === 'processing') j.etapa = etapa; };
   const concluir = (payload) => { const j = atasJobs.get(jobId); if (j) { j.status = 'done'; j.payload = payload; } agendarLimpezaJob(jobId); };
   // httpStatus (não 'status') pra NÃO colidir com o campo status do job. A rota /status
   // faz Object.assign({ status:'error' }, j.erro); se o erro trouxesse 'status', ele
@@ -2575,9 +2578,18 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
     try {
       const blocos = dividirEmBlocos(transcricao, numBlocosAuditoria(transcricao));
       numBlocos = blocos.length;
+      // T44: as auditorias de bloco são independentes (cada uma compara a MESMA ata base com um
+      // pedaço da transcrição), então rodam ao mesmo tempo. O resultado é juntado na ordem dos
+      // blocos, igual ao laço antigo; só deixa de esperar uma terminar para começar a outra.
+      marcarEtapa('conferindo');
+      // O bloco 1 sai na frente e os outros 10s depois: o cache do prompt só vale para quem chega
+      // depois que a primeira chamada começou a ser processada, e assim os blocos 2 e 3 ainda leem
+      // o cache (custo igual ao de antes) sem esperar o bloco 1 terminar.
+      const resultadosBlocos = await Promise.all(blocos.map((bl, i) =>
+        (i === 0 ? Promise.resolve() : new Promise((ok) => setTimeout(ok, ATRASO_BLOCOS_AUDITORIA_MS)))
+          .then(() => auditarBlocoCompletude(texto, bl, i + 1, blocos.length, chamar, extraSysDocs))));
       let lacunas = '';
-      for (let i = 0; i < blocos.length; i++) {
-        const res = await auditarBlocoCompletude(texto, blocos[i], i + 1, blocos.length, chamar, extraSysDocs);
+      for (const res of resultadosBlocos) {
         if (res && /LACUNA/i.test(res) && !/^NENHUMA LACUNA\s*$/i.test(res)) lacunas += res + '\n';
       }
       lacunas = lacunas.trim();
@@ -2598,6 +2610,7 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
       numGapsDet = gapsDet.length;
       const gapList = [lacunas, gapsDet.join('\n')].filter(Boolean).join('\n').trim();
       if (gapList.length > 0) {
+        marcarEtapa('completando');
         const inserida = await inserirLacunasNaAta(texto, gapList, MODELO_DA_ATA, chamar, extraSysDocs);
         if (aceitaInsercao(inserida)) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
         else {
@@ -2617,6 +2630,7 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
     // T01: com documentos, o grounding de nome aceita também o texto ESCRITO dos documentos
     // (nome de empresa que só aparece certo no orçamento passa a ser forma válida). Sem documento,
     // fonteNomes === transcricao e o passe é idêntico ao de antes.
+    marcarEtapa('revisando');
     const consol = await consolidarNomesProprios(ataFinal, fonteNomes, chamar);
     ataFinal = consol.ata;
 
@@ -2721,7 +2735,9 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
     // eram truncadas/condensadas; 32k dá folga pra sair completa.
     // T01: prepara os documentos da assembleia ANTES da geração (leitura de escaneado e
     // conferência transcrição x documento). Falha aberta: problema aqui nunca impede a ata.
+    if (documentos.length) marcarEtapa('documentos');
     await prepararDocumentos();
+    marcarEtapa('escrevendo');
     let r = await chamar(MODELO_DA_ATA, 32000, system, mensagemGeracao);
     tentativas.push({ modelo: MODELO_DA_ATA, max_tokens: 32000, status: r.status, erro: r.erro || null });
     if (r.ok && r.texto && r.texto.trim()) {
@@ -2863,7 +2879,7 @@ app.get('/api/atas/gerar/status/:jobId', requireAuth, (req, res) => {
   // T17: só o que a tela usa; nada de modelo, tentativas ou erro técnico do serviço.
   if (j.status === 'done') return enviar(200, Object.assign({ status: 'done' }, req.authMode === 'internal' ? j.payload : ataMensagem.limparResultadoAta(j.payload)));
   if (j.status === 'error') return enviar(200, Object.assign({ status: 'error' }, ataMensagem.limparErroAta(j.erro)));
-  return enviar(200, { status: 'processing', esperando_s: Math.round((Date.now() - j.criadoEm) / 1000) });
+  return enviar(200, { status: 'processing', esperando_s: Math.round((Date.now() - j.criadoEm) / 1000), etapa: j.etapa || 'iniciando' });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
