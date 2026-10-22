@@ -57,3 +57,29 @@ modelo falsos) e roda antes de entregar.
 A. Importação do CondGPT. B. Consulta, comparação e FAQ. C. Notificação, multa e comunicado.
 D. Acervo (lista, envio de PDF, leitura de escaneado, vigente, pendências). E. Conferência da ata, mandatos e alertas.
 Integração, importação real, teste no Chrome e subida para a dev: orquestrador.
+
+## Entrega (22/10/2026)
+
+Feito em 5 frentes paralelas (A importação, B consulta e FAQ, C notificação, multa e comunicado,
+D acervo, E conferência da ata, mandatos e alertas), juntadas na branch feat/regras-condominio e
+publicadas na dev.
+
+Revisões: auditoria de segurança (ajustes aplicados: nome do sistema antigo fora da tela,
+"registrada" só por GESTOR ou GERENTE, limite antes de ler o corpo, trechos escapados no prompt,
+janela sem opener) e 3 revisões de código (telas aprovadas; corrigidos: citação com reticências
+montando número, prazo, reincidência ou duração a partir de pedaços soltos; comparação lendo só
+1.000 documentos; cartão de conferência que ficava ao trocar de condomínio).
+
+Testes: scripts/regras-harness/ (acervo 13, ata 7, citação 5, consulta 9, importar 13, notificação 58).
+Teste no Chrome na dev: consulta com citação e divergência convenção x regimento, abrir PDF,
+unidades com proprietário e inquilino, carta de teste, acervo, mandatos lidos das atas.
+
+Importação no banco de teste (scripts/regras-importar-local.js, via railway run): 47 condomínios,
+1.114 documentos (43 regimentos, 46 convenções, 1.022 atas), 12.833 trechos, 1.051 PDFs copiados,
+927 notificações. 9 condomínios do sistema antigo não existem mais no Superlógica e ficaram fora.
+Villaggio Laranjeiras ligado ao cadastro residencial (170).
+
+Pendente para produção (só com "sobe para producao"): aplicar a migration 020 no banco de produção
+ANTES do código (senão os alertas falham), importar o acervo no banco de produção com o mesmo
+script, definir SALARIO_MINIMO se algum condomínio usar multa em salário mínimo.
+Limpeza: apagar o documento de teste id_superlogica 999999 do banco de teste.
