@@ -1571,8 +1571,9 @@
       <div id="banner-cond-previsao"></div>
 
       <!-- Modulo de Previsao Orcamentaria embutido (public/previsao-modulo.html).
-           Roda 100% no navegador, em memoria: nenhuma planilha financeira de cliente
-           sai do navegador (sem servidor, sem banco). O src e definido sob demanda em
+           Os calculos rodam no navegador. A previsao em andamento (dados extraidos,
+           decisoes e parametros) fica guardada por pessoa na pasta Em andamento (T49,
+           servico/trabalhos.js); nada vai ao Superlogica. O src e definido sob demanda em
            previsaoInit() para carregar o modulo so quando a aba abre.
            Fluxo antigo de PDF (previsao.js + rotas /api/previsao + tabela previsoes_orcamentarias)
            foi descontinuado nesta aba e mantido no repo para reversibilidade. -->

@@ -685,6 +685,7 @@ tr.mostrar td{background:rgba(46,123,199,.08)}
   <h1>Previsão Orçamentária</h1>
   <div class="sub">do W011A à taxa do condomínio, sem Excel manual</div>
 
+  <div id="guarda"></div>
   <div class="steps" id="steps"></div>
   <div class="live" id="live"></div>
   <div id="stage"></div>
@@ -795,17 +796,22 @@ window._motor = {recalcular, basePrevisao, pctAplicado, valorFinal, taxaNova};
 </script>
 <script>
 /* ============================================================
-   ESTADO + PERSISTENCIA EM MEMORIA (Service Hub)
-   Decisao do Matheus em 2026-06-30: dado financeiro de cliente NAO sai
-   do navegador nem sobrevive entre sessoes. Por isso a persistencia roda
-   so em memoria, sem localStorage e sem servidor. Qualquer persistencia
-   futura depende do isolamento por cliente estar construido e auditado.
+   ESTADO + PERSISTENCIA (Service Hub)
+   Store continua so em memoria (sem localStorage). A guarda que sobrevive a
+   recarregar e a outro computador e a pasta "Em andamento" do Hub (T49), ver
+   "GUARDA NA PASTA EM ANDAMENTO" no fim do arquivo: por pessoa, com o
+   condominio conferido na carteira pelo servidor, apagada com Encerrar ou
+   depois de 7 dias. Nada disso vai para o Superlogica.
+   (Antes, decisao de 2026-06-30: so memoria, ate existir isolamento por
+   pessoa; o T49 trouxe esse isolamento.)
    ============================================================ */
 const Store = {
   _mem: [],
   save(p){ try{ const i=this._mem.findIndex(x=>x.id===p.id);
     p.atualizadoEm=new Date().toISOString();
-    if(i>=0) this._mem[i]=p; else this._mem.push(p); }catch(e){console.warn(e)} },
+    if(i>=0) this._mem[i]=p; else this._mem.push(p); }catch(e){console.warn(e)}
+    // Toda mudanca passa por aqui: avisa a guarda para salvar na pasta (com folga).
+    try{ if(typeof window._previsaoMudou==='function') window._previsaoMudou(); }catch(e){} },
   load(id){ try{ return this._mem.find(x=>x.id===id)||null; }catch(e){return null} },
   list(){ try{ return this._mem.map(p=>({id:p.id,condominio:p.condominio,exercicio:p.exercicio})); }catch(e){return []} }
 };
@@ -1674,6 +1680,7 @@ function render(){ renderSteps(); renderLive();
   st.innerHTML = [renderDados,renderCuradoria,renderReajustes,renderResultado,renderExportar][etapa-1]();
   if(etapa===2) bindCuradoria();
   if(P) Store.save(P);
+  if(typeof _depoisDoRender==='function') _depoisDoRender();
 }
 const f2 = v => (v||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
 const pctf = v => (v*100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})+'%';
@@ -1716,7 +1723,7 @@ function renderDados(){
       <div class="col" style="flex:0;min-width:190px"><label>&nbsp;</label>
         </div>
       <div class="col" style="flex:0;min-width:210px"><label>Previsões salvas</label>
-        <select onchange="if(this.value)carregarSalva(this.value)"><option value="">— abrir —</option>${Store.list().map(s=>`<option value="${s.id}">${s.condominio} (${s.exercicio})</option>`).join('')}</select></div>
+        ${_previsoesSalvasHTML()}</div>
     </div>
     <div id="upMsg">${IMPORT_LOG.join('')}</div><div id="confMsg">${CONF_HTML}</div>
   </div>
@@ -3922,16 +3929,229 @@ function abaRateioXLSX(wb, M){
 }
 
 
-/* salvar versão (mantido) */
-function salvarVersao(){ const nome=prompt('Nome da versão:','Rascunho'); if(!nome)return;
-  P.versoes.push({nome,data:new Date().toISOString(),snapshot:JSON.parse(JSON.stringify({params:P.params,itens:P.itens,reajusteCategorias:P.reajusteCategorias}))});
-  Store.save(P); msg('Versão "'+nome+'" salva.'); }
+/* ============================================================
+   GUARDA NA PASTA EM ANDAMENTO (T49)
+   Por que: a previsao vivia so na memoria da aba e sumia ao recarregar,
+   trocar de condominio ou de computador. Agora o estado completo (todas as
+   etapas) vai para a pasta "Em andamento" do Hub e volta com um clique.
+   Sai so com Encerrar (com confirmacao) ou depois de 7 dias sem mexer.
+   Nunca envia nada ao Superlogica.
+   Ponte: este modulo roda num iframe da mesma origem (previsao-embed.js).
+   Daqui chamamos window.parent.PrevisaoHub; o Hub chama window.PrevisaoPonte.
+   Fora do Hub (arquivo aberto sozinho) tudo isso fica desligado.
+   ============================================================ */
+const GUARDA_LIMITE = 2900000;   // bytes; o servidor recusa acima de 3 MB
+function _guardaNova(){ return {id:null, versao:'', titulo:'', salvoEm:null, ultimoJson:'', bloqueado:false, salvando:false, erro:''}; }
+let GUARDA = _guardaNova();
+let _guardaTimer = null;
+let _guardaEmCurso = null;
+let _ultimaEtapaVista = 1;
+
+function _hub(){ try{ return (window.parent && window.parent!==window && window.parent.PrevisaoHub) || null; }catch(e){ return null; } }
+function _escG(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function _horaG(d){ try{ const x=new Date(d); return isNaN(x)?'':x.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } }
+function _dataCurtaG(d){ try{ const x=new Date(d); return isNaN(x)?'':x.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})+' '+_horaG(x); }catch(e){ return ''; } }
+
+/* Existe algo que vale guardar? Tela vazia (demo) nao vai para a pasta. */
+function temTrabalho(){
+  if(P && !P._demo) return true;
+  if(modoA_M) return true;
+  if(modoEntrada==='modoD' && modoD && (modoD.cats||[]).some(c=>(c.itens||[]).some(it=>typeof it.mensal==='number'))) return true;
+  return false;
+}
+
+/* Estado completo, para "abrir" voltar exatamente onde a pessoa parou.
+   atualizadoEm fica de fora porque muda a cada tela e faria salvar sem mudanca real. */
+function _montarDados(){
+  const Pc=Object.assign({}, P); delete Pc.atualizadoEm;
+  const d={ v:1, versao:GUARDA.versao||'Rascunho', etapa, modoEntrada, exportSoAno, modoA_antBase,
+    P:Pc, modoA_M, modoA_rows, modoD, IMPORT_LOG, CONF_HTML };
+  const medir=()=>{ const s=JSON.stringify(d); let b=s.length; try{ b=new TextEncoder().encode(s).length; }catch(e){} return {s,b}; };
+  let m=medir();
+  // Grande demais: larga primeiro a previa crua da planilha (so serve para conferir na tela),
+  // depois o historico das importacoes. As contas e decisoes ficam sempre.
+  if(m.b>GUARDA_LIMITE && d.modoA_rows){ d.modoA_rows=null; m=medir(); }
+  if(m.b>GUARDA_LIMITE && d.IMPORT_LOG && d.IMPORT_LOG.length){ d.IMPORT_LOG=[]; m=medir(); }
+  return {d, s:m.s, bytes:m.b};
+}
+function _tituloGuarda(){
+  const h=_hub(); const c=h&&h.condominio?h.condominio():null;
+  const nome=(c&&c.nome)||(P&&P.condominio)||'sem condomínio';
+  const ex=(modoA_M&&modoA_M.exercicio)||(P&&P.exercicio)||'';
+  return ('Previsão '+nome+' '+ex+' '+(GUARDA.versao||'Rascunho')).replace(/\s+/g,' ').trim();
+}
+function _avisoGuarda(t,tipo){
+  if(document.getElementById('expmsg')){ msg(t,tipo); return; }
+  const h=_hub(); if(h&&h.avisar){ h.avisar(t, tipo==='err'?'err':'info'); return; }
+  alert(t);
+}
+
+/* Envia para a pasta. Monta os dados de forma sincrona antes de qualquer espera:
+   na troca de condominio o iframe recarrega logo em seguida. Um envio por vez,
+   para a primeira gravacao (sem id ainda) nao virar dois itens na pasta. */
+function guardar(o){
+  o=o||{};
+  const h=_hub();
+  if(!h || !temTrabalho() || (GUARDA.bloqueado && !o.forcar)) return Promise.resolve(false);
+  if(_guardaEmCurso){
+    if(o.semEsperar) return _guardaEmCurso;
+    return _guardaEmCurso.then(()=>guardar(o), ()=>guardar(o));
+  }
+  const {d,s,bytes}=_montarDados();
+  if(bytes>GUARDA_LIMITE){
+    GUARDA.erro='a previsão passou do tamanho que a pasta aceita'; renderGuarda();
+    if(o.forcar) _avisoGuarda('Não foi possível guardar: '+GUARDA.erro+'.','err');
+    return Promise.resolve(false);
+  }
+  if(!o.forcar && GUARDA.id && s===GUARDA.ultimoJson) return Promise.resolve(true);
+  const alvo=GUARDA, titulo=_tituloGuarda();
+  let pr; try{ pr=h.salvar({id:alvo.id||undefined, titulo, dados:d}); }catch(e){ pr=Promise.reject(e); }
+  alvo.salvando=true; renderGuarda();
+  _guardaEmCurso=Promise.resolve(pr).then(id=>{
+    // So aplica se a previsao na tela ainda for a mesma (restaurar ou encerrar troca o objeto GUARDA).
+    if(GUARDA===alvo){ alvo.id=id||alvo.id; alvo.titulo=titulo; alvo.salvoEm=new Date(); alvo.ultimoJson=s; alvo.erro=''; alvo.bloqueado=false; }
+    return true;
+  }, e=>{ if(GUARDA===alvo) alvo.erro=(e&&e.message)||'falhou'; if(o.forcar) _avisoGuarda('Não foi possível guardar: '+((e&&e.message)||'falhou')+'.','err'); return false; })
+  .then(ok=>{ alvo.salvando=false; _guardaEmCurso=null; renderGuarda(); atualizarListaSalvas(); return ok; });
+  return _guardaEmCurso;
+}
+/* urgente: troca o agendamento (avanco de etapa). Senao so agenda se nada estiver agendado,
+   para mudanca miuda salvar no maximo a cada 15 s. */
+function agendarGuarda(ms, urgente){
+  if(_guardaTimer && !urgente) return;
+  if(_guardaTimer) clearTimeout(_guardaTimer);
+  _guardaTimer=setTimeout(()=>{ _guardaTimer=null; guardar(); }, ms);
+}
+window._previsaoMudou=function(){ if(GUARDA.id && !GUARDA.bloqueado) agendarGuarda(15000,false); };
+function _depoisDoRender(){
+  // Avancou de etapa (Curadoria, Reajustes, Resultado, Exportar): guarda sozinho.
+  if(etapa>_ultimaEtapaVista && temTrabalho() && !GUARDA.bloqueado) agendarGuarda(600,true);
+  _ultimaEtapaVista=etapa;
+  renderGuarda();
+}
+// Aba escondida (trocou de aba, minimizou): manda o que estiver agendado na hora.
+try{ document.addEventListener('visibilitychange',()=>{ if(document.hidden && _guardaTimer){ clearTimeout(_guardaTimer); _guardaTimer=null; guardar(); } }); }catch(e){}
+
+/* Barra no topo: o que esta guardado e o botao Encerrar. */
+function renderGuarda(){
+  const el=document.getElementById('guarda'); if(!el) return;
+  if(!_hub()){ el.innerHTML=''; return; }
+  const caixa='display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 12px;padding:8px 12px;border-radius:8px;font-size:13px;';
+  const bSalvar='<button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="salvarVersao()">💾 Salvar versão</button>';
+  if(GUARDA.id){
+    const st=GUARDA.salvando?'salvando…':(GUARDA.salvoEm?'salva às '+_horaG(GUARDA.salvoEm):'');
+    el.innerHTML=`<div style="${caixa}background:rgba(46,123,199,.08);border:1px solid rgba(46,123,199,.25)">
+      <span style="flex:1;min-width:220px">📁 <b>Na pasta Em andamento:</b> ${_escG(GUARDA.titulo)} <span class="note">${_escG(st)}${GUARDA.erro?' · não salvou agora: '+_escG(GUARDA.erro):''}</span></span>
+      ${bSalvar}<button class="btn btn-ghost" style="padding:4px 10px;font-size:12px" onclick="encerrarGuardada()">Encerrar</button></div>`;
+  } else if(temTrabalho()){
+    const t=GUARDA.bloqueado?'Esta previsão saiu da pasta Em andamento (encerrada em outro lugar). Use Salvar versão para guardar de novo.'
+      :(GUARDA.salvando?'Guardando na pasta Em andamento…':'Ainda não guardada. Ela vai sozinha para a pasta Em andamento quando você avança de etapa, ou agora em Salvar versão.');
+    el.innerHTML=`<div style="${caixa}background:rgba(232,139,26,.08);border:1px solid rgba(232,139,26,.3)">
+      <span style="flex:1;min-width:220px">${_escG(t)}${GUARDA.erro?' <span class="note">Não salvou agora: '+_escG(GUARDA.erro)+'</span>':''}</span>${bSalvar}</div>`;
+  } else el.innerHTML='';
+}
+
+/* "Previsões salvas" (etapa Dados): as guardadas do condominio ativo, vindas da pasta. */
+function _opcoesSalvas(){
+  const h=_hub(); let itens=[];
+  if(h){ try{ itens=(h.lista()||[]).map(t=>({id:t.id, rot:t.titulo+' · '+_dataCurtaG(t.atualizado_em)+(t.id===GUARDA.id?' (aberta)':'')})); }catch(e){ itens=[]; } }
+  else itens=Store.list().filter(x=>{ const p=Store.load(x.id); return p && !p._demo; }).map(x=>({id:x.id, rot:x.condominio+' ('+x.exercicio+')'}));
+  return `<option value="">${itens.length?'abrir':'nenhuma guardada'}</option>`+itens.map(i=>`<option value="${_escG(i.id)}">${_escG(i.rot)}</option>`).join('');
+}
+function _previsoesSalvasHTML(){
+  return `<select id="prevSalvas" style="max-width:280px" onchange="if(this.value){abrirSalva(this.value);} this.value='';">${_opcoesSalvas()}</select>`;
+}
+function atualizarListaSalvas(){ const s=document.getElementById('prevSalvas'); if(s) s.innerHTML=_opcoesSalvas(); }
+function abrirSalva(id){
+  const h=_hub();
+  if(h){ h.abrir(id); return; }   // a pastinha busca os dados e chama PrevisaoPonte.restaurar
+  carregarSalva(id);
+}
+
+/* salvar versão: grava na pasta Em andamento. Mesmo nome atualiza a guardada;
+   nome novo vira outra versao guardada, e a anterior continua na pasta. */
+async function salvarVersao(){
+  if(!temTrabalho()){ _avisoGuarda('Ainda não há previsão para guardar: importe os relatórios ou a planilha primeiro.','err'); return; }
+  const nome=prompt('Nome da versão:', GUARDA.versao||'Rascunho'); if(nome==null) return;
+  const nm=String(nome).replace(/\s+/g,' ').trim().slice(0,60); if(!nm) return;
+  if(!_hub()){ Store.save(P); _avisoGuarda('Versão "'+nm+'" guardada só nesta aba (fora do Hub).'); return; }
+  if(GUARDA.id && nm!==GUARDA.versao){ const nova=_guardaNova(); nova.versao=nm; GUARDA=nova; }
+  else { GUARDA.versao=nm; GUARDA.bloqueado=false; }
+  if(_guardaTimer){ clearTimeout(_guardaTimer); _guardaTimer=null; }
+  const ok=await guardar({forcar:true});
+  if(ok) _avisoGuarda('Versão "'+nm+'" guardada na pasta Em andamento.');
+  renderGuarda(); atualizarListaSalvas();
+}
+
+/* Volta a tela ao estado limpo (depois de Encerrar). */
+function _limparPrevisao(){
+  if(_guardaTimer){ clearTimeout(_guardaTimer); _guardaTimer=null; }
+  GUARDA=_guardaNova();
+  P=novaVazia(); etapa=1; _ultimaEtapaVista=1; modoEntrada='manual'; modoA_M=null; modoA_rows=null; modoA_antBase='mensal';
+  modoD=null; IMPORT_LOG=[]; CONF_HTML=''; exportSoAno=false;
+  render();
+}
+async function encerrarGuardada(){
+  const h=_hub(); if(!h || !GUARDA.id) return;
+  const ok=await h.encerrar(GUARDA.id);   // a pastinha pergunta antes
+  if(ok && GUARDA.id) _limparPrevisao();
+}
+
+/* Abre uma previsao guardada: devolve todas as etapas como estavam. */
+function restaurarGuardada(t){
+  const d=t&&t.dados;
+  if(!d || !d.P || !d.P.params) throw new Error('os dados desta previsão estão incompletos.');
+  // Outra previsao aberta com mudanca nao guardada: guarda antes de trocar.
+  if(GUARDA.id!==t.id && temTrabalho() && !GUARDA.bloqueado){ try{ guardar({semEsperar:true}); }catch(e){} }
+  if(_guardaTimer){ clearTimeout(_guardaTimer); _guardaTimer=null; }
+  P=d.P;
+  if(!Array.isArray(P.itens)) P.itens=[];
+  if(!Array.isArray(P.versoes)) P.versoes=[];
+  if(!P.reajusteCategorias) P.reajusteCategorias={};
+  etapa=Math.min(Math.max(parseInt(d.etapa,10)||1,1),5);
+  modoEntrada=d.modoEntrada||'manual'; exportSoAno=!!d.exportSoAno; modoA_antBase=d.modoA_antBase||'mensal';
+  modoA_M=d.modoA_M||null; modoA_rows=d.modoA_rows||null; modoD=d.modoD||null;
+  IMPORT_LOG=Array.isArray(d.IMPORT_LOG)?d.IMPORT_LOG:[]; CONF_HTML=d.CONF_HTML||'';
+  const g=_guardaNova(); g.id=t.id; g.versao=d.versao||'Rascunho'; g.titulo=t.titulo||''; g.salvoEm=t.atualizado_em?new Date(t.atualizado_em):null;
+  GUARDA=g; _ultimaEtapaVista=etapa;
+  render();
+  if(etapa===3) setTimeout(renderOverrides,0);
+  GUARDA.ultimoJson=_montarDados().s;   // acabou de abrir: nada novo para salvar
+  renderGuarda();
+}
+
+window.PrevisaoPonte = {
+  pronto:false,
+  geracao:(function(){ try{ return new URLSearchParams(location.search).get('g')||''; }catch(e){ return ''; } })(),
+  restaurar:restaurarGuardada,
+  // Troca de condominio no Hub: guarda ja (sincrono) e diz se havia algo para guardar.
+  guardarAgora:function(){
+    if(_guardaTimer){ clearTimeout(_guardaTimer); _guardaTimer=null; }
+    if(!temTrabalho() || GUARDA.bloqueado) return false;
+    guardar({semEsperar:true}); return true;
+  },
+  listaMudou:function(itens){
+    atualizarListaSalvas();
+    // A previsao aberta sumiu da pasta (encerrada em outra aba ou computador):
+    // solta, para nao recriar sozinha. Folga de 20 s para nao confundir com gravacao recem feita.
+    if(GUARDA.id && !GUARDA.salvando && !(itens||[]).some(x=>x.id===GUARDA.id)
+       && (!GUARDA.salvoEm || Date.now()-GUARDA.salvoEm.getTime()>20000)){
+      const g=_guardaNova(); g.versao=GUARDA.versao; g.bloqueado=true; GUARDA=g; renderGuarda();
+    }
+  },
+  encerradoFora:function(id){
+    if(id && id===GUARDA.id){ _limparPrevisao(); _avisoGuarda('Previsão encerrada.'); }
+    else atualizarListaSalvas();
+  }
+};
+window.salvarVersao=salvarVersao; window.encerrarGuardada=encerrarGuardada; window.abrirSalva=abrirSalva;
 
 /* ===== AUTO-VALIDAÇÃO (mantida) ===== */
 /* auto-validação removida na versão original */
 
 /* ===== BOOT ===== */
-function boot(){ P = novaVazia(); etapa=1; render(); }
+// pronto=true so depois do primeiro render: o Hub espera isso antes de restaurar.
+function boot(){ P = novaVazia(); etapa=1; render(); window.PrevisaoPonte.pronto=true; }
 window.addEventListener('DOMContentLoaded', boot);
 window.irEtapa=irEtapa; window.setParam=setParam; window.setFrac=setFrac;
 window.setDeci=setDeci; window.setBase=setBase; window.setItemVal=setItemVal; window.aplicarFiltro=aplicarFiltro; window.renderContratosPanel=renderContratosPanel;
