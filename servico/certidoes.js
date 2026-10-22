@@ -23,7 +23,7 @@ const URL_MINUTOS = 10;
 // Ordem da tela. Municipal ganha nome e link pela cidade do condomínio (ver municipalDe).
 const TIPOS = [
   { tipo: 'federal', nome: 'Federal (Receita e PGFN)', link: 'https://servicos.receitafederal.gov.br/servico/certidoes/#/home/cnpj' },
-  { tipo: 'estadual', nome: 'Estadual (SEFAZ ES)', link: 'https://s2-internet.sefaz.es.gov.br/certidao/cnd' },
+  { tipo: 'estadual', nome: 'Estadual (SEFAZ ES)', link: 'https://s1-internet.sefaz.es.gov.br/certidaonegativa/Gerar' },
   { tipo: 'municipal', nome: 'Municipal', link: null },
   { tipo: 'trabalhista', nome: 'Trabalhista (TST)', link: 'https://cndt-certidao.tst.jus.br/gerarCertidao' },
   { tipo: 'fgts', nome: 'FGTS (Caixa)', link: 'https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf' },
@@ -33,7 +33,7 @@ const CHAVES = new Set(TIPOS.map((t) => t.tipo));
 // Nome curto para o título do alerta ("Certidão FGTS vence em ...").
 const NOME_CURTO = { federal: 'Federal', estadual: 'Estadual', municipal: 'Municipal', trabalhista: 'Trabalhista', fgts: 'FGTS', falencia: 'de Falência' };
 const MUNICIPIOS = {
-  serra: { nome: 'Serra', link: 'https://www.serra.es.gov.br/servicos#titulo' },
+  serra: { nome: 'Serra', link: 'https://tributacao.serra.es.gov.br:8080/tbserra/loginWeb.jsp?execobj=ServicosWebSite&tab=tabCertNegCont' },
   vitoria: { nome: 'Vitória', link: 'https://tributario.vitoria.es.gov.br/servicos/CertidaoNegativa/CertidaoNegativa.aspx' },
   'vila velha': { nome: 'Vila Velha', link: 'https://tributacao.vilavelha.es.gov.br/tbw/loginWeb.jsp?execobj=ServicosWebSite&tab=tabCertNegCont' },
   cariacica: { nome: 'Cariacica', link: 'https://sistemas.cariacica.es.gov.br/tbw/loginWeb.jsp?execobj=ServicosWebSite' },
@@ -201,9 +201,11 @@ function carregarBusca() {
       TIPOS_AUTOMATICOS: b && b.TIPOS_AUTOMATICOS instanceof Set ? b.TIPOS_AUTOMATICOS : new Set(),
       buscar: b && typeof b.buscar === 'function' ? b.buscar : null,
       linkPreenchido: b && typeof b.linkPreenchido === 'function' ? b.linkPreenchido : null,
+      // Automática depende da cidade (municipal só em Vitória): usa ehAutomatica quando existe.
+      ehAutomatica: b && typeof b.ehAutomatica === 'function' ? b.ehAutomatica : null,
     };
   } catch (e) {
-    return { TIPOS_AUTOMATICOS: new Set(), buscar: null, linkPreenchido: null };
+    return { TIPOS_AUTOMATICOS: new Set(), buscar: null, linkPreenchido: null, ehAutomatica: null };
   }
 }
 
@@ -215,7 +217,7 @@ function tiposDaTela(busca, cnpj, cidade) {
     if (link && busca.linkPreenchido) {
       try { const l = busca.linkPreenchido(t.tipo, soDig(cnpj), cidade); if (typeof l === 'string' && /^https:\/\//.test(l)) link = l; } catch (e) { /* fica o link normal */ }
     }
-    return { tipo: t.tipo, nome, link, automatica: busca.TIPOS_AUTOMATICOS.has(t.tipo) };
+    return { tipo: t.tipo, nome, link, automatica: busca.ehAutomatica ? !!busca.ehAutomatica(t.tipo, cidade) : busca.TIPOS_AUTOMATICOS.has(t.tipo) };
   });
 }
 

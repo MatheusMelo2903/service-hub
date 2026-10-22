@@ -4,9 +4,9 @@ Pedido do Matheus (22/10/2026): opção "Incluir certidões negativas" na Presta
 
 ## Tipos (chave, nome na tela, link)
 1. federal: "Federal (Receita e PGFN)": https://servicos.receitafederal.gov.br/servico/certidoes/#/home/cnpj (verificação de robô: manual)
-2. estadual: "Estadual (SEFAZ ES)": https://s2-internet.sefaz.es.gov.br/certidao/cnd (a confirmar)
+2. estadual: "Estadual (SEFAZ ES)": https://s1-internet.sefaz.es.gov.br/certidaonegativa/Gerar (Cloudflare Turnstile: manual)
 3. municipal: "Municipal (<cidade>)", escolhida pela cidade do endereço do condomínio:
-   Serra: https://www.serra.es.gov.br/servicos#titulo (link exato a confirmar)
+   Serra: https://tributacao.serra.es.gov.br:8080/tbserra/loginWeb.jsp?execobj=ServicosWebSite&tab=tabCertNegCont (imagem: manual)
    Vitória: https://tributario.vitoria.es.gov.br/servicos/CertidaoNegativa/CertidaoNegativa.aspx (sem verificação na 1a tela)
    Vila Velha: https://tributacao.vilavelha.es.gov.br/tbw/loginWeb.jsp?execobj=ServicosWebSite&tab=tabCertNegCont (imagem: manual)
    Cariacica: https://sistemas.cariacica.es.gov.br/tbw/loginWeb.jsp?execobj=ServicosWebSite (verificação: manual)
@@ -46,3 +46,6 @@ Ficam no trabalho da prestação (pasta Em andamento) via Trabalhos.anexar. Teto
 2. Aguardando: se marcou "Incluir certidões negativas" e falta alguma, o trabalho da prestação fica na pasta com o título acrescido de " (aguardando certidões)" e o card mostra o que falta. Quando todas estiverem válidas, tira o "aguardando".
 3. Reuso: certidão guardada no condomínio e ainda válida entra sozinha, sem emitir de novo. Ao abrir o painel, as automáticas faltando ou vencidas são buscadas sozinhas.
 4. Alerta: certidão vencendo em até 15 dias (tipo certidao_vencendo) ou vencida (certidao_vencida) aparece no cartão "Alertas do condomínio" do Dashboard, só para condomínios que já têm certidão guardada. Gerador gerarAlertasCertidoes(banco, idSL, hoje) em servico/certidoes.js no formato de servico/regras/alertas-regras.js ({ alertas, falhas }), somado em calcularTodosAlertas no server.js; rótulo "Certidão" em public/dashboard.js (ALERTA_ROTULO).
+
+## Resultado da busca automática (22/10/2026, testado pelo Mac)
+Automático com PDF oficial: só municipal de Vitória. Manual: federal (hCaptcha), estadual (Turnstile), trabalhista (imagem), FGTS (o Consultar por programa cai no ShieldSquare com hCaptcha; no navegador da pessoa passa), Serra, Vila Velha (imagem), Cariacica (reCAPTCHA). TJES funciona sem verificação mas só entrega HTML (sem PDF): manual pela regra atual. Nenhum site aceita CNPJ no link: a tela copia o CNPJ. Vitória precisa ser testada uma vez a partir do servidor em nuvem.
