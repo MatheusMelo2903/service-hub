@@ -59,6 +59,7 @@ function prestacaoSelecionarCondominio(id, nome, idSuperlogica) {
 }
 
 function prestacaoMostrarInfoCondominio() {
+  if (window.Certidoes) Certidoes.atualizar(); // T50: painel de certidões segue o condomínio da tela
   var el = document.getElementById('prest-cond-info');
   if (!el) return;
   if (!prestacaoState.condId) { el.textContent = ''; return; }
@@ -214,6 +215,7 @@ function prestacaoLimparTudo() {
   // T49: a prestação gerada continua na pasta Em andamento; só a tela esquece dela.
   // Ajuste e arquivar saem junto (o aviso do botão promete isso), e voltam ao abrir pela pasta.
   prestacaoEsquecerTrabalhoDaTela();
+  if (window.Certidoes) Certidoes.limpar(); // T50: caixa de certidões e documentos da tela
   prestAjuste = { jobId: null, base: null, juntar: [], tela: null };
   var cardAj = document.getElementById('prest-ajuste');
   if (cardAj) cardAj.style.display = 'none';
@@ -2486,7 +2488,10 @@ window.addEventListener('condominioAtivo:trocou', function() {
 var PREST_MIME_PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
 // tela: muda sempre que a tela esquece a prestação (Limpar tudo, troca de condomínio,
 // abrir outra pela pasta). Um salvamento que termina depois disso não se pendura na tela nova.
-var prestTrabalho = { id: null, chave: '', ctx: null, titulo: '', arquivos: [], blobs: {}, urls: {}, tela: 0, salvando: 0, fila: Promise.resolve() };
+var prestTrabalho = { id: null, chave: '', ctx: null, titulo: '', arquivos: [], blobs: {}, urls: {}, tela: 0, salvando: 0, fila: Promise.resolve(),
+  // T50 (public/certidoes.js): dados e título só da prestação, para salvar de novo com as
+  // certidões e outros documentos sem gerar nada; extrasSalvos evita salvar sem mudança.
+  dadosBase: null, tituloBase: '', idSLTrabalho: null, extrasSalvos: '' };
 
 // O que precisa para reabrir a prestação, lido da tela no momento em que a geração começa.
 function prestacaoContextoAtual(origem) {
@@ -2592,6 +2597,11 @@ async function prestacaoGuardarAgora(ctx, r, jobId, res, tela) {
     ajuste: ajuste
   };
   var envio = { id: idAnterior, idSuperlogica: ctx.modoLivre ? null : (ctx.idSuperlogica || null), titulo: titulo, dados: dados };
+  // T50: certidões e outros documentos da tela vão junto (título ganha " (aguardando certidões)"
+  // se falta alguma). A base sem eles fica guardada para salvar de novo só essa parte.
+  var dadosBase = Object.assign({}, dados);
+  var extras = window.Certidoes ? Certidoes.extrasDoTrabalho(idAnterior) : null;
+  if (extras) { Object.assign(dados, extras.dados); envio.titulo = titulo + extras.sufixo; }
   var id;
   try {
     id = await Trabalhos.salvar('prestacao', envio);
@@ -2612,6 +2622,7 @@ async function prestacaoGuardarAgora(ctx, r, jobId, res, tela) {
       + ' na pasta Em andamento. O que já baixou continua valendo.', 'warn');
     // A lista guardada passa a ter só o que subiu (um arquivo antigo com o mesmo nome não vale mais).
     dados.arquivos = meta(guardados);
+    dadosBase.arquivos = dados.arquivos;
     envio.id = id;
     try { await Trabalhos.salvar('prestacao', envio); } catch (e) { /* fica a primeira versão */ }
   }
@@ -2619,9 +2630,48 @@ async function prestacaoGuardarAgora(ctx, r, jobId, res, tela) {
   prestTrabalho.id = id;
   prestTrabalho.chave = chave;
   prestTrabalho.ctx = ctx;
-  prestTrabalho.titulo = titulo;
+  prestTrabalho.titulo = envio.titulo;
   prestTrabalho.arquivos = meta(guardados);
   prestTrabalho.urls = {};
+  // T50: anexa os outros documentos que estavam só na tela e acerta o "aguardando".
+  prestTrabalho.dadosBase = dadosBase;
+  prestTrabalho.tituloBase = titulo;
+  prestTrabalho.idSLTrabalho = envio.idSuperlogica;
+  prestTrabalho.extrasSalvos = extras ? envio.titulo + '|' + JSON.stringify(extras.dados) : '';
+  if (window.Certidoes) prestacaoSalvarExtras();
+}
+
+// T50: salva de novo a prestação guardada (mesmo id) só com as certidões e os outros
+// documentos atualizados. Nada é gerado de novo. Vai na mesma fila dos salvamentos para
+// não cruzar com uma geração. Sem mudança desde o último salvamento, não chama o servidor.
+function prestacaoSalvarExtras() {
+  var tela = prestTrabalho.tela;
+  prestTrabalho.fila = prestTrabalho.fila.then(async function() {
+    if (prestTrabalho.tela !== tela || !prestTrabalho.id || !prestTrabalho.dadosBase || !window.Certidoes) return;
+    var id = prestTrabalho.id;
+    await Certidoes.anexarPendentes(id);
+    if (prestTrabalho.tela !== tela || prestTrabalho.id !== id) return;
+    var ex = Certidoes.extrasDoTrabalho(id);
+    var titulo = prestTrabalho.tituloBase + ex.sufixo;
+    var chave = titulo + '|' + JSON.stringify(ex.dados);
+    if (chave === prestTrabalho.extrasSalvos) return;
+    var novo = await Trabalhos.salvar('prestacao', { id: id, idSuperlogica: prestTrabalho.idSLTrabalho, titulo: titulo, dados: Object.assign({}, prestTrabalho.dadosBase, ex.dados) });
+    if (novo && novo !== id) {
+      // A prestação tinha saído da pasta (encerrada em outra aba ou expirou): o servidor
+      // criou outra sem os arquivos. Tira essa e a tela esquece.
+      try { await Trabalhos.encerrar(novo); } catch (e) { /* some sozinha em 7 dias */ }
+      if (prestTrabalho.tela === tela) prestacaoEsquecerTrabalhoDaTela();
+      toast('Esta prestação já tinha saído da pasta Em andamento. Gere de novo para guardar com as certidões.', 'warn');
+      return;
+    }
+    if (prestTrabalho.tela !== tela) return;
+    prestTrabalho.extrasSalvos = chave;
+    prestTrabalho.titulo = titulo;
+    if (!prestTrabalho.salvando) prestacaoMostrarGuardado(false);
+  }).catch(function(e) {
+    toast('As certidões e os documentos não ficaram guardados na pasta agora (' + (e && e.message ? e.message : 'erro') + '). Tente de novo.', 'warn');
+  });
+  return prestTrabalho.fila;
 }
 
 // A tela esquece a prestação guardada (ela continua na pasta Em andamento).
@@ -2635,8 +2685,13 @@ function prestacaoEsquecerTrabalhoDaTela() {
   prestTrabalho.blobs = {};
   prestTrabalho.urls = {};
   prestTrabalho.salvando = 0;
+  prestTrabalho.dadosBase = null;
+  prestTrabalho.tituloBase = '';
+  prestTrabalho.idSLTrabalho = null;
+  prestTrabalho.extrasSalvos = '';
   var el = document.getElementById('prest-guardado');
   if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+  if (window.Certidoes) Certidoes.aoEsquecerTrabalho(); // T50: painel volta para o card 2
 }
 
 // Bloco criado aqui (sem mexer no index.html), logo antes do "Ajustar estrutura".
@@ -2674,14 +2729,18 @@ function prestacaoMostrarGuardado(salvando) {
     + (prestTrabalho.arquivos.length ? '' : ' Os arquivos não ficaram guardados; para baixar, gere de novo.') + '</div>'
     + '</div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">' + botoes
+    // T50: "Incluir certidões e documentos" e "Baixar tudo" (public/certidoes.js preenche)
+    + '<span id="prest-guardado-cert-botoes" style="display:contents"></span>'
     + '<button type="button" class="btn btn-ghost prest-guardado-encerrar" style="font-size:12px;padding:6px 12px">Encerrar</button>'
-    + '</div></div>';
+    + '</div></div>'
+    + '<div id="prest-guardado-cert"></div>';
   el.querySelectorAll('.prest-guardado-baixar').forEach(function(b) {
     b.addEventListener('click', function() { prestacaoBaixarGuardado(b.dataset.tipo, b); });
   });
   var enc = el.querySelector('.prest-guardado-encerrar');
   if (enc) enc.addEventListener('click', prestacaoEncerrarGuardado);
   el.style.display = '';
+  if (window.Certidoes) Certidoes.completarCardGuardado();
 }
 
 // Relê o trabalho para ter links novos dos arquivos (cada link vale 10 minutos).
@@ -2797,6 +2856,12 @@ async function prestacaoRestaurarTrabalho(t) {
   prestTrabalho.ctx = ctx;
   prestTrabalho.chave = prestacaoChaveTrabalho(ctx);
   prestTrabalho.titulo = t.titulo || '';
+  // T50: certidões e outros documentos guardados com a prestação voltam para a tela.
+  var extras = window.Certidoes ? Certidoes.aoRestaurar(t) : null;
+  prestTrabalho.dadosBase = extras ? extras.base : Object.assign({}, d);
+  prestTrabalho.tituloBase = extras ? extras.tituloBase : (t.titulo || '');
+  prestTrabalho.idSLTrabalho = t.id_superlogica || null;
+  prestTrabalho.extrasSalvos = extras ? extras.chave : '';
   prestTrabalho.arquivos = (d.arquivos || []).filter(function(a) { return a && a.nome && Object.prototype.hasOwnProperty.call(noServidor, a.nome); });
   prestTrabalho.urls = {};
   prestTrabalho.arquivos.forEach(function(a) { prestTrabalho.urls[a.nome] = { url: noServidor[a.nome], em: Date.now() }; });
