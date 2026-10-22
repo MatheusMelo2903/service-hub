@@ -129,6 +129,7 @@ function setAudioProgress(pct, label, log) {
 const AUDIO_COMPRESS_THRESHOLD = 60 * 1024 * 1024; // 60 MB
 let _ffmpeg = null;
 let _ffmpegProgressCb = null;
+let _ffmpegVivoCb = null;
 
 function _injectScript(src) {
   return new Promise((resolve, reject) => {
@@ -149,38 +150,93 @@ async function carregarFfmpeg() {
   await _injectScript('/vendor/ffmpeg/util.js');
   const ff = new window.FFmpegWASM.FFmpeg();
   ff.on('progress', ({ progress }) => { if (_ffmpegProgressCb) _ffmpegProgressCb(progress); });
+  // T44: cada linha de log do compressor também conta como sinal de vida para o vigia.
+  ff.on('log', () => { if (_ffmpegVivoCb) _ffmpegVivoCb(); });
   await ff.load({ coreURL: '/vendor/ffmpeg/ffmpeg-core.js', wasmURL: '/vendor/ffmpeg/ffmpeg-core.wasm' });
   _ffmpeg = ff;
   return ff;
 }
 
-// Comprime só se o arquivo for grande. Retorna { file, comprimido, origMB?, novoMB? }.
+// T44: compressão à prova de travamento. Em computador com pouca memória (comum em Windows),
+// o compressor do navegador podia travar sem dar erro e a tela ficava carregando para sempre.
+// Agora: (1) arquivo grande demais para comprimir com folga de memória vai original; (2) se o
+// compressor não carregar a tempo, ou ficar sem avançar, é encerrado e o original sobe; (3)
+// qualquer falha da compressão também cai no envio do original. O envio original passa pelo
+// servidor em fluxo, sem limite de memória no navegador.
+const AUDIO_COMPRESS_MAX = 350 * 1024 * 1024;       // acima disso não comprime no navegador
+const AUDIO_COMPRESS_CARGA_MS = 90 * 1000;          // tempo máximo para carregar o compressor
+const AUDIO_COMPRESS_PARADO_MS = 45 * 1000;         // compressor sem avançar por 45s = travado
+
+// Decide se vale comprimir neste computador. Memória informada pelo navegador (Chrome e Edge)
+// abaixo de 4 GB não comprime arquivo acima de 150 MB.
+function audioPodeComprimir(file) {
+  if (file.size < AUDIO_COMPRESS_THRESHOLD) return false;
+  if (file.size > AUDIO_COMPRESS_MAX) return false;
+  const memGB = navigator.deviceMemory;
+  if (memGB && memGB < 4 && file.size > 150 * 1024 * 1024) return false;
+  return true;
+}
+
+// Comprime só se o arquivo for grande e o computador aguentar. Nunca trava: se a compressão
+// falhar ou parar, devolve o original. Retorna { file, comprimido, origMB?, novoMB? }.
 async function comprimirAudioSeGrande(file, sig) {
   if (file.size < AUDIO_COMPRESS_THRESHOLD) return { file, comprimido: false };
   const origMB = (file.size / 1048576).toFixed(1);
+  if (!audioPodeComprimir(file)) {
+    setAudioProgress(2, 'Áudio grande (' + origMB + 'MB), enviando o arquivo original...', 'Envio direto, sem otimizar neste computador.');
+    return { file, comprimido: false };
+  }
   setAudioProgress(2, 'Áudio grande (' + origMB + 'MB), otimizando para upload...', 'Carregando compressor (única vez)...');
-  const ff = await carregarFfmpeg();
-  _ffmpegProgressCb = (p) => {
-    const pct = Math.max(2, Math.min(99, Math.round(p * 100)));
-    setAudioProgress(pct, 'Áudio grande, otimizando para upload... ' + pct + '%', 'Comprimindo (mono 64k 16kHz)...');
-  };
+  let ff = null;
+  let ultimoSinal = Date.now();
+  let vigia = null;
+  const acComp = new AbortController();
+  const onAbortExterno = () => acComp.abort();
+  if (sig) sig.addEventListener('abort', onAbortExterno, { once: true });
   try {
+    // Carrega o compressor com prazo: rede lenta ou navegador sem memória não prende a tela.
+    ff = await Promise.race([
+      carregarFfmpeg(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('compressor demorou para carregar')), AUDIO_COMPRESS_CARGA_MS))
+    ]);
+    _ffmpegProgressCb = (p) => {
+      ultimoSinal = Date.now();
+      const pct = Math.max(2, Math.min(99, Math.round(p * 100)));
+      setAudioProgress(pct, 'Áudio grande, otimizando para upload... ' + pct + '%', 'Comprimindo (mono 64k 16kHz)...');
+    };
+    _ffmpegVivoCb = () => { ultimoSinal = Date.now(); };
+    // Vigia: sem progresso por 45s, encerra o compressor e segue com o original.
+    vigia = setInterval(() => {
+      if (Date.now() - ultimoSinal > AUDIO_COMPRESS_PARADO_MS) { clearInterval(vigia); vigia = null; acComp.abort(); try { ff.terminate(); } catch (e) { /* já encerrado */ } }
+    }, 5000);
     const { fetchFile } = window.FFmpegUtil;
-    await ff.writeFile('in', await fetchFile(file));
+    await ff.writeFile('in', await fetchFile(file), { signal: acComp.signal });
+    ultimoSinal = Date.now();
     // SETTING TRAVADO (aprovado 2026-07-07): mono, 16 kHz, 64 kbps mp3. Não expor ao usuário.
-    await ff.exec(['-i', 'in', '-ac', '1', '-ar', '16000', '-b:a', '64k', '-f', 'mp3', 'out.mp3'], -1, sig ? { signal: sig } : undefined);
+    await ff.exec(['-i', 'in', '-ac', '1', '-ar', '16000', '-b:a', '64k', '-f', 'mp3', 'out.mp3'], -1, { signal: acComp.signal });
     const data = await ff.readFile('out.mp3');
     await ff.deleteFile('in').catch(() => {});
     await ff.deleteFile('out.mp3').catch(() => {});
+    if (!data || !data.length) throw new Error('compressão sem resultado');
     const nome = file.name.replace(/\.[^.]+$/, '') + '.mp3';
     const novo = new File([data], nome, { type: 'audio/mpeg' });
     const novoMB = (novo.size / 1048576).toFixed(1);
     setAudioProgress(15, 'Otimizado: ' + origMB + 'MB → ' + novoMB + 'MB', 'Compressão concluída ✓');
     return { file: novo, comprimido: true, origMB, novoMB };
   } catch (e) {
-    _ffmpeg = null; // instância pode ter sido terminada; força reload limpo na próxima
-    throw e;
-  } finally { _ffmpegProgressCb = null; }
+    // Cancelamento do usuário continua cancelando; qualquer outra falha segue com o original.
+    if (sig && sig.aborted) throw e;
+    console.warn('compressão do áudio não concluiu, enviando o original:', e && e.message);
+    try { if (ff) ff.terminate(); } catch (e2) { /* já encerrado */ }
+    _ffmpeg = null; // força recarga limpa na próxima vez
+    setAudioProgress(5, 'Otimização não concluiu neste computador, enviando o arquivo original (' + origMB + 'MB)...', 'Envio direto.');
+    return { file, comprimido: false };
+  } finally {
+    if (vigia) clearInterval(vigia);
+    if (sig) sig.removeEventListener('abort', onAbortExterno);
+    _ffmpegProgressCb = null;
+    _ffmpegVivoCb = null;
+  }
 }
 
 // fetch com timeout de etapa (via AbortController). Marca err.__timeout=true no estouro,
@@ -200,6 +256,41 @@ async function fetchComTimeout(url, opts, ms, signalExterno) {
     clearTimeout(timer);
     if (signalExterno) signalExterno.removeEventListener('abort', onAbort);
   }
+}
+
+// T44: envio em partes. Abre a sessão, manda cada parte (com nova tentativa só na parte que
+// falhou) e pede ao servidor para juntar e enviar à transcrição. Devolve o arquivo_id.
+const AUDIO_PARTE_BYTES = 40 * 1024 * 1024;
+async function enviarAudioEmPartes(arquivo, nomeOriginal, sig, comRetry, authH, pctIni) {
+  const total = Math.ceil(arquivo.size / AUDIO_PARTE_BYTES);
+  const tamMB = (arquivo.size / 1048576).toFixed(1);
+  const ini = await comRetry(async () => {
+    const r = await fetchComTimeout('/api/audio/partes/iniciar', { method: 'POST', headers: Object.assign({ 'content-type': 'application/json' }, authH()),
+      body: JSON.stringify({ total, nome: (nomeOriginal || '').slice(0, 180) }) }, 30 * 1000, sig);
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 400 || r.status === 403) { const e = new Error(j.detalhe || 'Não foi possível enviar o áudio'); e.__timeout = true; throw e; }
+    if (!r.ok || !j.sessao) throw new Error(j.detalhe || 'Falha ao preparar o envio');
+    return j.sessao;
+  }, 'Preparação do envio');
+  for (let i = 0; i < total; i++) {
+    const parte = arquivo.slice(i * AUDIO_PARTE_BYTES, Math.min(arquivo.size, (i + 1) * AUDIO_PARTE_BYTES));
+    const pct = pctIni + Math.round((30 - pctIni) * i / total);
+    setAudioProgress(pct, 'Enviando arquivo (' + tamMB + 'MB): parte ' + (i + 1) + ' de ' + total + '...', 'Enviando em partes...');
+    await comRetry(async () => {
+      // Prazo por parte: 40 MB a pelo menos 0,25 MB/s (internet bem lenta) cabe em ~3 min.
+      const r = await fetchComTimeout('/api/audio/partes/' + encodeURIComponent(ini) + '/parte/' + i,
+        { method: 'POST', headers: Object.assign({ 'content-type': 'application/octet-stream' }, authH()), body: parte }, 4 * 60 * 1000, sig);
+      if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 8000)); throw new Error('muitos envios seguidos'); }
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 404) { const e = new Error(j.detalhe || 'O envio expirou. Envie o áudio de novo.'); e.__timeout = true; throw e; }
+      if (!r.ok || !j.ok) throw new Error(j.detalhe || 'Falha ao enviar parte do áudio');
+    }, 'Envio da parte ' + (i + 1));
+  }
+  setAudioProgress(29, 'Juntando as partes do áudio...', 'Finalizando envio...');
+  const r = await fetchComTimeout('/api/audio/partes/' + encodeURIComponent(ini) + '/finalizar', { method: 'POST', headers: authH() }, 6 * 60 * 1000, sig);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.arquivo_id) throw new Error(j.detalhe || 'Falha no envio');
+  return j.arquivo_id;
 }
 
 async function processarArquivoAudio(file) {
@@ -241,12 +332,16 @@ async function processarArquivoAudio(file) {
 
     // PASSO 1: envio (retry só em falha rápida; timeout de etapa de 6 min)
     setAudioProgress(comp.comprimido ? 18 : 5, 'Enviando arquivo (' + tamMB + 'MB)...', comp.comprimido ? 'Enviando versão otimizada...' : 'Enviando...');
-    const arquivoId = await comRetry(async () => {
-      const r = await fetchComTimeout(AUDIO_ENVIAR_URL, { method: 'POST', headers: Object.assign({ 'x-nome-arquivo': encodeURIComponent(file.name || '').slice(0, 180) }, authH()), body: arquivo }, 6 * 60 * 1000, sig);
+    // T44: até 40 MB sobe num pedido só; acima disso, em partes de 40 MB (cada pedido curto,
+    // à prova do limite de tempo da borda mesmo em internet lenta).
+    const arquivoId = arquivo.size <= AUDIO_PARTE_BYTES
+      ? await comRetry(async () => {
+      const r = await fetchComTimeout(AUDIO_ENVIAR_URL, { method: 'POST', headers: Object.assign({ 'x-nome-arquivo': encodeURIComponent(file.name || '').slice(0, 180) }, authH()), body: arquivo }, Math.max(6 * 60 * 1000, Math.round(arquivo.size / (0.4 * 1048576)) * 1000), sig);
       const j = await r.json().catch(() => ({}));
       if (!r.ok || !j.arquivo_id) throw new Error(j.detalhe || 'Falha no envio');
       return j.arquivo_id;
-    }, 'Envio');
+      }, 'Envio')
+      : await enviarAudioEmPartes(arquivo, file.name, sig, comRetry, authH, comp.comprimido ? 18 : 5);
     setAudioProgress(30, 'Arquivo enviado! Iniciando transcrição...', 'Envio concluído ✓');
 
     // PASSO 2: inicia a transcrição (retry só em falha rápida; timeout 30s)
@@ -359,43 +454,29 @@ async function extrairTextoPdf(arrayBuffer) {
 }
 
 // ============================================================
-// DOCUMENTOS DA ASSEMBLEIA (T01) — PDFs de apoio da ata
+// DOCUMENTOS DA ASSEMBLEIA (T01, T43) — PDF ou PowerPoint de apoio da ata
 // ============================================================
-// Cada PDF tem o texto extraído aqui no navegador (pdf.js, sem custo). PDF escaneado (sem
-// camada de texto) vai em base64 e o servidor lê com o Claude. O servidor trata o texto destes
-// documentos como fonte oficial prioritária de números, empresas e nomes (ver server.js,
-// REGRAS_DOCUMENTOS_APOIO). Limites espelham os do servidor.
+// PDF: texto de cada página pela camada de texto; páginas com imagem viram foto para leitura
+// visual. PowerPoint (.pptx): lido direto do arquivo, sem converter (ata-leitura-docs.js). O
+// servidor trata o texto destes documentos como fonte oficial prioritária de números, empresas
+// e nomes (ver server.js, REGRAS_DOCUMENTOS_APOIO). Limites espelham os do servidor.
 const ATA_DOCS_MAX = 6;
-const ATA_DOCS_MAX_ESCANEADOS = 3;
-const ATA_DOCS_MAX_BYTES_ESCANEADO = 8 * 1024 * 1024;
-const ATA_DOCS_MAX_CHARS_DOC = 80000;          // igual ao servidor (DOCS_APOIO_MAX_CHARS_DOC)
-const ATA_DOCS_MAX_CORPO = 34 * 1024 * 1024;   // abaixo do limite de 36mb da rota
-let _ataDocsApoio = []; // { id, nome, texto, pdfBase64, paginas, status }
+const ATA_DOCS_MAX_CHARS_DOC = 120000;         // igual ao servidor (DOCS_APOIO_MAX_CHARS_DOC)
+const ATA_DOCS_MAX_CORPO = 62 * 1024 * 1024;   // abaixo do limite de 64mb da rota
+let _ataDocsApoio = []; // { id, nome, texto, imagens, paginas, status, tipo, avisos }
 let _ataDocsSeq = 0;
-let _ataDocsLendo = false; // uma leitura por vez: evita passar do limite de escaneados
+let _ataDocsLendo = false; // uma leitura por vez: o orçamento de imagens é somado em ordem
 
-// Lê um PDF: texto por página e número de páginas. Usa o mesmo loader do pdf.js.
-async function _ataDocLerPdf(arrayBuffer) {
-  const pdfjsLib = await carregarPdfjs();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  let texto = '';
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    texto += '[página ' + i + '] ' + content.items.map(it => it.str).join(' ') + '\n';
-  }
-  return { texto: texto.trim(), paginas: pdf.numPages };
+// Identifica o tipo do arquivo anexado pelo nome e pelo tipo informado pelo navegador.
+function _ataDocTipo(file) {
+  const nome = (file.name || '').toLowerCase();
+  if (file.type === 'application/pdf' || /\.pdf$/.test(nome)) return 'pdf';
+  if (/\.pptx$/.test(nome) || file.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') return 'pptx';
+  if (/\.(ppt|pps|ppsx|key|odp)$/.test(nome)) return 'ppt_antigo';
+  return '';
 }
 
-function _ataDocBase64(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => { const v = String(r.result || ''); const i = v.indexOf(','); resolve(i >= 0 ? v.slice(i + 1) : v); };
-    r.onerror = () => reject(new Error('falha ao ler arquivo'));
-    r.readAsDataURL(file);
-  });
-}
-
+// Lê cada arquivo anexado (PDF ou PowerPoint), um por vez, mostrando o progresso na lista.
 async function anexarDocsAssembleia(event) {
   const input = event && event.target;
   const files = Array.from((input && input.files) || []);
@@ -405,31 +486,30 @@ async function anexarDocsAssembleia(event) {
   try {
   for (const file of files) {
     if (_ataDocsApoio.length >= ATA_DOCS_MAX) { toast('No máximo ' + ATA_DOCS_MAX + ' documentos por ata', 'warn'); break; }
-    const ehPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name || '');
-    if (!ehPdf) { toast(file.name + ': use PDF', 'err'); continue; }
-    const doc = { id: ++_ataDocsSeq, nome: file.name, texto: '', pdfBase64: '', paginas: 0, status: 'lendo' };
+    const tipo = _ataDocTipo(file);
+    if (tipo === 'ppt_antigo') { toast(file.name + ': abra no PowerPoint e salve como .pptx ou exporte em PDF', 'err'); continue; }
+    if (!tipo) { toast(file.name + ': use PDF ou PowerPoint (.pptx)', 'err'); continue; }
+    const doc = { id: ++_ataDocsSeq, nome: file.name, texto: '', imagens: [], paginas: 0, status: 'lendo', tipo, progresso: '', avisos: [] };
     _ataDocsApoio.push(doc);
     renderAtaDocs();
+    const orc = ataNovoOrcamento(_ataDocsApoio.filter(d => d.id !== doc.id));
+    const progresso = (txt) => { doc.progresso = txt; renderAtaDocs(); };
     try {
-      const lido = await _ataDocLerPdf(await file.arrayBuffer());
+      const lido = tipo === 'pptx' ? await ataLerPptx(file, orc, progresso) : await ataLerPdfCompleto(await file.arrayBuffer(), orc, progresso);
       doc.paginas = lido.paginas;
-      const util = lido.texto.replace(/\[página \d+\]/g, '').replace(/\s+/g, '');
-      // Escaneado: quase nenhum texto por página. Vai como PDF para o servidor ler.
-      if (util.length < 30 * Math.max(1, lido.paginas)) { // menos de 30 letras por página: sem camada de texto
-        const escaneados = _ataDocsApoio.filter(d => d.pdfBase64).length;
-        if (escaneados >= ATA_DOCS_MAX_ESCANEADOS) throw new Error('no máximo ' + ATA_DOCS_MAX_ESCANEADOS + ' PDFs escaneados por ata');
-        if (file.size > ATA_DOCS_MAX_BYTES_ESCANEADO) throw new Error('PDF escaneado acima de 8MB');
-        doc.pdfBase64 = await _ataDocBase64(file);
-        doc.texto = '';
-        doc.status = 'escaneado';
-      } else {
-        doc.texto = lido.texto.slice(0, ATA_DOCS_MAX_CHARS_DOC);
-        doc.status = 'ok';
-        if (lido.texto.length > ATA_DOCS_MAX_CHARS_DOC) toast(file.name + ': documento longo, só o início será usado', 'warn');
-      }
+      doc.imagens = lido.imagens;
+      doc.texto = lido.texto.slice(0, ATA_DOCS_MAX_CHARS_DOC);
+      if (lido.texto.length > ATA_DOCS_MAX_CHARS_DOC) doc.avisos.push('documento longo, só o início do texto será usado');
+      if (lido.ocultos) doc.avisos.push(lido.ocultos + ' slide(s) oculto(s) ignorado(s)');
+      if (lido.naoSuportadas) doc.avisos.push(lido.naoSuportadas + ' imagem(ns) em formato que só o PDF lê; se tiver tabela colada do Excel, anexe também o PDF exportado');
+      if (orc.descartadas) doc.avisos.push(orc.descartadas + ' imagem(ns) acima do limite ficaram fora');
+      const util = doc.texto.replace(/\[(página|slide) \d+\]/g, '').replace(/\s+/g, '');
+      if (!util && !doc.imagens.length) throw new Error('nenhum conteúdo encontrado no arquivo');
+      doc.status = 'ok';
+      doc.avisos.forEach(a => toast(file.name + ': ' + a, 'warn'));
     } catch (e) {
       _ataDocsApoio = _ataDocsApoio.filter(d => d.id !== doc.id);
-      toast(file.name + ': ' + (e && e.message ? e.message : 'não foi possível ler o PDF'), 'err');
+      toast(file.name + ': ' + (e && e.message ? e.message : 'não foi possível ler o arquivo'), 'err');
     }
     renderAtaDocs();
   }
@@ -437,21 +517,27 @@ async function anexarDocsAssembleia(event) {
 }
 
 function removerDocAssembleia(id) {
+  if (_ataDocsLendo && _ataDocsApoio.some(d => d.id === id && d.status === 'lendo')) { toast('Aguarde terminar a leitura deste arquivo', 'warn'); return; }
   _ataDocsApoio = _ataDocsApoio.filter(d => d.id !== id);
   renderAtaDocs();
 }
 
+// Lista dos documentos anexados com páginas ou slides e quantas imagens vão para leitura.
 function renderAtaDocs() {
   const lista = document.getElementById('ata-docs-lista');
   if (!lista) return;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   lista.innerHTML = _ataDocsApoio.map(d => {
-    let info = 'lendo...';
-    if (d.status === 'ok') info = d.paginas + ' pág. · ' + d.texto.length.toLocaleString('pt-BR') + ' caracteres';
-    if (d.status === 'escaneado') info = d.paginas + ' pág. · escaneado, será lido no servidor ao gerar';
+    const unidade = d.tipo === 'pptx' ? 'slide' : 'pág.';
+    let info = 'lendo' + (d.progresso ? ' ' + d.progresso : '') + '...';
+    if (d.status === 'ok') {
+      info = d.paginas + ' ' + unidade + (d.tipo === 'pptx' && d.paginas !== 1 ? 's' : '') + ' · ' + d.texto.length.toLocaleString('pt-BR') + ' caracteres';
+      if (d.imagens.length) info += ' · ' + d.imagens.length + ' ' + (d.imagens.length > 1 ? 'imagens' : 'imagem') + ' para leitura ao gerar';
+    }
+    const icone = d.tipo === 'pptx' ? '📊' : '📄';
     return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px">' +
-      '<span style="flex:1;font-size:12px;font-family:var(--mono);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 ' + esc(d.nome) + '</span>' +
-      '<span style="font-size:11px;font-family:var(--mono);color:' + (d.status === 'escaneado' ? 'var(--warning)' : 'var(--muted)') + '">' + esc(info) + '</span>' +
+      '<span style="flex:1;font-size:12px;font-family:var(--mono);color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + icone + ' ' + esc(d.nome) + '</span>' +
+      '<span style="font-size:11px;font-family:var(--mono);color:' + (d.avisos && d.avisos.length ? 'var(--warning)' : 'var(--muted)') + '" title="' + esc((d.avisos || []).join('; ')) + '">' + esc(info) + '</span>' +
       '<button class="pauta-remove" title="Remover" onclick="removerDocAssembleia(' + d.id + ')">×</button></div>';
   }).join('');
 }
@@ -634,6 +720,12 @@ function limparAta() {
 // Ver server.js (app.post('/api/atas/gerar', ...)) e skills-server/ata-condominial.md.
 
 let _ataTextoGerado = '';
+// T44: etapa da geração informada pelo servidor, mostrada no botão enquanto gera.
+let _ataEtapa = '';
+const ATA_ETAPAS = {
+  iniciando: 'Preparando', documentos: 'Lendo a apresentação', escrevendo: 'Escrevendo a ata',
+  conferindo: 'Conferindo com a reunião', completando: 'Completando trechos', revisando: 'Revisando nomes'
+};
 
 async function gerarAtaIA() {
   const cond    = document.getElementById('ata-cond').value.trim();
@@ -707,12 +799,13 @@ async function gerarAtaIA() {
   btn.disabled = true;
   window._gerandoAta = true; // trava a troca de condomínio até terminar (condTrocaBloqueada)
   const geracaoT0 = Date.now();
+  _ataEtapa = '';
   btn.textContent = '⏳ Gerando ata... 0s';
   const progTimer = setInterval(() => {
     const seg = Math.round((Date.now() - geracaoT0) / 1000);
-    btn.textContent = `⏳ Gerando ata... ${seg}s`;
+    btn.textContent = '⏳ ' + (ATA_ETAPAS[_ataEtapa] || 'Gerando ata') + '... ' + seg + 's';
   }, 1000);
-  toast('Gerando ata... pode levar até 1 minuto', 'info');
+  toast('Gerando ata... reunião longa pode levar alguns minutos', 'info');
 
   try {
     // Geração ASSÍNCRONA (job + polling). Antes era uma requisição longa única, mas
@@ -729,12 +822,13 @@ async function gerarAtaIA() {
         transcricao_id: usarTexto ? undefined : (_ataTranscricaoId || undefined),
         transcricao_texto: usarTexto ? trans : undefined,
         id_superlogica: ataCondominioEscolhido(),
-        // T01: documentos da assembleia. Texto extraído aqui; escaneado vai como PDF (base64).
-        documentos: _ataDocsApoio.filter(d => d.status === 'ok' || d.status === 'escaneado').map(d => (
-          d.pdfBase64 ? { nome: d.nome, texto: '', pdf_base64: d.pdfBase64 } : { nome: d.nome, texto: d.texto }
-        ))
+        // T01/T43: documentos da assembleia. Texto extraído aqui; imagens vão para leitura no servidor.
+        documentos: _ataDocsApoio.filter(d => d.status === 'ok').map(d => ({
+          nome: d.nome, tipo: d.tipo, texto: d.texto,
+          imagens: (d.imagens || []).map(im => ({ ref: im.ref, mime: im.mime, base64: im.base64 }))
+        }))
       });
-    if (corpoAta.length > ATA_DOCS_MAX_CORPO) throw new Error('os documentos anexados passam do limite de tamanho; remova algum PDF escaneado');
+    if (corpoAta.length > ATA_DOCS_MAX_CORPO) throw new Error('os documentos anexados passam do limite de tamanho; remova algum arquivo');
     const resp = await apiAuthFetch('/api/atas/gerar', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -759,7 +853,7 @@ async function gerarAtaIA() {
     // AbortController de 15s por consulta pra um request pendurado não travar o laço.
     let payload = null;
     let errosSeguidos = 0;
-    const prazoMax = Date.now() + (_ataDocsApoio.some(d => d.pdfBase64) ? 35 : 25) * 60 * 1000;
+    const prazoMax = Date.now() + (_ataDocsApoio.some(d => d.imagens && d.imagens.length) ? 35 : 25) * 60 * 1000;
     for (;;) {
       await new Promise((r) => setTimeout(r, 4000));
       if (Date.now() > prazoMax) throw new Error('tempo esgotado, tente novamente');
@@ -782,7 +876,7 @@ async function gerarAtaIA() {
       }
       errosSeguidos = 0;
       const body = await st.json().catch(() => ({}));
-      if (body.status === 'processing') continue;
+      if (body.status === 'processing') { if (body.etapa) _ataEtapa = body.etapa; continue; }
       if (body.status === 'error') throw new Error(body.detalhe || body.erro || ('HTTP ' + body.status));
       if (body.status === 'done') { payload = body; break; }
     }
@@ -812,6 +906,7 @@ async function gerarAtaIA() {
     if (Array.isArray(payload.documentos)) {
       payload.documentos.filter(d => d.falhou).forEach(d => avisos.push('o documento ' + d.nome + ' não pôde ser lido e ficou fora'));
       payload.documentos.filter(d => d.truncado).forEach(d => avisos.push('o documento ' + d.nome + ' é muito longo e foi usado só em parte'));
+      payload.documentos.filter(d => d.imagens_falharam).forEach(d => avisos.push(d.imagens_falharam + ' imagem(ns) de ' + d.nome + ' não puderam ser lidas'));
     }
     // T07: participantes citados que não bateram com o cadastro (nome e unidade)
     const part = payload.participantes;

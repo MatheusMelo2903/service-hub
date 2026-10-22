@@ -1660,11 +1660,11 @@
           <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
             <div style="font-size:11px;font-family:var(--mono);color:var(--gs-blue);text-transform:uppercase;letter-spacing:0.08em">📊 Apresentação e documentos da assembleia</div>
             <label style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;background:var(--gs-blue-light);border:1px solid var(--gs-blue-mid);border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;font-family:var(--sans);color:var(--gs-blue)">
-              📎 Adicionar PDF da apresentação
-              <input type="file" id="ata-docs-input" accept="application/pdf,.pdf" multiple style="display:none" onchange="anexarDocsAssembleia(event)">
+              📎 Adicionar PDF ou PowerPoint
+              <input type="file" id="ata-docs-input" accept="application/pdf,.pdf,.pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation" multiple style="display:none" onchange="anexarDocsAssembleia(event)">
             </label>
           </div>
-          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin:0 0 10px">Opcional. Apresentação, prestação de contas, orçamentos ou propostas mostrados na assembleia, um ou mais PDFs. Os números, nomes de empresas e nomes escritos nestes documentos têm prioridade sobre o áudio; quando o áudio disser diferente, a ata usa o documento e marca [conferir: transcrição dizia ...].</p>
+          <p style="font-size:12px;color:var(--muted);font-family:var(--mono);margin:0 0 10px">Opcional. Apresentação, prestação de contas, orçamentos ou propostas mostrados na assembleia, em PDF ou PowerPoint (.pptx), um ou mais arquivos. Texto e imagens dos slides e páginas são lidos. Os números, nomes de empresas e nomes escritos nestes documentos têm prioridade sobre o áudio; quando o áudio disser diferente, a ata usa o documento e marca [conferir: transcrição dizia ...].</p>
           <div id="ata-docs-lista" style="display:flex;flex-direction:column;gap:6px"></div>
         </div>
       </div>
@@ -4197,6 +4197,7 @@ async function deletarUsuario(userId, email) {
 <script src="/comparativo.js"></script>
 <script src="/seguranca.js"></script>
 <script src="/custo.js"></script>
+<script src="/ata-leitura-docs.js"></script>
 <script src="/atas.js"></script>
 <script src="/comunicados.js"></script>
 <script src="/regras.js"></script>

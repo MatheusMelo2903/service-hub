@@ -6,6 +6,9 @@
 
 const https = require('https');
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const CHAVE = () => process.env.ASSEMBLYAI_KEY || '';
 const ARQUIVOS = new Map(); // arquivoId -> { url, dono, ate }
@@ -34,9 +37,27 @@ function servico(method, caminho, corpo, extra) {
   });
 }
 
+// T44: envio em partes. Áudio grande sobe em pedaços curtos (cada pedido termina bem antes
+// do limite de tempo da borda do Railway, mesmo em internet lenta), fica guardado em pasta
+// temporária e, no fim, vai inteiro ao serviço de transcrição numa só passada de servidor
+// para servidor. Funciona igual em qualquer computador e navegador.
+const PASTA_PARTES = path.join(os.tmpdir(), 'audio-partes');
+const PARTE_MAX = 40 * 1024 * 1024;           // tamanho máximo de cada parte
+const PARTES_MAX = 60;                         // até 2,4 GB por áudio
+const SESSOES = new Map(); // sessaoId -> { dono, nome, total, recebidas:Set, bytes, ate }
+const PRAZO_SESSAO_MS = 2 * 60 * 60 * 1000;
+function caminhoParte(sessao, i) { return path.join(PASTA_PARTES, sessao + '.' + i); }
+function apagarSessao(sessao) {
+  const ss = SESSOES.get(sessao);
+  SESSOES.delete(sessao);
+  if (!ss) return;
+  for (let i = 0; i < ss.total; i++) fs.unlink(caminhoParte(sessao, i), () => {});
+}
+
 function limparVencidos() {
   const agora = Date.now();
   for (const [k, v] of ARQUIVOS) if (v.ate < agora) ARQUIVOS.delete(k);
+  for (const [k, v] of SESSOES) if (v.ate < agora) apagarSessao(k);
 }
 
 function quem(req) { return String((req.user && req.user.sub) || ''); }
@@ -77,6 +98,78 @@ function criarRotasAudio(app, d) {
     pr.on('timeout', () => { pr.destroy(); if (!res.headersSent) res.status(504).json({ erro: 'tempo_esgotado', detalhe: 'O envio demorou demais. Tente de novo.' }); });
     req.on('aborted', () => pr.destroy());
     req.pipe(pr);
+  });
+
+  // T44: passo 1 em partes. (a) abre a sessão; (b) recebe cada parte; (c) finaliza e envia.
+  app.post('/api/audio/partes/iniciar', requireAuth, exigirAtas, limite('audio_envio', 30), express.json(), (req, res) => {
+    if (!CHAVE()) return res.status(503).json({ erro: 'servico_indisponivel', detalhe: 'Transcrição indisponível no momento.' });
+    const total = Number((req.body || {}).total);
+    if (!Number.isInteger(total) || total < 1 || total > PARTES_MAX) return res.status(400).json({ erro: 'partes_invalidas', detalhe: 'Arquivo grande demais para envio.' });
+    limparVencidos();
+    try { fs.mkdirSync(PASTA_PARTES, { recursive: true }); } catch (e) { return res.status(500).json({ erro: 'falha_envio', detalhe: 'Não foi possível preparar o envio.' }); }
+    const id = crypto.randomUUID();
+    SESSOES.set(id, { dono: quem(req), nome: nomeArquivo((req.body || {}).nome), total, recebidas: new Set(), bytes: 0, ate: Date.now() + PRAZO_SESSAO_MS });
+    res.json({ sessao: id, parte_max: PARTE_MAX });
+  });
+
+  app.post('/api/audio/partes/:sessao/parte/:indice', requireAuth, exigirAtas, limite('audio_parte', 400), (req, res) => {
+    const sessao = req.params.sessao;
+    const ss = UUID.test(sessao) ? SESSOES.get(sessao) : null;
+    const i = Number(req.params.indice);
+    if (!ss || ss.dono !== quem(req)) return res.status(404).json({ erro: 'sessao_nao_encontrada', detalhe: 'O envio expirou. Envie o áudio de novo.' });
+    if (!Number.isInteger(i) || i < 0 || i >= ss.total) return res.status(400).json({ erro: 'parte_invalida', detalhe: 'Parte inválida.' });
+    const destino = caminhoParte(sessao, i);
+    const tmp = destino + '.tmp';
+    const out = fs.createWriteStream(tmp);
+    let bytes = 0, estourou = false;
+    req.on('data', (c) => { bytes += c.length; if (bytes > PARTE_MAX && !estourou) { estourou = true; req.unpipe(out); out.destroy(); fs.unlink(tmp, () => {}); res.status(413).json({ erro: 'parte_grande', detalhe: 'Parte acima do limite.' }); } });
+    req.on('aborted', () => { out.destroy(); fs.unlink(tmp, () => {}); });
+    out.on('error', () => { if (!res.headersSent) res.status(500).json({ erro: 'falha_envio', detalhe: 'Não foi possível gravar a parte.' }); });
+    out.on('finish', () => {
+      if (estourou || res.headersSent) return;
+      fs.rename(tmp, destino, (err) => {
+        if (err) return res.status(500).json({ erro: 'falha_envio', detalhe: 'Não foi possível gravar a parte.' });
+        if (!ss.recebidas.has(i)) ss.recebidas.add(i);
+        ss.ate = Date.now() + PRAZO_SESSAO_MS;
+        res.json({ ok: true, recebidas: ss.recebidas.size, total: ss.total });
+      });
+    });
+    req.pipe(out);
+  });
+
+  app.post('/api/audio/partes/:sessao/finalizar', requireAuth, exigirAtas, (req, res) => {
+    const sessao = req.params.sessao;
+    const ss = UUID.test(sessao) ? SESSOES.get(sessao) : null;
+    if (!ss || ss.dono !== quem(req)) return res.status(404).json({ erro: 'sessao_nao_encontrada', detalhe: 'O envio expirou. Envie o áudio de novo.' });
+    if (ss.recebidas.size !== ss.total) return res.status(400).json({ erro: 'partes_faltando', detalhe: 'Faltam partes do áudio. Envie de novo.' });
+    let tamanho = 0;
+    try { for (let i = 0; i < ss.total; i++) tamanho += fs.statSync(caminhoParte(sessao, i)).size; }
+    catch (e) { apagarSessao(sessao); return res.status(400).json({ erro: 'partes_faltando', detalhe: 'Faltam partes do áudio. Envie de novo.' }); }
+    const pr = https.request({ hostname: 'api.assemblyai.com', path: '/v2/upload', method: 'POST', timeout: 300000,
+      headers: { authorization: CHAVE(), 'content-type': 'application/octet-stream', 'content-length': tamanho } }, (r) => {
+      const partes = [];
+      r.on('data', (c) => partes.push(c));
+      r.on('end', () => {
+        apagarSessao(sessao);
+        let j = null; try { j = JSON.parse(Buffer.concat(partes).toString('utf8')); } catch (e) { j = null; }
+        if (!j || !j.upload_url) { console.error('[audio] envio em partes falhou status ' + r.statusCode); if (!res.headersSent) res.status(502).json({ erro: 'falha_envio', detalhe: 'Não foi possível enviar o áudio. Tente de novo.' }); return; }
+        const id = crypto.randomUUID();
+        ARQUIVOS.set(id, { url: j.upload_url, dono: ss.dono, ate: Date.now() + PRAZO_ARQUIVO_MS, nome: ss.nome });
+        if (!res.headersSent) res.json({ arquivo_id: id });
+      });
+    });
+    pr.on('error', () => { apagarSessao(sessao); if (!res.headersSent) res.status(502).json({ erro: 'falha_envio', detalhe: 'Não foi possível enviar o áudio. Tente de novo.' }); });
+    pr.on('timeout', () => { pr.destroy(); });
+    // Junta as partes em ordem, uma de cada vez, direto no envio (sem carregar tudo na memória).
+    let i = 0;
+    const proxima = () => {
+      if (i >= ss.total) return pr.end();
+      const rs = fs.createReadStream(caminhoParte(sessao, i++));
+      rs.on('error', () => pr.destroy(new Error('parte ilegível')));
+      rs.on('end', proxima);
+      rs.pipe(pr, { end: false });
+    };
+    proxima();
   });
 
   // Passo 2: começa a transcrição. Sem transcrição livre, o condomínio é obrigatório e tem de ser da base.
