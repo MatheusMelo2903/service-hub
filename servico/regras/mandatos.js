@@ -6,7 +6,7 @@
 // sem isso o fim fica vazio (a tela mostra "sem data de fim" e a pessoa corrige à mão).
 
 const { buscarTrechos, juntarTrechos } = require('./banco');
-const { normalizar, citacaoExiste, conferirFundamentos, trechosParaPrompt } = require('./citacao');
+const { normalizar, pedacos, citacaoExiste, conferirFundamentos, trechosParaPrompt } = require('./citacao');
 const { extrairJson } = require('../modelo');
 
 const enc = encodeURIComponent;
@@ -61,6 +61,11 @@ function datasNoTexto(texto) {
 // Duração do mandato em meses lida da PRÓPRIA citação (nunca do número que o modelo informa).
 // Exige uma palavra de mandato na citação, para não pegar "há 2 anos" solto.
 function mesesDaCitacao(citacao) {
+  // Só dentro de um pedaço contínuo (sem juntar "mandato ... 4 ... anos").
+  for (const p of pedacos(citacao)) { const m = mesesDoPedaco(p); if (m) return m; }
+  return null;
+}
+function mesesDoPedaco(citacao) {
   const n = normalizar(citacao);
   if (!/(mandato|bienio|trienio|gestao|prazo)/.test(n)) return null;
   if (/\bbienio\b/.test(n)) return 24;

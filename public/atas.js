@@ -706,6 +706,8 @@ function limparAta() {
   _ataTextoGerado = '';
   const conteudo = document.getElementById('ata-gerada-conteudo'); if (conteudo) conteudo.innerHTML = '';
   const modalAta = document.getElementById('ata-gerada-modal'); if (modalAta) modalAta.style.display = 'none';
+  // A conferência com a convenção da ata anterior também sai.
+  const confRegras = document.getElementById('regras-conf-ata'); if (confRegras) confRegras.remove();
   // O cabeçalho (nome, CNPJ, endereço, síndico) volta do cadastro do condomínio ativo.
   _ataCadastro = null;
   if (typeof ataCadastroCarregar === 'function') ataCadastroCarregar();

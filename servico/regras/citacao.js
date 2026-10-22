@@ -12,10 +12,21 @@ const normalizar = (s) => String(s || '')
   .trim();
 
 // A citação está no texto? Aceita reticências no meio ("início ... fim") como dois pedaços em ordem.
+// Pedaços contínuos da citação (separados por reticências). Número, prazo, reincidência e
+// duração só podem ser lidos dentro de um pedaço, nunca juntando pedaços.
+function pedacos(citacao) {
+  return String(citacao || '').split(/\s*(?:\.\.\.|…|\[\.\.\.\])\s*/).map((p) => p.trim()).filter(Boolean);
+}
+// Cada pedaço precisa ter conteúdo de verdade (3 palavras; com reticências, também 12 letras), senão a citação é
+// recusada: pedaço curto como "50" ou "dias" deixaria o modelo montar uma regra que não existe.
+const PEDACO_MIN_LETRAS = 12;
+const PEDACO_MIN_PALAVRAS = 3;
 function citacaoExiste(citacao, texto) {
   const alvo = normalizar(texto);
-  const partes = String(citacao || '').split(/\s*(?:\.\.\.|…|\[\.\.\.\])\s*/).map(normalizar).filter((p) => p.length >= 3);
+  const partes = pedacos(citacao).map(normalizar).filter(Boolean);
   if (!partes.length || !alvo) return false;
+  if (partes.some((p) => p.split(' ').length < PEDACO_MIN_PALAVRAS)) return false;
+  if (partes.length > 1 && partes.some((p) => p.replace(/\s/g, '').length < PEDACO_MIN_LETRAS)) return false;
   let pos = 0;
   for (const p of partes) {
     const i = alvo.indexOf(p, pos);
@@ -54,4 +65,4 @@ function trechosParaPrompt(trechos) {
   }).join('\n\n');
 }
 
-module.exports = { normalizar, citacaoExiste, conferirFundamentos, trechosParaPrompt };
+module.exports = { normalizar, pedacos, citacaoExiste, conferirFundamentos, trechosParaPrompt };
