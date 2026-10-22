@@ -237,6 +237,11 @@ async function enviarDespesas() {
     return;
   }
 
+  // T48: grava despesas no cliente; confirma condomínio, quantidade e total antes.
+  const totalCent = validos.reduce((s, r) => s + (Math.round(parseFloat(r.VL_VALOR_PDES) * 100) || 0), 0);
+  const totalTxt = totalCent ? ', total R$ ' + (totalCent / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+  if (!confirm('Lançar ' + validos.length + ' despesa(s)' + totalTxt + ' no Superlógica, condomínio ' + (condAtivo.nome || condAtivo.nome_fantasia || '') + ' (código ' + condAtivo.id_superlogica + ')?')) return;
+
   const btn = document.getElementById('btn-enviar');
   btn.disabled = true;
   btn.textContent = '⏳ Conferindo...';

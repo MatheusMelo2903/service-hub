@@ -4,7 +4,7 @@
 //   GET  /api/financeiro/balancete/:id/conferencia?competencia=AAAA-MM&impressao=<id>
 //        dispara (ou devolve) a conferência do PDF: 202 enquanto roda, 200 com o resultado
 //   POST /api/financeiro/balancete/:id/gerar { competencia }  pede ao Superlógica o 900A SEM publicar,
-//        só para condomínio de BALANCETE_GERACAO_LIBERADA (padrão 94 e 167)
+//        só para condomínio de BALANCETE_GERACAO_LIBERADA (padrão só o 167)
 // Publicar para os condôminos não existe aqui: é sempre clique humano no Superlógica.
 const B = require('./balancete');
 

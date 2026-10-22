@@ -102,11 +102,11 @@ P(S.ajustarSelecaoParaMes({ cred: {}, cliente: cx, idUsuario: 89, idSelecao: 1, 
 
 // ── 2. liberação da geração ──
 delete process.env.BALANCETE_GERACAO_LIBERADA;
-t('padrão só 94 e 167', [...B.liberadosGeracao()].sort().join(',') === '167,94');
+t('padrão só o 167', [...B.liberadosGeracao()].sort().join(',') === '167');
 process.env.BALANCETE_GERACAO_LIBERADA = '94, 160 ,abc,136';
 t('lista com excluído e lixo', [...B.liberadosGeracao()].sort().join(',') === '136,94');
 process.env.BALANCETE_GERACAO_LIBERADA = '';
-t('vazio volta ao padrão', B.liberadosGeracao().has('94') && B.liberadosGeracao().size === 2);
+t('vazio volta ao padrão', B.liberadosGeracao().has('167') && B.liberadosGeracao().size === 1);
 delete process.env.BALANCETE_GERACAO_LIBERADA;
 t('seleção padrão é a NOVA', B.selecaoGeracao().ID_RELATORIOSELECAO_RLSU === '1');
 process.env.BALANCETE_SELECAO = 'condominio:4';
@@ -115,7 +115,7 @@ process.env.BALANCETE_SELECAO = 'qualquer coisa';
 t('seleção inválida volta à NOVA', B.selecaoGeracao().ID_RELATORIOSELECAO_RLSU === '1');
 delete process.env.BALANCETE_SELECAO;
 P(B.pedirGeracao({ base: 'https://api.superlogica.net', appToken: 'x', accessToken: 'y' }, '136', '2026-09').then(() => t('não liberado recusa', false), (e) => t('não liberado recusa', e.codigo === 'nao_liberado')));
-P(B.pedirGeracao({ base: 'https://api.superlogica.net', appToken: 'x', accessToken: 'y' }, '94', B.mesAtualBrasilia()).then(() => t('mês aberto recusa', false), (e) => t('mês aberto recusa', e.codigo === 'mes_aberto')));
+P(B.pedirGeracao({ base: 'https://api.superlogica.net', appToken: 'x', accessToken: 'y' }, '167', B.mesAtualBrasilia()).then(() => t('mês aberto recusa', false), (e) => t('mês aberto recusa', e.codigo === 'mes_aberto')));
 t('palavras que não são mês', B.mesesCitados('mais de 2026; setor de 2025; outros/2024').length === 0);
 t('ano antigo não quebra', B.conferir([pg(1, ['W011A T (1)', 'D', 'Comparativo de Mar/2014 com os próximos 11 meses', 'x'])], { competencia: '2015-03', esperados: [] }).mes_fora.length === 1);
 t('página não lida acusa', B.conferir([pg(1, ['W037E T (1)', 'D', 'Posição em Set/2026', 'x'], { erro: true })], { competencia: '2026-09', esperados: [] }).paginas_em_branco.length === 1);
@@ -159,7 +159,7 @@ const srv = app.listen(0, async () => {
   });
   try {
     t('lista ok', (await pedir('GET', '/api/financeiro/balancete/94/impressoes?competencia=2026-09')).st === 200);
-    t('lista diz liberado', (await pedir('GET', '/api/financeiro/balancete/94/impressoes?competencia=2026-09')).j.geracao_liberada === true);
+    t('lista diz liberado', (await pedir('GET', '/api/financeiro/balancete/167/impressoes?competencia=2026-09')).j.geracao_liberada === true && (await pedir('GET', '/api/financeiro/balancete/94/impressoes?competencia=2026-09')).j.geracao_liberada === false);
     t('id inválido 400', (await pedir('GET', '/api/financeiro/balancete/abc/impressoes?competencia=2026-09')).st === 400);
     t('id excluído 400', (await pedir('GET', '/api/financeiro/balancete/160/impressoes?competencia=2026-09')).st === 400);
     t('mês futuro 400', (await pedir('GET', '/api/financeiro/balancete/94/impressoes?competencia=2099-01')).st === 400);
@@ -184,9 +184,10 @@ const srv = app.listen(0, async () => {
     escrita = false;
     t('gerar sem escrita 403', (await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09' })).st === 403 && chamadasGerar === 0);
     escrita = true;
-    const g = await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09' });
+    t('T48: Victoria Bay sem variável não gera', (await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09' })).st === 403 && chamadasGerar === 0);
+    const g = await pedir('POST', '/api/financeiro/balancete/167/gerar', { competencia: '2026-09' });
     t('gerar liberado 202 e audita', g.st === 202 && chamadasGerar === 1 && eventos.includes('balancete_gerar'));
-    t('gerar com mês ruim 400', (await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: 'x' })).st === 400 && chamadasGerar === 1);
+    t('gerar com mês ruim 400', (await pedir('POST', '/api/financeiro/balancete/167/gerar', { competencia: 'x' })).st === 400 && chamadasGerar === 1);
     t('GET em gerar não existe', (await pedir('GET', '/api/financeiro/balancete/94/gerar')).st === 404);
   } catch (e) { t('rotas sem exceção: ' + e.message, false); }
   srv.close();

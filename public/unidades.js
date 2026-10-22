@@ -1655,6 +1655,9 @@ async function enviarUnidades() {
 
   const processed = state.unidades.processed;
   if (!processed || !processed.length) { toast('Carregue uma planilha primeiro', 'err'); return; }
+  // T48: grava direto no cadastro do cliente, então confirma condomínio e quantidade antes.
+  const nomeCond = condAtivo.nome || condAtivo.nome_fantasia || 'condomínio';
+  if (!confirm('Enviar ' + processed.length + ' unidade(s) para o Superlógica no condomínio ' + nomeCond + ' (código ' + condAtivo.id_superlogica + ')?\n\nIsso cria as unidades, proprietários, inquilinos e dependentes no cadastro do cliente.')) return;
 
   state.unidades.importing = true;
   state.unidades.shouldStop = false;

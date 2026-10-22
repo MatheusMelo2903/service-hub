@@ -4579,6 +4579,10 @@ app.post('/api/cobranca/condominio/:idSuperlogica/segunda-via', requireAuth, exp
     if (!require('./superlogica/carteira').temModulo(p, 'cobranca', 'segunda_via')) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não pode gerar a 2ª via.' });
   }
   if (!(await _exigirCarteira(req, res, id))) return;
+  // T48: a 2ª via ainda não foi validada de ponta a ponta. Só nos condomínios de
+  // COBRANCA_SEGUNDA_VIA_LIBERADA (padrão: só o 167, de teste), igual à Entrada e ao Consumo.
+  const liberadosVia = String(process.env.COBRANCA_SEGUNDA_VIA_LIBERADA || '167').split(/[\s,;]+/).filter((x) => slModulo.idValido(x));
+  if (!liberadosVia.includes(id)) return res.status(423).json({ erro: 'segunda_via_travada', detalhe: 'A 2ª via pelo Hub ainda não está liberada para este condomínio. Gere no Superlógica.' });
   try {
     const painel = await _painelCobranca(id, false);
     const u = painel.unidades.find((x) => x.id_unidade === String(b.id_unidade || ''));

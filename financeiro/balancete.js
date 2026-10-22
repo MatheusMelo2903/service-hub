@@ -486,8 +486,8 @@ function lerPdf(caminho, { tempoMs = 10 * 60 * 1000 } = {}) {
 }
 
 // ── geração do 900A (sem publicar) ─────────────────────────────────────────
-// Só para condomínio da lista BALANCETE_GERACAO_LIBERADA (padrão: Victoria Bay 94 e Residencial
-// Teste 167; 143, 144, 145, 160 e 162 nunca). Pede pela API v2 o mesmo que a tela pede ao clicar em
+// Só para condomínio da lista BALANCETE_GERACAO_LIBERADA (padrão: só o Residencial Teste 167, T48;
+// Victoria Bay 94 entra pela variável depois da validação; 143, 144, 145, 160 e 162 nunca). Pede pela API v2 o mesmo que a tela pede ao clicar em
 // Visualizar: relatorios/id/900A com render=pdf e getId=1 (cria a impressão só para a administração,
 // sem publicar e sem envio por email). O Superlógica leva cerca de 3 minutos num 900A grande e o
 // gateway corta em 60 s (HTTP 504), então o pedido é disparado uma vez e a tela acompanha a lista.
@@ -495,7 +495,7 @@ function lerPdf(caminho, { tempoMs = 10 * 60 * 1000 } = {}) {
 const EXCLUIDOS = new Set(['143', '144', '145', '160', '162']);
 function liberadosGeracao() {
   const v = process.env.BALANCETE_GERACAO_LIBERADA;
-  const lista = (v == null || v === '' ? '94,167' : v).split(',').map((x) => x.trim()).filter((x) => /^\d{1,9}$/.test(x) && !EXCLUIDOS.has(x));
+  const lista = (v == null || v === '' ? '167' : v).split(',').map((x) => x.trim()).filter((x) => /^\d{1,9}$/.test(x) && !EXCLUIDOS.has(x));
   return new Set(lista);
 }
 // Seleção usada na geração: "usuario:<id>" (MINHA SELEÇÃO) ou "condominio:<id>" (seleção do condomínio).

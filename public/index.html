@@ -1384,7 +1384,7 @@
           <span class="card-title">Pré-visualização</span>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost" onclick="clearFile('unidades')">✕ Limpar</button>
-            <button class="btn btn-primary" onclick="enviarUnidades()">↑ Enviar unidades</button>
+            <button class="btn btn-primary" id="btn-enviar-uni" onclick="enviarUnidades()">↑ Enviar unidades</button>
             <button class="btn btn-danger" id="btn-parar-uni" onclick="pararImportacaoUnidades()" style="display:none">⏹ Parar</button>
           </div>
         </div>
@@ -2486,8 +2486,8 @@ function renderBannerCondAtivo(painelId) {
   const rot = el.querySelector('.banner-cond-rotulo');
   if (rot) rot.textContent = cond ? 'Condomínio ativo:' : 'Nenhum condomínio selecionado. Escolha antes de continuar:';
   // Sem condomínio: desabilita o envio de despesas para evitar envio ao lugar errado
-  if (painelId === 'despesas') {
-    const btnEnviar = document.getElementById('btn-enviar');
+  if (painelId === 'despesas' || painelId === 'unidades') {
+    const btnEnviar = document.getElementById(painelId === 'despesas' ? 'btn-enviar' : 'btn-enviar-uni');
     if (btnEnviar) {
       btnEnviar.disabled = !cond;
       if (cond) btnEnviar.removeAttribute('title'); else btnEnviar.title = 'Selecione um condomínio primeiro';

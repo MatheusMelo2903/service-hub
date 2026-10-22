@@ -204,6 +204,8 @@ async function cobSegundaVia(idSL, k, btn) {
   if (!reg || !tr || (btn && btn.disabled)) return;
   var u = reg.p.unidades[k];
   var res = tr.querySelector('.cob-res');
+  // T48: pede ao Superlógica um boleto atualizado; confirma unidade e data antes.
+  if (!confirm('Gerar a 2ª via no Superlógica para a unidade ' + u.unidade + ', para pagamento até ' + String(tr.querySelector('.cob-a').value || '').split('-').reverse().join('/') + '?')) return;
   if (btn) btn.disabled = true; // sem clique duplo: cada clique pode gerar um boleto atualizado
   setTimeout(function () { if (btn) btn.disabled = false; }, 15000);
   res.innerHTML = '<div class="cond-loading">Gerando o link no Superlógica...</div>';
