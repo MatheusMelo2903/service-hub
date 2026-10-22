@@ -5633,6 +5633,13 @@ app.post('/api/previsao/gerar-pdf',
   }
 });
 
+// T49: trabalhos em andamento (pastinha). Detalhes em servico/trabalhos.js.
+require('./servico/trabalhos').criarRotasTrabalhos(app, {
+  requireAuth, express, banco: supabaseAdminRequest,
+  exigirCarteira: (req, res, id) => _exigirCarteira(req, res, id),
+  storageUpload: supabaseStorageUpload, storageSignedUrl: supabaseStorageSignedUrl, storageDelete: supabaseStorageDelete,
+});
+
 // Middleware 404 para rotas /api/* desconhecidas.
 // Posicionado depois de todas as rotas reais de /api e antes do catch-all geral.
 // Retorna JSON estruturado e loga via console.warn (404 é erro de cliente, não falha de servidor).
