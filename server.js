@@ -563,7 +563,7 @@ require('./servico/rotas-custo').criarRotasCusto(app, { requireAuth, banco: supa
 // ─────────────────────────────────────────────────────────────────────────
 // Engine de geração de ata — Sonnet 4.6 primário + Opus 4.7 último recurso CONDICIONAL.
 //
-// Pipeline (teto HARD de 7 chamadas Anthropic por geração, ver MAX_CHAMADAS_ANTHROPIC_POR_ATA):
+// Pipeline (teto HARD de 8 chamadas Anthropic por geração, ver MAX_CHAMADAS_ANTHROPIC_POR_ATA):
 //   1. Sonnet 4.6 + max_tokens 32000 → se retornou texto, ENTREGA (validação é só aviso).
 //   2. Só se a API NÃO retornou texto (rede/timeout): 1 retry Sonnet 4.6 + 32000.
 //   3. Auditoria de COMPLETUDE FRACIONADA: transcrição em 1-3 blocos (por tamanho), cada bloco
@@ -862,6 +862,97 @@ REGRAS:
 - CONTEXTO DA LACUNA É LEI: valor citado como exemplo, simulação ou conta entra como exemplo ("citou, como exemplo, que..."), nunca como valor atual ou decisão. Lacuna que, ao ler o item, se revelar conversa paralela, piada ou comentário fora do assunto NÃO é inserida.
 - Número dito com clareza entra sem marcador; [a confirmar] só para dado ambíguo ou conflitante.
 - Devolva APENAS a ata completa corrigida, do cabeçalho até a última linha de assinatura. Nada antes, nada depois, sem comentários.`;
+
+// T46: inserção POR TRECHO. Em vez de reescrever a ata inteira para encaixar 2 ou 3 lacunas
+// (saída do tamanho da ata, minutos de espera), o modelo devolve só as operações: depois de
+// qual trecho exato entra o texto novo, ou qual trecho exato é trocado. O código aplica, o resto
+// da ata fica byte a byte igual. Se as âncoras não baterem, cai na reescrita inteira de antes.
+const PROMPT_INSERCAO_TRECHOS = `Você recebe uma ATA condominial já redigida e uma LISTA DE LACUNAS (fatos ditos na assembleia que faltaram na ata, ou que estão divergentes).
+
+Tarefa: dizer ONDE e O QUE inserir ou corrigir, SEM reescrever a ata. Você devolve só uma lista de operações em JSON; o sistema aplica.
+
+FORMATO DE SAÍDA: APENAS um array JSON, sem texto antes ou depois, sem cercas de código. Cada operação é um destes dois objetos:
+{"tipo":"inserir_apos","ancora":"<trecho copiado EXATAMENTE da ata>","texto":"<texto novo que entra logo depois da âncora>"}
+{"tipo":"substituir","de":"<trecho copiado EXATAMENTE da ata>","para":"<trecho corrigido>"}
+
+REGRAS DA ÂNCORA (crítico):
+- Copie a âncora LETRA POR LETRA da ata, com a mesma pontuação, acentos e maiúsculas. Entre 40 e 250 caracteres. Tem que existir UMA única vez na ata.
+- Use como âncora o FIM de uma frase do item certo (terminando no ponto final), para o texto novo entrar entre duas frases. Nunca ancore no meio de um número, nome ou marcador.
+- O "texto" começa com espaço quando continua o mesmo parágrafo. Escreva frases completas, no mesmo estilo da ata (prosa corrida, (i)(ii)(iii) quando for lista, valores R$ X.XXX,XX).
+- "substituir" só para corrigir um dado DIVERGENTE que a lacuna aponta (valor, nome, data, atribuição de fala). O "de" deve ser o menor trecho que contém o erro (até 300 caracteres), e o "para" mantém tudo o que estava certo nele.
+
+REGRAS DE CONTEÚDO (as mesmas da ata):
+- Insira cada fato no item de pauta em que foi tratado. Lacuna que já está na ata: ignore.
+- Valores informais viram formais ("21 mil" vira R$ 21.000,00).
+- CONTEXTO DA LACUNA É LEI: valor citado como exemplo, simulação ou conta entra como exemplo, nunca como valor atual ou decisão. Lacuna que se revelar conversa paralela, piada ou comentário fora do assunto NÃO é inserida.
+- ANTI-INVENÇÃO ABSOLUTA: insira só o que a lacuna afirma; incerto vai com [a confirmar]. Número dito com clareza entra sem marcador.
+- Sem hífen ou travessão no texto novo. Nunca comente a transcrição, a gravação ou a redação.
+- Se nada precisar entrar, devolva [].`;
+
+// Acha onde um trecho está na ata: exato primeiro; depois tolerando diferença só de espaços.
+// Devolve { ini, fim } quando há UMA ocorrência, senão null (âncora ambígua ou ausente).
+function _acharTrechoUnico(ata, trecho) {
+  const t = String(trecho || '');
+  if (t.trim().length < 12) return null;
+  const i = ata.indexOf(t);
+  if (i >= 0) return ata.indexOf(t, i + 1) >= 0 ? null : { ini: i, fim: i + t.length };
+  const re = new RegExp(t.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'), 'g');
+  const ms = [...ata.matchAll(re)];
+  return ms.length === 1 ? { ini: ms[0].index, fim: ms[0].index + ms[0][0].length } : null;
+}
+
+// Aplica as operações de inserção por trecho. Nunca lança: operação que não casa é contada
+// como falha e pulada. Aplica de trás para frente para os índices não mudarem.
+function aplicarTrechos(ata, ops) {
+  const base = String(ata);
+  const planos = [];
+  let falhas = 0;
+  for (const op of Array.isArray(ops) ? ops : []) {
+    if (!op || typeof op !== 'object') { falhas++; continue; }
+    if (op.tipo === 'inserir_apos') {
+      const pos = _acharTrechoUnico(base, op.ancora);
+      const txt = typeof op.texto === 'string' ? op.texto.replace(/\s+$/, '') : '';
+      if (!pos || !txt.trim() || txt.length > 4000) { falhas++; continue; }
+      const sep = /^\s/.test(txt) || /\s$/.test(base.slice(pos.fim - 1, pos.fim)) ? '' : ' ';
+      planos.push({ ini: pos.fim, fim: pos.fim, novo: sep + txt });
+    } else if (op.tipo === 'substituir') {
+      const pos = _acharTrechoUnico(base, op.de);
+      const para = typeof op.para === 'string' ? op.para : '';
+      // Guarda: troca só trecho curto e não deixa sumir texto (o "para" não pode encolher demais).
+      if (!pos || (pos.fim - pos.ini) > 400 || !para.trim() || para.length < (pos.fim - pos.ini) * 0.5) { falhas++; continue; }
+      planos.push({ ini: pos.ini, fim: pos.fim, novo: para });
+    } else falhas++;
+  }
+  // Duas operações no mesmo lugar ou sobrepostas: fica a primeira, a outra conta como falha.
+  planos.sort((a, b) => a.ini - b.ini);
+  const aceitos = [];
+  for (const p of planos) {
+    const ult = aceitos[aceitos.length - 1];
+    if (ult && p.ini < ult.fim) { falhas++; continue; }
+    aceitos.push(p);
+  }
+  let out = base;
+  for (let i = aceitos.length - 1; i >= 0; i--) out = out.slice(0, aceitos[i].ini) + aceitos[i].novo + out.slice(aceitos[i].fim);
+  return { ata: out, aplicadas: aceitos.length, falhas };
+}
+
+// Pede as operações ao modelo e aplica. Devolve { ata, aplicadas, falhas } ou null se a resposta
+// não veio ou não é JSON (quem chama cai na reescrita inteira).
+async function inserirLacunasPorTrecho(ata, listaLacunas, modelo, chamar, extraSys) {
+  const sys = PROMPT_INSERCAO_TRECHOS + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : '') + (extraSys ? '\n\n---\n\n' + extraSys : '');
+  const msg = '=== ATA ATUAL ===\n' + ata + '\n\n=== LACUNAS ===\n' + listaLacunas + '\n\nDevolva só o array JSON de operações.';
+  const r = await chamar(modelo, 8000, sys, msg);
+  if (!r || !r.ok || !r.texto) return null;
+  const t = r.texto;
+  const a = t.indexOf('['), b = t.lastIndexOf(']');
+  if (a < 0 || b <= a) return null;
+  let ops;
+  try { ops = JSON.parse(t.slice(a, b + 1)); } catch (e) { return null; }
+  if (!Array.isArray(ops)) return null;
+  const res = aplicarTrechos(ata, ops);
+  res.operacoes = ops.length;
+  return res;
+}
 
 // ─── DOCUMENTOS DA ASSEMBLEIA (T01, 2026-10-20) ─────────────────────────────
 // Apresentação, prestação de contas, orçamentos, propostas: PDFs anexados na aba Atas.
@@ -2468,7 +2559,9 @@ function agendarLimpezaJob(jobId) {
 // o pior caso real pode chegar a 8. O teto abaixo continua sendo o corte HARD de verdade —
 // se a 8ª chamada estourar o teto, a etapa 3 falha ABERTA (try/catch próprio, telemetria
 // 'pulada_teto') e a ata segue sem a consolidação daquele passe, nunca aborta a geração inteira.
-const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 7;
+// T46: 8 = 7 de antes + 1 da inserção por trecho (pior caso: ela falha e cai na reescrita).
+const MAX_CHAMADAS_ANTHROPIC_POR_ATA = 8;
+const INSERCAO_POR_TRECHO = process.env.ATA_INSERCAO_POR_TRECHO !== '0'; // desliga com ATA_INSERCAO_POR_TRECHO=0
 const ATRASO_BLOCOS_AUDITORIA_MS = 10000; // T44: auditorias 2 e 3 começam 10s depois da 1
 
 // Motor de geração — roda em background, sem prender a requisição HTTP. Entrega a
@@ -2508,7 +2601,7 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
   // Contador que CORTA de vez: toda chamada Anthropic desta geração passa por 'chamar',
   // que aborta ao tentar a (MAX+1)-ésima. Cobre as tentativas E a auditoria. Se um bug
   // futuro introduzir qualquer loop ou nova cascata, isto barra antes de gastar mais.
-  // MAX = 7 = pior caso legítimo (1 geração + 1 retry + até 3 auditorias de bloco +
+  // MAX = 8 = pior caso legítimo (1 geração + 1 retry + até 3 auditorias de bloco + 1 inserção por trecho +
   // 1 inserção Sonnet + 1 inserção Opus). Típico: 2 a 5, sem Opus. A etapa 3 do passe de
   // consolidação de nome próprio pode somar mais 1 (pior caso real = 8); se estourar o teto
   // aqui, ela falha ABERTA sozinha (ver consolidarNomesProprios), não aborta a geração.
@@ -2641,6 +2734,7 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
     let cortadoPorTeto = false;
     let numBlocos = 0;
     let numGapsDet = 0;
+    let insercaoTrecho = null;
     // Moderado 6: TODO o fluxo de auditoria/inserção sob try. Se o teto de chamadas estourar
     // no meio (loop de blocos ou inserção), entrega a MELHOR ata que já temos, em vez de
     // descartar a ata gerada com sucesso.
@@ -2683,8 +2777,18 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
       const gapList = [lacunas, gapsDet.join('\n')].filter(Boolean).join('\n').trim();
       if (gapList.length > 0) {
         marcarEtapa('completando');
-        const inserida = await inserirLacunasNaAta(texto, gapList, MODELO_DA_ATA, chamar, extraSysDocs);
-        if (aceitaInsercao(inserida)) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
+        // T46: primeiro a inserção POR TRECHO (rápida, não toca no resto da ata). Só vale se a
+        // maioria das operações casou com a ata; senão, reescrita inteira como antes.
+        let porTrecho = null;
+        if (INSERCAO_POR_TRECHO) {
+          try { porTrecho = await inserirLacunasPorTrecho(texto, gapList, MODELO_DA_ATA, chamar, extraSysDocs); }
+          catch (e) { if (/TETO_CHAMADAS/.test(String(e && e.message))) throw e; porTrecho = null; }
+          insercaoTrecho = porTrecho ? { operacoes: porTrecho.operacoes, aplicadas: porTrecho.aplicadas, falhas: porTrecho.falhas } : { falhou: true };
+        }
+        const trechoValeu = porTrecho && (porTrecho.operacoes === 0 || (porTrecho.aplicadas > 0 && porTrecho.falhas <= porTrecho.aplicadas / 2)) && aceitaInsercao(porTrecho.ata);
+        const inserida = trechoValeu ? null : await inserirLacunasNaAta(texto, gapList, MODELO_DA_ATA, chamar, extraSysDocs);
+        if (trechoValeu) { ataFinal = porTrecho.ata; etapa = porTrecho.operacoes === 0 ? 'insercao_trecho_nada_a_inserir' : 'insercao_trecho'; }
+        else if (aceitaInsercao(inserida)) { ataFinal = inserida; etapa = 'insercao_sonnet'; }
         else {
           // inserção Sonnet quebrou OU tentou condensar → mantém original e tenta OPUS (último recurso).
           etapa = inserida ? 'insercao_sonnet_condensou_usou_original' : 'insercao_sonnet_quebrou_usou_original';
@@ -2778,7 +2882,7 @@ async function gerarAtaJob(jobId, userMessage, documentosEntrada, idConferencia,
     // diagnóstico determinístico: valores da fala fora da ata final.
     const falaFaltandoFinal = [...new Set(mencoesMonetarias(transcricao).map((m) => m.canon))].filter((c) => !canonFinal.has(c));
     tentativas[tentativaIdx].auditoria_fracionada = {
-      blocos: numBlocos, etapa, usouOpus, cortadoPorTeto, chamadas: _chamadas, gaps_deterministicos: numGapsDet,
+      blocos: numBlocos, etapa, usouOpus, cortadoPorTeto, chamadas: _chamadas, gaps_deterministicos: numGapsDet, insercao_trecho: insercaoTrecho,
       placeholders_preenchidos: cir.preenchidos.map((p) => fmtBRL(p.canon)),
       placeholders_ambiguos: cir.ambiguos.length,
       valores_fala_faltando_final: falaFaltandoFinal.map(fmtBRL),
@@ -5485,4 +5589,7 @@ module.exports = {
   gateDeSaida, validarMarcadoresConferir,
   chamarAnthropicAta, // T42: teste de que o registro de custo não derruba a chamada
   inserirLacunasNaAta, validarAta, // T42: teste do modelo da inserção de último recurso
+  // T46: harness da inserção por trecho
+  inserirLacunasPorTrecho, aplicarTrechos, auditarBlocoCompletude, dividirEmBlocos, numBlocosAuditoria,
+  montarSystemAta: () => ATA_SKILL_MD + '\n\n---\n\n' + CONTEXTO_GRUPO_SERVICE + '\n\n---\n\n' + REGRAS_ANTI_ERRO + '\n\n---\n\n' + REGRAS_DETALHAMENTO_MAXIMO + '\n\n---\n\n' + REGRAS_FIDELIDADE_TRANSCRICAO + (GLOSSARIO_MD ? '\n\n---\n\n' + GLOSSARIO_MD : ''),
 };
