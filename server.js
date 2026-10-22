@@ -2934,6 +2934,13 @@ async function supabaseStorageSignedUrl(bucket, objectPath, expiresIn = 600) {
   return SUPABASE_URL.replace(/\/$/, '') + '/storage/v1' + rel;
 }
 
+// Apaga um objeto do Storage (acervo de regras: documento apagado pela tela). 404 conta como apagado.
+async function supabaseStorageDelete(bucket, objectPath) {
+  const r = await supabaseAdminRequest('DELETE', `/storage/v1/object/${bucket}/${objectPath}`);
+  if (r.status >= 400 && r.status !== 404) throw new Error('storage_delete_status_' + r.status);
+  return true;
+}
+
 // POST /api/admin/usuarios/convidar
 // Body: { email, role: 'GERENTE'|'OPERACIONAL', nome? }
 // Envia magic link de convite via GoTrue. O profile é criado automaticamente pelo
@@ -4508,6 +4515,21 @@ app.post('/api/multas/registrar', requireAuth, express.json({ limit: '100kb' }),
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível registrar agora.' });
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Regras do condomínio (substitui o CondGPT): acervo de convenção, regimento e atas, consulta
+// com citação conferida, notificação e multa com histórico, conferência da ata (só aviso),
+// mandatos e importação do acervo antigo. Rotas em servico/regras/rotas-*.js, contrato em
+// tarefas/em-andamento/regras-condominio.md. Todas as dependências passam por aqui.
+// ─────────────────────────────────────────────────────────────────────────
+const depsRegras = {
+  requireAuth, express, banco: supabaseAdminRequest, perfilDe, podeModulo, temAcao, exigirCarteira: _exigirCarteira,
+  carteiraT18, exigirLeituraSuperlogica, exigirEscritaSuperlogica, superlogicaNativa, clienteSL, credSL: _credSL, auditoria,
+  dentroDoLimite, chamarModelo: require('./servico/modelo').chamarModelo, modelos,
+  storageUpload: supabaseStorageUpload, storageSignedUrl: supabaseStorageSignedUrl, storageDelete: supabaseStorageDelete,
+  slComunicados, slModulo, buscarCadastro: (id) => slModulo.buscarCadastro(clienteSL(), id),
+};
+// REGRAS_ROTAS (o orquestrador liga cada frente aqui)
 
 // ─────────────────────────────────────────────────────────────────────────
 // POST /api/condominio/:id/documentos (T12) — arquiva no Superlógica a ata ou a
