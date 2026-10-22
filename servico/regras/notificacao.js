@@ -16,7 +16,7 @@ async function buscasDoRelato(deps, texto) {
     return Array.isArray(lista) && lista.length ? lista : [texto];
   } catch (e) { return [texto]; }
 }
-const { citacaoExiste, conferirFundamentos, trechosParaPrompt, normalizar } = require('./citacao');
+const { citacaoExiste, conferirFundamentos, trechosParaPrompt, normalizar, pedacos } = require('./citacao');
 const { extrairJson } = require('../modelo');
 const boletos = require('../../financeiro/boletos');
 
@@ -280,7 +280,11 @@ const EXTENSO = { 1: 'um|uma', 2: 'dois|duas', 3: 'tres', 4: 'quatro', 5: 'cinco
 
 // O número que o modelo deu está escrito na própria citação aprovada (em algarismo ou por
 // extenso)? Sem isso a citação pode ser verdadeira e o número, inventado.
+// Vale se o número estiver dentro de UM pedaço contínuo da citação.
 function numeroNaCitacao(n, texto) {
+  return pedacos(texto).some((p) => numeroNoPedaco(n, p));
+}
+function numeroNoPedaco(n, texto) {
   const v = Number(n);
   if (!isFinite(v) || v <= 0) return false;
   const t = ' ' + normalizar(texto) + ' ';
@@ -295,6 +299,9 @@ function numeroNaCitacao(n, texto) {
 
 // Multiplicador de reincidência dito na citação ("em dobro", "o triplo"). null = não diz.
 function multiplicadorReincidencia(citacao) {
+  return pedacos(citacao).map(multiplicadorNoPedaco).find((m) => m) || null;
+}
+function multiplicadorNoPedaco(citacao) {
   const t = ' ' + normalizar(citacao) + ' ';
   if (!/reincid/.test(t)) return null;
   if (/\s(dobro|duas vezes|2 vezes)\s/.test(t)) return 2;
@@ -350,7 +357,7 @@ function calcularValor(rv, trechosPorId, taxa, ctx) {
 function conferirPrazo(dias, citacoes) {
   const n = Number(dias);
   if (!Number.isInteger(n) || n < 1 || n > 365) return null;
-  return citacoes.some((c) => /\bdia/.test(normalizar(c)) && numeroNaCitacao(n, c)) ? n : null;
+  return citacoes.some((c) => pedacos(c).some((p) => /\bdia/.test(normalizar(p)) && numeroNoPedaco(n, p))) ? n : null;
 }
 
 const rotuloLimpo = (r) => limpar(String(r || '').replace(/\s*\(continuação\)\s*$/i, ''));
