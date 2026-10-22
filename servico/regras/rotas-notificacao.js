@@ -110,6 +110,12 @@ function criarRotasNotificacao(app, deps) {
       const atual = await N.lerNotificacao(deps, req.params.id);
       if (!atual) return res.status(404).json({ erro: 'nao_encontrada', detalhe: 'Notificação não encontrada.' });
       if (!(await exigirCarteira(req, res, String(atual.id_superlogica)))) return;
+      // Marcar como registrada (com número de ocorrência e cobrança) só quem pode registrar no
+      // Superlógica (GESTOR ou GERENTE, a mesma regra da /api/multas/registrar).
+      if ((req.body || {}).status === 'registrada' && req.authMode !== 'internal') {
+        const p = await perfilDe(req).catch(() => null);
+        if (!p || (p.role !== 'GESTOR' && p.role !== 'GERENTE')) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Só gestor ou gerente pode marcar como registrada.' });
+      }
       const n = await N.mudarStatus(deps, atual, req.body || {});
       auditoria.evento(req, 'regras_notificacao_status', { id_superlogica: atual.id_superlogica, notificacao: n.id, de: atual.status, para: n.status, id_ocorrencia_sl: n.id_ocorrencia_sl || null, id_cobranca_sl: n.id_cobranca_sl || null });
       res.json({ notificacao: n });

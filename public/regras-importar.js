@@ -37,7 +37,7 @@
     est.montado = true;
     box.innerHTML =
       '<div class="card">' +
-        '<div class="card-header"><span class="card-title">Importar acervo do CondGPT</span></div>' +
+        '<div class="card-header"><span class="card-title">Importar acervo do sistema antigo</span></div>' +
         '<div style="font-size:12px;color:var(--muted);margin-bottom:12px">Escolha o arquivo de exportação (.json). Ele é lido aqui no navegador e cada condomínio é enviado separadamente. Pode importar de novo sem medo: o que já entrou não é duplicado.</div>' +
         '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">' +
           '<input type="file" id="rimp-arquivo" accept=".json,application/json" style="font-size:12px">' +
@@ -48,7 +48,7 @@
       '<div class="card" id="rimp-card-mapa" style="display:none">' +
         '<div class="card-header"><span class="card-title">Condomínios do arquivo</span><span id="rimp-resumo-mapa" style="font-size:12px;font-family:var(--mono);color:var(--muted)"></span></div>' +
         '<div style="overflow-x:auto"><table class="data-table" style="width:100%;font-size:12px"><thead><tr>' +
-          '<th>Condomínio no CondGPT</th><th>CNPJ</th><th>Documentos</th><th>Notificações</th><th>Condomínio no Superlógica</th><th>Situação</th><th>Código</th>' +
+          '<th>Condomínio no sistema antigo</th><th>CNPJ</th><th>Documentos</th><th>Notificações</th><th>Condomínio no Superlógica</th><th>Situação</th><th>Código</th>' +
         '</tr></thead><tbody id="rimp-tabela"></tbody></table></div>' +
         '<div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">' +
           '<button class="btn btn-primary" id="rimp-btn-importar">Importar</button>' +
@@ -89,7 +89,7 @@
     rd.onload = function () {
       var j = null;
       try { j = JSON.parse(rd.result); } catch (e) { msg('O arquivo não é um JSON válido.', true); return; }
-      if (!j || typeof j.condominios !== 'object' || Array.isArray(j.condominios)) { msg('Este arquivo não parece ser a exportação do CondGPT.', true); return; }
+      if (!j || typeof j.condominios !== 'object' || Array.isArray(j.condominios)) { msg('Este arquivo não parece ser a exportação do sistema antigo.', true); return; }
       est.arquivo = { nome: f.name, exportado_em: j.exportado_em || '' };
       est.conds = j.condominios;
       est.resultados = [];
@@ -217,7 +217,7 @@
     est.importando = false; bt.disabled = false;
     desenharMapa();
     desenharResumo(tot, pulados);
-    if (typeof addHistorico === 'function') addHistorico('Acervo do CondGPT importado: ' + fila.length + ' condomínios');
+    if (typeof addHistorico === 'function') addHistorico('Acervo do sistema antigo importado: ' + fila.length + ' condomínios');
   }
   function linhaResumo(rotulo, c) {
     return '<tr><td>' + esc(rotulo) + '</td><td>' + num(c.novos) + '</td><td>' + num(c.duplicados) + '</td><td>' + num(c.erros) + '</td></tr>';
@@ -228,7 +228,7 @@
         linhaResumo('Documentos (convenção, regimento, atas)', tot.documentos) +
         linhaResumo('Notificações', tot.notificacoes) +
         linhaResumo('Comunicados', tot.comunicados) +
-        linhaResumo('Atas geradas no CondGPT', tot.atas_geradas) +
+        linhaResumo('Atas geradas no sistema antigo', tot.atas_geradas) +
       '</tbody></table>' +
       '<div style="font-size:12px;font-family:var(--mono);color:var(--muted);margin-top:8px">' + num(tot.pdfs) + ' PDFs na fila de cópia.' +
         (pulados.length ? ' Sem código do Superlógica (não importados): ' + esc(pulados.map(function (m) { return m.nome || m.slug; }).join(', ')) + '.' : '') + '</div>' +

@@ -103,7 +103,8 @@ function regrasAtaRender(c, j, idSL) {
 
 // Abre o PDF do documento do acervo (link temporário do servidor).
 async function regrasAtaAbrirDoc(idSL, docId) {
-  var janela = window.open('', '_blank'); // abre já no clique para o navegador não bloquear
+  var janela = window.open('about:blank', '_blank'); // abre já no clique para o navegador não bloquear
+  if (janela) janela.opener = null;
   try {
     var r = await apiAuthFetch('/api/regras/' + encodeURIComponent(idSL) + '/documentos/' + encodeURIComponent(docId) + '/arquivo');
     var j = await r.json().catch(function () { return {}; });
