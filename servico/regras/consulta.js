@@ -83,7 +83,7 @@ async function gerarBuscas(deps, pergunta) {
   const base = p ? [p] : [];
   try {
     const r = await deps.chamarModelo({
-      modelo: deps.modelos.modelo('regras_extracao'), maxTokens: 300, system: PROMPT_BUSCAS, content: 'Pergunta: ' + p,
+      modelo: deps.modelos.modelo('regras_extracao'), maxTokens: 1000, esforco: 'low', system: PROMPT_BUSCAS, content: 'Pergunta: ' + p,
       rotulo: 'regras_buscas', funcao: 'regras', usuario: deps.usuario, timeoutMs: 30000,
     });
     if (!r || !r.ok) return base;
