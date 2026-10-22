@@ -4,7 +4,7 @@
 // Superlógica só com confirmação na tela. Multa: ocorrência na unidade, carta e cobrança
 // opcional, também só com confirmação. Só GESTOR e GERENTE (o servidor confere).
 // Rotas: /api/comunicados/rascunho, /publicar, /disparar, /api/condominio/:id/multa-opcoes,
-// /api/multas/registrar.
+// /api/multas/registrar e, com "Citar regimento e convenção", /api/regras/:id/comunicado/rascunho.
 // ============================================================
 var comEstado = { idOpcoes: null, opcoes: null, seq: 0 };
 
@@ -95,14 +95,49 @@ async function comGerarTexto(prefixo) {
   var uniTxt = '';
   if (prefixo === 'mul') { var sel = document.getElementById('mul-unidade'); uniTxt = sel && sel.selectedIndex > 0 ? (sel.options[sel.selectedIndex].dataset.uni || '') : ''; }
   var bt = document.getElementById(prefixo + '-btn-gerar');
+  // Comunicado com "Citar regimento e convenção" marcado usa a rota das regras do condomínio,
+  // que devolve o mesmo { titulo, texto } mais os trechos conferidos no acervo.
+  var citar = prefixo === 'com' && comCitarMarcado();
+  if (citar && (!cond || !cond.id_superlogica)) { toast('Selecione um condomínio com código do Superlógica', 'err'); return; }
   bt.disabled = true; var txt0 = bt.textContent; bt.textContent = 'Gerando...';
+  if (prefixo === 'com') comMostrarFundamentos(null);
   try {
-    var j = await comPost('/api/comunicados/rascunho', { tipo: tipo, assunto: assunto, detalhes: comV(prefixo + '-detalhes'), condominio: cond ? cond.nome : '', unidade: uniTxt });
+    var j = citar
+      ? await comPost('/api/regras/' + encodeURIComponent(cond.id_superlogica) + '/comunicado/rascunho', { tipo: tipo, assunto: assunto, detalhes: comV(prefixo + '-detalhes'), condominio: cond ? cond.nome : '' })
+      : await comPost('/api/comunicados/rascunho', { tipo: tipo, assunto: assunto, detalhes: comV(prefixo + '-detalhes'), condominio: cond ? cond.nome : '', unidade: uniTxt });
     comSet(prefixo + '-titulo', j.titulo); comSet(prefixo + '-texto', j.texto); comPrevia(prefixo);
+    if (citar) comMostrarFundamentos(j.fundamentos || []);
     toast('Texto gerado. Revise antes de gravar; o que estiver como [a confirmar] precisa ser preenchido.', 'ok');
   } catch (e) { toast('Não foi possível gerar: ' + e.message, 'err'); }
   finally { bt.disabled = false; bt.textContent = txt0; }
 }
+
+// Opção "Citar regimento e convenção" (regras do condomínio). Criada aqui, ao lado do botão de
+// gerar, para não depender de mudança no index.html. Os fundamentos aparecem abaixo do texto.
+function comCitarMarcado() { var cb = document.getElementById('com-citar-regras'); return !!(cb && cb.checked); }
+function comPrepararCitar() {
+  var bt = document.getElementById('com-btn-gerar');
+  if (!bt || document.getElementById('com-citar-regras')) return;
+  var lab = document.createElement('label');
+  lab.style.cssText = 'display:inline-flex;gap:8px;align-items:center;font-size:12px;margin-left:12px';
+  var cb = document.createElement('input'); cb.type = 'checkbox'; cb.id = 'com-citar-regras';
+  lab.appendChild(cb); lab.appendChild(document.createTextNode(' Citar regimento e convenção'));
+  bt.insertAdjacentElement('afterend', lab);
+  var txt = document.getElementById('com-texto');
+  if (txt && !document.getElementById('com-fundamentos')) {
+    var box = document.createElement('div'); box.id = 'com-fundamentos'; box.style.cssText = 'font-size:12px;margin-top:6px';
+    txt.insertAdjacentElement('afterend', box);
+  }
+}
+// null limpa; lista vazia avisa que nada do acervo foi conferido para o assunto.
+function comMostrarFundamentos(lista) {
+  var box = document.getElementById('com-fundamentos'); if (!box) return;
+  if (lista == null) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-bottom:4px">FUNDAMENTOS CONFERIDOS NO ACERVO</div>' + (lista.length ? lista.map(function (f) {
+    return '<div style="padding:4px 0;border-bottom:1px solid var(--border)"><b>' + comEsc(f.rotulo || 'Trecho') + '</b> · ' + comEsc(f.documento || f.tipo || '') + '<div style="color:var(--muted)">"' + comEsc(f.citacao) + '"</div></div>';
+  }).join('') : '<div style="color:var(--muted)">Nenhum trecho do regimento ou da convenção foi conferido para este assunto; o texto saiu sem citar regra.</div>');
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', comPrepararCitar); else comPrepararCitar();
 
 async function comPublicar() {
   var cond = comCond();
@@ -120,7 +155,7 @@ async function comPublicar() {
     addHistorico('Comunicado publicado: ' + comV('com-titulo') + ' · ' + cond.nome);
     toast('Comunicado publicado', 'ok');
     ['com-titulo', 'com-texto', 'com-assunto', 'com-detalhes'].forEach(function (k) { comSet(k, ''); });
-    comPrevia('com');
+    comPrevia('com'); comMostrarFundamentos(null);
     comAtualizarConfirmacoes();
   } catch (e) { toast('Não publicado: ' + e.message, 'err'); bt.disabled = false; }
 }
@@ -200,6 +235,7 @@ async function comRegistrarMulta() {
 }
 
 function comunicadosAbrir() {
+  comPrepararCitar();
   comAtualizarConfirmacoes();
   comCarregarOpcoes();
 }
@@ -208,6 +244,7 @@ function comunicadosAbrir() {
 window.addEventListener('condominioAtivo:trocou', function () {
   comEstado.idOpcoes = null; comEstado.seq++;
   ['com-titulo', 'com-texto', 'mul-titulo', 'mul-texto', 'mul-assunto', 'mul-detalhes', 'com-assunto', 'com-detalhes'].forEach(function (k) { comSet(k, ''); });
+  comMostrarFundamentos(null);
   ['com-previa', 'mul-previa', 'com-resultado', 'mul-resultado'].forEach(function (k) { var el = document.getElementById(k); if (el) el.textContent = ''; });
   comAtualizarConfirmacoes();
   var p = document.getElementById('panel-comunicados');
