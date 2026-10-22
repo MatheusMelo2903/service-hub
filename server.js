@@ -4536,6 +4536,7 @@ require('./servico/regras/rotas-consulta').criarRotasConsulta(app, depsRegras);
 require('./servico/regras/rotas-importar').criarRotasImportar(app, depsRegras);
 require('./servico/regras/rotas-ata').criarRotasAta(app, depsRegras);
 require('./servico/regras/rotas-notificacao').criarRotasNotificacao(app, depsRegras);
+require('./servico/regras/rotas-acervo').criarRotasAcervo(app, depsRegras);
 
 // ─────────────────────────────────────────────────────────────────────────
 // POST /api/condominio/:id/documentos (T12) — arquiva no Superlógica a ata ou a
@@ -4586,6 +4587,13 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
   const r = await D.enviarDocumento({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }, id, titulo, buf);
   console.log('[documentos] ' + (req.user && req.user.email ? req.user.email : req.authMode) + ' arquivou ' + b.tipo + ' no condomínio ' + id + ': ' + (r.ok ? 'ok id ' + r.id : 'falhou ' + r.status + ' formato ' + r.formato));
   if (!r.ok) return res.status(502).json({ erro: 'falha_envio', detalhe: 'O Superlógica não confirmou o recebimento do documento' + (r.msg ? ': ' + r.msg : '.') + ' Confira nos documentos do condomínio antes de tentar de novo.' });
+  // Regras do condomínio: a ata arquivada entra também no acervo do Hub (consulta, mandatos,
+  // conferência). Em segundo plano; falha aqui nunca muda a resposta do arquivamento.
+  if (b.tipo === 'ata' && typeof b.texto_ata === 'string' && b.texto_ata.trim().length >= 200 && b.texto_ata.length <= 2000000) {
+    const dm = String(b.data_ata || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    require('./servico/regras/acervo').arquivarAtaNoAcervo(depsRegras, { idSL: id, titulo, data_documento: dm ? dm[3] + '-' + dm[2] + '-' + dm[1] : null,
+      pdfBuffer: buf, texto: b.texto_ata, criado_por: (req.user && req.user.sub) || null }).catch(() => {});
+  }
   res.json({ ok: true, titulo, id_superlogica: Number(id), id_documento: r.id || null, publicado: r.publicado == null ? null : !['', '0'].includes(r.publicado) });
 });
 

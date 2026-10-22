@@ -854,6 +854,8 @@ function abrirArquivarAta() {
   const textoNaHora = _ataTextoGerado;
   ArquivarSL.mostrar('ata-arquivar', {
     tipo: 'ata',
+    // Regras do condomínio: a ata arquivada também entra no acervo do Hub (texto como foi gerado).
+    extra: { texto_ata: textoNaHora, data_ata: data },
     titulo: ('ATA ASSEMBLEIA ' + tipo + ' ' + dataTitulo).replace(/\s+/g, ' ').trim(),
     idSuperlogica: cond && cond.id_superlogica,
     nomeCond: (cond && cond.nome) || (document.getElementById('ata-cond') || {}).value || '',
