@@ -890,6 +890,7 @@ REGRAS DA ÂNCORA (crítico):
 
 REGRAS DE CONTEÚDO (as mesmas da ata):
 - Insira cada fato no item de pauta em que foi tratado. Lacuna que já está na ata: ignore.
+- NÃO PULE LACUNA: toda lacuna da lista vira uma operação, salvo se já estiver na ata ou se, lida no contexto, for conversa paralela. Isso vale também para as lacunas automáticas de valor (as que dizem "valor dito na assembleia"): leia o trecho citado, ache o assunto e insira o valor no sentido exato da fala (ex.: valor de uma proposta de empresa entra como valor dessa proposta).
 - Valores informais viram formais ("21 mil" vira R$ 21.000,00).
 - CONTEXTO DA LACUNA É LEI: valor citado como exemplo, simulação ou conta entra como exemplo, nunca como valor atual ou decisão. Lacuna que se revelar conversa paralela, piada ou comentário fora do assunto NÃO é inserida.
 - ANTI-INVENÇÃO ABSOLUTA: insira só o que a lacuna afirma; incerto vai com [a confirmar]. Número dito com clareza entra sem marcador.
