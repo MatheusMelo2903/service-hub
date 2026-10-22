@@ -4530,6 +4530,7 @@ const depsRegras = {
   slComunicados, slModulo, buscarCadastro: (id) => slModulo.buscarCadastro(clienteSL(), id),
 };
 // REGRAS_ROTAS (o orquestrador liga cada frente aqui)
+require('./servico/regras/rotas-consulta').criarRotasConsulta(app, depsRegras);
 
 // ─────────────────────────────────────────────────────────────────────────
 // POST /api/condominio/:id/documentos (T12) — arquiva no Superlógica a ata ou a
