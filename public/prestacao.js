@@ -211,6 +211,13 @@ function prestacaoLimparTudo() {
   prestacaoRenderizarListaArquivos();
   prestacaoPreencherMeses();
   prestacaoAtualizarBotao();
+  // T49: a prestação gerada continua na pasta Em andamento; só a tela esquece dela.
+  // Ajuste e arquivar saem junto (o aviso do botão promete isso), e voltam ao abrir pela pasta.
+  prestacaoEsquecerTrabalhoDaTela();
+  prestAjuste = { jobId: null, base: null, juntar: [], tela: null };
+  var cardAj = document.getElementById('prest-ajuste');
+  if (cardAj) cardAj.style.display = 'none';
+  if (window.ArquivarSL) ArquivarSL.esconder('prest-arquivar');
   prestacaoInit();
 }
 
@@ -1983,6 +1990,8 @@ async function prestacaoExecutarV13(btn) {
   }
   var ini = prestacaoState.mesInicio, fim = prestacaoState.mesFim;
   if (!ini || !fim || ini > fim) throw new Error('Confira o mês inicial e o mês final.');
+  // Foto da tela no início: a geração demora e os campos podem mudar enquanto isso.
+  var ctx = prestacaoContextoAtual('pdfs');
 
   var form = new FormData();
   arquivos.forEach(function(f) { form.append('arquivos', f); });
@@ -2007,6 +2016,7 @@ async function prestacaoExecutarV13(btn) {
   (r.avisos || []).forEach(function(a) { toast(a, 'warn'); });
   if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
   prestacaoMostrarAjuste(jobId, r);
+  prestacaoGuardarTrabalho(ctx, r, jobId);
   // Tira só os relatórios usados nesta geração (algum anexado durante a espera fica).
   prestacaoState.arquivos = (prestacaoState.arquivos || []).filter(function(f) { return arquivos.indexOf(f) < 0; });
   prestacaoRenderizarListaArquivos();
@@ -2055,6 +2065,7 @@ async function prestacaoGerarSuperlogica() {
     var ini = prestacaoState.mesInicio, fim = prestacaoState.mesFim;
     if (!ini || !fim || ini > fim) throw new Error('Confira o mês inicial e o mês final.');
     if (!prestacaoState.condIdSuperlogica) throw new Error('Escolha um condomínio cadastrado.');
+    var ctx = prestacaoContextoAtual('superlogica');
     var resp = await apiAuthFetch('/api/prestacao/v13/superlogica', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -2082,6 +2093,7 @@ async function prestacaoGerarSuperlogica() {
     toast('Prestação gerada com os dados do Superlógica (' + (r.duracao_s || 0) + 's): '
       + baixados.join(' e ') + ' baixado' + (baixados.length > 1 ? 's' : '') + '.', 'ok');
     prestacaoMostrarAjuste(jobId, r);
+    prestacaoGuardarTrabalho(ctx, r, jobId);
   } catch (err) {
     console.error('[prestacao superlogica]', err && err.message);
     toast(err && err.message ? err.message : String(err), 'err');
@@ -2441,6 +2453,8 @@ async function prestacaoGerarComAjuste() {
     if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
     toast('Prestação com os ajustes: ' + baixados.join(' e ') + ' baixado' + (baixados.length > 1 ? 's' : '') + '.', 'ok');
     prestacaoMostrarAjuste(jobId, r);
+    // Mesma prestação (mesmo condomínio e período): atualiza o trabalho guardado e troca os arquivos.
+    prestacaoGuardarTrabalho(prestTrabalho.ctx || prestacaoContextoAtual('superlogica'), r, jobId);
   } catch (err) {
     toast(err && err.message ? err.message : String(err), 'err');
   } finally {
@@ -2457,4 +2471,389 @@ window.addEventListener('condominioAtivo:trocou', function() {
   prestAjuste = { jobId: null, base: null, juntar: [], tela: null };
   var card = document.getElementById('prest-ajuste');
   if (card) card.style.display = 'none';
+  // A prestação do anterior continua na pasta Em andamento; só sai da tela.
+  prestacaoEsquecerTrabalhoDaTela();
+});
+
+// ============================================================
+// T49: PRESTAÇÃO GUARDADA NA PASTA "EM ANDAMENTO" (public/trabalhos.js)
+// Depois de gerar, a prestação vai para o servidor com os arquivos. Trocar de aba,
+// recarregar, clicar em "Limpar tudo" por engano ou entrar por outro computador não
+// obriga a gerar de novo: abre pela pastinha do topo e volta com os downloads e o
+// painel de arquivar. Só sai com "Encerrar" ou depois de 7 dias sem mexer.
+// Se guardar falhar, a prestação já baixou normalmente; só avisa.
+// ============================================================
+var PREST_MIME_PPTX = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+// tela: muda sempre que a tela esquece a prestação (Limpar tudo, troca de condomínio,
+// abrir outra pela pasta). Um salvamento que termina depois disso não se pendura na tela nova.
+var prestTrabalho = { id: null, chave: '', ctx: null, titulo: '', arquivos: [], blobs: {}, urls: {}, tela: 0, salvando: 0, fila: Promise.resolve() };
+
+// O que precisa para reabrir a prestação, lido da tela no momento em que a geração começa.
+function prestacaoContextoAtual(origem) {
+  var livre = document.getElementById('prest-modo-livre');
+  return {
+    origem: origem,
+    condId: prestacaoState.condId || null,
+    condNome: String(prestacaoState.condNome || '').trim(),
+    idSuperlogica: prestacaoState.condIdSuperlogica || null,
+    modoLivre: !!(livre && livre.style.display !== 'none'),
+    mesInicio: prestacaoState.mesInicio || '',
+    mesFim: prestacaoState.mesFim || '',
+    periodo: prestacaoState.periodo || '',
+    observacoes: String(prestacaoState.observacoes || '').slice(0, 1000)
+  };
+}
+
+// Mesma prestação = mesmo condomínio e mesmo período. Gerar de novo assim (ou com os
+// ajustes) atualiza o mesmo trabalho; outro período vira outro trabalho na pasta.
+function prestacaoChaveTrabalho(ctx) {
+  var cond = ctx.modoLivre ? 'livre:' + ctx.condNome.toLowerCase() : String(ctx.idSuperlogica || ctx.condId || '');
+  return [cond, ctx.mesInicio, ctx.mesFim].join('|');
+}
+
+// O servidor só aceita letras sem acento, números, espaço, _ . ( ) no nome guardado.
+// O nome do download continua o original (com acentos), guardado à parte em dados.
+function prestacaoNomeGuardado(base, ext) {
+  var s = String(base || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z0-9 _.()]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
+  if (!s) s = 'Prestacao de contas';
+  return s.slice(0, 110).trim() + '.' + ext;
+}
+
+function prestacaoB64ParaBlob(b64, mime) {
+  var bin = atob(b64);
+  return new Blob([Uint8Array.from(bin, function(c) { return c.charCodeAt(0); })], { type: mime });
+}
+
+// Arquivos da geração conforme o formato escolhido (o mesmo critério do download).
+function prestacaoArquivosDoResultado(ctx, r) {
+  var fmtSel = document.querySelector('input[name="prest-formato"]:checked');
+  var formato = fmtSel ? fmtSel.value : 'ambos';
+  var base = r.nome_arquivo || ('Prestação de Contas ' + (ctx.condNome || ''));
+  var lista = [];
+  if ((formato === 'ambos' || formato === 'pdf') && r.pdf_b64) lista.push({ tipo: 'pdf', rotulo: 'PDF', b64: r.pdf_b64, mime: 'application/pdf' });
+  if ((formato === 'ambos' || formato === 'pptx') && r.pptx_b64) lista.push({ tipo: 'pptx', rotulo: 'PowerPoint', b64: r.pptx_b64, mime: PREST_MIME_PPTX });
+  var saida = [];
+  lista.forEach(function(a) {
+    try {
+      saida.push({ tipo: a.tipo, rotulo: a.rotulo, nome: prestacaoNomeGuardado(base, a.tipo), nomeBaixar: base + '.' + a.tipo, blob: prestacaoB64ParaBlob(a.b64, a.mime) });
+    } catch (e) { /* já avisado no download */ }
+  });
+  return { formato: formato, arquivos: saida };
+}
+
+// Chamada logo depois de uma geração (ou ajuste) com sucesso. Não espera o servidor:
+// os downloads já saíram e a tela segue livre. Os salvamentos vão em fila para o
+// segundo (ex.: ajuste logo depois) reaproveitar o id criado pelo primeiro.
+function prestacaoGuardarTrabalho(ctx, r, jobId) {
+  try {
+    if (!window.Trabalhos || !ctx || !r) return;
+    var res = prestacaoArquivosDoResultado(ctx, r);
+    if (!res.arquivos.length) return;
+    var tela = prestTrabalho.tela;
+    prestTrabalho.ctx = ctx;
+    // Em memória: "Baixar de novo" nesta mesma tela não precisa ir ao servidor.
+    prestTrabalho.blobs = {};
+    res.arquivos.forEach(function(a) { prestTrabalho.blobs[a.tipo] = a.blob; });
+    prestTrabalho.salvando++;
+    prestacaoMostrarGuardado(true);
+    prestTrabalho.fila = prestTrabalho.fila.then(function() {
+      return prestacaoGuardarAgora(ctx, r, jobId, res, tela);
+    }).catch(function(e) {
+      console.warn('[prestacao] guardar falhou: ' + (e && e.message));
+    }).then(function() {
+      prestTrabalho.salvando = Math.max(0, prestTrabalho.salvando - 1);
+      if (prestTrabalho.tela === tela) prestacaoMostrarGuardado(prestTrabalho.salvando > 0);
+    });
+  } catch (e) {
+    console.warn('[prestacao] guardar falhou: ' + (e && e.message));
+  }
+}
+
+async function prestacaoGuardarAgora(ctx, r, jobId, res, tela) {
+  var mesmaTela = function() { return prestTrabalho.tela === tela; };
+  var chave = prestacaoChaveTrabalho(ctx);
+  var idAnterior = (mesmaTela() && prestTrabalho.id && prestTrabalho.chave === chave) ? prestTrabalho.id : null;
+  var titulo = ('Prestação ' + (ctx.condNome || 'condomínio') + ' ' + prestacaoMesRotulo(ctx.mesInicio) + ' a ' + prestacaoMesRotulo(ctx.mesFim)).replace(/\s+/g, ' ').trim();
+  var meta = function(lista) { return lista.map(function(a) { return { tipo: a.tipo, rotulo: a.rotulo, nome: a.nome, nomeBaixar: a.nomeBaixar }; }); };
+  // Ajuste só vale enquanto o servidor guarda a geração (15 minutos); guarda a estrutura
+  // para reabrir o bloco se ainda der tempo.
+  var ajuste = null;
+  if (jobId && Array.isArray(r.estrutura_base) && r.estrutura_base.length) {
+    ajuste = { jobId: jobId, ate: Date.now() + 14 * 60 * 1000, estrutura_base: r.estrutura_base, estrutura_aplicada: r.estrutura_aplicada || null };
+  }
+  var dados = {
+    versao: 1,
+    origem: ctx.origem, condId: ctx.condId, condNome: ctx.condNome, idSuperlogica: ctx.idSuperlogica, modoLivre: ctx.modoLivre,
+    mesInicio: ctx.mesInicio, mesFim: ctx.mesFim, periodo: ctx.periodo, observacoes: ctx.observacoes,
+    formato: res.formato, modo: r.modo || null, geradoEm: new Date().toISOString(),
+    arquivos: meta(res.arquivos),
+    arquivar: { tipo: 'prestacao', titulo: ('Prestação de contas ' + (ctx.periodo || '')).replace(/\s+/g, ' ').trim(), idSuperlogica: ctx.idSuperlogica || null, nomeCond: ctx.condNome || '' },
+    ajuste: ajuste
+  };
+  var envio = { id: idAnterior, idSuperlogica: ctx.modoLivre ? null : (ctx.idSuperlogica || null), titulo: titulo, dados: dados };
+  var id;
+  try {
+    id = await Trabalhos.salvar('prestacao', envio);
+    if (!id) throw new Error('sem resposta');
+  } catch (e) {
+    toast('A prestação foi gerada e baixada, mas não ficou guardada na pasta Em andamento (' + (e && e.message ? e.message : 'erro') + ').', 'warn');
+    if (mesmaTela() && !idAnterior) prestacaoEsquecerTrabalhoDaTela();
+    return;
+  }
+  var guardados = [], falhas = [];
+  for (var i = 0; i < res.arquivos.length; i++) {
+    var a = res.arquivos[i];
+    try { await Trabalhos.anexar(id, a.nome, a.blob); guardados.push(a); }
+    catch (e) { falhas.push(a.rotulo); }
+  }
+  if (falhas.length) {
+    toast((falhas.length > 1 ? 'O ' + falhas.join(' e o ') + ' não ficaram guardados' : 'O ' + falhas[0] + ' não ficou guardado')
+      + ' na pasta Em andamento. O que já baixou continua valendo.', 'warn');
+    // A lista guardada passa a ter só o que subiu (um arquivo antigo com o mesmo nome não vale mais).
+    dados.arquivos = meta(guardados);
+    envio.id = id;
+    try { await Trabalhos.salvar('prestacao', envio); } catch (e) { /* fica a primeira versão */ }
+  }
+  if (!mesmaTela()) return;
+  prestTrabalho.id = id;
+  prestTrabalho.chave = chave;
+  prestTrabalho.ctx = ctx;
+  prestTrabalho.titulo = titulo;
+  prestTrabalho.arquivos = meta(guardados);
+  prestTrabalho.urls = {};
+}
+
+// A tela esquece a prestação guardada (ela continua na pasta Em andamento).
+function prestacaoEsquecerTrabalhoDaTela() {
+  prestTrabalho.tela++;
+  prestTrabalho.id = null;
+  prestTrabalho.chave = '';
+  prestTrabalho.ctx = null;
+  prestTrabalho.titulo = '';
+  prestTrabalho.arquivos = [];
+  prestTrabalho.blobs = {};
+  prestTrabalho.urls = {};
+  prestTrabalho.salvando = 0;
+  var el = document.getElementById('prest-guardado');
+  if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+}
+
+// Bloco criado aqui (sem mexer no index.html), logo antes do "Ajustar estrutura".
+function prestacaoBlocoGuardado() {
+  var el = document.getElementById('prest-guardado');
+  if (el) return el;
+  var painel = document.getElementById('panel-prestacao');
+  if (!painel) return null;
+  el = document.createElement('div');
+  el.id = 'prest-guardado';
+  el.className = 'card';
+  el.style.display = 'none';
+  var ajuste = document.getElementById('prest-ajuste');
+  painel.insertBefore(el, ajuste && ajuste.parentNode === painel ? ajuste : null);
+  return el;
+}
+
+function prestacaoMostrarGuardado(salvando) {
+  var el = prestacaoBlocoGuardado();
+  if (!el) return;
+  if (salvando) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--muted);font-family:var(--mono)">Guardando esta prestação na pasta Em andamento...</div>';
+    el.style.display = '';
+    return;
+  }
+  if (!prestTrabalho.id) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  var botoes = prestTrabalho.arquivos.map(function(a) {
+    return '<button type="button" class="btn btn-ghost prest-guardado-baixar" data-tipo="' + prestacaoEscAj(a.tipo) + '" style="font-size:12px;padding:6px 12px">'
+      + (a.tipo === 'pdf' ? 'Baixar PDF de novo' : 'Baixar PowerPoint de novo') + '</button>';
+  }).join('');
+  el.innerHTML = '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:220px">'
+    + '<div style="font-weight:600;font-size:13px">📁 Esta prestação está guardada na pasta Em andamento.</div>'
+    + '<div class="hint" style="margin-top:2px">' + prestacaoEscAj(prestTrabalho.titulo) + '. Fica lá até você encerrar (ou 7 dias sem mexer).'
+    + (prestTrabalho.arquivos.length ? '' : ' Os arquivos não ficaram guardados; para baixar, gere de novo.') + '</div>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap">' + botoes
+    + '<button type="button" class="btn btn-ghost prest-guardado-encerrar" style="font-size:12px;padding:6px 12px">Encerrar</button>'
+    + '</div></div>';
+  el.querySelectorAll('.prest-guardado-baixar').forEach(function(b) {
+    b.addEventListener('click', function() { prestacaoBaixarGuardado(b.dataset.tipo, b); });
+  });
+  var enc = el.querySelector('.prest-guardado-encerrar');
+  if (enc) enc.addEventListener('click', prestacaoEncerrarGuardado);
+  el.style.display = '';
+}
+
+// Relê o trabalho para ter links novos dos arquivos (cada link vale 10 minutos).
+async function prestacaoRenovarLinks() {
+  var id = prestTrabalho.id;
+  var r = await window.apiAuthFetch('/api/trabalhos/' + encodeURIComponent(id), { cache: 'no-store' });
+  if (r.status === 404) {
+    if (prestTrabalho.id === id) prestacaoEsquecerTrabalhoDaTela();
+    throw new Error('esta prestação já foi encerrada ou passou de 7 dias na pasta');
+  }
+  if (!r.ok) throw new Error('o servidor não respondeu agora');
+  var t = await r.json();
+  if (prestTrabalho.id !== id) throw new Error('a tela mudou');
+  prestTrabalho.urls = {};
+  (t.arquivos || []).forEach(function(f) { prestTrabalho.urls[f.nome] = { url: f.url, em: Date.now() }; });
+}
+
+// Blob de um arquivo guardado: da memória se já tiver, senão do servidor.
+async function prestacaoBlobGuardado(tipo) {
+  if (prestTrabalho.blobs[tipo]) return prestTrabalho.blobs[tipo];
+  var a = prestTrabalho.arquivos.find(function(x) { return x.tipo === tipo; });
+  if (!a || !prestTrabalho.id) throw new Error('esse arquivo não está guardado');
+  var id = prestTrabalho.id;
+  var u = prestTrabalho.urls[a.nome];
+  if (!u || !u.url || Date.now() - u.em > 8 * 60 * 1000) {
+    await prestacaoRenovarLinks();
+    u = prestTrabalho.urls[a.nome];
+  }
+  if (!u || !u.url) throw new Error('o arquivo não está mais na pasta');
+  var blob = await Trabalhos.baixarArquivo(u.url);
+  if (prestTrabalho.id === id) prestTrabalho.blobs[tipo] = blob;
+  return blob;
+}
+
+async function prestacaoBaixarGuardado(tipo, btn) {
+  var a = prestTrabalho.arquivos.find(function(x) { return x.tipo === tipo; });
+  if (!a) return;
+  var texto = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Baixando...'; }
+  try {
+    var blob = await prestacaoBlobGuardado(tipo);
+    prestacaoDispararDownload(URL.createObjectURL(blob), a.nomeBaixar || a.nome);
+  } catch (e) {
+    toast('Não foi possível baixar: ' + (e && e.message ? e.message : e) + '.', 'err');
+  } finally {
+    if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = texto; }
+  }
+}
+
+async function prestacaoEncerrarGuardado() {
+  if (!prestTrabalho.id || !window.Trabalhos) return;
+  var ok = await Trabalhos.encerrar(prestTrabalho.id, { perguntar: true });
+  if (ok) {
+    prestacaoEsquecerTrabalhoDaTela();
+    toast('Prestação encerrada e tirada da pasta Em andamento.', 'ok');
+  }
+}
+
+// Põe um mês no seletor mesmo que esteja fora dos 48 meses listados.
+function prestacaoPorMes(sel, valor) {
+  if (!sel || !valor) return;
+  var tem = Array.prototype.some.call(sel.options, function(o) { return o.value === valor; });
+  if (!tem) {
+    var o = document.createElement('option');
+    o.value = valor; o.textContent = prestacaoMesRotulo(valor);
+    sel.appendChild(o);
+  }
+  sel.value = valor;
+}
+
+// Aberta pela pasta Em andamento. A pasta já trocou o condomínio ativo e abriu a aba.
+async function prestacaoRestaurarTrabalho(t) {
+  if (prestacaoState.gerando) throw new Error('Aguarde a prestação em andamento terminar de gerar.');
+  var d = (t && t.dados) || {};
+  prestacaoEsquecerTrabalhoDaTela();
+  await prestacaoInit(); // meses e seletor prontos antes de repor os campos
+
+  // Condomínio
+  var livre = document.getElementById('prest-modo-livre');
+  var emLivre = !!(livre && livre.style.display !== 'none');
+  if (d.modoLivre) {
+    if (!emLivre) prestacaoUsarOutro();
+    var nomeLivre = document.getElementById('prest-cond-nome-livre');
+    if (nomeLivre) nomeLivre.value = d.condNome || '';
+    prestacaoState.condNome = d.condNome || '';
+    prestacaoMostrarInfoCondominio();
+  } else {
+    if (emLivre) prestacaoVoltarLista();
+    if (d.condId) prestacaoSelecionarCondominio(d.condId, d.condNome || '', d.idSuperlogica || null);
+  }
+
+  // Período, observações e formato
+  prestacaoPorMes(document.getElementById('prest-mes-inicio'), d.mesInicio);
+  prestacaoPorMes(document.getElementById('prest-mes-fim'), d.mesFim);
+  prestacaoAtualizarPeriodo();
+  var obs = document.getElementById('prest-observacoes');
+  if (obs) obs.value = d.observacoes || '';
+  prestacaoState.observacoes = d.observacoes || '';
+  if (d.formato) {
+    var radio = document.querySelector('input[name="prest-formato"][value="' + String(d.formato).replace(/[^a-z]/g, '') + '"]');
+    if (radio) radio.checked = true;
+  }
+  prestacaoAtualizarBotao();
+
+  // Bloco "guardada" com os downloads (só o que de fato está no servidor).
+  var noServidor = {};
+  (t.arquivos || []).forEach(function(f) { noServidor[f.nome] = f.url || null; });
+  var ctx = {
+    origem: d.origem || 'superlogica', condId: d.condId || null, condNome: d.condNome || '', idSuperlogica: d.idSuperlogica || null,
+    modoLivre: !!d.modoLivre, mesInicio: d.mesInicio || '', mesFim: d.mesFim || '', periodo: d.periodo || '', observacoes: d.observacoes || ''
+  };
+  prestTrabalho.id = t.id;
+  prestTrabalho.ctx = ctx;
+  prestTrabalho.chave = prestacaoChaveTrabalho(ctx);
+  prestTrabalho.titulo = t.titulo || '';
+  prestTrabalho.arquivos = (d.arquivos || []).filter(function(a) { return a && a.nome && Object.prototype.hasOwnProperty.call(noServidor, a.nome); });
+  prestTrabalho.urls = {};
+  prestTrabalho.arquivos.forEach(function(a) { prestTrabalho.urls[a.nome] = { url: noServidor[a.nome], em: Date.now() }; });
+  prestacaoMostrarGuardado(false);
+
+  // Arquivar no Superlógica com o PDF guardado (baixado só na hora de enviar).
+  var temPdf = prestTrabalho.arquivos.some(function(a) { return a.tipo === 'pdf'; });
+  if (window.ArquivarSL) {
+    if (temPdf && d.arquivar) {
+      var idTrab = t.id;
+      ArquivarSL.mostrar('prest-arquivar', {
+        tipo: 'prestacao',
+        titulo: d.arquivar.titulo || ('Prestação de contas ' + (d.periodo || '')).trim(),
+        idSuperlogica: d.arquivar.idSuperlogica || null,
+        nomeCond: d.arquivar.nomeCond || d.condNome || '',
+        pdfBase64: async function() {
+          if (prestTrabalho.id !== idTrab) throw new Error('Abra esta prestação de novo pela pasta Em andamento.');
+          var blob = await prestacaoBlobGuardado('pdf');
+          return ArquivarSL.paraBase64(await blob.arrayBuffer());
+        }
+      });
+    } else {
+      ArquivarSL.esconder('prest-arquivar');
+    }
+  }
+
+  // Ajustar estrutura: depende da geração ainda guardada no servidor (15 minutos).
+  // Fora desse prazo, nem aparece; dentro, se o servidor já tiver esquecido, o próprio
+  // botão avisa que não está mais disponível.
+  var aj = d.ajuste;
+  if (aj && aj.jobId && aj.ate > Date.now() && Array.isArray(aj.estrutura_base)) {
+    prestacaoMostrarAjuste(aj.jobId, { estrutura_base: aj.estrutura_base, estrutura_aplicada: aj.estrutura_aplicada || null });
+  } else {
+    prestAjuste = { jobId: null, base: null, juntar: [], tela: null };
+    var cardAj = document.getElementById('prest-ajuste');
+    if (cardAj) cardAj.style.display = 'none';
+  }
+
+  var bloco = document.getElementById('prest-guardado');
+  if (bloco && bloco.scrollIntoView) bloco.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+if (window.Trabalhos) {
+  Trabalhos.registrar('prestacao', { nome: 'Prestação de contas', painel: 'prestacao', restaurar: prestacaoRestaurarTrabalho });
+}
+
+// Encerrada pela pastinha do topo: o bloco desta tela some junto.
+window.addEventListener('trabalhos:encerrado', function(ev) {
+  if (ev && ev.detail && ev.detail.id && ev.detail.id === prestTrabalho.id) prestacaoEsquecerTrabalhoDaTela();
+});
+// A lista da pasta foi relida e esta prestação não está nela (encerrada em outra aba ou
+// expirou): confere no servidor antes de tirar o bloco, porque a lista pode ter sido
+// pedida antes de um salvamento recente.
+window.addEventListener('trabalhos:lista', function(ev) {
+  var id = prestTrabalho.id;
+  if (!id || prestTrabalho.salvando) return;
+  var itens = (ev && ev.detail) || [];
+  if (itens.some(function(x) { return x.id === id; })) return;
+  prestacaoRenovarLinks().catch(function() { /* 404 já tira o bloco; outro erro mantém */ });
 });
