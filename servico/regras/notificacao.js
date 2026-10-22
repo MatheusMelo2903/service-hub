@@ -9,6 +9,13 @@
 // Nada aqui grava no Superlógica: o registro continua pela rota /api/multas/registrar.
 
 const B = require('./banco');
+// Expansão da busca (sinônimos) emprestada da consulta; se falhar, vale só o texto original.
+async function buscasDoRelato(deps, texto) {
+  try {
+    const lista = await require('./consulta').gerarBuscas(deps, String(texto || '').slice(0, 500));
+    return Array.isArray(lista) && lista.length ? lista : [texto];
+  } catch (e) { return [texto]; }
+}
 const { citacaoExiste, conferirFundamentos, trechosParaPrompt, normalizar } = require('./citacao');
 const { extrairJson } = require('../modelo');
 const boletos = require('../../financeiro/boletos');
@@ -427,7 +434,7 @@ REGRAS:
 R1. Fundamentos só dos <trecho> recebidos. trecho_id é o id do trecho. citacao é cópia literal de um pedaço do texto do trecho (pode pular partes com ...), sem trocar palavras. Cite a regra descumprida e a regra de penalidade.
 R2. Código Civil ou outra lei só se o próprio trecho citar.
 R3. Nunca invente data, valor, prazo, nome ou artigo. O que não estiver no pedido ou nos trechos vira [a confirmar].
-R4. texto: carta em prosa simples, parágrafos separados por linha em branco, começando com "Prezado(a) Senhor(a)," e terminando com "Atenciosamente," e "A Administração do <nome do condomínio>". Descreva o fato com a data informada, diga em palavras simples qual regra foi descumprida e peça a regularização. NÃO copie trechos, NÃO escreva número de artigo, valor nem prazo no texto: a fundamentação literal, o valor e o prazo são acrescentados depois. Sem markdown, sem listas, sem hífen nem travessão.
+R4. texto: carta em prosa simples, parágrafos separados por linha em branco, começando com "Prezado(a) Senhor(a)," e terminando com "Atenciosamente," e "A Administração do <nome do condomínio>". Descreva o fato com a data informada, diga em palavras simples qual regra foi descumprida e peça a regularização. NÃO copie trechos, NÃO escreva número de artigo, valor nem prazo no texto: a fundamentação literal, o valor e o prazo são acrescentados depois. Sem markdown, sem listas, sem hífen nem travessão (escreva "nos colocamos", nunca "colocamo-nos").
 R5. tipo_sugerido ("advertencia" ou "multa"): siga a regra de penalidades do condomínio e o histórico da unidade. Advertência anterior do mesmo assunto pesa para multa; multa anterior do mesmo assunto é reincidência. motivo_sugestao: uma ou duas frases.
 R6. regra_valor: o trecho que diz como se calcula a multa. forma: "percentual_taxa" (porcentagem da taxa ou das despesas ordinárias da unidade; numero é a porcentagem), "multiplo_taxa" (vezes a taxa; numero é quantas vezes), "valor_fixo" (numero em reais), "salario_minimo" (numero é quantos salários), "nao_definido" (os trechos não dizem; trecho_id, citacao e numero null). reincidencia_multiplica true só se o trecho disser que a reincidência aumenta a multa E a unidade já tiver multa anterior do mesmo assunto.
 R7. prazo_regularizacao_dias: só se um trecho disser o prazo em dias; senão null.
@@ -443,9 +450,11 @@ async function rascunho(deps, idSL, entrada, usuario) {
   if (e.data_fato && !dataFato) throw erro(400, 'dados_invalidos', 'Data do fato inválida (use DD/MM/AAAA).');
   const tipoPedido = TIPOS.includes(e.tipo_pedido) ? e.tipo_pedido : null;
   const u = await dadosUnidade(deps, idSL, e.idUnidade || e.id_unidade, { hoje: e.hoje });
+  // Buscas com os sinônimos que a convenção usa ("cachorro" vira "animais domésticos"), as mesmas da consulta.
+  const buscas = await buscasDoRelato(deps, relato);
   const [hist, trechos, cab] = await Promise.all([
     historicoCompleto(deps, idSL, u),
-    B.juntarTrechos(deps.banco, idSL, [relato, CONSULTA_PENALIDADES], { tipos: TIPOS_ACERVO, maxTotal: 25 }),
+    B.juntarTrechos(deps.banco, idSL, buscas.concat([CONSULTA_PENALIDADES]), { tipos: TIPOS_ACERVO, maxTotal: 25 }),
     cabecalho(deps, idSL),
   ]);
   const resumo = resumirHistorico(hist);
@@ -637,8 +646,9 @@ async function comunicadoComRegras(deps, idSL, entrada, usuario) {
   const assunto = limpar(e.assunto).slice(0, 300);
   const detalhes = String(e.detalhes || '').trim().slice(0, 4000);
   if (!assunto) throw erro(400, 'dados_invalidos', 'Informe o assunto.');
+  const buscasCom = await buscasDoRelato(deps, assunto + ' ' + detalhes.slice(0, 300));
   const [trechos, cab] = await Promise.all([
-    B.juntarTrechos(deps.banco, idSL, [assunto, detalhes.slice(0, 300)], { tipos: TIPOS_ACERVO, maxTotal: 15 }),
+    B.juntarTrechos(deps.banco, idSL, buscasCom.concat([detalhes.slice(0, 300)]), { tipos: TIPOS_ACERVO, maxTotal: 15 }),
     cabecalho(deps, idSL),
   ]);
   const nomeCond = cab.nome || limpar(e.condominio) || null;

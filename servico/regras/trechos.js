@@ -101,7 +101,9 @@ function dividirEmTrechos(texto, tipo) {
   const artigos = linhas.filter(({ linha }) => RE_ARTIGO.test(linha)).length;
   const usarArtigos = tipo !== 'ata' && artigos >= 3;
   const lista = (usarArtigos ? porArtigo(linhas) : porBloco(linhas)).filter((t) => t.texto && t.texto.replace(/\s/g, '').length >= 8);
-  return lista.map((t, i) => Object.assign({ ordem: i + 1 }, t, { rotulo: t.rotulo || (tipo === 'ata' ? 'Trecho ' + (i + 1) : null) }));
+  // Sem quebra de página no texto (texto vindo de outro sistema), a página não é conhecida.
+  const temPaginas = String(texto || '').includes('\f');
+  return lista.map((t, i) => Object.assign({ ordem: i + 1 }, t, { rotulo: t.rotulo || (tipo === 'ata' ? 'Trecho ' + (i + 1) : null), pagina: temPaginas ? t.pagina : null }));
 }
 
 module.exports = { dividirEmTrechos, cortar, RE_ARTIGO };
