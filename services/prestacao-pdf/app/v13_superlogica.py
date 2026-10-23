@@ -150,7 +150,7 @@ def _itens_das_despesas(despesas: list, periodo: list[str], conta_para_cat: dict
             nome = _norm(f"{rub} {a.get('st_complemento_apro') or ''}")
             if mparc:
                 nome += f" (parc {mparc.group(1)}/{mparc.group(2)})"
-            itens[(cat, rub)].append((nome, v / 100.0))
+            itens[(cat, rub)].append((nome, v / 100.0, _mes_da_data(d.get("dt_liquidacao_pdes"))))
     return itens
 
 
@@ -226,11 +226,18 @@ def montar_dados(bruto: dict, extrair_mod) -> dict:
     itens = _itens_das_despesas(bruto.get("despesas") or [], periodo, conta_para_cat, nome_por_conta)
     for c in categorias:
         for r in c["rubricas"]:
-            lst = itens.get((c["nome"], r["nome"]), [])
+            lst3 = itens.get((c["nome"], r["nome"]), [])
+            lst = [(nm, v) for nm, v, _ in lst3]
             soma = round(sum(v for _, v in lst), 2)
             if lst:
                 r["status"] = "exato" if abs(soma - r["total"]) < TOL else f"diverge ({soma:.2f})"
                 r["itens"] = extrair_mod._agrupa(lst, r["nome"])
+                # Maiores itens de cada mês: explicam o mês em que a rubrica fugiu do normal.
+                por_mes = defaultdict(list)
+                for nm, v, mes in lst3:
+                    por_mes[mes].append((nm, v))
+                r["itens_mes"] = {m: [(g["rotulo"], g["valor"]) for g in extrair_mod._agrupa(l, r["nome"])[:3]]
+                                  for m, l in por_mes.items() if m}
 
     cond = bruto.get("condominio") or {}
     nome = _norm(cond.get("fantasia") or cond.get("nome") or "")
