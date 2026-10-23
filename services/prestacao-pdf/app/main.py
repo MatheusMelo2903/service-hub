@@ -36,6 +36,7 @@ from .pipeline import converter_pdf, gerar_deck, orquestrar, orquestrar_multi_fo
 from .prosa import ProsaDeterministica
 from . import v13
 from . import v13_superlogica
+from . import certidoes_deck
 
 _VERSAO = "1.0.0"
 
@@ -335,5 +336,68 @@ async def v13_montar(
     except Exception:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail={"erro": "geracao_falhou", "acao": "revisao_humana"})
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Certidões dentro da prestação: acrescenta um slide por certidão no fim do
+# PowerPoint e do PDF já gerados (app/certidoes_deck.py). O Hub manda os arquivos
+# da prestação guardada e as certidões válidas do condomínio, em base64.
+# ─────────────────────────────────────────────────────────────────────────
+
+def _b64(v, campo: str, limite_mb: int) -> bytes | None:
+    if not v:
+        return None
+    if not isinstance(v, str):
+        raise _422(f"Campo {campo} inválido.", "payload_invalido")
+    try:
+        dado = base64.b64decode(v, validate=True)
+    except Exception:
+        raise _422(f"Campo {campo} inválido.", "payload_invalido")
+    if len(dado) > limite_mb * 1024 * 1024:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                            detail={"erro": "upload_muito_grande", "limite_mb": limite_mb})
+    return dado
+
+
+@app.post("/v13/certidoes")
+async def v13_certidoes(
+    payload: dict = Body(...),
+    _: None = Depends(verificar_secret),
+):
+    inicio_t = time.perf_counter()
+    pptx = _b64(payload.get("pptx_b64"), "pptx_b64", 40)
+    pdf = _b64(payload.get("pdf_b64"), "pdf_b64", 40)
+    if pdf is not None and pdf[:4] != b"%PDF":
+        raise _422("O PDF da prestação está inválido.", "payload_invalido")
+    certs = []
+    for c in (payload.get("certidoes") or [])[:certidoes_deck.MAX_CERTIDOES]:
+        if not isinstance(c, dict):
+            continue
+        dado = _b64(c.get("pdf_b64"), "certidoes.pdf_b64", 10)
+        if not dado or dado[:4] != b"%PDF":
+            raise _422("Uma das certidões não é PDF.", "payload_invalido")
+        certs.append({k: (str(c.get(k))[:120] if c.get(k) is not None else None)
+                      for k in ("tipo", "nome", "situacao", "emitida_em", "validade")} | {"pdf": dado})
+    tmpdir = tempfile.mkdtemp(prefix="prestcert_")
+    try:
+        try:
+            r = await run_in_threadpool(certidoes_deck.anexar, pptx, pdf, certs, tmpdir)
+        except v13.ErroPrestacao as e:
+            _log("v13_certidoes_recusou", motivo=str(e)[:200])
+            raise _422(str(e), "certidoes")
+        _log("v13_certidoes_ok", certidoes=len(certs), slides=r["slides"],
+             duracao_ms=int((time.perf_counter() - inicio_t) * 1000))
+        return {
+            "pptx_b64": base64.b64encode(r["pptx"]).decode("ascii") if r["pptx"] else None,
+            "pdf_b64": base64.b64encode(r["pdf"]).decode("ascii") if r["pdf"] else None,
+            "slides": r["slides"],
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail={"erro": "certidoes_falhou", "acao": "revisao_humana"})
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

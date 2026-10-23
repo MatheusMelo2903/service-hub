@@ -11,9 +11,10 @@
 // 2. Integração com a prestação (public/prestacao.js): caixa "Incluir certidões
 //    negativas" no card 2, "Outros documentos" (atas, contratos, laudos) que vão no
 //    trabalho da pasta Em andamento, título " (aguardando certidões)" enquanto falta
-//    alguma válida, e "Baixar tudo" em um .zip montado no navegador.
+//    alguma válida, e "Baixar tudo": PDF e PowerPoint com um slide por certidão no fim.
 //
-// Nada aqui gera a prestação de novo: certidões e documentos são arquivos separados.
+// Nada aqui gera a prestação de novo: as certidões entram como slides no fim dos arquivos já
+// gerados (servidor), e os outros documentos continuam arquivos separados.
 // Estado das certidões fica em memória por condomínio (estados[idSL]); os painéis são
 // só vistas desse estado, então redesenhar ou mudar o painel de lugar não perde nada.
 // ─────────────────────────────────────────────────────────────────────────
@@ -821,7 +822,7 @@
     var idSL = idSLDoPacote();
     return '<label class="cert-chk"><input type="checkbox" class="cert-incluir"' + (pacote.incluir ? ' checked' : '') + (idSL ? '' : ' disabled') + '> Incluir certidões negativas</label>'
       + '<div class="hint" style="margin-top:2px">' + (idSL
-        ? 'Opcional. Cada certidão vai em um arquivo separado, junto da prestação. As que já estão guardadas e válidas entram sozinhas.'
+        ? 'Opcional. Cada certidão entra como um slide no fim do PDF e do PowerPoint. As que já estão guardadas e válidas entram sozinhas.'
         : 'Certidões só para condomínio cadastrado no Superlógica (o CNPJ vem do cadastro).') + '</div>';
   }
 
@@ -869,7 +870,7 @@
     botoes.innerHTML = (pacote.aberto
       ? '<button type="button" class="btn btn-ghost" data-pacote="fechar" style="font-size:12px;padding:6px 12px">Fechar certidões e documentos</button>'
       : '<button type="button" class="btn btn-ghost" data-pacote="abrir" style="font-size:12px;padding:6px 12px">Incluir certidões e documentos</button>')
-      + '<button type="button" class="btn btn-primary" data-pacote="zip" style="font-size:12px;padding:6px 12px" title="Prestação, certidões válidas e outros documentos em um arquivo .zip">Baixar tudo</button>';
+      + '<button type="button" class="btn btn-primary" data-pacote="zip" style="font-size:12px;padding:6px 12px" title="PDF e PowerPoint com as certidões dentro, e os outros documentos">Baixar tudo</button>';
     var h = '<div class="cert-resumo">' + htmlResumo() + '</div>';
     if (pacote.aberto) {
       h += '<div class="cert-bloco" style="margin-top:12px">' + htmlCaixa() + '<div class="cert-painel-host"></div>' + htmlOutros() + '</div>';
@@ -909,64 +910,128 @@
     }
   }
 
-  // ── Baixar tudo (.zip montado no navegador) ──
+  // ── Certidões dentro da prestação ──
+  // O servidor acrescenta um slide por certidão válida no fim do PDF e do PowerPoint guardados
+  // (rota /api/certidoes/:id/na-prestacao). O resultado fica em memória enquanto nada muda:
+  // mesma prestação e mesmas certidões não montam de novo.
+  var comCert = { chave: null, res: null, rodando: null };
+
+  function paraBase64(blob) {
+    return new Promise(function (ok, falha) {
+      var fr = new FileReader();
+      fr.onload = function () { var r = String(fr.result || ''); ok(r.slice(r.indexOf(',') + 1)); };
+      fr.onerror = function () { falha(new Error('não foi possível ler o arquivo da prestação')); };
+      fr.readAsDataURL(blob);
+    });
+  }
+  function deBase64(b64, tipo) {
+    var bin = atob(b64), n = bin.length, u = new Uint8Array(n);
+    for (var i = 0; i < n; i++) u[i] = bin.charCodeAt(i);
+    return new Blob([u], { type: tipo });
+  }
+  var MIME = { pdf: 'application/pdf', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' };
+
+  // { pdf, pptx } com as certidões dentro, ou null quando não há certidão para incluir.
+  async function arquivosComCertidoes() {
+    var idSL = idSLDoPacote();
+    if (!temTrabalho() || !pacote.incluir || !idSL) return null;
+    var est = estadoDe(idSL);
+    await carregar(idSL, !est.dados || Date.now() - est.em > URL_VALIDA_MS);
+    if (!est.dados) return null;
+    var validas = (est.dados.certidoes || []).filter(function (c) { return ehValida(situacao(c).estado); });
+    if (!validas.length) return null;
+    var chave = prestTrabalho.id + '|' + validas.map(function (c) { return c.tipo + ':' + (c.validade || '') + ':' + (c.atualizado_em || ''); }).sort().join(',');
+    if (comCert.chave === chave && comCert.res) return comCert.res;
+    if (comCert.chave === chave && comCert.rodando) return comCert.rodando;
+    comCert.chave = chave; comCert.res = null;
+    comCert.rodando = (async function () {
+      var tipos = (prestTrabalho.arquivos || []).map(function (a) { return a.tipo; });
+      var corpo = {};
+      if (tipos.indexOf('pdf') >= 0) corpo.pdf_b64 = await paraBase64(await prestacaoBlobGuardado('pdf'));
+      if (tipos.indexOf('pptx') >= 0) corpo.pptx_b64 = await paraBase64(await prestacaoBlobGuardado('pptx'));
+      var j = await chamar('/api/certidoes/' + encodeURIComponent(idSL) + '/na-prestacao', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo)
+      });
+      var res = { pdf: j.pdf_b64 ? deBase64(j.pdf_b64, MIME.pdf) : null, pptx: j.pptx_b64 ? deBase64(j.pptx_b64, MIME.pptx) : null, slides: j.slides || 0 };
+      if (comCert.chave === chave) comCert.res = res;
+      return res;
+    })();
+    try { return await comCert.rodando; }
+    catch (e) { if (comCert.chave === chave) comCert.chave = null; throw e; }
+    finally { if (comCert.chave === chave || comCert.chave === null) comCert.rodando = null; }
+  }
+
+  // Arquivo final de um tipo (pdf ou pptx): com as certidões quando a prestação inclui certidões.
+  // Se a montagem falhar, devolve o original e avisa (o download nunca fica travado por isso).
+  async function blobFinal(tipo) {
+    if (pacote.incluir && idSLDoPacote()) {
+      try {
+        var r = await arquivosComCertidoes();
+        if (r && r[tipo]) return r[tipo];
+      } catch (e) {
+        aviso('As certidões não entraram no arquivo: ' + e.message + ' Baixei a prestação sem elas.', 'warn');
+      }
+    }
+    return prestacaoBlobGuardado(tipo);
+  }
+
+  // ── Baixar tudo ──
+  // PDF e PowerPoint baixam como arquivos separados (abrem igual no Windows e no Mac, sem
+  // descompactar nada), já com um slide por certidão no fim. Outros documentos baixam em
+  // seguida, um arquivo cada. O navegador pode pedir uma vez para permitir vários downloads.
+  function esperar(ms) { return new Promise(function (ok) { setTimeout(ok, ms); }); }
   async function baixarTudo(btn) {
     if (!temTrabalho()) return;
-    if (!window.JSZip) { aviso('Não foi possível montar o pacote neste navegador. Baixe os arquivos um por um.', 'err'); return; }
     var texto = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Montando...'; }
-    var faltas = [];
+    if (btn) { btn.disabled = true; btn.textContent = pacote.incluir ? 'Colocando as certidões...' : 'Baixando...'; }
+    var faltas = [], baixados = 0, semCert = false;
     try {
-      var zip = new window.JSZip();
-      var usados = {};
-      function poe(pasta, nome, blob) {
-        var n = nomeArquivoSeguro(nome), base = n.replace(/\.[^.]+$/, ''), ext = (/\.[^.]+$/.exec(n) || [''])[0];
-        for (var i = 2; usados[(pasta + '/' + n).toLowerCase()]; i++) n = base + ' (' + i + ')' + ext;
-        usados[(pasta + '/' + n).toLowerCase()] = true;
-        (pasta ? zip.folder(pasta) : zip).file(n, blob);
-      }
-      // Prestação (PDF e/ou PowerPoint guardados)
       var arqs = prestTrabalho.arquivos || [];
-      for (var i = 0; i < arqs.length; i++) {
-        try { poe('', arqs[i].nomeBaixar || arqs[i].nome, await prestacaoBlobGuardado(arqs[i].tipo)); }
-        catch (e) { faltas.push(arqs[i].rotulo || arqs[i].tipo); }
+      var final = null;
+      if (pacote.incluir && idSLDoPacote()) {
+        try { final = await arquivosComCertidoes(); }
+        catch (e) { semCert = true; aviso('As certidões não entraram no arquivo: ' + e.message, 'warn'); }
       }
-      // Certidões válidas
+      if (btn && btn.isConnected) btn.textContent = 'Baixando...';
+      for (var i = 0; i < arqs.length; i++) {
+        try {
+          var blob = (final && final[arqs[i].tipo]) || await prestacaoBlobGuardado(arqs[i].tipo);
+          if (baixados) await esperar(600);
+          prestacaoDispararDownload(URL.createObjectURL(blob), arqs[i].nomeBaixar || arqs[i].nome);
+          baixados++;
+        } catch (e) { faltas.push(arqs[i].rotulo || arqs[i].tipo); }
+      }
+      // Certidões que não entraram na prestação vão como PDFs separados, para não faltar nada.
       var idSL = idSLDoPacote();
-      if (pacote.incluir && idSL) {
+      if (semCert && idSL) {
         var est = estadoDe(idSL);
-        try { await carregar(idSL, !est.dados || Date.now() - est.em > URL_VALIDA_MS); } catch (e) { faltas.push('certidões'); }
-        if (est.dados) {
-          for (var k = 0; k < est.dados.tipos.length; k++) {
-            var t = est.dados.tipos[k];
-            var c = certDoTipo(est, t.tipo);
-            if (!c || !ehValida(situacao(c).estado)) continue;
-            try {
-              var url = await urlCertidao(idSL, t.tipo);
-              var r = await fetch(url);
-              if (!r.ok) throw new Error('indisponível');
-              poe('Certidoes', 'Certidao ' + t.nome + '.pdf', await r.blob());
-            } catch (e) { faltas.push(t.nome); }
-          }
+        var tiposEst = (est.dados && est.dados.tipos) || [];
+        for (var k = 0; k < tiposEst.length; k++) {
+          var t = tiposEst[k], c = certDoTipo(est, t.tipo);
+          if (!c || !ehValida(situacao(c).estado)) continue;
+          try {
+            var r = await fetch(await urlCertidao(idSL, t.tipo));
+            if (!r.ok) throw new Error('indisponível');
+            await esperar(600);
+            prestacaoDispararDownload(URL.createObjectURL(await r.blob()), nomeArquivoSeguro('Certidao ' + t.nome) + '.pdf');
+            baixados++;
+          } catch (e) { faltas.push(t.nome); }
         }
       }
-      // Outros documentos
       var docs = pacote.docs.filter(function (d) { return d.noTrabalho === prestTrabalho.id || d.blob; });
       for (var j = 0; j < docs.length; j++) {
-        try { poe('Outros documentos', docs[j].original, await blobDoDoc(docs[j])); }
-        catch (e) { faltas.push(docs[j].original); }
+        try {
+          var b = await blobDoDoc(docs[j]);
+          await esperar(600);
+          prestacaoDispararDownload(URL.createObjectURL(b), nomeArquivoSeguro(docs[j].original));
+          baixados++;
+        } catch (e) { faltas.push(docs[j].original); }
       }
-      if (!Object.keys(usados).length) throw new Error('nenhum arquivo disponível');
-      var ctx = prestTrabalho.ctx || {};
-      var rot = typeof prestacaoMesRotulo === 'function' ? prestacaoMesRotulo : function (x) { return x; };
-      var periodo = ctx.mesInicio && ctx.mesFim ? rot(ctx.mesInicio) + ' a ' + rot(ctx.mesFim) : (ctx.periodo || '');
-      var nome = nomeArquivoSeguro('Prestacao ' + (ctx.condNome || '') + ' ' + periodo) + '.zip';
-      var blob = await zip.generateAsync({ type: 'blob' });
-      if (typeof prestacaoDispararDownload === 'function') prestacaoDispararDownload(URL.createObjectURL(blob), nome);
-      if (faltas.length) aviso('O pacote saiu sem: ' + faltas.join(', ') + '.', 'warn');
-      else aviso('Pacote baixado.', 'ok');
+      if (!baixados) throw new Error('nenhum arquivo disponível');
+      if (faltas.length) aviso('Não baixou: ' + faltas.join(', ') + '.', 'warn');
+      else aviso(final && final.slides ? 'Prestação baixada com ' + final.slides + (final.slides === 1 ? ' slide' : ' slides') + ' de certidões.' : 'Arquivos baixados.', 'ok');
     } catch (e) {
-      aviso('Não foi possível montar o pacote: ' + (e && e.message ? e.message : e) + '.', 'err');
+      aviso('Não foi possível baixar: ' + (e && e.message ? e.message : e) + '.', 'err');
     } finally {
       if (btn && btn.isConnected) { btn.disabled = false; btn.textContent = texto; }
     }
@@ -1053,6 +1118,7 @@
     limpar: limpar,
     atualizar: atualizar,
     baixarTudo: baixarTudo,
+    blobFinal: blobFinal,
     SUFIXO_AGUARDANDO: SUFIXO_AGUARDANDO
   };
 

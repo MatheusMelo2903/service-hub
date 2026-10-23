@@ -391,6 +391,62 @@ function criarRotasCertidoes(app, deps) {
     }
   });
 
+  // Certidões dentro da prestação (PDF e PowerPoint). O navegador manda os arquivos da prestação
+  // guardada; o servidor junta as certidões válidas deste condomínio (do bucket, não do navegador,
+  // para não entrar certidão de outro condomínio) e pede ao prestacao-pdf um slide por certidão
+  // no fim de cada arquivo (services/prestacao-pdf/app/certidoes_deck.py).
+  const MAX_DECK_B64 = 60 * 1024 * 1024;
+  app.post('/api/certidoes/:idSuperlogica/na-prestacao', requireAuth, express.json({ limit: '80mb' }), async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const id = String(req.params.idSuperlogica);
+    const api = deps.prestacaoPdf || {};
+    if (!api.url || !api.segredo) return res.status(503).json({ erro: 'indisponivel', detalhe: 'A montagem da prestação não está configurada neste ambiente.' });
+    const corpo = req.body || {};
+    const pdf = typeof corpo.pdf_b64 === 'string' ? corpo.pdf_b64 : null;
+    const pptx = typeof corpo.pptx_b64 === 'string' ? corpo.pptx_b64 : null;
+    if (!pdf && !pptx) return res.status(400).json({ erro: 'sem_arquivos', detalhe: 'Envie o PDF ou o PowerPoint da prestação.' });
+    if ((pdf || '').length + (pptx || '').length > MAX_DECK_B64) return res.status(413).json({ erro: 'muito_grande', detalhe: 'A prestação passou do tamanho aceito.' });
+    if (!(await exigirLeituraSuperlogica(req, res))) return;
+    const r = await banco('GET', '/rest/v1/certidoes_condominio?id_superlogica=eq.' + id + '&select=tipo,situacao,emitida_em,validade,caminho&limit=20');
+    if (r.status >= 400 || !Array.isArray(r.body)) return res.status(503).json({ erro: 'banco', detalhe: 'Não foi possível ler as certidões guardadas agora.' });
+    const h = hoje();
+    let cidade = '';
+    const validas = r.body.filter((l) => CHAVES.has(l.tipo) && l.caminho && !(l.validade && l.validade < h));
+    if (!validas.length) return res.status(422).json({ erro: 'sem_certidoes', detalhe: 'Este condomínio não tem certidão válida guardada.' });
+    if (validas.some((l) => l.tipo === 'municipal')) { try { cidade = (await cadastroDe(id)).cidade; } catch (e) { cidade = ''; } }
+    const certidoes = [];
+    for (const l of validas) {
+      try {
+        const url = await storageSignedUrl(BUCKET, l.caminho, 120);
+        const a = await fetch(url, { signal: AbortSignal.timeout(30000) });
+        if (!a.ok) throw new Error('storage_' + a.status);
+        const buf = Buffer.from(await a.arrayBuffer());
+        if (buf.slice(0, 4).toString('latin1') !== '%PDF') throw new Error('nao_pdf');
+        const nome = l.tipo === 'municipal' ? municipalDe(cidade).nome : (TIPOS.find((t) => t.tipo === l.tipo) || {}).nome;
+        certidoes.push({ tipo: l.tipo, nome, situacao: l.situacao || null, emitida_em: l.emitida_em || null, validade: l.validade || null, pdf_b64: buf.toString('base64') });
+      } catch (e) {
+        console.warn('[certidoes] na-prestacao cond=' + id + ' tipo=' + l.tipo + ' sem arquivo: ' + e.message);
+      }
+    }
+    if (!certidoes.length) return res.status(503).json({ erro: 'storage', detalhe: 'Não foi possível ler os arquivos das certidões agora. Tente de novo.' });
+    try {
+      const resp = await fetch(new URL('/v13/certidoes', api.url), {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': api.segredo },
+        body: JSON.stringify({ pdf_b64: pdf, pptx_b64: pptx, certidoes }), signal: AbortSignal.timeout(240000),
+      });
+      const j = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        const det = j && j.detail && typeof j.detail === 'object' ? j.detail.detalhe : null;
+        return res.status(resp.status === 422 ? 422 : 502).json({ erro: 'montagem', detalhe: det || 'Não foi possível colocar as certidões na prestação agora. Tente de novo.' });
+      }
+      console.log('[certidoes] na-prestacao cond=' + id + ' certidoes=' + certidoes.length + ' slides=' + j.slides + ' usuario=' + (usuario(req) || 'interno'));
+      res.json({ pdf_b64: j.pdf_b64 || null, pptx_b64: j.pptx_b64 || null, slides: j.slides || 0, tipos: certidoes.map((c) => c.tipo) });
+    } catch (e) {
+      console.warn('[certidoes] na-prestacao cond=' + id + ' falhou: ' + (e && e.message));
+      res.status(502).json({ erro: 'montagem', detalhe: 'O serviço que monta a prestação não respondeu. Tente de novo em instantes.' });
+    }
+  });
+
   return { ultimaBusca };
 }
 

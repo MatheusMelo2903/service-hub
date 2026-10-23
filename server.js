@@ -5696,6 +5696,7 @@ require('./servico/certidoes').criarRotasCertidoes(app, {
   requireAuth, express, banco: supabaseAdminRequest, exigirLeituraSuperlogica,
   storageUpload: supabaseStorageUpload, storageSignedUrl: supabaseStorageSignedUrl, storageDelete: supabaseStorageDelete,
   buscarCadastro: (id) => slModulo.buscarCadastro(clienteSL(), id),
+  prestacaoPdf: { url: PRESTACAO_PDF_API_URL, segredo: INTERNAL_API_SECRET },
 });
 
 // T51: Central de alertas (carteira toda por área) e "Meus alertas" (preferência por pessoa).

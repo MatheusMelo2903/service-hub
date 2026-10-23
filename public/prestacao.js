@@ -2781,7 +2781,8 @@ async function prestacaoBaixarGuardado(tipo, btn) {
   var texto = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = 'Baixando...'; }
   try {
-    var blob = await prestacaoBlobGuardado(tipo);
+    // Com certidões incluídas, o arquivo sai com um slide por certidão no fim (certidoes.js).
+    var blob = (window.Certidoes && Certidoes.blobFinal) ? await Certidoes.blobFinal(tipo) : await prestacaoBlobGuardado(tipo);
     prestacaoDispararDownload(URL.createObjectURL(blob), a.nomeBaixar || a.nome);
   } catch (e) {
     toast('Não foi possível baixar: ' + (e && e.message ? e.message : e) + '.', 'err');
