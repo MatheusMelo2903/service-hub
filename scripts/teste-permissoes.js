@@ -28,7 +28,12 @@ t('gerente sem pode_convidar nao edita', !P.podeEditarAlvo({ id: 'z', role: 'GER
 // O que pode mudar
 const antes = op.permissoes;
 t('raiane libera transcricao livre', P.conferirMudanca(raiane, antes, { atas: { visivel: true, acoes: ['gerar', 'transcricao_livre'] } }).ok);
-t('raiane nao tira gerar (fora do concede)', !P.conferirMudanca(raiane, antes, { atas: { visivel: true, acoes: [] } }).ok);
+t('raiane tira gerar (ela tem gerar; repassa o que tem desde 23/10/2026)', P.conferirMudanca(raiane, antes, { atas: { visivel: true, acoes: [] } }).ok);
+const raianeSoAtas = { id: 'r3', role: 'GERENTE', pode_convidar: true, permissoes: { atas: { visivel: true, acoes: ['gerar', 'edital'] } }, concede: {} };
+t('raiane sem concede repassa a ação que ela tem', P.conferirMudanca(raianeSoAtas, antes, { atas: { visivel: true, acoes: ['gerar', 'edital'] } }).ok);
+t('raiane sem concede não repassa ação que ela não tem', !P.conferirMudanca(raianeSoAtas, antes, { atas: { visivel: true, acoes: ['gerar', 'transcricao_livre'] } }).ok);
+t('raiane sem concede não mostra módulo que ela não vê', !P.conferirMudanca(raianeSoAtas, antes, Object.assign({}, antes, { cobranca: { visivel: true, acoes: [] } })).ok);
+t('quem tem ação restrita não repassa', !P.conferirMudanca({ id: 'r4', role: 'GERENTE', pode_convidar: true, permissoes: { configuracoes: { visivel: true, acoes: ['ver_chaves'] } }, concede: {} }, antes, Object.assign({}, antes, { configuracoes: { visivel: true, acoes: ['ver_chaves'] } })).ok);
 t('raiane mostra previsao', P.conferirMudanca(raiane, antes, Object.assign({}, antes, { previsao: { visivel: true, acoes: [] } })).ok);
 t('raiane nao da acao de previsao', !P.conferirMudanca(raiane, antes, Object.assign({}, antes, { previsao: { visivel: true, acoes: ['editar'] } })).ok);
 t('raiane nao da ver_chaves', !P.conferirMudanca(raiane, antes, Object.assign({}, antes, { configuracoes: { visivel: false, acoes: ['ver_chaves'] } })).ok);

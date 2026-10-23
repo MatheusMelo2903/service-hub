@@ -3942,8 +3942,13 @@ function renderPermissoesForm(u) {
   const souDono = window.USER_DONO === true;
   const concedeMeu = window.USER_CONCEDE || {};
   const ACOES_RESTRITAS = ACOES_RESTRITAS_PERM;
-  const tenhoModulo = (m) => souDono || (Array.isArray(concedeMeu[m]) && concedeMeu[m].includes('ver'));
-  const tenhoAcao = (m, a) => ACOES_RESTRITAS.includes(a) ? souDono : (souDono || (Array.isArray(concedeMeu[m]) && concedeMeu[m].includes(a)));
+  // Quem gerencia usuários repassa o que ele mesmo tem (módulo visível e cada ação), além do
+  // que o dono marcou em "Pode liberar para outros". Mesma regra do servidor (servico/permissoes.js).
+  const minhas = window.USER_PERMS || {};
+  const meuVisivel = (m) => !!(minhas[m] && minhas[m].visivel === true);
+  const minhaAcao = (m, a) => meuVisivel(m) && Array.isArray(minhas[m].acoes) && minhas[m].acoes.includes(a);
+  const tenhoModulo = (m) => souDono || meuVisivel(m) || (Array.isArray(concedeMeu[m]) && concedeMeu[m].includes('ver'));
+  const tenhoAcao = (m, a) => ACOES_RESTRITAS.includes(a) ? souDono : (souDono || minhaAcao(m, a) || (Array.isArray(concedeMeu[m]) && concedeMeu[m].includes(a)));
   const cargo = (souDono && u._roleOriginal !== 'GESTOR')
     ? `<div style="padding:10px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;margin-bottom:10px">
          <label style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--text)">
