@@ -41,10 +41,14 @@
     document.head.appendChild(st);
   })();
 
-  // Estado de aberto e fechado lembrado no navegador (só conveniência).
+  // Sanfona: fora o Principal (curto), só um tópico fica aberto por vez, o da tela atual,
+  // para o menu não voltar a ser a lista longa de antes. Nada é lembrado entre visitas.
   var aberto = {};
-  try { aberto = JSON.parse(localStorage.getItem(CHAVE) || '{}') || {}; } catch (e) { aberto = {}; }
-  function lembrar() { try { localStorage.setItem(CHAVE, JSON.stringify(aberto)); } catch (e) { /* sem memória do navegador */ } }
+  try { localStorage.removeItem(CHAVE); } catch (e) { /* versão anterior guardava; limpa */ }
+  function abrirSo(id) {
+    TOPICOS.forEach(function (t) { if (t.id !== 'principal' && t.id !== id) aberto[t.id] = false; });
+    aberto[id] = true;
+  }
 
   function painelDo(el) {
     var m = (el.getAttribute('onclick') || '').match(/showPanel\('([^']+)'\)/);
@@ -70,8 +74,9 @@
     cx.id = 'nav-topico-' + t.id;
     cab.setAttribute('aria-controls', cx.id);
     cab.addEventListener('click', function () {
-      aberto[t.id] = !estaAberto(t.id);
-      lembrar();
+      if (estaAberto(t.id)) aberto[t.id] = false;
+      else if (t.id === 'principal') aberto[t.id] = true;
+      else abrirSo(t.id);
       pintar();
     });
     caixas[t.id] = cx; cabecalhos[t.id] = cab;
@@ -148,7 +153,7 @@
       var r = origShow.apply(this, arguments);
       try {
         var t = topicoDo(nome);
-        if (caixas[t] && !estaAberto(t)) { aberto[t] = true; lembrar(); }
+        if (caixas[t] && t !== 'principal') abrirSo(t);
         pintar();
       } catch (e) { /* o menu nunca pode atrapalhar a troca de tela */ }
       return r;
