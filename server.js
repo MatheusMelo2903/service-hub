@@ -374,7 +374,9 @@ async function acessoSuperlogica(userId) {
   const c = _cachePerfilSL.get(userId);
   if (c && c.ate > Date.now()) return c;
   const p = await lerPerfil(userId);
-  const ok = !!(p && (p.role === 'GESTOR' || Object.entries(p.permissoes || {}).some(([m, v]) => m !== 'dashboard' && v && v.visivel === true)));
+  // T51: a Central de alertas vem visível para todos (como o Dashboard) e não conta como acesso
+  // ao Superlógica; senão toda pessoa ganharia o proxy só por ver a Central.
+  const ok = !!(p && (p.role === 'GESTOR' || Object.entries(p.permissoes || {}).some(([m, v]) => m !== 'dashboard' && m !== 'central_alertas' && v && v.visivel === true)));
   const v = { ok, chaves: temVerChaves(p), ate: Date.now() + 60 * 1000 };
   _cachePerfilSL.set(userId, v);
   return v;
@@ -554,7 +556,8 @@ audioMod.criarRotasAudio(app, { requireAuth, express, banco: supabaseAdminReques
   podeAtas: async (req) => req.authMode === 'internal' || podeModulo(await perfilDe(req), 'atas'),
   dentroDoLimite,
   auditar: (req, acao, det, susp) => auditoria.evento(req, acao, det, susp) });
-require('./servico/rotas-seguranca').criarRotasSeguranca(app, { requireAuth, express, banco: supabaseAdminRequest, perfilDe, temAcao, auditoria,
+// T51: guarda o cálculo dos alertas de uso para a Central de alertas.
+const _rotasSeguranca = require('./servico/rotas-seguranca').criarRotasSeguranca(app, { requireAuth, express, banco: supabaseAdminRequest, perfilDe, temAcao, auditoria,
   lerPerfil, esquecerPerfil, esquecerBloqueios, usoRecente: require('./servico/modelo').usoRecente });
 // T42: registro do custo de cada chamada (tabela api_uso, só com o banco configurado) e o painel do dono.
 if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) custo.configurar({ banco: supabaseAdminRequest });
@@ -4002,6 +4005,10 @@ async function calcularTodosAlertas(id, hoje, cfg, forcar) {
   return { alertas: a.alertas.concat(o.alertas, rg.alertas, ct.alertas), falhas: a.falhas.concat(o.falhas, rg.falhas, ct.falhas), saldo_minimo: a.saldo_minimo };
 }
 const _cacheAlertas = slModulo.consulta.criarCache(5 * 60 * 1000, 300, 60 * 1000);
+// T51: Central de alertas (servico/central-alertas.js). As rotas são montadas mais abaixo; aqui
+// ficam as funções de preferência usadas pelas rotas que já existiam.
+const centralMod = require('./servico/central-alertas');
+let _centralAlertas = null;
 const _verificandoCond = new Set();
 
 // Mudar estado de alerta ou o limite de saldo: só GESTOR e GERENTE (ver alertas segue a regra
@@ -4064,6 +4071,42 @@ async function _lerConfigAlertas(id) {
   return (Array.isArray(r.body) && r.body[0]) || { saldo_minimo: null };
 }
 
+// Calcula os alertas de um condomínio no Superlógica (com cache curto), grava os novos na tabela
+// alertas e devolve { calc, porChave }. É a função única usada pelo Dashboard e pela fila em
+// segundo plano da Central de alertas (T51), para não haver duas lógicas de cálculo.
+async function calcularEGravarAlertas(id, forcar) {
+  const cfg = Object.assign({}, await _lerConfigAlertas(id), { prazos: (await slPrazos.ler(supabaseAdminRequest)).prazos });
+  const hoje = _hojeBrasilia();
+  // forcar=1 (botão Atualizar) recalcula sem cache; resultado com falha de leitura não fica em cache.
+  const chaveCache = 'alertas:' + id + ':' + hoje.toISOString().slice(0, 10) + ':' + cfg.saldo_minimo + ':' + slPrazos.assinatura(cfg.prazos);
+  let calc;
+  if (forcar) calc = await calcularTodosAlertas(id, hoje, cfg, true);
+  else {
+    calc = await _cacheAlertas.pegar(chaveCache, async () => {
+      const c = await calcularTodosAlertas(id, hoje, cfg);
+      if (c.falhas.length) { const e = new Error('parcial'); e.parcial = c; throw e; }
+      return c;
+    }).catch((e) => { if (e && e.parcial) return e.parcial; throw e; });
+  }
+  const chaves = calc.alertas.map((a) => a.chave);
+  const porChave = chaves.length ? await _lerEstadoAlertas(id, chaves) : new Map();
+  const novos = calc.alertas.filter((a) => !porChave.has(a.chave));
+  if (novos.length) {
+    const linha = (a) => ({ id_superlogica: Number(id), chave: a.chave, tipo: a.tipo, titulo: a.titulo.slice(0, 300), detalhe: a.detalhe });
+    const ins = await supabaseAdminRequest('POST', '/rest/v1/alertas', novos.map(linha));
+    if (ins.status === 201 && Array.isArray(ins.body)) ins.body.forEach((a) => porChave.set(a.chave, a));
+    else if (ins.status === 409) {
+      // corrida com outra aba: um por um, ignorando o que já existe, e relê
+      for (const a of novos) { await supabaseAdminRequest('POST', '/rest/v1/alertas', [linha(a)]); }
+      const de2 = await _lerEstadoAlertas(id, novos.map((a) => a.chave));
+      de2.forEach((v, k) => porChave.set(k, v));
+    } else throw new Error('insert_' + ins.status);
+  }
+  // T51: a Central de alertas passa a saber o que vale agora neste condomínio.
+  if (_centralAlertas) { try { _centralAlertas.registrarCalculo(id, calc); } catch (e) { /* a Central não derruba o Dashboard */ } }
+  return { calc, porChave };
+}
+
 // GET /api/condominio/:id/alertas[?todos=1] — calcula no Superlógica, registra os novos e devolve
 // com o estado de cada um. Sem todos=1, os resolvidos ficam de fora.
 app.get('/api/condominio/:idSuperlogica/alertas', requireAuth, async (req, res) => {
@@ -4073,40 +4116,16 @@ app.get('/api/condominio/:idSuperlogica/alertas', requireAuth, async (req, res) 
   if (!(await exigirLeituraSuperlogica(req, res))) return;
   if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) return res.status(503).json({ erro: 'service_role_nao_configurada' });
   try {
-    const cfg = Object.assign({}, await _lerConfigAlertas(id), { prazos: (await slPrazos.ler(supabaseAdminRequest)).prazos });
-    const hoje = _hojeBrasilia();
-    // forcar=1 (botão Atualizar) recalcula sem cache; resultado com falha de leitura não fica em cache.
-    const chaveCache = 'alertas:' + id + ':' + hoje.toISOString().slice(0, 10) + ':' + cfg.saldo_minimo + ':' + slPrazos.assinatura(cfg.prazos);
-    let calc;
-    if (req.query.forcar === '1') calc = await calcularTodosAlertas(id, hoje, cfg, true);
-    else {
-      calc = await _cacheAlertas.pegar(chaveCache, async () => {
-        const c = await calcularTodosAlertas(id, hoje, cfg);
-        if (c.falhas.length) { const e = new Error('parcial'); e.parcial = c; throw e; }
-        return c;
-      }).catch((e) => { if (e && e.parcial) return e.parcial; throw e; });
-    }
-    const chaves = calc.alertas.map((a) => a.chave);
-    const porChave = chaves.length ? await _lerEstadoAlertas(id, chaves) : new Map();
-    const novos = calc.alertas.filter((a) => !porChave.has(a.chave));
-    if (novos.length) {
-      const linha = (a) => ({ id_superlogica: Number(id), chave: a.chave, tipo: a.tipo, titulo: a.titulo.slice(0, 300), detalhe: a.detalhe });
-      const ins = await supabaseAdminRequest('POST', '/rest/v1/alertas', novos.map(linha));
-      if (ins.status === 201 && Array.isArray(ins.body)) ins.body.forEach((a) => porChave.set(a.chave, a));
-      else if (ins.status === 409) {
-        // corrida com outra aba: um por um, ignorando o que já existe, e relê
-        for (const a of novos) { await supabaseAdminRequest('POST', '/rest/v1/alertas', [linha(a)]); }
-        const de2 = await _lerEstadoAlertas(id, novos.map((a) => a.chave));
-        de2.forEach((v, k) => porChave.set(k, v));
-      } else throw new Error('insert_' + ins.status);
-    }
+    const { calc, porChave } = await calcularEGravarAlertas(id, req.query.forcar === '1');
     const todos = req.query.todos === '1';
-    const lista = calc.alertas.map((a) => {
+    let lista = calc.alertas.map((a) => {
       const g = porChave.get(a.chave) || {};
       return { id: g.id || null, chave: a.chave, tipo: a.tipo, titulo: a.titulo, detalhe: a.detalhe, status: g.status || 'novo' };
     }).filter((a) => todos || a.status !== 'resolvido');
     const ordem = { novo: 0, visto: 1, resolvido: 2 };
     lista.sort((a, b) => (ordem[a.status] - ordem[b.status]) || a.tipo.localeCompare(b.tipo));
+    // T51: quem silenciou tipos em "Meus alertas" recebe silenciado:true neles (a tela esconde).
+    lista = centralMod.aplicarPreferencias(lista, await centralMod.preferenciasDoPedido(req, { banco: supabaseAdminRequest, perfilDe }));
     res.json({ id_superlogica: Number(id), gerado_em: new Date().toISOString(), saldo_minimo: calc.saldo_minimo, falhas: calc.falhas, alertas: lista });
   } catch (e) {
     console.warn('[alertas] ' + id + ' falhou: ' + (e && e.message));
@@ -4353,7 +4372,11 @@ app.get('/api/financeiro/resumo', requireAuth, async (req, res) => {
   try {
     const base = await _painelFin.obterBase(req.query.forcar === '1');
     if (!base) return _respostaCalculando(res);
-    res.json(Object.assign(_painelFin.resumo(base, ids, escopo === null), { recalculando: _painelFin.situacao().calculando }));
+    const resumo = _painelFin.resumo(base, ids, escopo === null);
+    // T51: tipos silenciados em "Meus alertas" ganham silenciado:true em por_tipo e a lista vai na
+    // raiz (tipos_silenciados). Nada é descontado dos totais aqui: a tela desconta.
+    centralMod.marcarResumoFinanceiro(resumo, await centralMod.preferenciasDoPedido(req, { banco: supabaseAdminRequest, perfilDe }));
+    res.json(Object.assign(resumo, { recalculando: _painelFin.situacao().calculando }));
   } catch (e) {
     console.warn('[financeiro] resumo falhou: ' + (e && e.message));
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível calcular os alertas agora. Tente de novo em alguns minutos.' });
@@ -4374,7 +4397,10 @@ app.get('/api/financeiro/condominio/:idSuperlogica/alertas', requireAuth, async 
   try {
     const base = await _painelFin.obterBase(req.query.forcar === '1');
     if (!base) return _respostaCalculando(res);
-    res.json(Object.assign(_painelFin.alertasDoCondominio(base, id, acesso.escopo !== null), { recalculando: _painelFin.situacao().calculando }));
+    const r = _painelFin.alertasDoCondominio(base, id, acesso.escopo !== null);
+    // T51: silenciado:true nos tipos que a pessoa silenciou (cópias; a base é de todos).
+    r.alertas = centralMod.aplicarPreferencias(r.alertas, await centralMod.preferenciasDoPedido(req, { banco: supabaseAdminRequest, perfilDe }));
+    res.json(Object.assign(r, { recalculando: _painelFin.situacao().calculando }));
   } catch (e) {
     console.warn('[financeiro] alertas ' + id + ' falhou: ' + (e && e.message));
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível calcular os alertas agora. Tente de novo em alguns minutos.' });
@@ -4709,6 +4735,8 @@ app.get('/api/financeiro/banco/status', requireAuth, requireGestor, (req, res) =
 require('./financeiro/avisos-rotas').registrar({
   app, express, requireAuth, requireGestor, lerPerfil, carteira: carteiraT18, gruposCarteiras, clienteSL, superlogicaNativa,
   supabaseUrl: SUPABASE_URL, supabaseChave: SUPABASE_SERVICE_ROLE_KEY, supabaseAdminRequest, env: process.env,
+  // T51: silenciado:true nos itens dos tipos que a pessoa silenciou em "Meus alertas".
+  preferencias: (req) => centralMod.preferenciasDoPedido(req, { banco: supabaseAdminRequest, perfilDe }),
 });
 
 // GET /api/carteiras — todos os grupos (para o GESTOR escolher na tela de usuários).
@@ -5641,6 +5669,27 @@ require('./servico/certidoes').criarRotasCertidoes(app, {
   requireAuth, express, banco: supabaseAdminRequest, exigirLeituraSuperlogica,
   storageUpload: supabaseStorageUpload, storageSignedUrl: supabaseStorageSignedUrl, storageDelete: supabaseStorageDelete,
   buscarCadastro: (id) => slModulo.buscarCadastro(clienteSL(), id),
+});
+
+// T51: Central de alertas (carteira toda por área) e "Meus alertas" (preferência por pessoa).
+// Detalhes em servico/central-alertas.js. O cálculo de cada condomínio é o mesmo do Dashboard
+// (calcularEGravarAlertas); o do Financeiro é a base do painel; o de uso é o da aba Segurança.
+_centralAlertas = centralMod.criarRotasCentral(app, {
+  requireAuth, express, banco: supabaseAdminRequest, perfilDe,
+  escopo: (req) => carteiraT18.escopo(req),
+  gruposCarteiras,
+  podeLerSuperlogica: async (req) => {
+    if (!superlogicaNativa()) return false;
+    if (req.authMode === 'internal') return true;
+    if (!SUPABASE_SERVICE_ROLE_KEY) return false;
+    try { return !!(await podeUsarSuperlogica(req.user && req.user.sub)); } catch (e) { return false; }
+  },
+  podeCalcular: () => !!(superlogicaNativa() && SUPABASE_SERVICE_ROLE_KEY && SUPABASE_URL),
+  calcularEGravar: (id) => calcularEGravarAlertas(String(id), false),
+  painelFin: _painelFin,
+  temFinanceiro: (p, acao) => finPainel.temFinanceiro(p, acao),
+  nivelAuditoria: (req) => auditoria.nivel(req),
+  alertasUso: (req, n) => _rotasSeguranca.alertasUso(req, n),
 });
 
 // T49: trabalhos em andamento (pastinha). Detalhes em servico/trabalhos.js.

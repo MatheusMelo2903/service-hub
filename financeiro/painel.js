@@ -203,9 +203,10 @@ function resumoDe(base, ids) {
     let valorAlta = 0;
     for (const a of al) {
       porGravidade[a.gravidade] = (porGravidade[a.gravidade] || 0) + 1;
-      const t = porTipo[a.tipo] || (porTipo[a.tipo] = { descricao: a.descricao_tipo, total: 0, alta: 0, media: 0, baixa: 0 });
+      // T51: valor_alta também por tipo, para a tela descontar o tipo silenciado do valor do condomínio.
+      const t = porTipo[a.tipo] || (porTipo[a.tipo] = { descricao: a.descricao_tipo, total: 0, alta: 0, media: 0, baixa: 0, valor_alta: 0 });
       t.total++; t[a.gravidade]++;
-      if (a.gravidade === 'alta') valorAlta += Number(a.valor) || 0;
+      if (a.gravidade === 'alta') { valorAlta += Number(a.valor) || 0; t.valor_alta = Math.round((t.valor_alta + (Number(a.valor) || 0)) * 100) / 100; }
     }
     linhas.push({ id_condominio: id, condominio: c.nome, analista: (base.analistas && base.analistas.get(id)) || '', total: al.length, por_gravidade: porGravidade, por_tipo: porTipo, valor_alta: Math.round(valorAlta * 100) / 100 });
   }
