@@ -166,6 +166,13 @@ def de_superlogica(bruto: dict) -> dict:
     spec.loader.exec_module(mod)
     dados = montar_dados(bruto, mod)
     v13._desambiguar(dados)
+    # Números que assustam (déficit, mês negativo, uso de reserva) já saem investigados,
+    # para a curadoria escrever a explicação junto com as observações do usuário.
+    from . import justificativas
+    try:
+        dados["sinais"] = justificativas.analisar(dados)
+    except Exception:  # explicação nunca derruba a prestação
+        dados["sinais"] = {"ha_alerta": False}
     import json
     rascunho = json.loads(json.dumps(mod.rascunho(dados), ensure_ascii=False))
     return {"dados": dados, "rascunho": rascunho}
