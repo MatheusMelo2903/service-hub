@@ -59,6 +59,60 @@ def _nome(s: str) -> str:
     return s[0].upper() + s[1:]
 
 
+# Rótulo de item que fala de pessoa (férias, salário, rescisão): o nome do funcionário
+# nunca vai para o slide. Fica só o tipo da despesa e as datas, quando houver.
+PESSOAL_ITEM = re.compile(r"FERIAS|SALARI|13[ºO°]?\s*SAL|DECIMO|RESCIS|DEMISS|ADIANTAMENTO|AVISO PREVIO|HORA EXTRA|PRO\s*LABORE", re.I)
+_PREFIXO_REF = re.compile(r"^\s*(?:ref(?:erente)?\.?(?:\s+(?:a|ao|à|aos|às|as))?\s+|ref\.\s*)", re.I)
+_DATAS = re.compile(r"\d{2}/\d{2}(?:/\d{2,4})?(?:\s*(?:a|até)\s*\d{2}/\d{2}(?:/\d{2,4})?)?")
+
+
+def sem_hifen(t: str) -> str:
+    """Regra do Matheus: nada de hífen ou travessão como pontuação no texto do slide.
+    ' - ' vira vírgula; hífen que junta dois nomes vira ' e ' (Eletrodoméstico-Eletroeletrônico,
+    DARF INSS- CRF); hífen de palavra composta vira espaço (guarda-corpo)."""
+    t = re.sub(r"\b([Ee])-mail", r"\1mail", str(t or ""))
+    t = re.sub(r"\s+[-\u2010-\u2015\u2212]+\s+", ", ", t)
+    t = re.sub(r"(?<=[A-Za-zÀ-ÿ])\s*[-\u2010-\u2015\u2212]\s*(?=[A-ZÀ-Þ])", " e ", t)
+    t = re.sub(r"[-\u2010-\u2015\u2212]", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def limpa_rotulo(rot: str, rubrica: str = "") -> str:
+    """Rótulo do lançamento pronto para a frase: sem 'Ref.', 'Ref. a', 'Referente a',
+    sem nome de funcionário em férias ou salário e sem hífen."""
+    s = re.sub(r"\s+", " ", str(rot or "")).strip()
+    for _ in range(2):
+        s = _PREFIXO_REF.sub("", s).strip()
+    if s and PESSOAL_ITEM.search(_sem_acento(rubrica + " " + s)):
+        base = _nome(rubrica or "despesa com pessoal").lower()
+        datas = _DATAS.findall(s)
+        s = f"{base} da equipe" + (f" ({datas[0]})" if datas else "")
+    s = sem_hifen(s).strip(" .,;:")
+    if s.count("(") > s.count(")"):
+        s += ")"
+    return s
+
+
+def cortar(t: str, limite: int) -> str:
+    """Corta no fim da última frase (ou item) que cabe no limite do slide."""
+    t = re.sub(r"\s+", " ", str(t or "")).strip()
+    if len(t) <= limite:
+        return t
+    parte = t[:limite]
+    ponto = "." if t.endswith(".") else ""
+    i = parte.rfind(". ")
+    if i >= 20:
+        return parte[:i + 1]
+    for sep in ("; ", ", "):
+        i = parte.rfind(sep)
+        if i >= 20:
+            return parte[:i].rstrip(" ,;") + ponto
+    return parte.rsplit(" ", 1)[0].rstrip(" ,;:") + ponto
+
+
+LIMITES = {"resumo": 240, "caixa": 90, "meses": 80, "rubricas": 160, "contas": 220}
+
+
 def _rot_mes(chave: str, label: str | None = None) -> str:
     if re.match(r"^\d{4}-\d{2}$", str(chave or "")):
         y, m = chave.split("-")
@@ -107,9 +161,9 @@ def analisar(dados: dict) -> dict:
                 tipo = "sazonal" if sazonal else "nao_recorrente"
                 itens_mes = (r.get("itens_mes") or {}).get(periodo[i] if i < len(periodo) else "", [])
                 picos.append({
-                    "categoria": nome_c, "rubrica": nome_r, "nome": _nome(nome_r), "mes": meses[i], "indice": i,
+                    "categoria": nome_c, "rubrica": nome_r, "nome": _nome(sem_hifen(nome_r)), "mes": meses[i], "indice": i,
                     "valor": round(v, 2), "excesso": round(exc, 2), "normal": round(base, 2), "tipo": tipo,
-                    "itens": [{"rotulo": _nome(x[0]), "valor": round(float(x[1]), 2)} for x in itens_mes[:3]],
+                    "itens": [{"rotulo": _nome(limpa_rotulo(x[0], nome_r)), "valor": round(float(x[1]), 2)} for x in itens_mes[:3]],
                 })
     picos.sort(key=lambda p: -p["excesso"])
     extra = round(sum(p["excesso"] for p in picos if p["tipo"] == "nao_recorrente"), 2)
@@ -202,6 +256,13 @@ def _agrupar(picos: list, meses: list) -> list:
     return lst[:6]
 
 
+def _meses_txt(ms: list) -> str:
+    """'fev/26, abr/26' ou, com muitos meses, 'entre fev/26 e ago/26' (sem lista enganosa cortada)."""
+    if len(ms) <= 3:
+        return ", ".join(ms)
+    return f"entre {ms[0]} e {ms[-1]}"
+
+
 def textos_padrao(s: dict) -> dict:
     """Frases curtas para os slides, só com fatos dos dados (nomes das rubricas, meses, valores e
     contas). A curadoria pode reescrever com mais naturalidade e com as observações do usuário;
@@ -212,47 +273,74 @@ def textos_padrao(s: dict) -> dict:
     sazon = [g for g in (s.get("grupos") or []) if g["tipo"] == "sazonal"]
     reservas = [c for c in (s.get("contas") or []) if c["reserva"] and c["total_saidas"] > 0]
     reservas.sort(key=lambda c: -c["total_saidas"])
+    nm = lambda g: sem_hifen(g["nome"]).lower()
 
     def lista_grupos(gs, n=2):
-        return " e ".join(f"{g['nome'].lower()} ({_brl_curto(g['valor'])}, {g['periodo']})" for g in gs[:n])
+        return " e ".join(f"{nm(g)} ({_brl_curto(g['valor'])}, {g['periodo']})" for g in gs[:n])
 
     out = {}
-    causa = ""
-    if grupos:
-        causa = "despesas fora da rotina: " + lista_grupos(grupos)
-    elif sazon:
-        causa = "despesas sazonais: " + lista_grupos(sazon)
-    elif s.get("quedas_arrecadacao"):
-        causa = "meses com arrecadação abaixo da média"
+
+    def causa_de(n):
+        if grupos:
+            return ("despesas fora da rotina: " if n > 1 and len(grupos) > 1 else "despesa fora da rotina: ") + lista_grupos(grupos, n)
+        if sazon:
+            return "despesas sazonais: " + lista_grupos(sazon, n)
+        if s.get("quedas_arrecadacao"):
+            return "meses com arrecadação abaixo da média"
+        return ""
+    causa = causa_de(2)
     fonte = ""
     if reservas:
         r0 = reservas[0]
         fonte = f"{r0['nome']} ({_brl_curto(r0['ini'])} para {_brl_curto(r0['fim'])})"
 
     if s["resultado"] < 0:
-        partes = [("O déficit veio de " + causa + ".") if causa else "As despesas do período superaram a arrecadação."]
-        if grupos and s["cobertura_sem_nao_recorrentes"] >= 98:
-            partes.append("Sem elas, a receita cobriria " + str(round(s["cobertura_sem_nao_recorrentes"])) + "% das despesas.")
-        if fonte:
-            partes.append(f"Foram pagas com recursos guardados: saíram {_brl_curto(reservas[0]['total_saidas'])} do {fonte}.")
-        elif s.get("caixa_cobriu"):
-            partes.append("A diferença foi paga com o saldo que o condomínio já tinha guardado.")
-        out["resumo"] = " ".join(partes)
-        curta = grupos[0]["nome"].lower() if grupos else (sazon[0]["nome"].lower() if sazon else "despesas acima da arrecadação")
+        abre_n = lambda n: ("O déficit veio de " + causa_de(n) + ".") if causa else "As despesas do período superaram a arrecadação."
+        abre = abre_n(2)
+        def sem_n(pl):
+            if grupos and s["cobertura_sem_nao_recorrentes"] >= 98:
+                return f"Sem {'elas' if pl else 'ela'}, a receita cobriria " + str(round(s["cobertura_sem_nao_recorrentes"])) + "% das despesas."
+            return ""
+
+        def pago_n(pl):
+            if fonte:
+                return (f"{'Foram pagas' if pl else 'Foi paga'} com recursos guardados: saíram "
+                        f"{_brl_curto(reservas[0]['total_saidas'])} do {fonte}.")
+            if s.get("caixa_cobriu"):
+                return "A diferença foi paga com o saldo que o condomínio já tinha guardado."
+            return ""
+        pl2 = len(grupos) > 1 or (not grupos and len(sazon) > 1)
+        # De onde saiu o dinheiro vale mais que a cobertura sem as despesas: some primeiro o "sem elas".
+        for partes in ((abre, sem_n(pl2), pago_n(pl2)), (abre, pago_n(pl2)),
+                       (abre_n(1), sem_n(False), pago_n(False)), (abre_n(1), pago_n(False))):
+            txt = " ".join(p for p in partes if p)
+            if len(txt) <= LIMITES["resumo"]:
+                break
+        out["resumo"] = txt
+        curta = nm(grupos[0]) if grupos else (nm(sazon[0]) if sazon else "despesas acima da arrecadação")
         out["caixa"] = (f"Uso planejado de reserva: {curta}" if fonte else f"Caixa usado para {curta}")
     elif s["meses_negativos"]:
         com = [m for m in s["meses_negativos"] if m["motivos"]]
         out["resumo"] = "O período fechou positivo. " + (
-            "Meses negativos pontuais: " + "; ".join(f"{m['mes']}, {m['motivos'][0]}" for m in com[:2]) + "."
+            "Meses negativos pontuais: " + "; ".join(f"{m['mes']}, {m['motivos'][0][:1].lower() + m['motivos'][0][1:]}" for m in com[:2]) + "."
             if com else "Os meses negativos foram compensados pelos demais.")
-    out["meses"] = {m["mes"]: ", ".join(m["motivos"][:2]) for m in s["meses_negativos"] if m["motivos"]}
+        if s.get("saldo_final", 0) < s.get("saldo_inicial", 0) and fonte:
+            out["caixa"] = f"Uso de reserva: saíram {_brl_curto(reservas[0]['total_saidas'])} do {reservas[0]['nome']}"
+    out["meses"] = {m["mes"]: sem_hifen(", ".join(m["motivos"][:2])) for m in s["meses_negativos"] if m["motivos"]}
     out["rubricas"] = {}
     for g in grupos + sazon:
         k = g["categoria"] + "|" + g["rubrica"]
-        o_que = ", ".join(i["rotulo"] for i in g["itens"][:2] if i["rotulo"])
+        o_que = "; ".join(i["rotulo"][:1].lower() + i["rotulo"][1:] for i in g["itens"][:2] if i["rotulo"])
         out["rubricas"][k] = (("Despesa sazonal" if g["tipo"] == "sazonal" else "Fora da rotina")
-                              + f" em {g['periodo']}" + (f": {o_que}" if o_que else "") + ".")[:160]
+                              + f" em {g['periodo']}" + (f": {o_que}" if o_que else "") + ".")
     if reservas:
-        out["contas"] = "; ".join(f"{c['nome']}: saíram {_brl_curto(c['total_saidas'])} em " +
-                                  ", ".join(x['mes'] for x in c['saidas'][:4]) for c in reservas[:2]) + "."
+        out["contas"] = "; ".join(f"{c['nome']}: saíram {_brl_curto(c['total_saidas'])} " +
+                                  ("em " if len(c["saidas"]) <= 3 else "") + _meses_txt([x["mes"] for x in c["saidas"]])
+                                  for c in reservas[:2]) + "."
+    # Mesmos limites da curadoria, para o slide nunca receber texto maior que o previsto.
+    for k in ("resumo", "caixa", "contas"):
+        if out.get(k):
+            out[k] = cortar(sem_hifen(out[k]), LIMITES[k])
+    for k in ("meses", "rubricas"):
+        out[k] = {c: cortar(sem_hifen(v), LIMITES[k]) for c, v in out[k].items() if v}
     return out

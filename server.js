@@ -5729,6 +5729,7 @@ require('./servico/apresentacao').criarRotasApresentacao(app, {
   condominioDaBase: SUPABASE_SERVICE_ROLE_KEY ? condominioDaBase : null,
   exigirCarteira: (req, res, id) => carteiraT18.exigir(req, res, id),
   prestacaoPdf: { url: PRESTACAO_PDF_API_URL, segredo: INTERNAL_API_SECRET },
+  banco: supabaseAdminRequest, storageSignedUrl: supabaseStorageSignedUrl,
 });
 
 // T49: trabalhos em andamento (pastinha). Detalhes em servico/trabalhos.js.

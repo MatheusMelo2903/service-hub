@@ -194,14 +194,124 @@ def test_roteiro_ruim_nao_quebra():
             A.desenhar({'slides': []}, {}, {}, tmp)
 
 
-def test_rota_http():
+# ── modo atualizar: apresentação autossuficiente ──
+
+def test_roteiro_embutido_e_recuperado(gerado):
+    pptx, _, _, _ = gerado
+    r = A.ler(pptx)
+    esperado = {k: v for k, v in ROTEIRO.items() if k != 'avisos'}
+    assert r['roteiro'] == esperado
+    assert r['alterada'] is False
+    # logo original, byte a byte
+    assert base64.b64decode(r['logo_cliente_b64']) == _logo()
+    # o pacote continua abrindo e com a parte de dados ligada à apresentação
+    import zipfile
+    z = zipfile.ZipFile(io.BytesIO(pptx))
+    assert 'customXml/item1.xml' in z.namelist() and 'customXml/itemProps1.xml' in z.namelist()
+    assert b'relationships/customXml' in z.read('ppt/_rels/presentation.xml.rels')
+
+
+def test_imagens_recuperadas_pelo_nome(gerado):
+    pptx, _, _, _ = gerado
+    prs = Presentation(io.BytesIO(pptx))
+    nomes = {sh.name for s in prs.slides for sh in s.shapes}
+    assert {'foto:f1', 'foto:f2', 'foto:f3', 'doc:d1:p1', 'doc:d1:p2', 'logo_cliente'} <= nomes
+    r = A.ler(pptx)
+    fotos = {f['id']: f for f in r['fotos']}
+    assert set(fotos) == {'f1', 'f2', 'f3'}
+    # foto recortada no slide continua inteira no arquivo (recorte pela moldura)
+    im = Image.open(io.BytesIO(base64.b64decode(fotos['f2']['b64'])))
+    assert im.size == (800, 1200)
+    assert fotos['f3']['grafico'] is True and fotos['f1']['grafico'] is False
+    pags = [(p['id'], p['pagina'], p['total']) for p in r['documentos_paginas']]
+    assert pags == [('d1', 1, 2), ('d1', 2, 2)]
+
+
+def test_pptx_editado_a_mao_e_avisado(gerado):
+    pptx, _, _, _ = gerado
+    prs = Presentation(io.BytesIO(pptx))
+    for sh in prs.slides[0].shapes:
+        if sh.has_text_frame and sh.text_frame.text.strip():
+            sh.text_frame.paragraphs[0].runs[0].text = 'mudado à mão'
+            break
+    buf = io.BytesIO()
+    prs.save(buf)
+    r = A.ler(buf.getvalue())       # o PowerPoint salvando de novo mantém a parte de dados
+    assert r['alterada'] is True and r['roteiro']['slides'][0]['tipo'] == 'capa'
+
+
+def test_pptx_sem_roteiro():
+    with pytest.raises(A.SemRoteiro):
+        A.ler(b'isto nao e um pptx')
+    buf = io.BytesIO()
+    Presentation().save(buf)
+    with pytest.raises(A.SemRoteiro):
+        A.ler(buf.getvalue())
+
+
+def test_render_a_partir_da_imagem_da_pagina(gerado):
+    """Sem o PDF: slides "documento" e "orcamento" com página saem da imagem já pronta."""
+    pptx, _, _, _ = gerado
+    r = A.ler(pptx)
+    paginas = {}
+    for p in r['documentos_paginas']:
+        d = paginas.setdefault(p['id'], {'total': p['total'], 'paginas': {}})
+        d['paginas'][p['pagina']] = base64.b64decode(p['b64'])
+    fotos = {f['id']: base64.b64decode(f['b64']) for f in r['fotos']}
+    graficos = {f['id']: f['grafico'] for f in r['fotos'] if 'grafico' in f}
+    rot = {'slides': [{'tipo': 'capa', 'condominio': 'Cond', 'data': 'hoje'},
+                      {'tipo': 'documento', 'titulo': 'Projeto', 'documento': 'd1', 'paginas': [2, 3]},
+                      {'tipo': 'orcamento', 'titulo': 'Orçamento B', 'fornecedor': 'B', 'total': 10.0, 'documento': 'd1', 'pagina': 1},
+                      {'tipo': 'foto_texto', 'titulo': 'Brinquedo', 'foto': 'f3', 'topicos': ['Balanço']}]}
+    with tempfile.TemporaryDirectory() as tmp:
+        pptx2, pdf2, avisos, n = A.montar(rot, fotos, {}, tmp, None, paginas, graficos)
+    assert pdf2[:4] == b'%PDF' and n == 4
+    _, textos = _textos(pptx2)
+    assert 'PÁGINA DO DOCUMENTO' in textos[1] and '2 de 2' in textos[1]   # total original do documento
+    assert any('página 3 não existe' in a for a in avisos)
+    # a página reaproveitada continua rastreável na apresentação nova
+    r2 = A.ler(pptx2)
+    assert [(p['id'], p['pagina'], p['total']) for p in r2['documentos_paginas']] == [('d1', 1, 2), ('d1', 2, 2)]
+    assert base64.b64decode(r2['documentos_paginas'][1]['b64']) == paginas['d1']['paginas'][2]
+    assert [f['grafico'] for f in r2['fotos'] if f['id'] == 'f3'] == [True]
+
+
+def _cliente():
     from fastapi.testclient import TestClient
     os.environ.setdefault('INTERNAL_API_SECRET', 'segredo-teste')
     from app import auth
     auth.INTERNAL_API_SECRET = auth.INTERNAL_API_SECRET or 'segredo-teste'
     from app.main import app
-    cli = TestClient(app)
-    h = {'X-Internal-Secret': auth.INTERNAL_API_SECRET}
+    return TestClient(app), {'X-Internal-Secret': auth.INTERNAL_API_SECRET}
+
+
+def test_rota_ler(gerado):
+    cli, h = _cliente()
+    pptx, _, _, _ = gerado
+    r = cli.post('/v13/apresentacao/ler', json={'pptx_b64': base64.b64encode(pptx).decode()}, headers=h)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j['roteiro']['titulo_arquivo'] == 'AGE teste' and len(j['fotos']) == 3 and len(j['documentos_paginas']) == 2
+    buf = io.BytesIO()
+    Presentation().save(buf)
+    r = cli.post('/v13/apresentacao/ler', json={'pptx_b64': base64.b64encode(buf.getvalue()).decode()}, headers=h)
+    assert r.status_code == 422
+    assert r.json()['detail'] == {'erro': 'sem_roteiro', 'detalhe': 'Esta apresentação não foi gerada pelo sistema. Gere uma nova.'}
+    assert cli.post('/v13/apresentacao/ler', json={'pptx_b64': 'x'}, headers=h).status_code == 422
+    assert cli.post('/v13/apresentacao/ler', json={'pptx_b64': base64.b64encode(pptx).decode()}).status_code in (401, 503)
+    # páginas prontas pela rota de montar
+    pg = j['documentos_paginas'][0]
+    corpo = {'roteiro': {'slides': [{'tipo': 'capa', 'condominio': 'C', 'data': 'hoje'},
+                                    {'tipo': 'documento', 'titulo': 'D', 'documento': 'd1', 'paginas': [1]}]},
+             'fotos': [], 'documentos': [], 'documentos_paginas': [pg]}
+    r = cli.post('/v13/apresentacao', json=corpo, headers=h)
+    assert r.status_code == 200 and r.json()['slides'] == 2
+    corpo['documentos_paginas'] = [{'id': 'd1', 'pagina': 'um', 'b64': pg['b64']}]
+    assert cli.post('/v13/apresentacao', json=corpo, headers=h).status_code == 422
+
+
+def test_rota_http():
+    cli, h = _cliente()
     corpo = {'roteiro': {'slides': [{'tipo': 'capa', 'condominio': 'Cond', 'data': 'hoje'},
                                     {'tipo': 'fotos', 'titulo': 'F', 'fotos': [{'id': 'f1'}]}, {'tipo': 'encerramento'}]},
              'fotos': [{'id': 'f1', 'b64': base64.b64encode(_foto()).decode()}], 'documentos': [],

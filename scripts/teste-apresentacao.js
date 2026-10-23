@@ -89,6 +89,74 @@ t('semTraco: hífen dentro da palavra fica', A.semTraco('mão-de-obra 2024-2025'
 t('numero: formatos', A.numero('R$ 1.234,56') === 1234.56 && A.numero('27750.5') === 27750.5 && isNaN(A.numero('abc')));
 t('nome do arquivo limpo', A.nomeArquivo('AGE 16/10/2024: Buritis*') === 'AGE 16 10 2024 Buritis' && A.nomeArquivo('') === 'Apresentação de assembleia');
 
+// ── 2b. Modo atualizar: resumo, ids novos e junção ──
+const ANTIGA = {
+  titulo_arquivo: 'AGE 16.10.2024 Buritis',
+  slides: [
+    { tipo: 'capa', assembleia: 'Assembleia Geral Extraordinária', condominio: 'Buritis', data: '16 de outubro de 2024' },             // #1
+    { tipo: 'pauta', itens: [{ titulo: 'Reforma do playground', etiqueta: 'VOTAÇÃO' }, { titulo: 'Taxa extra', etiqueta: 'VOTAÇÃO' }, { titulo: 'Assuntos gerais', etiqueta: 'ABERTO' }] }, // #2
+    { tipo: 'item', numero: 1, titulo: 'Reforma do playground' },                                                                            // #3
+    { tipo: 'fotos', numero: 1, titulo: 'Situação atual', fotos: [{ id: 'f3' }, { id: 'f12' }] },                                              // #4
+    { tipo: 'votacao', numero: 1, titulo: 'Votação', pergunta: 'Aprova a reforma?' },                                                         // #5
+    { tipo: 'item', numero: 2, titulo: 'Taxa extra' },                                                                                       // #6
+    { tipo: 'texto', numero: 2, titulo: 'Custeio', paragrafos: ['PARAGRAFO_SECRETO que não pode ir no resumo'] },                            // #7
+    { tipo: 'documento', numero: 2, titulo: 'Planilha', documento: 'd3', paginas: [2] },                                                     // #8
+    { tipo: 'item', numero: 3, titulo: 'Assuntos gerais' },                                                                                  // #9
+    { tipo: 'pontos', numero: 3, titulo: 'Pontos', pontos: [{ texto: 'Cerca', origem: 'Item 2' }] },                                         // #10
+    { tipo: 'encerramento' },                                                                                                               // #11
+  ],
+};
+{
+  const res = A.resumoRoteiro(ANTIGA);
+  t('resumo: capa, pauta e uma linha por slide', res.includes('CAPA: Assembleia Geral Extraordinária | Buritis | 16 de outubro de 2024') && res.includes('2. Taxa extra [VOTAÇÃO]')
+    && res.includes('#3 | item | item 1 | Reforma do playground') && res.includes('#8 | documento | item 2 | Planilha') && res.includes('#11 | encerramento'));
+  t('resumo: sem o conteúdo dos slides', !res.includes('PARAGRAFO_SECRETO') && !res.includes('f12') && !res.includes('Aprova a reforma') && !res.includes('Cerca'));
+  t('ids: maior usado', A.maiorId(['f3', 'f12', 'd3', 'x9'], 'f') === 12 && A.maiorId(['d3', 'd10'], 'd') === 10 && A.maiorId([], 'f') === 0);
+  const dd = { documentos: [{ id: 'd1' }, { id: 'd2' }], fotos: [{ id: 'f1' }, { id: 'f2' }, { id: 'f3' }] };
+  A.renumerarNovos(dd, 12, 3);
+  t('ids: novos continuam a numeração', dd.fotos.map((f) => f.id).join() === 'f13,f14,f15' && dd.documentos.map((d) => d.id).join() === 'd4,d5');
+  t('conferência da resposta', A.conferirAtualizacao({ inserir: [{ depois_do_slide: 4, slides: [{ tipo: 'fotos' }] }] }) === null
+    && !!A.conferirAtualizacao({ slides: [] }) && !!A.conferirAtualizacao({ inserir: [{ slides: [{}] }] }));
+
+  const tit = (r) => r.roteiro.slides.map((s) => (s.tipo === 'item' ? 'I' + s.numero : s.tipo === 'capa' || s.tipo === 'pauta' || s.tipo === 'encerramento' ? s.tipo : s.titulo + ':' + s.numero)).join(' ');
+  // A. Acréscimo no item 1, depois do slide 4 (antes da votação)
+  const a = A.juntarAtualizacao(ANTIGA, { inserir: [{ depois_do_slide: 4, slides: [{ tipo: 'fotos', numero: 1, titulo: 'Brigada', fotos: [{ id: 'f13' }] }] }] });
+  t('junção: no item existente, na posição pedida', tit(a) === 'capa pauta I1 Situação atual:1 Brigada:1 Votação:1 I2 Custeio:2 Planilha:2 I3 Pontos:3 encerramento');
+  t('junção: antigos intactos e pauta igual', a.roteiro.slides[3] !== ANTIGA.slides[3] && JSON.stringify(a.roteiro.slides[3]) === JSON.stringify(ANTIGA.slides[3]) && a.roteiro.slides[1].itens.length === 3 && !a.avisos.length);
+  t('junção: o que entrou', a.inseridos.length === 1 && a.inseridos[0].item === 1 && a.inseridos[0].slides === 1 && a.inseridos[0].novo === false && a.inseridos[0].titulo === 'Reforma do playground');
+  // B. Item 2 com posição fora da faixa dele: vai para o fim do item 2
+  const b2 = A.juntarAtualizacao(ANTIGA, { inserir: [{ depois_do_slide: 3, slides: [{ tipo: 'topicos', numero: 2, titulo: 'Rateio', topicos: ['x'] }] }] });
+  t('junção: posição fora do item vai para o fim do item', tit(b2) === 'capa pauta I1 Situação atual:1 Votação:1 I2 Custeio:2 Planilha:2 Rateio:2 I3 Pontos:3 encerramento');
+  // C. Item novo no meio (depois do último slide do item 1): renumera divisores, slides e pauta
+  const c = A.juntarAtualizacao(ANTIGA, { avisos: [], inserir: [{ depois_do_slide: 5, slides: [{ tipo: 'item', numero: 2, titulo: 'Brigada de incêndio', etiqueta: 'APRESENTAÇÃO' },
+    { tipo: 'topicos', numero: 2, titulo: 'Treinamento', topicos: ['a'] }, { tipo: 'fotos', numero: 9, titulo: 'Fotos da brigada', fotos: [{ id: 'f13' }] }] }] });
+  t('junção: item novo no meio', tit(c) === 'capa pauta I1 Situação atual:1 Votação:1 I2 Treinamento:2 Fotos da brigada:2 I3 Custeio:3 Planilha:3 I4 Pontos:4 encerramento');
+  t('junção: pauta com o item novo na posição', c.roteiro.slides[1].itens.map(textoItem).join('|') === 'Reforma do playground|Brigada de incêndio|Taxa extra|Assuntos gerais' && c.roteiro.slides[1].itens[1].etiqueta === 'APRESENTAÇÃO');
+  t('junção: aviso de renumeração e o que entrou', c.avisos.some((x) => /mudaram de número/.test(x)) && c.inseridos[0].item === 2 && c.inseridos[0].novo && c.inseridos[0].slides === 3 && c.inseridos[0].titulo === 'Brigada de incêndio');
+  const semRef = A.juntarAtualizacao({ slides: ANTIGA.slides.filter((x) => x.tipo !== 'pontos') }, { inserir: [{ depois_do_slide: 5, slides: [{ tipo: 'item', titulo: 'Novo' }] }] });
+  t('junção: sem "Item N" escrito nos slides, sem aviso de renumeração', !semRef.avisos.length && semRef.roteiro.slides.find((x) => x.titulo === 'Assuntos gerais').numero === 4);
+  t('junção: roteiro antigo não foi mexido', ANTIGA.slides[5].numero === 2 && ANTIGA.slides[1].itens.length === 3);
+  // D. Item novo sem posição: fim, antes do encerramento; título da pauta da resposta
+  const d = A.juntarAtualizacao(ANTIGA, { inserir: [{ slides: [{ tipo: 'item', titulo: 'Brigada', etiqueta: 'VOTAÇÃO' }, { tipo: 'votacao', titulo: 'Votação', pergunta: 'Aprova?' }] }],
+    pauta: ['Reforma do playground', 'Taxa extra', 'Assuntos gerais', { titulo: 'Contratação da brigada de incêndio', etiqueta: 'VOTAÇÃO' }] });
+  t('junção: item novo sem posição vai para o fim', tit(d) === 'capa pauta I1 Situação atual:1 Votação:1 I2 Custeio:2 Planilha:2 I3 Pontos:3 I4 Votação:4 encerramento' && !d.avisos.some((x) => /mudaram/.test(x)));
+  t('junção: título da pauta da resposta só para o item novo', d.roteiro.slides[1].itens.length === 4 && d.roteiro.slides[1].itens[3].titulo === 'Contratação da brigada de incêndio' && d.roteiro.slides[1].itens[0].titulo === 'Reforma do playground');
+  // E. Item novo pedido no meio de um item: vai para o fim daquele item
+  const e = A.juntarAtualizacao(ANTIGA, { inserir: [{ depois_do_slide: 7, slides: [{ tipo: 'item', titulo: 'Novo' }] }] });
+  t('junção: item novo nunca no meio de outro', tit(e) === 'capa pauta I1 Situação atual:1 Votação:1 I2 Custeio:2 Planilha:2 I3 I4 Pontos:4 encerramento');
+  // F. Capa e encerramento no acréscimo saem; grupo vazio não entra
+  const f = A.juntarAtualizacao(ANTIGA, { inserir: [{ depois_do_slide: 1, slides: [{ tipo: 'capa' }, { tipo: 'encerramento' }] }] });
+  t('junção: capa e encerramento no acréscimo ficam de fora', f.roteiro.slides.length === 11 && f.avisos.some((x) => /ficaram de fora/.test(x)) && !f.inseridos.length);
+  // G. Páginas citadas
+  const pc = A.paginasCitadas({ slides: [{ tipo: 'documento', documento: 'd1', paginas: [1, 2] }, { tipo: 'orcamento', documento: 'd2' }] });
+  t('páginas citadas', [...pc.get('d1')].join() === '1,2' && [...pc.get('d2')].join() === '1');
+  // H. Documento sem PDF usa só as páginas prontas
+  const vr = A.validarRoteiro({ slides: [{ tipo: 'documento', titulo: 'P', documento: 'd3', paginas: [2, 3] }, { tipo: 'documento', titulo: 'Q', documento: 'd3', paginas: [5] },
+    { tipo: 'orcamento', titulo: 'O', fornecedor: 'X', total: 10, documento: 'd3', pagina: 4 }] }, { fotos: [], documentos: [{ id: 'd3', pdf: false, paginas: 6, prontas: [2] }], pauta: [] });
+  t('páginas prontas: só as que existem', vr.roteiro.slides[0].paginas.join() === '2' && !vr.roteiro.slides.some((s) => s.titulo === 'Q') && !('documento' in vr.roteiro.slides[1]));
+}
+function textoItem(it) { return typeof it === 'string' ? it : it.titulo; }
+
 // ── 3. Registro nas listas de modelos e custo ──
 t('modelo da apresentação', modelos.PADRAO.apresentacao === 'claude-sonnet-5-5' && modelos.esforco('apresentacao') === 'low');
 t('modelo da conferência das imagens', modelos.PADRAO.apresentacao_imagens === 'claude-haiku-5-5');
@@ -132,9 +200,19 @@ const chamarModelo = async (o) => {
   return r || { ok: false, erro: 'falha' };
 };
 let motorRecebeu = null; let motorStatus = 200;
+let motorLeu = null; let lerResposta = null;   // modo atualizar: o que o motor devolve ao ler o PPTX
+const PPTX_PASTA = Buffer.from('PK\u0003\u0004 pptx guardado na pasta');
 const motor = http.createServer((req, res) => {
+  if (req.method === 'GET' && req.url === '/arquivo.pptx') { res.writeHead(200); res.end(PPTX_PASTA); return; }
   let s = ''; req.on('data', (c) => { s += c; });
   req.on('end', () => {
+    if (req.url === '/v13/apresentacao/ler') {
+      motorLeu = { segredo: req.headers['x-internal-secret'], corpo: JSON.parse(s) };
+      const semRoteiro = !lerResposta || Buffer.from(motorLeu.corpo.pptx_b64, 'base64').toString().includes('SEMROTEIRO');
+      res.writeHead(semRoteiro ? 422 : 200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(semRoteiro ? { detail: { erro: 'sem_roteiro', detalhe: 'Esta apresentação não foi gerada pelo sistema. Gere uma nova.' } } : lerResposta));
+      return;
+    }
     motorRecebeu = { caminho: req.url, segredo: req.headers['x-internal-secret'], corpo: JSON.parse(s) };
     res.writeHead(motorStatus, { 'content-type': 'application/json' });
     res.end(JSON.stringify(motorStatus === 200 ? { pptx_b64: 'UEsDBA==', pdf_b64: 'JVBERi0=', slides: 9, avisos: ['Slide 4: texto longo foi reduzido'] } : { detail: { detalhe: 'Roteiro inválido no motor.' } }));
@@ -145,6 +223,7 @@ const USUARIO = '11111111-1111-4111-8111-111111111111';
 const OUTRO = '22222222-2222-4222-8222-222222222222';
 const perfis = { [USUARIO]: { role: 'OPERACIONAL', permissoes: { apresentacao: { visivel: true, acoes: ['ver', 'gerar'] } } }, [OUTRO]: { role: 'OPERACIONAL', permissoes: { apresentacao: { visivel: true, acoes: ['ver'] } } } };
 const eventos = [];
+let assinado = null;
 const app = express();
 const requireAuth = (req, res, next) => { req.user = { sub: req.headers['x-usuario'] || USUARIO }; next(); };
 
@@ -160,6 +239,10 @@ motor.listen(0, () => {
     prestacaoPdf: { url: 'http://127.0.0.1:' + motor.address().port, segredo: 'segredo-teste' },
     caminhoGuia: guia,
     agora: () => Date.parse('2026-10-23T15:00:00Z'),
+    // Pasta Em andamento: só o trabalho do USUARIO existe.
+    banco: async (metodo, caminho) => ({ status: 200, body: caminho.includes('user_id=eq.' + USUARIO) && caminho.includes('id=eq.33333333-aaaa-4aaa-8aaa-333333333333') && caminho.includes('tipo=eq.apresentacao')
+      ? [{ id: '33333333-aaaa-4aaa-8aaa-333333333333', arquivos: [{ nome: 'AGE.pdf' }, { nome: 'AGE.pptx' }] }] : [] }),
+    storageSignedUrl: async (bucket, caminho) => { assinado = { bucket, caminho }; return 'http://127.0.0.1:' + motor.address().port + '/arquivo.pptx'; },
   });
   const logs = [];
   const logOrig = console.log; const warnOrig = console.warn;
@@ -357,6 +440,96 @@ motor.listen(0, () => {
       const f6 = await esperar(g6.j.jobId);
       t('motor recusou: mensagem do motor', f6.j.status === 'error' && f6.j.detalhe === 'Roteiro inválido no motor.');
       motorStatus = 200;
+
+      // ── Modo atualizar ──
+      const jpgB64 = (n) => jpeg('antiga ' + n);
+      lerResposta = {
+        roteiro: JSON.parse(JSON.stringify(ANTIGA)), alterada: false, logo_cliente_b64: png,
+        fotos: [{ id: 'f3', b64: jpgB64(3), grafico: false }, { id: 'f12', b64: jpgB64(12), grafico: true }, { id: 'f7', b64: jpgB64(7) }],
+        documentos_paginas: [{ id: 'd3', pagina: 2, total: 4, b64: jpgB64('d3p2') }, { id: 'd3', pagina: 3, total: 4, b64: jpgB64('d3p3') }],
+      };
+      const PPTX = Buffer.from('PK\u0003\u0004 apresentacao gerada').toString('base64');
+      const ACRESCIMO = JSON.stringify({ avisos: ['Confira a data do treinamento.'], inserir: [{ depois_do_slide: 5, slides: [
+        { tipo: 'item', titulo: 'Brigada de incêndio', etiqueta: 'APRESENTAÇÃO' },
+        { tipo: 'fotos', numero: 2, titulo: 'Treinamento — brigada', fotos: [{ id: 'f13' }, { id: 'f3' }] },
+        { tipo: 'documento', numero: 2, titulo: 'Certificado', documento: 'd4', paginas: [1] }] }] });
+      const baseAtu = () => ({
+        idSuperlogica: '136', pedido: 'incluir a apresentação da brigada como item 2', pptx_b64: PPTX,
+        documentos: [{ nome: 'Brigada.pdf', tipo: 'pdf', paginas: 1, texto: '[página 1] Certificado da brigada de incêndio, treinamento em 10/10/2026', pdf_b64: pdf('brigada') }],
+        fotos: [{ nome: 'brigada.jpg', legenda: 'treinamento da brigada', b64: jpeg('brig') }],
+      });
+      t('atualizar: sem a ação gerar 403', (await pedir('POST', '/api/apresentacao/atualizar', baseAtu(), OUTRO)).st === 403);
+      const semArq = baseAtu(); delete semArq.pptx_b64;
+      t('atualizar: sem apresentação 400', (await pedir('POST', '/api/apresentacao/atualizar', semArq)).st === 400);
+      const naoPptx = baseAtu(); naoPptx.pptx_b64 = pdf('x');
+      t('atualizar: arquivo que não é PowerPoint 400', (await pedir('POST', '/api/apresentacao/atualizar', naoPptx)).st === 400);
+      const nada = { pptx_b64: PPTX, pedido: '', documentos: [], fotos: [] };
+      t('atualizar: sem material novo nem pedido 400', (await pedir('POST', '/api/apresentacao/atualizar', nada)).st === 400);
+      const foraAtu = baseAtu(); foraAtu.idSuperlogica = '999';
+      t('atualizar: condomínio fora da carteira 403', (await pedir('POST', '/api/apresentacao/atualizar', foraAtu)).st === 403);
+
+      chamadas.length = 0; motorRecebeu = null;
+      respostasRoteiro = [{ ok: true, texto: ACRESCIMO }];
+      const ga = await pedir('POST', '/api/apresentacao/atualizar', baseAtu());
+      t('atualizar: 202 com jobId', ga.st === 202 && !!ga.j.jobId);
+      const fa = await esperar(ga.j.jobId);
+      t('atualizar: terminou', fa && fa.j.status === 'done' && fa.j.modo === 'atualizar');
+      t('atualizar: leu o PPTX no motor com o segredo', motorLeu.segredo === 'segredo-teste' && motorLeu.corpo.pptx_b64 === PPTX);
+      const ca = chamadas.filter((c) => c.funcao === 'apresentacao');
+      const txt = ca[0] && ca[0].content;
+      t('atualizar: uma chamada, guia em cache', ca.length === 1 && ca[0].system === 'GUIA DE TESTE' && ca[0].cache === true && ca[0].maxTokens === 8000);
+      t('atualizar: manda o resumo e não os slides inteiros', typeof txt === 'string' && txt.includes('MODO ATUALIZAR') && txt.includes('#5 | votacao | item 1 | Votação')
+        && !txt.includes('PARAGRAFO_SECRETO') && !txt.includes('"tipo"') && !txt.includes('/9j/') && !txt.includes('JVBERi'));
+      t('atualizar: ids novos continuam a numeração', txt.includes('fotos até f12, documentos até d3') && txt.includes('f13: arquivo brigada.jpg | legenda: treinamento da brigada') && txt.includes('<documento id="d4" nome="Brigada.pdf"'));
+      t('atualizar: pedido vai', txt.includes('<pedido>\nincluir a apresentação da brigada como item 2'));
+      const rm = motorRecebeu && motorRecebeu.corpo;
+      const seqM = rm ? rm.roteiro.slides.map((s) => (s.tipo === 'item' ? 'I' + s.numero : s.titulo ? s.titulo + ':' + s.numero : s.tipo)).join(' ') : '';
+      t('atualizar: item novo no lugar certo e renumerado', seqM === 'capa pauta I1 Situação atual:1 Votação:1 I2 Treinamento, brigada:2 Certificado:2 I3 Custeio:3 Planilha:3 I4 Pontos:4 encerramento');
+      t('atualizar: pauta com o item novo', rm && rm.roteiro.slides[1].itens.map(textoItem).join('|') === 'Reforma do playground|Brigada de incêndio|Taxa extra|Assuntos gerais');
+      t('atualizar: fotos antigas citadas com o jeito de mostrar, mais a nova', rm && rm.fotos.map((f) => f.id + (f.grafico === undefined ? '' : ':' + f.grafico)).join() === 'f3:false,f12:true,f13');
+      t('atualizar: PDF novo citado e só as páginas antigas citadas', rm && rm.documentos.map((d) => d.id).join() === 'd4' && rm.documentos_paginas.map((p) => p.id + 'p' + p.pagina + '/' + p.total).join() === 'd3p2/4');
+      t('atualizar: logo da apresentação vai de novo', rm && rm.logo_cliente_b64 === png);
+      t('atualizar: resultado com o que entrou', fa.j.inseridos.length === 1 && fa.j.inseridos[0].item === 2 && fa.j.inseridos[0].novo === true && fa.j.inseridos[0].slides === 3 && fa.j.inseridos[0].titulo === 'Brigada de incêndio');
+      t('atualizar: avisos juntos', fa.j.avisos.includes('Confira a data do treinamento.') && fa.j.avisos.some((a) => /mudaram de número/.test(a)) && fa.j.avisos.includes('Slide 4: texto longo foi reduzido'));
+      t('atualizar: pauta e arquivos no resultado', fa.j.pauta.length === 4 && fa.j.pptx_b64 === 'UEsDBA==' && fa.j.titulo_arquivo === 'AGE 16.10.2024 Buritis');
+      t('atualizar: log no padrão', logs.some((l) => /^\[apresentacao\] atualizada cond=136 slides=9 novos=3 fotos_novas=1 docs_novos=1 imagens_triadas=0 avisos=\d+ ms=\d+ usuario=11111111/.test(l)));
+      t('atualizar: auditoria', eventos.some((e) => e.acao === 'apresentacao_atualizada' && e.det.origem === 'arquivo'));
+
+      // Item novo sem posição vai para o fim; apresentação mudada à mão vira aviso
+      lerResposta.alterada = true;
+      respostasRoteiro = [{ ok: true, texto: JSON.stringify({ inserir: [{ slides: [{ tipo: 'item', titulo: 'Brigada' }, { tipo: 'topicos', titulo: 'Treino', topicos: ['x'] }] }] }) }];
+      const gf = await pedir('POST', '/api/apresentacao/atualizar', baseAtu());
+      const ff = await esperar(gf.j.jobId);
+      const seqF = motorRecebeu.corpo.roteiro.slides.map((s) => (s.tipo === 'item' ? 'I' + s.numero : s.titulo ? s.titulo + ':' + s.numero : s.tipo)).join(' ');
+      t('atualizar: item novo sem posição no fim', ff.j.status === 'done' && seqF === 'capa pauta I1 Situação atual:1 Votação:1 I2 Custeio:2 Planilha:2 I3 Pontos:3 I4 Treino:4 encerramento');
+      t('atualizar: aviso de apresentação mudada à mão', ff.j.avisos.some((a) => /mudada à mão/.test(a)));
+      lerResposta.alterada = false;
+
+      // JSON quebrado: repete uma vez
+      chamadas.length = 0;
+      respostasRoteiro = [{ ok: true, texto: '{"slides": []}' }, { ok: true, texto: ACRESCIMO }];
+      const gr = await pedir('POST', '/api/apresentacao/atualizar', baseAtu());
+      const fr = await esperar(gr.j.jobId);
+      t('atualizar: repete uma vez com o JSON quebrado', fr.j.status === 'done' && chamadas.filter((c) => c.funcao === 'apresentacao').length === 2);
+
+      // PPTX que não foi gerado pelo sistema
+      const sem = baseAtu(); sem.pptx_b64 = Buffer.from('PK\u0003\u0004 SEMROTEIRO xx').toString('base64');
+      const gs = await pedir('POST', '/api/apresentacao/atualizar', sem);
+      const fs2 = await esperar(gs.j.jobId);
+      t('atualizar: PPTX de fora vira erro claro', fs2.j.status === 'error' && fs2.j.erro === 'sem_roteiro' && fs2.j.detalhe === 'Esta apresentação não foi gerada pelo sistema. Gere uma nova.');
+
+      // Da pasta Em andamento (só da própria pessoa)
+      respostasRoteiro = [{ ok: true, texto: ACRESCIMO }];
+      const tp = baseAtu(); delete tp.pptx_b64; tp.trabalho_id = '33333333-aaaa-4aaa-8aaa-333333333333';
+      const gt = await pedir('POST', '/api/apresentacao/atualizar', tp);
+      const ft = await esperar(gt.j.jobId);
+      t('atualizar: da pasta Em andamento lê o PowerPoint guardado', ft.j.status === 'done' && motorLeu.corpo.pptx_b64 === PPTX_PASTA.toString('base64')
+        && assinado.bucket === 'trabalhos' && assinado.caminho === USUARIO + '/33333333-aaaa-4aaa-8aaa-333333333333/AGE.pptx');
+      const outroUsr = '44444444-4444-4444-8444-444444444444';
+      perfis[outroUsr] = perfis[USUARIO];
+      const go = await pedir('POST', '/api/apresentacao/atualizar', tp, outroUsr);
+      const fo = await esperar(go.j.jobId, outroUsr);
+      t('atualizar: trabalho de outra pessoa não abre', fo.j.status === 'error' && /saiu da pasta/.test(fo.j.detalhe));
 
       // Uma geração por vez por pessoa
       respostasRoteiro = [];
