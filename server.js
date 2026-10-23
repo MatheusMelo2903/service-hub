@@ -4295,6 +4295,33 @@ app.get('/api/financeiro/boletos/:idSuperlogica', requireAuth, async (req, res) 
 // ─────────────────────────────────────────────────────────────────────────
 const finPainel = require('./financeiro/painel');
 const _painelFin = finPainel.criarPainel({ cliente: () => clienteSL() });
+
+// Base do Financeiro pronta antes de alguém abrir: às 7h dos dias úteis (horário de Brasília)
+// e, se o servidor ligar num dia útil entre 7h e 20h, 1 minuto depois de ligar (assim uma
+// publicação no meio do dia não faz a primeira pessoa esperar). Só leitura no Superlógica.
+// Durante o dia a base se renova sozinha quando alguém abre (cálculo por trás, sem espera).
+// FIN_BASE_AGENDADA=0 desliga.
+function _horaBrasilia() {
+  const p = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', weekday: 'short', hour: 'numeric', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(new Date()).reduce((o, x) => { o[x.type] = x.value; return o; }, {});
+  return { util: !['Sat', 'Sun'].includes(p.weekday), hora: Number(p.hour), dia: p.year + '-' + p.month + '-' + p.day };
+}
+if (superlogicaNativa() && process.env.FIN_BASE_AGENDADA !== '0') {
+  let _finBaseDia = '';
+  const _finPreparar = (origem) => {
+    _painelFin.recalcular().then(() => console.log('[financeiro] base preparada (' + origem + ')')).catch(() => { /* o erro já fica anotado no painel */ });
+  };
+  const tIni = setTimeout(() => {
+    const h = _horaBrasilia();
+    if (h.util && h.hora >= 7 && h.hora < 20) { _finBaseDia = h.dia; _finPreparar('inicio'); }
+  }, 60 * 1000);
+  if (typeof tIni.unref === 'function') tIni.unref();
+  const tDia = setInterval(() => {
+    const h = _horaBrasilia();
+    if (h.util && h.hora === 7 && _finBaseDia !== h.dia) { _finBaseDia = h.dia; _finPreparar('7h'); }
+  }, 60 * 1000);
+  if (typeof tDia.unref === 'function') tDia.unref();
+}
 async function _exigirFinanceiro(req, res, acao) {
   if (req.authMode === 'internal') return true;
   if (!SUPABASE_SERVICE_ROLE_KEY) { res.status(503).json({ erro: 'service_role_nao_configurada' }); return false; }
