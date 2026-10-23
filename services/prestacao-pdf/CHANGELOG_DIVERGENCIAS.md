@@ -55,3 +55,38 @@ Rastreabilidade pra quando o Matheus comparar com um deck montado à mão.
 Os totais de categoria, totais gerais e saldos são idênticos em todos os
 casos; as quatro igualdades de consistência passam, e a soma das linhas de
 cada categoria fecha exatamente com o total — inclusive através de páginas.
+
+## Explicação dos números que assustam (2026-10-23, diverge da skill powerpoint-prestacao-contas)
+
+Pedido do Matheus: déficit, caixa caindo, mês negativo ou receita que não cobre a
+despesa não podem aparecer secos no começo da apresentação. O número continua, mas
+já explicado no mesmo slide. A cópia da skill em `vendor/skill_v13` passou a ter
+código que a skill original não tem (sincronizar a skill com este comportamento
+antes de rodar `scripts/sincronizar-skill-prestacao.sh`, senão ele se perde):
+
+9. **`montar.py`:** `composicao.json["explicacoes"]` (`resumo`, `caixa`, `contas`,
+   `meses {mes: texto}`, `rubricas {"CATEGORIA|RUBRICA": texto}`) vira
+   `CFG["explicacoes"]`, `CFG["contas"]` (só quando a soma das contas bate ao centavo
+   com o saldo inicial e final) e `CFG["rubricas_marcadas"]`; a rubrica marcada ganha
+   o campo `destaque`. Sem explicação, o CFG é exatamente o de antes.
+10. **`gerador.py`, só com explicação** (sem alerta, slides e gráficos idênticos byte
+    a byte aos do molde):
+    * capa: rótulo "VARIAÇÃO NO PERÍODO" quando o caixa cai e a explicação curta
+      embaixo do "de R$ X para R$ Y";
+    * visão geral: quatro cartões no topo (saldo final sobe), cartão do resultado com
+      a explicação no lugar do "Déficit de X% sobre a receita", faixa "POR QUE O
+      RESULTADO FICOU NEGATIVO" com o resumo e o pilar do caixa com a conta de onde
+      saiu o dinheiro;
+    * patrimônio: gráfico mais baixo e faixa "DE ONDE SAIU O DINHEIRO" (explicação e
+      conta que caiu, ex.: Fundo de Reserva de R$ 234 mil para R$ 93 mil);
+    * slide novo "Onde está o dinheiro" logo depois do patrimônio: saldo de cada conta
+      no início e no fim, variação e total igual ao da capa, mais o movimento das
+      reservas;
+    * resultado de cada mês: gráfico de largura cheia e lista dos meses negativos com
+      o que pesou em cada um (mês sem motivo identificado vai numa linha só, sem causa
+      inventada);
+    * detalhamento: a rubrica marcada ganha uma linha em azul celeste (▸ texto) fora
+      do texto de composição, então a conferência de soma da composição não muda.
+11. **Textos padrão (`app/justificativas.py`)** quando a curadoria não escreve: rótulos
+    sem "Ref.", "Ref. a", "Referente a", sem nome de funcionário em férias e salário
+    ("férias da equipe (datas)"), " - " vira vírgula e hífen entre nomes vira " e ".

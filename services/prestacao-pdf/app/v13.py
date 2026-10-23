@@ -242,7 +242,83 @@ def completar_composicao(comp_ia: dict, dados: dict, rascunho: dict, nome_hub: s
         comp["receitas_nomes"] = rn
     if isinstance(comp_ia.get("receita_insight"), str) and comp_ia["receita_insight"].strip():
         comp["receita_insight"] = comp_ia["receita_insight"].strip()
+    exp = sanear_explicacoes(comp_ia.get("explicacoes"), dados)
+    if exp:
+        comp["explicacoes"] = exp
+        # Se a composicao da IA reprovar na conferencia, o main.py refaz com a automatica
+        # usando o MESMO dict de dados: guardada aqui, a explicacao da curadoria continua
+        # valendo nesse caminho (o montar le daqui quando a composicao nao trouxer).
+        dados[_EXP_GUARDADA] = exp
     return comp
+
+
+_EXP_GUARDADA = "_explicacoes_curadoria"
+
+
+def _meses_dos_dados(dados: dict) -> set:
+    from . import justificativas
+    per = list(dados.get("periodo") or [])
+    lab = list(dados.get("meses_label") or [])
+    return {justificativas._rot_mes(per[i] if i < len(per) else "", lab[i] if i < len(lab) else None)
+            for i in range(max(len(per), len(lab)))}
+
+
+def sanear_explicacoes(exp, dados: dict) -> dict:
+    """Explicacoes dos numeros que assustam (formato de justificativas.textos_padrao):
+    so chaves conhecidas, meses do periodo, rubricas 'CATEGORIA|RUBRICA' que existem,
+    sem hifen de pontuacao e cortadas no limite de cada campo do slide."""
+    from . import justificativas as J
+    if not isinstance(exp, dict):
+        return {}
+    limpa = lambda v, k: J.cortar(J.sem_hifen(v), J.LIMITES[k]) if isinstance(v, str) and v.strip() else ""
+    out = {}
+    for k in ("resumo", "caixa", "contas"):
+        t = limpa(exp.get(k), k)
+        if t:
+            out[k] = t
+    validos = {
+        "meses": _meses_dos_dados(dados),
+        "rubricas": {c["nome"] + "|" + r["nome"] for c in dados.get("categorias", []) for r in c.get("rubricas", [])},
+    }
+    for k, ok in validos.items():
+        v = exp.get(k)
+        if not isinstance(v, dict):
+            continue
+        o = {}
+        for chave, texto in list(v.items())[:60]:
+            t = limpa(texto, k)
+            if isinstance(chave, str) and chave in ok and t:
+                o[chave] = t
+        if o:
+            out[k] = o
+    return out
+
+
+def juntar_explicacoes(dados: dict, comp: dict) -> dict:
+    """O que a curadoria escreveu vale; o que faltar cai no texto padrao das
+    justificativas. Sem numero que assuste (sem alerta), nada: a apresentacao fica
+    identica a de sempre. Os sinais sao recalculados aqui para o texto padrao sair
+    sempre com a limpeza de rotulos atual (o caminho por PDF nem traz sinais)."""
+    from . import justificativas as J
+    try:
+        sinais = J.analisar(dados)
+    except Exception:  # explicacao nunca derruba a prestacao
+        sinais = dados.get("sinais") if isinstance(dados.get("sinais"), dict) else {}
+    if not sinais.get("ha_alerta"):
+        return {}
+    pad = sanear_explicacoes(sinais.get("textos") or {}, dados)
+    cur = comp.get("explicacoes") if isinstance(comp.get("explicacoes"), dict) else dados.get(_EXP_GUARDADA)
+    cur = sanear_explicacoes(cur, dados)
+    out = {}
+    for k in ("resumo", "caixa", "contas"):
+        if cur.get(k) or pad.get(k):
+            out[k] = cur.get(k) or pad.get(k)
+    for k in ("meses", "rubricas"):
+        m = dict(pad.get(k) or {})
+        m.update(cur.get(k) or {})
+        if m:
+            out[k] = m
+    return out
 
 
 def _nome_limpo(v, limite: int = 80) -> str:
@@ -299,10 +375,29 @@ def nome_arquivo(dados: dict, comp: dict) -> str:
 
 
 def montar(dados: dict, comp: dict, pasta: str) -> dict:
+    comp = dict(comp)
+    exp = juntar_explicacoes(dados, comp)
+    if exp:
+        comp["explicacoes"] = exp
+    else:
+        comp.pop("explicacoes", None)
+    try:
+        return _montar(dados, comp, pasta)
+    except ErroPrestacao:
+        if not exp:
+            raise
+        # A explicacao e um complemento: se for ela que nao coube, a prestacao sai sem ela.
+        comp.pop("explicacoes", None)
+        res = _montar(dados, comp, pasta)
+        print("v13: prestacao gerada sem as explicacoes (nao passaram na montagem)", file=sys.stderr)
+        return res
+
+
+def _montar(dados: dict, comp: dict, pasta: str) -> dict:
     dados_p = os.path.join(pasta, "dados.json")
     comp_p = os.path.join(pasta, "composicao.json")
     with open(dados_p, "w", encoding="utf-8") as f:
-        json.dump(dados, f, ensure_ascii=False)
+        json.dump({k: v for k, v in dados.items() if k != _EXP_GUARDADA}, f, ensure_ascii=False)
     with open(comp_p, "w", encoding="utf-8") as f:
         json.dump(comp, f, ensure_ascii=False)
     base = nome_arquivo(dados, comp)

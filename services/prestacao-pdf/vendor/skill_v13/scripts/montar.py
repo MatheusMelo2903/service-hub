@@ -69,6 +69,9 @@ def aplicar_estrutura(cats, est):
             novo = dict(chave='+'.join(chaves), nome=nome, valor=round(sum(m['valor'] for m in membros), 2),
                         comp='Reúne: ' + ', '.join(m['nome'] for m in membros) + '.', fecha=False,
                         serie=[round(sum(x), 2) for x in zip(*[m['serie'] for m in membros])])
+            dest = next((m['destaque'] for m in membros if m.get('destaque')), None)
+            if dest:
+                novo['destaque'] = dest
             if all(m['chave'] in ocr for m in membros):
                 ocr.add(novo['chave'])
             c['rubricas'] = [r for r in c['rubricas'] if r['chave'] not in chaves]
@@ -103,8 +106,38 @@ def garante_fontes():
     for f in os.listdir(G.FONTES): shutil.copy(os.path.join(G.FONTES, f), dst)
     subprocess.run(['fc-cache', '-f'], capture_output=True)
 
+def _contas_que_fecham(d):
+    """Contas do condominio para o slide "Onde está o dinheiro": so quando a soma bate
+    com o caixa no inicio e no fim (ao centavo), e so as que tiveram saldo em algum extremo."""
+    contas = d.get('contas')
+    if not isinstance(contas, list) or not contas:
+        return None
+    try:
+        lst = [dict(nome=str(c.get('nome') or 'Conta'), ini=round(float(c['ini']), 2), fim=round(float(c['fim']), 2)) for c in contas]
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+    if abs(sum(c['ini'] for c in lst) - d['saldo_anterior']) > 0.02 or abs(sum(c['fim'] for c in lst) - d['saldo_final']) > 0.02:
+        return None
+    lst = [c for c in lst if abs(c['ini']) > 0.004 or abs(c['fim']) > 0.004]
+    return lst or None
+
+def _explicacoes(comp):
+    """Explicacao dos numeros que assustam (deficit, caixa caindo, mes negativo). Vem
+    pronta na composicao: {resumo, caixa, contas, meses:{mes: texto}, rubricas:{CAT|RUB: texto}}."""
+    e = comp.get('explicacoes')
+    if not isinstance(e, dict):
+        return {}
+    out = {k: e[k].strip() for k in ('resumo', 'caixa', 'contas') if isinstance(e.get(k), str) and e[k].strip()}
+    for k in ('meses', 'rubricas'):
+        if isinstance(e.get(k), dict):
+            m = {str(a): b.strip() for a, b in e[k].items() if isinstance(b, str) and b.strip()}
+            if m: out[k] = m
+    return out
+
 def montar_cfg(d, comp):
     cli = comp['cliente']
+    exp = _explicacoes(comp)
+    exp_rub = exp.get('rubricas', {})
     rubc = comp.get('rubricas', {}); catc = comp.get('categorias', {}); rnome = comp.get('receitas_nomes', {})
     meses = d['meses_label']; n = len(meses)
     detalhado = d['modo'] == 'detalhado'
@@ -121,6 +154,8 @@ def montar_cfg(d, comp):
             nm = sum(1 for v in r['serie'] if abs(v) > 0.004)
             rubs.append(dict(chave=r['nome'], nome=rc.get('nome', NOME_PADRAO.get(r['nome'], r['nome'])), valor=r['total'],
                              comp=texto.replace('{n}', str(nm)), fecha=bool(rc.get('fecha')), serie=r['serie']))
+            if exp_rub.get(c['nome'] + '|' + r['nome']):
+                rubs[-1]['destaque'] = exp_rub[c['nome'] + '|' + r['nome']]
         cats.append(dict(nome=c['nome'], curto=cc.get('curto', pad[0]), t1=cc.get('t1', pad[1]), t2=cc.get('t2', pad[2]),
                          desc=cc.get('desc', pad[3]), nota=cc.get('nota'), total=c['total'], rubricas=rubs))
     cats = aplicar_estrutura(cats, comp.get('estrutura'))
@@ -136,13 +171,21 @@ def montar_cfg(d, comp):
     if not insight and receitas:
         top = receitas[0]
         insight = f"{top[0]} responde por {G.pct(top[1]/RT*100)} da arrecadação no período."
-    return dict(cliente_linha1=cli['linha1'], cliente_linha2=cli['linha2'], rodape=cli.get('rodape', (cli['linha1'] + ' ' + cli['linha2']).upper()),
+    cfg = dict(cliente_linha1=cli['linha1'], cliente_linha2=cli['linha2'], rodape=cli.get('rodape', (cli['linha1'] + ' ' + cli['linha2']).upper()),
                 periodo_label=f"{lab(ini)} A {lab(fim)}", periodo_extenso=f"{ext(ini)} a {ext(fim)}",
                 exercicio_titulo=f"Exercício {lab(ini)} a {lab(fim)}", n_meses=n,
                 data_inicial=f"01/{ini[5:]}/{ini[:4]}", data_final=f"{ultimo:02d}/{fim[5:]}/{fim[:4]}",
                 saldo_anterior=d['saldo_anterior'], receita_total=RT, despesa_total=DT, saldo_final=d['saldo_final'],
                 meses_label=meses, receitas_mes=d['receitas_mes'], despesas_mes=d['despesas_mes'], saldo_fim_mes=d['saldo_fim_mes'],
                 receitas_cat=receitas, despesas=sorted(cats, key=lambda c: -c['total']), receita_insight=insight)
+    # So com explicacao o CFG ganha chaves novas: sem alerta, a apresentacao e a de sempre.
+    if exp:
+        cfg['explicacoes'] = exp
+        contas = _contas_que_fecham(d)
+        if contas:
+            cfg['contas'] = contas
+        cfg['rubricas_marcadas'] = sorted(exp_rub)
+    return cfg
 
 def main():
     ap = argparse.ArgumentParser()
