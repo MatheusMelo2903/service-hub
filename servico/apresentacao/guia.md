@@ -31,7 +31,8 @@ Conteúdo típico de cada tipo de item:
 - Erro evidente no material (data trocada, soma errada): corrija e registre em "avisos".
 - Use o vocabulário do edital ("associados" quando o edital é de associação, "condôminos" quando é de condomínio).
 - Item sem material vira slide estrutural honesto: votação com o texto literal do edital, opções a favor, contra e abstenção e a regra de voto do edital; definição sem proposta vira o que o regimento já prevê mais os pontos a decidir, sem valores. Registre em "avisos".
-- Prestação de contas com condomínio no sistema: não refaça os números a partir de prints; ponha só o divisor e, se houver documento, as páginas, e avise que a prestação detalhada sai pela função de prestação de contas.
+- Prestação de contas: quando o pedido trouxer a instrução PRESTAÇÃO DE CONTAS (ITEM N), os slides financeiros desse item já vêm do sistema logo depois do divisor; não crie slides de números para ele. Análise da diretoria só em slide de texto ou tópicos com título "Análise da diretoria". Sem essa instrução, não refaça números a partir de prints: ponha o divisor e avise.
+- No texto lido das imagens, [grifado: ...] marca o trecho destacado no print (no regimento, é o que muda) e [riscado: ...] o que sai.
 - Item de deliberação final (entrega de empreendimento, encerramento de obra): um slide "pontos levantados nesta assembleia" juntando o que apareceu nos outros itens, com a referência do item de origem, deixa a decisão objetiva.
 
 # Regras de conteúdo (obrigatórias)
