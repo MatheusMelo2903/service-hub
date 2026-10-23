@@ -307,6 +307,23 @@
     const logDiv = $('consumo-log');
     $('consumo-log-card').style.display = 'block';
     st.lancando = true; travar(); render();
+    // Política de gravação: fora do condomínio de teste o servidor pede a confirmação da lista inteira
+    // (janela de confirmar-gravacao.js) e devolve um token que vale para cada leitura uma vez.
+    let confirmacao = null;
+    try {
+      const gravar = window.gravarNoSuperlogica || apiAuthFetch;
+      const rp = await gravar('/api/consumo/' + encodeURIComponent(c.id_superlogica) + '/previa-lote', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: p.tipo, mes: p.mes, dia, itens: marcadas.map((it) => ({ id_unidade: it.id_unidade, leitura: it.leitura, substituir: it.conf.suspeitas.some((s) => s.codigo === 'ja_lancada') })) }),
+      });
+      const dp = await lerJson(rp);
+      if (!rp.ok) throw new Error(dp.detalhe || ('erro ' + rp.status));
+      if (dp.confirmado && dp.confirmacao) confirmacao = dp.confirmacao;
+    } catch (e) {
+      addLog(logDiv, 'Nada lançado: ' + (e.message || e), 'err');
+      st.lancando = false; travar(); render();
+      return;
+    }
     let ok = 0, falhas = 0;
     for (const it of marcadas) {
       const rot = (it.conf && it.conf.rotulo) || ('unidade ' + it.id_unidade);
@@ -320,9 +337,14 @@
             foto: it.b64 ? { mime: 'image/jpeg', base64: it.b64 } : undefined,
             substituir: cods.includes('ja_lancada'),
             aceitar_suspeitas: cods.filter((x) => x === 'menor_que_anterior' || x === 'salto_alto'),
-            confirmacao: 'LANCAR' }),
+            confirmacao: 'LANCAR', confirmacao_gravacao: confirmacao ? { id_condominio: confirmacao.id_condominio, token: confirmacao.token } : undefined }),
         });
         const d = await lerJson(r);
+        if (r.status === 428) {
+          falhas++;
+          addLog(logDiv, 'A confirmação venceu ou mudou. Parei aqui: clique em Lançar de novo para confirmar as que faltam.', 'err');
+          break;
+        }
         if (r.ok && d.ok) {
           ok++; it.lancada = true; it.lancar = false; it.fotoInfo = d.foto;
           addLog(logDiv, rot + ': lançada' + (d.foto === 'guardada' ? ' com a foto' : d.foto === 'recusada' ? ' (o Superlógica não aceitou a foto)' : ''), 'ok');

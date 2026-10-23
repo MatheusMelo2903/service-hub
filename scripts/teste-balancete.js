@@ -155,6 +155,9 @@ criarRotasBalancete(app, {
   requireAuth, express, exigirModuloItem, exigirCarteira, exigirEscopo: async () => ({ escopo: null }), idValido: (v) => /^[1-9][0-9]{0,8}$/.test(String(v || '')),
   exigirFinanceiro: async (req, res) => { if (financeiro) return true; res.status(403).json({ erro: 'modulo_sem_acesso' }); return false; },
   exigirLeituraSuperlogica: async () => true, exigirEscritaSuperlogica: async (req, res) => { if (escrita) return true; res.status(403).json({ erro: 'acesso_negado' }); return false; }, cred: () => ({}), cliente: () => ({}), auditar: (req, acao) => eventos.push(acao),
+  // Política de gravação de verdade (servico/escrita-superlogica.js) com a base simulada.
+  politica: require('../servico/escrita-superlogica').criarPoliticaEscrita({ auditar: (req, acao) => eventos.push(acao),
+    condominioDaBase: async (id) => ({ 94: { nome: 'Condomínio Victoria Bay Club & Residence' }, 136: { nome: 'Casablanca' }, 167: { nome: 'Residencial Teste' } })[id] || null }),
 });
 const srv = app.listen(0, async () => {
   const porta = srv.address().port;
@@ -197,11 +200,22 @@ const srv = app.listen(0, async () => {
     t('outro condomínio não recebe o resultado', outro.st === 202 && !outro.j.resultado && iniciou === 2);
     const c2 = await pedir('GET', '/api/financeiro/balancete/94/conferencia?competencia=2026-09&impressao=647731');
     t('conferência pronta 200', c2.st === 200 && c2.j.resultado.ok === true);
-    t('gerar não liberado 403', (await pedir('POST', '/api/financeiro/balancete/136/gerar', { competencia: '2026-09' })).st === 403 && chamadasGerar === 0);
+    // Política de gravação (23/10/2026): fora do teste, 423 no modo teste; com a lista antiga, confirmação reforçada.
+    t('gerar não liberado 423', (await pedir('POST', '/api/financeiro/balancete/136/gerar', { competencia: '2026-09' })).st === 423 && chamadasGerar === 0);
     escrita = false;
-    t('gerar sem escrita 403', (await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09' })).st === 403 && chamadasGerar === 0);
+    t('gerar sem escrita 403', (await pedir('POST', '/api/financeiro/balancete/167/gerar', { competencia: '2026-09' })).st === 403 && chamadasGerar === 0);
     escrita = true;
-    t('T48: Victoria Bay sem variável não gera', (await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09' })).st === 403 && chamadasGerar === 0);
+    t('T48: Victoria Bay sem variável não gera', (await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09' })).st === 423 && chamadasGerar === 0);
+    process.env.BALANCETE_GERACAO_LIBERADA = '94';
+    t('lista antiga: Victoria Bay aparece liberado', (await pedir('GET', '/api/financeiro/balancete/94/impressoes?competencia=2026-09')).j.geracao_confirmacao === 'reforcada');
+    const p94 = await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09' });
+    t('lista antiga: 428 reforçado com o nome curto', p94.st === 428 && p94.j.confirmacao.reforcada === true && p94.j.confirmacao.nome_curto === 'Victoria Bay' && p94.j.resumo.condominio === 'Condomínio Victoria Bay Club & Residence' && chamadasGerar === 0);
+    const semNome = await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09', confirmacao_gravacao: { id_condominio: '94', token: p94.j.confirmacao.token } });
+    t('reforçado sem o nome digitado não gera', semNome.st === 428 && semNome.j.motivo === 'nome_nao_confere' && chamadasGerar === 0);
+    const comNome = await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09', confirmacao_gravacao: { id_condominio: '94', token: p94.j.confirmacao.token, nome_digitado: 'victória  bay' } });
+    t('reforçado com o nome digitado gera', comNome.st === 202 && chamadasGerar === 1 && eventos.includes('gravacao_superlogica'));
+    chamadasGerar = 0;
+    delete process.env.BALANCETE_GERACAO_LIBERADA;
     const g = await pedir('POST', '/api/financeiro/balancete/167/gerar', { competencia: '2026-09' });
     t('gerar liberado 202 e audita', g.st === 202 && chamadasGerar === 1 && eventos.includes('balancete_gerar'));
     t('gerar com mês ruim 400', (await pedir('POST', '/api/financeiro/balancete/167/gerar', { competencia: 'x' })).st === 400 && chamadasGerar === 1);

@@ -159,7 +159,8 @@
     var b = document.getElementById('bal-gerar');
     b.disabled = true;
     try {
-      var r = await apiAuthFetch('/api/financeiro/balancete/' + encodeURIComponent(est.cond.id) + '/gerar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ competencia: est.mes }) });
+      // Fora do condomínio de teste o servidor pede a confirmação reforçada (confirmar-gravacao.js).
+      var r = await (window.gravarNoSuperlogica || apiAuthFetch)('/api/financeiro/balancete/' + encodeURIComponent(est.cond.id) + '/gerar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ competencia: est.mes }) });
       var j = await r.json().catch(function () { return {}; });
       if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
       info(j.detalhe || 'Pedido enviado.');

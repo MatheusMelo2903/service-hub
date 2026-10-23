@@ -52,7 +52,8 @@
       var b64 = await o.pdfBase64();
       if (!b64) throw new Error('Não consegui montar o PDF.');
       if (b64.length * 3 / 4 > 15 * 1024 * 1024) throw new Error('O PDF passa de 15 MB, limite do Superlógica.');
-      var resp = await apiAuthFetch('/api/condominio/' + encodeURIComponent(o.idSuperlogica) + '/documentos', {
+      // Fora do condomínio de teste o servidor pede a confirmação (confirmar-gravacao.js).
+      var resp = await (window.gravarNoSuperlogica || apiAuthFetch)('/api/condominio/' + encodeURIComponent(o.idSuperlogica) + '/documentos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(Object.assign({}, o.extra || {}, { tipo: o.tipo, titulo: titulo, pdf_base64: b64, forcar: !!forcar }))

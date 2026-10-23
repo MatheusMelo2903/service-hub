@@ -18,8 +18,9 @@ function comEsc(s) {
 function comCond() { return (typeof getCondominioAtivo === 'function') ? getCondominioAtivo() : null; }
 function comV(id) { var el = document.getElementById(id); return el ? el.value : ''; }
 function comSet(id, v) { var el = document.getElementById(id); if (el) el.value = v; }
-async function comPost(url, corpo) {
-  var r = await apiAuthFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+// gravar: true quando a chamada grava no Superlógica (janela de confirmação em confirmar-gravacao.js).
+async function comPost(url, corpo, gravar) {
+  var r = await (gravar && window.gravarNoSuperlogica ? window.gravarNoSuperlogica : apiAuthFetch)(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
   var j = await r.json().catch(function () { return {}; });
   if (!r.ok) { var e = new Error(j.detalhe || ('Falha ' + r.status)); e.status = r.status; e.corpo = j; throw e; }
   j._status = r.status;
@@ -123,7 +124,7 @@ async function comPublicar() {
       id_superlogica: cond.id_superlogica, titulo: comV('com-titulo'), texto: comV('com-texto'),
       destinatario: Number(comV('com-destinatario')), canal: Number(comV('com-canal')),
       notificar: document.getElementById('com-notificar').checked, confirmacao: 'PUBLICAR',
-    });
+    }, true);
     document.getElementById('com-resultado').textContent = 'Publicado no Superlógica' + (j.id_comunicado ? ' (comunicado ' + j.id_comunicado + ')' : '') + '.' + (j.notificacao_pendente ? ' A notificação ficou na fila do Superlógica.' : '');
     addHistorico('Comunicado publicado: ' + comV('com-titulo') + ' · ' + cond.nome);
     toast('Comunicado publicado', 'ok');

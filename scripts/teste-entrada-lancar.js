@@ -252,6 +252,11 @@ async function testeRotas() {
     carteiraT18: { escopo: async () => ({ todas: true }) }, exigirLeituraSuperlogica: async () => true, superlogicaNativa: () => true,
     clienteSL: () => cli, credSL: () => ({}), dentroDoLimite: () => true, auditoria: { evento: (req, tipo, det) => eventos.push({ tipo, det }) }, processar: {},
     carteiraEstrita: async (req, res) => { if (negarCarteira > 0) { negarCarteira--; res.status(403).json({ erro: 'fora_da_carteira' }); return false; } return true; },
+    // Política de gravação de verdade (servico/escrita-superlogica.js) com a base simulada.
+    politica: require('../servico/escrita-superlogica').criarPoliticaEscrita({
+      auditar: (req, tipo, det) => eventos.push({ tipo, det }),
+      condominioDaBase: async (id) => ({ 167: { nome: 'Residencial Teste' }, 136: { nome: 'Condomínio Casablanca' } })[id] || null,
+    }),
   });
   const srv = app.listen(0);
   const porta = srv.address().port;
@@ -303,10 +308,15 @@ async function testeRotas() {
     r = await chama('POST', '/api/entrada/' + U(5) + '/lancar', { confirmacao: 'LANCAR', aceitar_alertas: ['mes_fechado'] });
     t('mês fechado recusa mesmo marcando', r.st === 409 && /fechado/.test(r.j.detalhe) && gravados.length === 4);
     bloqueio = paraSL(dia(-30));
-    process.env.ENTRADA_LANCAMENTO_LIBERADO = '136';
+    // Política de gravação (23/10/2026): o 167 é livre por ser o condomínio de teste (ESCRITA_TESTE).
+    process.env.ESCRITA_TESTE = '136';
     r = await chama('POST', '/api/entrada/' + U(5) + '/lancar', { confirmacao: 'LANCAR' });
-    t('lista sem o 167 trava o 167', r.st === 423 && gravados.length === 4);
-    delete process.env.ENTRADA_LANCAMENTO_LIBERADO;
+    t('teste sem o 167 trava o 167', r.st === 423 && gravados.length === 4);
+    delete process.env.ESCRITA_TESTE;
+    process.env.ESCRITA_SUPERLOGICA = 'off';
+    r = await chama('POST', '/api/entrada/' + U(5) + '/lancar', { confirmacao: 'LANCAR' });
+    t('interruptor off trava até o 167', r.st === 423 && r.j.motivo === 'escrita_desligada' && gravados.length === 4);
+    delete process.env.ESCRITA_SUPERLOGICA;
     podeLancarModulo = false;
     r = await chama('POST', '/api/entrada/' + U(5) + '/lancar', { confirmacao: 'LANCAR' });
     t('sem a ação lancar: 403', r.st === 403 && gravados.length === 4);
@@ -319,5 +329,29 @@ async function testeRotas() {
     t('gerar rascunho com alerta grave marcado', r.st === 200 && r.j.item.dados.pronto.aceitos.includes('condominio_diferente_do_documento') && gravados.length === 4);
     r = await chama('POST', '/api/entrada/' + U(5) + '/lancar', { confirmacao: 'LANCAR' });
     t('individual com tudo certo lança', r.st === 200 && r.j.conferido === true && gravados.length === 5 && mem.db.get(U(5)).resultado.origem === 'individual');
-  } finally { srv.close(); E.lancar = original; }
+    // Política de gravação no modo confirmacao: o 136 (fora do teste) só grava confirmando.
+    process.env.ESCRITA_SUPERLOGICA = 'confirmacao';
+    r = await chama('GET', '/api/entrada/fila?status=rascunho');
+    t('fila em confirmacao: 136 liberado com confirmação', r.st === 200 && r.j.so_teste === false && ((r.j.itens || []).find((x) => x.id === U(3)) || {}).lancar_com_confirmacao === true);
+    r = await chama('POST', '/api/entrada/' + U(3) + '/lancar', { confirmacao: 'LANCAR' });
+    t('136 sem token: 428 com resumo e nada gravado', r.st === 428 && r.j.erro === 'confirmacao_necessaria' && r.j.resumo.condominio === 'Condomínio Casablanca'
+      && r.j.resumo.linhas.some((l) => l.rotulo === 'Valor' && /250,00/.test(l.valor)) && r.j.confirmacao.id_condominio === '136' && gravados.length === 5);
+    const tok = r.j.confirmacao;
+    r = await chama('POST', '/api/entrada/' + U(3) + '/lancar', { confirmacao: 'LANCAR', aceitar_alertas: ['x'], confirmacao_gravacao: { id_condominio: '136', token: tok.token } });
+    t('conteúdo alterado (aceites diferentes): recusa e pede de novo', r.st === 428 && r.j.motivo === 'conteudo_alterado' && gravados.length === 5);
+    // O token novo vale para o pedido como ficou (com o aceite x).
+    r = await chama('POST', '/api/entrada/' + U(3) + '/lancar', { confirmacao: 'LANCAR', aceitar_alertas: ['x'], confirmacao_gravacao: { id_condominio: '136', token: r.j.confirmacao.token } });
+    t('136 com token: grava', r.st === 200 && gravados.length === 6 && gravados[5].cond === '136');
+    t('auditoria da gravação confirmada', eventos.some((e) => e.tipo === 'gravacao_superlogica' && e.det.operacao === 'entrada_lancar' && e.det.confirmada === true && e.det.ok === true && e.det.condominios[0] === '136'));
+    mem.db.set(U(20), linha(U(20), 136, conf(33, V2)));
+    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [item(12), item(20)] });
+    t('lote com 136: 428 do lote inteiro', r.st === 428 && r.j.resumo.operacao === 'Lançamento de despesas em lote' && gravados.length === 6);
+    const tl = r.j.confirmacao;
+    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [item(12), item(20)], confirmacao_gravacao: { id_condominio: tl.id_condominio, token: tl.token } });
+    t('lote confirmado grava o 136', r.st === 200 && (r.j.resultados || []).some((x) => x.id === U(20) && x.ok) && gravados.some((g) => g.cond === '136' && g.valor === 33));
+    mem.db.set(U(21), linha(U(21), 136, conf(34, V2)));
+    r = await chama('POST', '/api/entrada/lancar-lote', { confirmacao: 'LANCAR_LOTE', itens: [item(21)], confirmacao_gravacao: { id_condominio: tl.id_condominio, token: tl.token } });
+    t('lote: token já usado recusa', r.st === 409 && r.j.erro === 'confirmacao_ja_usada' && !gravados.some((g) => g.valor === 34));
+    delete process.env.ESCRITA_SUPERLOGICA;
+  } finally { srv.close(); E.lancar = original; delete process.env.ESCRITA_SUPERLOGICA; delete process.env.ESCRITA_TESTE; }
 }
