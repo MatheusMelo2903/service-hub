@@ -138,54 +138,121 @@ def analisar(dados: dict) -> dict:
 
     sinais = {
         "ha_alerta": ha_alerta, "resultado": round(res, 2), "cobertura": round(cob, 1),
-        "despesas_nao_recorrentes": [p for p in picos if p["tipo"] == "nao_recorrente"][:6],
+        "despesas_nao_recorrentes": [p for p in picos if p["tipo"] == "nao_recorrente"][:8],
         "despesas_sazonais": [p for p in picos if p["tipo"] == "sazonal"][:4],
+        "grupos": _agrupar(picos, meses),
         "total_nao_recorrente": extra, "total_sazonal": sazon,
         "cobertura_sem_nao_recorrentes": round(cob_sem, 1),
         "resultado_sem_nao_recorrentes": round(res + extra, 2),
         "meses_negativos": meses_neg, "quedas_arrecadacao": quedas,
         "saldo_inicial": round(ini, 2), "saldo_final": round(fim, 2),
         "caixa_cobriu": res < 0 and fim > 0,
+        "contas": _movimento_contas(dados.get("contas"), meses),
     }
     sinais["textos"] = textos_padrao(sinais)
     return sinais
 
 
+RESERVA = re.compile(r"FUNDO|RESERVA|POUPAN|APLICA|CAPITAL|TAXA|OBRA|INVEST|PROVIS|FERIAS|TRABALH|13", re.I)
+
+
+def _movimento_contas(contas, meses: list) -> list:
+    """Para cada conta: saldo no início e no fim, e os meses em que saiu ou entrou dinheiro
+    além do rendimento. Conta de reserva (fundo, poupança, aplicação) é marcada, porque o uso
+    dela é o que o morador precisa entender quando o caixa cai."""
+    out = []
+    for c in contas or []:
+        ini, fim = float(c.get("ini") or 0), float(c.get("fim") or 0)
+        sal = c.get("saldos")
+        saidas, entradas = [], []
+        if isinstance(sal, list) and len(sal) == len(meses) + 1:
+            for i in range(len(meses)):
+                d = float(sal[i + 1]) - float(sal[i])
+                limite = max(300.0, 0.01 * max(abs(float(sal[i])), 1.0))
+                if d < -limite:
+                    saidas.append({"mes": meses[i], "valor": round(-d, 2)})
+                elif d > limite:
+                    entradas.append({"mes": meses[i], "valor": round(d, 2)})
+        out.append({
+            "nome": _nome(c.get("nome")) if c.get("nome") else "Conta", "nome_original": c.get("nome"),
+            "reserva": bool(RESERVA.search(_sem_acento(c.get("nome")))),
+            "ini": round(ini, 2), "fim": round(fim, 2), "variacao": round(fim - ini, 2),
+            "saidas": saidas, "entradas": entradas,
+            "total_saidas": round(sum(x["valor"] for x in saidas), 2),
+        })
+    return out
+
+
+def _agrupar(picos: list, meses: list) -> list:
+    """Junta os meses fora do normal da mesma rubrica: 'reforma do salão, abr a ago/26, R$ 213 mil'."""
+    grupos = {}
+    for p in picos:
+        g = grupos.setdefault((p["categoria"], p["rubrica"]), {
+            "categoria": p["categoria"], "rubrica": p["rubrica"], "nome": p["nome"], "tipo": p["tipo"],
+            "meses": [], "valor": 0.0, "excesso": 0.0, "itens": []})
+        g["meses"].append(p["mes"]); g["valor"] += p["valor"]; g["excesso"] += p["excesso"]
+        for it in p["itens"]:
+            if it["rotulo"] and it["rotulo"] not in [x["rotulo"] for x in g["itens"]] and len(g["itens"]) < 6:
+                g["itens"].append(it)
+    lst = sorted(grupos.values(), key=lambda g: -g["excesso"])
+    for g in lst:
+        ordem = [m for m in meses if m in g["meses"]]
+        g["periodo"] = ordem[0] if len(ordem) == 1 else f"{ordem[0].split('/')[0]} a {ordem[-1]}"
+        g["valor"] = round(g["valor"], 2); g["excesso"] = round(g["excesso"], 2)
+    return lst[:6]
+
+
 def textos_padrao(s: dict) -> dict:
-    """Frases curtas para o slide, só com fatos dos dados. Vazio quando não há o que explicar."""
+    """Frases curtas para os slides, só com fatos dos dados (nomes das rubricas, meses, valores e
+    contas). A curadoria pode reescrever com mais naturalidade e com as observações do usuário;
+    estas ficam como base quando ela não escrever. Vazio quando não há o que explicar."""
     if not s.get("ha_alerta"):
         return {}
-    nr = s.get("despesas_nao_recorrentes") or []
-    sz = s.get("despesas_sazonais") or []
-    partes_causa = []
-    if nr:
-        nomes = ", ".join(f"{p['nome'].lower()} em {p['mes']}" for p in nr[:2])
-        partes_causa.append(f"despesas fora da rotina ({nomes}), que somaram {_brl_curto(s['total_nao_recorrente'])} acima do normal")
-    if sz:
-        partes_causa.append("despesas sazonais como " + sz[0]["nome"].lower())
-    if s.get("quedas_arrecadacao") and not nr:
-        partes_causa.append("meses com arrecadação abaixo da média")
-    causa = " e ".join(partes_causa)
+    grupos = [g for g in (s.get("grupos") or []) if g["tipo"] == "nao_recorrente"]
+    sazon = [g for g in (s.get("grupos") or []) if g["tipo"] == "sazonal"]
+    reservas = [c for c in (s.get("contas") or []) if c["reserva"] and c["total_saidas"] > 0]
+    reservas.sort(key=lambda c: -c["total_saidas"])
+
+    def lista_grupos(gs, n=2):
+        return " e ".join(f"{g['nome'].lower()} ({_brl_curto(g['valor'])}, {g['periodo']})" for g in gs[:n])
 
     out = {}
+    causa = ""
+    if grupos:
+        causa = "despesas fora da rotina: " + lista_grupos(grupos)
+    elif sazon:
+        causa = "despesas sazonais: " + lista_grupos(sazon)
+    elif s.get("quedas_arrecadacao"):
+        causa = "meses com arrecadação abaixo da média"
+    fonte = ""
+    if reservas:
+        r0 = reservas[0]
+        fonte = f"{r0['nome']} ({_brl_curto(r0['ini'])} para {_brl_curto(r0['fim'])})"
+
     if s["resultado"] < 0:
-        resumo = "O resultado negativo veio de " + causa + "." if causa else "As despesas do período superaram a arrecadação."
-        if nr and s["cobertura_sem_nao_recorrentes"] >= 98:
-            resumo += f" Sem elas, a receita cobriria {str(round(s['cobertura_sem_nao_recorrentes'])).replace('.', ',')}% da despesa."
-        if s.get("caixa_cobriu"):
-            resumo += " A diferença foi paga com o saldo que o condomínio já tinha guardado."
-        out["resumo"] = resumo
-        out["caixa"] = ("Queda porque o saldo acumulado pagou " + (causa if causa else "a diferença do período") + ".")
+        partes = [("O déficit veio de " + causa + ".") if causa else "As despesas do período superaram a arrecadação."]
+        if grupos and s["cobertura_sem_nao_recorrentes"] >= 98:
+            partes.append("Sem elas, a receita cobriria " + str(round(s["cobertura_sem_nao_recorrentes"])) + "% das despesas.")
+        if fonte:
+            partes.append(f"Foram pagas com recursos guardados: saíram {_brl_curto(reservas[0]['total_saidas'])} do {fonte}.")
+        elif s.get("caixa_cobriu"):
+            partes.append("A diferença foi paga com o saldo que o condomínio já tinha guardado.")
+        out["resumo"] = " ".join(partes)
+        curta = grupos[0]["nome"].lower() if grupos else (sazon[0]["nome"].lower() if sazon else "despesas acima da arrecadação")
+        out["caixa"] = (f"Uso planejado de reserva: {curta}" if fonte else f"Caixa usado para {curta}")
     elif s["meses_negativos"]:
-        out["resumo"] = ("O período fechou positivo. "
-                         + ("Os meses negativos foram pontuais: " + "; ".join(
-                             f"{m['mes']}, {m['motivos'][0]}" for m in s["meses_negativos"][:2] if m["motivos"]) + "."
-                            if any(m["motivos"] for m in s["meses_negativos"]) else "Os meses negativos foram compensados pelos demais."))
+        com = [m for m in s["meses_negativos"] if m["motivos"]]
+        out["resumo"] = "O período fechou positivo. " + (
+            "Meses negativos pontuais: " + "; ".join(f"{m['mes']}, {m['motivos'][0]}" for m in com[:2]) + "."
+            if com else "Os meses negativos foram compensados pelos demais.")
     out["meses"] = {m["mes"]: ", ".join(m["motivos"][:2]) for m in s["meses_negativos"] if m["motivos"]}
     out["rubricas"] = {}
-    for p in nr + sz:
-        k = p["categoria"] + "|" + p["rubrica"]
-        if k not in out["rubricas"]:
-            out["rubricas"][k] = (("Despesa sazonal" if p["tipo"] == "sazonal" else "Despesa fora da rotina")
-                                  + f" em {p['mes']}: {_brl_curto(p['valor'])}, contra {_brl_curto(p['normal'])} num mês normal.")
+    for g in grupos + sazon:
+        k = g["categoria"] + "|" + g["rubrica"]
+        o_que = ", ".join(i["rotulo"] for i in g["itens"][:2] if i["rotulo"])
+        out["rubricas"][k] = (("Despesa sazonal" if g["tipo"] == "sazonal" else "Fora da rotina")
+                              + f" em {g['periodo']}" + (f": {o_que}" if o_que else "") + ".")[:160]
+    if reservas:
+        out["contas"] = "; ".join(f"{c['nome']}: saíram {_brl_curto(c['total_saidas'])} em " +
+                                  ", ".join(x['mes'] for x in c['saidas'][:4]) for c in reservas[:2]) + "."
     return out

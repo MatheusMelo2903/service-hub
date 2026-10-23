@@ -171,6 +171,28 @@ def de_superlogica(bruto: dict) -> dict:
     return {"dados": dados, "rascunho": rascunho}
 
 
+def _contas_validas(contas, s_ini: float, s_fim: float, n: int):
+    """Saldo de cada conta (vindo do Hub). Só vale se a soma das contas bater com o caixa
+    no início e no fim; senão a prestação segue sem esse detalhe (nunca mostra conta que não fecha)."""
+    if not isinstance(contas, list) or not contas:
+        return None
+    lst = []
+    for c in contas:
+        if not isinstance(c, dict):
+            return None
+        try:
+            ini, fim = round(float(c.get("ini")), 2), round(float(c.get("fim")), 2)
+        except (TypeError, ValueError):
+            return None
+        sal = c.get("saldos")
+        if not (isinstance(sal, list) and len(sal) == n + 1 and all(isinstance(v, (int, float)) for v in sal)):
+            sal = None
+        lst.append({"nome": _norm(c.get("nome")) or "Conta", "ini": ini, "fim": fim, "saldos": sal})
+    if abs(sum(c["ini"] for c in lst) - s_ini) > 1 or abs(sum(c["fim"] for c in lst) - s_fim) > 1:
+        return None
+    return lst
+
+
 def montar_dados(bruto: dict, extrair_mod) -> dict:
     """bruto = {condominio:{nome,fantasia}, inicio, fim, balancetes:{AAAA-MM: json},
     saldo_inicial, saldo_final_ref (ou None), despesas:[...]}."""
@@ -241,7 +263,8 @@ def montar_dados(bruto: dict, extrair_mod) -> dict:
 
     cond = bruto.get("condominio") or {}
     nome = _norm(cond.get("fantasia") or cond.get("nome") or "")
-    return dict(condominio=nome, modo="detalhado", fonte_itens="superlogica", periodo=periodo,
+    contas = _contas_validas(bruto.get("contas"), s_ini, saldos[-1], len(periodo))
+    return dict(condominio=nome, modo="detalhado", fonte_itens="superlogica", periodo=periodo, contas=contas,
                 meses_label=[_rotulo_mes(m) for m in periodo], saldo_anterior=s_ini, saldo_final=saldos[-1],
                 receitas_mes=rec_m, despesas_mes=desp_m, saldo_fim_mes=saldos,
                 receitas=sorted(receitas, key=lambda r: -r["total"]),
