@@ -94,7 +94,7 @@ async function dashSalvarNovoCondominio() {
 // abaixo do limite e despesas recorrentes não lançadas. Marcar visto ou resolvido
 // fica guardado no servidor (tabela alertas). Rota: /api/condominio/:id/alertas.
 // ============================================================
-var alertasEstado = { seq: 0, idCarregado: null };
+var alertasEstado = { seq: 0, idCarregado: null, verSilenciados: false, ultimo: null };
 var ALERTA_ROTULO = { mandato_vencendo: 'Mandato', advertencia_vencida: 'Advertência', conta_a_vencer: 'A vencer', saldo_baixo: 'Saldo', recorrente_nao_lancada: 'Recorrente',
   sem_nota_fiscal: 'Sem nota', manutencao_atrasada: 'Manutenção', consumo_fora_padrao: 'Consumo', certidao_vencendo: 'Certidão', certidao_vencida: 'Certidão' };
 
@@ -135,6 +135,7 @@ async function alertasDashAbrir(forcar) {
     alertasEstado.idCarregado = cond.id_superlogica;
     var inp = document.getElementById('alertas-saldo-min');
     if (inp && document.activeElement !== inp) inp.value = j.saldo_minimo ? String(j.saldo_minimo).replace('.', ',') : '';
+    alertasEstado.ultimo = j;
     alertasRender(j);
   } catch (e) {
     if (seq !== alertasEstado.seq) return;
@@ -142,38 +143,83 @@ async function alertasDashAbrir(forcar) {
   }
 }
 
+// T51: link "Central de alertas" no cabeçalho do cartão. A função vem de outro arquivo;
+// enquanto ela não existir o link fica escondido.
+function alertasLinkCentral() {
+  var card = document.getElementById('alertas-card');
+  var cab = card ? card.querySelector('.card-header') : null;
+  if (!cab) return;
+  var tem = !!(window.CentralAlertas && typeof window.CentralAlertas.abrir === 'function');
+  var link = document.getElementById('alertas-link-central');
+  if (!link && tem) {
+    link = document.createElement('a');
+    link.id = 'alertas-link-central';
+    link.href = '#';
+    link.textContent = 'Central de alertas';
+    link.style.cssText = 'font-size:11px;font-family:var(--mono);margin-left:10px';
+    link.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      if (window.CentralAlertas && typeof window.CentralAlertas.abrir === 'function') window.CentralAlertas.abrir();
+    });
+    var titulo = cab.querySelector('.card-title');
+    if (titulo) titulo.insertAdjacentElement('afterend', link); else cab.appendChild(link);
+  }
+  if (link) link.style.display = tem ? '' : 'none';
+}
+
+function alertasVerSilenciados() {
+  alertasEstado.verSilenciados = !alertasEstado.verSilenciados;
+  if (alertasEstado.ultimo) alertasRender(alertasEstado.ultimo);
+}
+
 function alertasRender(j) {
+  alertasLinkCentral();
   var lista = document.getElementById('alertas-lista');
-  var itens = Array.isArray(j.alertas) ? j.alertas : [];
+  var todosItens = Array.isArray(j.alertas) ? j.alertas : [];
+  // T51: o servidor marca silenciado:true no que a pessoa desligou em "Meus alertas".
+  // Esses saem da lista e só aparecem, apagados, quando ela pede para ver.
+  var itens = todosItens.filter(function (a) { return !(a && a.silenciado === true); });
+  var silenciados = todosItens.filter(function (a) { return a && a.silenciado === true; });
   var html = '';
   if (Array.isArray(j.falhas) && j.falhas.length) {
     html += '<div style="font-size:11px;color:var(--warning);font-family:var(--mono)">Não foi possível ler agora: ' + alertasEsc(j.falhas.join(', ')) + '.</div>';
   }
+  var linhaSil = '';
+  if (silenciados.length) {
+    linhaSil = '<div style="font-size:11px;color:var(--muted);font-family:var(--mono)">' + silenciados.length + (silenciados.length === 1 ? ' silenciado' : ' silenciados') + ' por você · ' +
+      '<a href="#" onclick="alertasVerSilenciados();return false">' + (alertasEstado.verSilenciados ? 'esconder' : 'ver') + '</a></div>';
+    if (alertasEstado.verSilenciados) {
+      linhaSil += '<div style="display:flex;flex-direction:column;gap:6px;opacity:0.45">' + silenciados.map(alertasLinha).join('') + '</div>';
+    }
+  }
   if (!itens.length) {
     html += '<div style="font-size:12px;color:var(--success);font-family:var(--mono)">Nenhum alerta aberto para este condomínio.</div>';
-    lista.innerHTML = html;
+    lista.innerHTML = html + linhaSil;
     return;
   }
-  html += itens.map(function (a) {
-    var d = a.detalhe || {};
-    var extra = '';
-    if (a.tipo === 'conta_a_vencer') extra = alertasBRL(d.valor) + (d.descricao ? ' · ' + d.descricao : '');
-    if (a.tipo === 'saldo_baixo') extra = (d.conta || '') + ': ' + alertasBRL(d.saldo) + ' (limite ' + alertasBRL(d.limite) + ')';
-    if (a.tipo === 'recorrente_nao_lancada') extra = 'último lançamento ' + (d.ultimo_vencimento || '') + ', ' + alertasBRL(d.valor_ultimo);
-    // T08: o servidor manda o resumo pronto (nota fiscal, manutenção e consumo).
-    if (!extra && d.resumo) extra = d.resumo;
-    var cor = a.status === 'novo' ? 'var(--warning)' : a.status === 'visto' ? 'var(--muted)' : 'var(--success)';
-    var botoes = '';
-    if (a.id && a.status !== 'visto' && a.status !== 'resolvido') botoes += '<button class="btn btn-ghost" style="font-size:10px;padding:4px 8px" onclick="alertasMarcar(\'' + a.id + '\',\'visto\')">Visto</button>';
-    if (a.id && a.status !== 'resolvido') botoes += '<button class="btn btn-ghost" style="font-size:10px;padding:4px 8px" onclick="alertasMarcar(\'' + a.id + '\',\'resolvido\')">Resolvido</button>';
-    if (a.id && a.status === 'resolvido') botoes += '<button class="btn btn-ghost" style="font-size:10px;padding:4px 8px" onclick="alertasMarcar(\'' + a.id + '\',\'novo\')">Reabrir</button>';
-    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-left:3px solid ' + cor + ';border-radius:8px">' +
-      '<span style="font-size:10px;font-family:var(--mono);color:' + cor + ';text-transform:uppercase;min-width:74px">' + alertasEsc(ALERTA_ROTULO[a.tipo] || a.tipo) + '</span>' +
-      '<div style="flex:1;min-width:0"><div style="font-size:13px;color:var(--text)">' + alertasEsc(a.titulo) + '</div>' +
-      '<div style="font-size:11px;color:var(--muted);font-family:var(--mono)">' + alertasEsc(extra) + '</div></div>' +
-      '<div style="display:flex;gap:6px">' + botoes + '</div></div>';
-  }).join('');
-  lista.innerHTML = html;
+  html += itens.map(alertasLinha).join('');
+  lista.innerHTML = html + linhaSil;
+}
+
+// Uma linha de alerta do cartão (mesmo desenho de antes, agora reaproveitado para os silenciados).
+function alertasLinha(a) {
+  var d = a.detalhe || {};
+  var extra = '';
+  if (a.tipo === 'conta_a_vencer') extra = alertasBRL(d.valor) + (d.descricao ? ' · ' + d.descricao : '');
+  if (a.tipo === 'saldo_baixo') extra = (d.conta || '') + ': ' + alertasBRL(d.saldo) + ' (limite ' + alertasBRL(d.limite) + ')';
+  if (a.tipo === 'recorrente_nao_lancada') extra = 'último lançamento ' + (d.ultimo_vencimento || '') + ', ' + alertasBRL(d.valor_ultimo);
+  // T08: o servidor manda o resumo pronto (nota fiscal, manutenção e consumo).
+  if (!extra && d.resumo) extra = d.resumo;
+  var cor = a.status === 'novo' ? 'var(--warning)' : a.status === 'visto' ? 'var(--muted)' : 'var(--success)';
+  var botoes = '';
+  if (a.id && a.status !== 'visto' && a.status !== 'resolvido') botoes += '<button class="btn btn-ghost" style="font-size:10px;padding:4px 8px" onclick="alertasMarcar(\'' + a.id + '\',\'visto\')">Visto</button>';
+  if (a.id && a.status !== 'resolvido') botoes += '<button class="btn btn-ghost" style="font-size:10px;padding:4px 8px" onclick="alertasMarcar(\'' + a.id + '\',\'resolvido\')">Resolvido</button>';
+  if (a.id && a.status === 'resolvido') botoes += '<button class="btn btn-ghost" style="font-size:10px;padding:4px 8px" onclick="alertasMarcar(\'' + a.id + '\',\'novo\')">Reabrir</button>';
+  return '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-left:3px solid ' + cor + ';border-radius:8px">' +
+    '<span style="font-size:10px;font-family:var(--mono);color:' + cor + ';text-transform:uppercase;min-width:74px">' + alertasEsc(ALERTA_ROTULO[a.tipo] || a.tipo) + '</span>' +
+    '<div style="flex:1;min-width:0"><div style="font-size:13px;color:var(--text)">' + alertasEsc(a.titulo) + '</div>' +
+    '<div style="font-size:11px;color:var(--muted);font-family:var(--mono)">' + alertasEsc(extra) + '</div></div>' +
+    '<div style="display:flex;gap:6px">' + botoes + '</div></div>';
 }
 
 async function alertasMarcar(id, status) {
@@ -208,8 +254,9 @@ async function alertasSalvarSaldo() {
 window.addEventListener('condominioAtivo:trocou', function () {
   alertasEstado.seq++;
   alertasEstado.idCarregado = null;
+  alertasEstado.ultimo = null;
   var inp = document.getElementById('alertas-saldo-min'); if (inp) inp.value = '';
   if (alertasPainelAberto()) alertasDashAbrir();
 });
-document.addEventListener('auth:ready', function () { if (alertasPainelAberto()) alertasDashAbrir(); });
-setTimeout(function () { if (alertasPainelAberto() && window.AUTH_TOKEN) alertasDashAbrir(); }, 0);
+document.addEventListener('auth:ready', function () { alertasLinkCentral(); if (alertasPainelAberto()) alertasDashAbrir(); });
+setTimeout(function () { alertasLinkCentral(); if (alertasPainelAberto() && window.AUTH_TOKEN) alertasDashAbrir(); }, 0);

@@ -6,7 +6,7 @@
 // O servidor decide quem vê (OPERACIONAL não vê nada); aqui é só a tela. Nada é enviado para fora do Hub.
 // ============================================================
 (function () {
-  var est = { dados: null, sel: '', mostrarTudo: {}, ultimaCarga: 0, carregando: false, vigia: null };
+  var est = { dados: null, sel: '', mostrarTudo: {}, verSil: {}, ultimaCarga: 0, carregando: false, vigia: null };
   var GRAV = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
   var COR = { alta: 'var(--danger, #e05050)', media: '#d99a2b', baixa: 'var(--muted, #888)' };
 
@@ -82,10 +82,10 @@
   function seletorCarteira(d) {
     var o = '<select id="avisos-carteira" style="width:auto;min-width:220px"><option value="">Todas as carteiras</option>';
     (d.carteiras || []).forEach(function (c) {
-      o += '<option value="' + esc(c.id) + '"' + (String(c.id) === est.sel ? ' selected' : '') + '>' + esc(c.nome) + ' (' + ((c.totais && c.totais.itens) || 0) + ')</option>';
+      o += '<option value="' + esc(c.id) + '"' + (String(c.id) === est.sel ? ' selected' : '') + '>' + esc(c.nome) + ' (' + (totaisVisiveis(c).itens || 0) + ')</option>';
     });
     if (d.sem_carteira && d.sem_carteira.itens && d.sem_carteira.itens.length) {
-      o += '<option value="sem"' + (est.sel === 'sem' ? ' selected' : '') + '>Fora de carteira (' + d.sem_carteira.itens.length + ')</option>';
+      o += '<option value="sem"' + (est.sel === 'sem' ? ' selected' : '') + '>Fora de carteira (' + naoSilenciados(d.sem_carteira.itens).length + ')</option>';
     }
     return o + '</select>';
   }
@@ -93,31 +93,57 @@
   function maisBotao(chave, total, vis) {
     return total > vis ? '<button class="btn btn-ghost" data-acao="tudo" data-chave="' + esc(chave) + '" style="margin-top:6px">Mostrar todos (' + total + ')</button>' : '';
   }
-  function listaItens(chave, itens, limite) {
-    if (!itens.length) return '<div class="hint">Nada pendente.</div>';
+  // T51: o servidor marca silenciado:true no que a pessoa desligou em "Meus alertas".
+  // Some da lista e dos contadores; a linha "N silenciados por você · ver" mostra apagados.
+  function silenciado(i) { return !!(i && i.silenciado === true); }
+  function naoSilenciados(lista) { return (lista || []).filter(function (i) { return !silenciado(i); }); }
+  function linhaSilenciados(chave, sil, desenhaUm) {
+    if (!sil.length) return '';
+    var aberto = !!est.verSil[chave];
+    var h = '<div class="hint" style="margin-top:6px">' + sil.length + (sil.length === 1 ? ' silenciado' : ' silenciados') + ' por você · ' +
+      '<a href="#" data-acao="sil" data-chave="' + esc(chave) + '">' + (aberto ? 'esconder' : 'ver') + '</a></div>';
+    if (aberto) h += '<div style="opacity:0.45">' + sil.map(desenhaUm).join('') + '</div>';
+    return h;
+  }
+  function linhaItem(i) {
+    return '<div style="' + LINHA + '">' + selo(i.gravidade) + '<div style="flex:1"><div style="font-size:13px"><b>' +
+      esc(i.condominio || ('Condomínio ' + i.id_condominio)) + '</b>: ' + esc(i.titulo) + '</div>' +
+      (i.detalhe ? '<div class="hint">' + esc(i.detalhe) + '</div>' : '') + '</div></div>';
+  }
+  function listaItens(chave, todos, limite) {
+    var itens = naoSilenciados(todos);
+    var sil = (todos || []).filter(silenciado);
+    if (!itens.length) return '<div class="hint">Nada pendente.</div>' + linhaSilenciados(chave, sil, linhaItem);
     var vis = est.mostrarTudo[chave] ? itens : itens.slice(0, limite || 12);
-    var h = '';
-    vis.forEach(function (i) {
-      h += '<div style="' + LINHA + '">' + selo(i.gravidade) + '<div style="flex:1"><div style="font-size:13px"><b>' +
-        esc(i.condominio || ('Condomínio ' + i.id_condominio)) + '</b>: ' + esc(i.titulo) + '</div>' +
-        (i.detalhe ? '<div class="hint">' + esc(i.detalhe) + '</div>' : '') + '</div></div>';
-    });
-    return h + maisBotao(chave, itens.length, vis.length);
+    var h = vis.map(linhaItem).join('');
+    return h + maisBotao(chave, itens.length, vis.length) + linhaSilenciados(chave, sil, linhaItem);
   }
   function contagem(t) {
     t = t || {};
     return (t.alta || 0) + ' alta, ' + (t.media || 0) + ' média, ' + (t.baixa || 0) + ' baixa';
   }
+  // Totais da carteira sem os silenciados (o servidor manda os totais com tudo).
+  function totaisVisiveis(c) {
+    var t = {}, k;
+    var base = (c && c.totais) || {};
+    for (k in base) if (Object.prototype.hasOwnProperty.call(base, k)) t[k] = base[k];
+    (c && c.itens || []).forEach(function (i) {
+      if (!silenciado(i)) return;
+      if (t.itens) t.itens--;
+      if (t[i.gravidade]) t[i.gravidade]--;
+    });
+    return t;
+  }
   function blocoCarteira(c, chave) {
     var antigo = c.dia && est.dados && c.dia !== est.dados.hoje ? ', resumo de ' + dataBR(c.dia) : '';
-    return '<div style="margin:14px 0 6px;font-size:13px;font-weight:600">' + esc(c.nome) + ' <span class="hint">(' + contagem(c.totais) + esc(antigo) + ')</span></div>' +
+    return '<div style="margin:14px 0 6px;font-size:13px;font-weight:600">' + esc(c.nome) + ' <span class="hint">(' + contagem(totaisVisiveis(c)) + esc(antigo) + ')</span></div>' +
       listaItens(chave || ('c' + c.id), c.itens || []);
   }
   function quadroCarteiras(d) {
     var h = '<div style="margin:10px 0 4px;font-size:13px;font-weight:600">Carteiras</div>';
     (d.carteiras || []).forEach(function (c) {
       h += '<div style="' + LINHA + ';cursor:pointer" data-acao="escolher" data-id="' + esc(c.id) + '"><div style="flex:1;font-size:13px">' + esc(c.nome) +
-        (c.gerente ? ' <span class="hint">' + esc(c.gerente) + '</span>' : '') + '</div><div class="hint">' + (c.condominios || 0) + ' condomínios, ' + contagem(c.totais) + '</div></div>';
+        (c.gerente ? ' <span class="hint">' + esc(c.gerente) + '</span>' : '') + '</div><div class="hint">' + (c.condominios || 0) + ' condomínios, ' + contagem(totaisVisiveis(c)) + '</div></div>';
     });
     return h;
   }
@@ -137,10 +163,12 @@
     return vis.map(function (e) { return linhaErro(e, gestor); }).join('') + maisBotao(chave, erros.length, vis.length);
   }
   function blocoErros(d) {
-    var erros = d.erros || [];
+    var erros = naoSilenciados(d.erros);
+    var silE = (d.erros || []).filter(silenciado);
+    var rodape = linhaSilenciados('erros', silE, function (e) { return linhaErro(e, !!d.gestor); });
     var h = '<div style="margin:18px 0 6px;font-size:13px;font-weight:600">' + (d.gestor ? 'Erros por analista' : 'Erros nos seus lançamentos') + '</div>';
-    if (!d.gestor) return h + (erros.length ? listaErros('meus', erros, false) : '<div class="hint">Nenhum erro nos seus lançamentos dos últimos dias.</div>');
-    if (!erros.length) return h + '<div class="hint">Nenhum erro ligado a um usuário do Superlógica.</div>';
+    if (!d.gestor) return h + (erros.length ? listaErros('meus', erros, false) : '<div class="hint">Nenhum erro nos seus lançamentos dos últimos dias.</div>') + rodape;
+    if (!erros.length) return h + '<div class="hint">Nenhum erro ligado a um usuário do Superlógica.</div>' + rodape;
     var vinc = {};
     (d.vinculos || []).forEach(function (v) { vinc[String(v.id_usuario_sl)] = v; });
     var grupos = {}, ordem = [];
@@ -152,7 +180,7 @@
       h += '<div style="margin:10px 0 2px;font-size:13px"><b>' + esc(grupos[k][0].autor) + '</b> <span class="hint">(' + grupos[k].length + (grupos[k].length === 1 ? ' erro, ' : ' erros, ') + situacao + ')</span></div>' +
         listaErros('u' + k, grupos[k], true, 3);
     });
-    return h;
+    return h + rodape;
   }
 
   function desenhar() {
@@ -185,6 +213,7 @@
     if (!alvo) return;
     var a = alvo.getAttribute('data-acao');
     if (a === 'tudo') { est.mostrarTudo[alvo.getAttribute('data-chave')] = true; desenhar(); }
+    else if (a === 'sil') { ev.preventDefault(); var ch = alvo.getAttribute('data-chave'); est.verSil[ch] = !est.verSil[ch]; desenhar(); }
     else if (a === 'escolher') { est.sel = alvo.getAttribute('data-id') || ''; desenhar(); }
     else if (a === 'gerar') gerar();
     else if (a === 'vinculos') abrirVinculos();

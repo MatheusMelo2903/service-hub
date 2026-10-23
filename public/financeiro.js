@@ -67,7 +67,7 @@
   });
 
   // 3. Utilitários.
-  var est = { aberto: false, seqQ: 0, seqD: 0, cond: null, alertas: null, aba: 'alertas' };
+  var est = { aberto: false, seqQ: 0, seqD: 0, cond: null, alertas: null, aba: 'alertas', verSilDet: false };
   function esc(s) {
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
@@ -172,8 +172,36 @@
     }
   };
 
+  // T51: tipos que a pessoa silenciou em "Meus alertas". O resumo chega com os números de tudo;
+  // o servidor marca o tipo em por_tipo[tipo].silenciado (ou manda a lista tipos_silenciados)
+  // e aqui eles saem de Alta, Média, Baixa, Valor em alta e Principais.
+  function semSilenciados(c, globais) {
+    var g0 = c.por_gravidade || {};
+    var g = { alta: g0.alta || 0, media: g0.media || 0, baixa: g0.baixa || 0 };
+    var pt = c.por_tipo || {};
+    var valor = Number(c.valor_alta) || 0, total = Number(c.total) || 0, sil = [], qtd = 0;
+    Object.keys(pt).forEach(function (k) {
+      var t = pt[k] || {};
+      if (!(t.silenciado === true || globais.indexOf(k) >= 0)) return;
+      sil.push(t);
+      qtd += Number(t.total) || 0;
+      ['alta', 'media', 'baixa'].forEach(function (n) { g[n] = Math.max(0, g[n] - (Number(t[n]) || 0)); });
+      if (typeof t.valor_alta === 'number') valor -= t.valor_alta;
+    });
+    var tipos = Object.keys(pt).map(function (k) { return pt[k]; }).filter(function (t) { return sil.indexOf(t) < 0; });
+    return Object.assign({}, c, { por_gravidade: g, valor_alta: Math.max(0, Math.round(valor * 100) / 100), total: Math.max(0, total - qtd), tiposVisiveis: tipos, tiposSil: sil, qtdSil: qtd });
+  }
+  function principais(tipos) {
+    return tipos.slice().sort(function (a, b) { return b.alta - a.alta || b.total - a.total; }).slice(0, 3)
+      .map(function (t) { return esc(t.descricao) + ' (' + t.total + ')'; }).join('; ');
+  }
+
   function renderQuadro(j) {
-    var lista = j.condominios || [];
+    var globais = Array.isArray(j.tipos_silenciados) ? j.tipos_silenciados.map(String) : [];
+    var lista = (j.condominios || []).map(function (c) { return semSilenciados(c, globais); });
+    var qtdSil = lista.reduce(function (s, c) { return s + c.qtdSil; }, 0);
+    // Mesma ordem do servidor, refeita só quando algum silenciado mudou os números.
+    if (qtdSil) lista.sort(function (a, b) { return b.por_gravidade.alta - a.por_gravidade.alta || b.por_gravidade.media - a.por_gravidade.media || b.total - a.total || String(a.condominio || '').localeCompare(String(b.condominio || '')); });
     var p = j.periodo || {};
     var info = 'Calculado em ' + horaBR(j.gerado_em) + '. Pagas desde ' + dataBR(p.pagas_desde) + ', pendentes até ' + dataBR(p.pendentes_ate)
       + ', mexidas dos dias ' + (p.auditoria_dias || []).map(dataBR).join(', ') + '.'
@@ -184,13 +212,13 @@
     if (!lista.length) { el.innerHTML = '<div class="hint">Nenhum condomínio com dados nesta carteira.</div>'; return; }
     var th = 'style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border2)"';
     var td = 'style="padding:6px 8px;font-size:12px;border-bottom:1px solid var(--border)"';
-    var html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>'
+    var html = (qtdSil ? '<div class="hint" style="margin-bottom:6px">' + qtdSil + (qtdSil === 1 ? ' alerta silenciado' : ' alertas silenciados') + ' por você · <a href="#" id="fin-quadro-sil">ver</a></div>' : '')
+      + '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>'
       + '<th ' + th + '>Condomínio</th><th ' + th + '>Analista</th><th ' + th + '>Alta</th><th ' + th + '>Média</th><th ' + th + '>Baixa</th><th ' + th + '>Valor em alta</th><th ' + th + '>Principais</th>'
       + (fechamentoLigado() ? '<th ' + th + '>Fechamento</th>' : '') + '</tr></thead><tbody>';
     lista.forEach(function (c) {
-      var tipos = Object.keys(c.por_tipo || {}).map(function (k) { return c.por_tipo[k]; })
-        .sort(function (a, b) { return b.alta - a.alta || b.total - a.total; }).slice(0, 3)
-        .map(function (t) { return esc(t.descricao) + ' (' + t.total + ')'; }).join('; ');
+      var tipos = principais(c.tiposVisiveis);
+      if (c.tiposSil.length) tipos += '<span data-fin-sil style="display:none;opacity:0.5">' + (tipos ? '<br>' : '') + 'Silenciados: ' + principais(c.tiposSil) + '</span>';
       var g = c.por_gravidade || {};
       html += '<tr data-fin-cond="' + esc(c.id_condominio) + '" data-fin-nome="' + esc(c.condominio) + '" style="cursor:pointer" title="Abrir os alertas">'
         + '<td ' + td + '><b>' + esc(c.condominio || ('Código ' + c.id_condominio)) + '</b> <span style="color:var(--muted);font-family:var(--mono);font-size:11px">' + esc(c.id_condominio) + '</span></td>'
@@ -203,6 +231,13 @@
         + (fechamentoLigado() ? '<td ' + td + ' data-fin-fech="' + esc(c.id_condominio) + '"></td>' : '') + '</tr>';
     });
     el.innerHTML = html + '</tbody></table></div>';
+    var linkSil = document.getElementById('fin-quadro-sil');
+    if (linkSil) linkSil.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      var abrir = linkSil.textContent === 'ver';
+      linkSil.textContent = abrir ? 'esconder' : 'ver';
+      el.querySelectorAll('[data-fin-sil]').forEach(function (sp) { sp.style.display = abrir ? '' : 'none'; });
+    });
     el.querySelectorAll('tr[data-fin-cond]').forEach(function (tr) {
       tr.addEventListener('click', function () { finAbrirCondominio(tr.getAttribute('data-fin-cond'), tr.getAttribute('data-fin-nome')); });
     });
@@ -285,20 +320,39 @@
     if (!j || !lista) return;
     var selTipo = document.getElementById('fin-filtro-tipo');
     var tipoAtual = selTipo.value;
+    // T51: silenciados (silenciado:true do servidor) saem da lista, do filtro e da contagem.
+    var todos = j.alertas || [];
+    var base = todos.filter(function (a) { return !(a && a.silenciado === true); });
+    var sil = todos.filter(function (a) { return a && a.silenciado === true; });
     var tipos = {};
-    (j.alertas || []).forEach(function (a) { tipos[a.tipo] = a.descricao_tipo || a.tipo; });
+    base.forEach(function (a) { tipos[a.tipo] = a.descricao_tipo || a.tipo; });
     selTipo.innerHTML = '<option value="">Todos os tipos</option>' + Object.keys(tipos).sort().map(function (k) {
       return '<option value="' + esc(k) + '"' + (k === tipoAtual ? ' selected' : '') + '>' + esc(tipos[k]) + '</option>';
     }).join('');
     var g = document.getElementById('fin-filtro-grav').value;
     var t = selTipo.value;
-    var vis = (j.alertas || []).filter(function (a) { return (!g || a.gravidade === g) && (!t || a.tipo === t); });
-    msg('fin-alertas-info', (j.alertas || []).length + ' alerta(s), ' + vis.length + ' na lista. Calculado em ' + horaBR(j.gerado_em) + '.'
+    var vis = base.filter(function (a) { return (!g || a.gravidade === g) && (!t || a.tipo === t); });
+    msg('fin-alertas-info', base.length + ' alerta(s), ' + vis.length + ' na lista. Calculado em ' + horaBR(j.gerado_em) + '.'
       + (j.analista ? ' Analista: ' + j.analista + '.' : '') + (j.recalculando ? ' Atualizando em segundo plano.' : ''));
-    if (!vis.length) { lista.innerHTML = '<div class="hint">Nenhum alerta com esse filtro.</div>'; return; }
+    var rodape = '';
+    if (sil.length) {
+      rodape = '<div class="hint" style="margin-top:8px">' + sil.length + (sil.length === 1 ? ' silenciado' : ' silenciados') + ' por você · <a href="#" id="fin-alertas-sil">' + (est.verSilDet ? 'esconder' : 'ver') + '</a></div>';
+      if (est.verSilDet) rodape += '<div style="opacity:0.45">' + tabelaAlertas(sil.slice(0, 300)) + '</div>';
+    }
     var MAX = 300;
+    if (!vis.length) lista.innerHTML = '<div class="hint">Nenhum alerta com esse filtro.</div>' + rodape;
+    else {
+      var html = tabelaAlertas(vis.slice(0, MAX));
+      if (vis.length > MAX) html += '<div class="hint" style="margin-top:6px">Mostrando os ' + MAX + ' mais graves de ' + vis.length + '. Use os filtros para ver os outros.</div>';
+      lista.innerHTML = html + rodape;
+    }
+    var ls = document.getElementById('fin-alertas-sil');
+    if (ls) ls.addEventListener('click', function (ev) { ev.preventDefault(); est.verSilDet = !est.verSilDet; renderAlertas(); });
+  }
+  // Tabela de alertas do condomínio (a mesma para os visíveis e para os silenciados).
+  function tabelaAlertas(itens) {
     var html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Gravidade</th><th ' + TH + '>Tipo</th><th ' + TH + '>Fornecedor e documento</th><th ' + TH + '>Valor</th><th ' + TH + '>Datas</th><th ' + TH + '>O que houve</th><th ' + TH + '>Responsável</th><th ' + TH + '></th></tr></thead><tbody>';
-    vis.slice(0, MAX).forEach(function (a) {
+    itens.forEach(function (a) {
       var datas = [a.dt_vencimento ? 'venc. ' + dataBR(a.dt_vencimento) : '', a.dt_liquidacao ? 'pago ' + dataBR(a.dt_liquidacao) : '', a.dt_lancamento ? 'lançado ' + dataBR(a.dt_lancamento) : ''].filter(Boolean).join('<br>');
       var link = linkSeguro(a.link);
       html += '<tr><td ' + TD + '>' + selo(a.gravidade) + '</td>'
@@ -310,9 +364,7 @@
         + '<td ' + TD + '>' + esc(a.usuario || a.analista || '') + '</td>'
         + '<td ' + TD + '>' + (link ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer" style="font-size:12px;white-space:nowrap">Abrir no Superlógica</a>' : '') + '</td></tr>';
     });
-    html += '</tbody></table></div>';
-    if (vis.length > MAX) html += '<div class="hint" style="margin-top:6px">Mostrando os ' + MAX + ' mais graves de ' + vis.length + '. Use os filtros para ver os outros.</div>';
-    lista.innerHTML = html;
+    return html + '</tbody></table></div>';
   }
 
   // 6b. Boletos do mês (conferência antes de enviar).
