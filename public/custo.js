@@ -7,8 +7,19 @@
 const CUSTO_NOMES = {
   atas: 'Atas', comunicados: 'Comunicados e multas', edital: 'Leitura do edital',
   medidores: 'Leitura de medidores', unidades: 'Normalização de unidades',
-  prestacao: 'Prestação de contas', entrada_documentos: 'Entrada de documentos', outros: 'Outros',
+  prestacao: 'Prestação de contas', entrada_documentos: 'Entrada de documentos', regras: 'Regras do condomínio', outros: 'Outros',
 };
+// Junta as linhas que caem no mesmo nome de tela (função sem nome próprio vira Outros numa linha só).
+function _custoJuntarPorNome(fs) {
+  const m = new Map();
+  fs.forEach((f) => {
+    const nome = CUSTO_NOMES[f.funcao] || CUSTO_NOMES.outros;
+    const g = m.get(nome) || { nome, custo_usd: 0, chamadas: 0 };
+    g.custo_usd += Number(f.custo_usd) || 0; g.chamadas += Number(f.chamadas) || 0;
+    m.set(nome, g);
+  });
+  return [...m.values()].sort((x, y) => y.custo_usd - x.custo_usd);
+}
 const _custoEsc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const _custoUsd = (v) => 'US$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -102,9 +113,9 @@ function custoDesenhar(j) {
       ${caixa('Limite do mês', _custoUsd(j.limite_usd), '<span style="color:' + cor + '">' + String(j.percentual_limite).replace('.', ',') + '% usado</span>')}
     </div>
     <div style="height:8px;background:var(--bg3);border-radius:4px;margin-top:10px;overflow:hidden"><div style="height:100%;width:${Math.min(100, j.percentual_limite)}%;background:${cor}"></div></div>${avisos}`;
-  const fs = j.por_funcao || [];
+  const fs = _custoJuntarPorNome(j.por_funcao || []);
   document.getElementById('custo-funcoes').innerHTML = fs.length ? '<table class="table" style="width:100%"><thead><tr><th style="text-align:left">Função</th><th style="text-align:right">Processamentos</th><th style="text-align:right">Custo</th><th style="text-align:right">Parte do mês</th></tr></thead><tbody>' +
-    fs.map((f) => `<tr><td>${_custoEsc(CUSTO_NOMES[f.funcao] || CUSTO_NOMES.outros)}</td><td style="text-align:right">${f.chamadas}</td><td style="text-align:right">${_custoUsd(f.custo_usd)}</td><td style="text-align:right">${j.total_usd > 0 ? Math.round(f.custo_usd / j.total_usd * 100) : 0}%</td></tr>`).join('') +
+    fs.map((f) => `<tr><td>${_custoEsc(f.nome)}</td><td style="text-align:right">${f.chamadas}</td><td style="text-align:right">${_custoUsd(f.custo_usd)}</td><td style="text-align:right">${j.total_usd > 0 ? Math.round(f.custo_usd / j.total_usd * 100) : 0}%</td></tr>`).join('') +
     '</tbody></table>' : '<div class="hint">Nenhum processamento neste mês.</div>';
   const ds = j.por_dia || [];
   const max = Math.max(0.01, ...ds.map((d) => d.custo_usd));
