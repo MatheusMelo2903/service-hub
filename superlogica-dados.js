@@ -175,6 +175,12 @@ async function puxarDadosPrestacao(cliente, { idCondominio, inicio, fim, nome, f
   const r = await emParalelo(tarefas, SIMULTANEAS);
   const n = meses.length;
   if (r[0] === null) throw new Error('saldo_indisponivel');
+  // Saldo de cada conta (principal, fundo de reserva, poupanças): mostra de onde saiu o
+  // dinheiro quando o caixa cai. Falha aqui não impede a prestação: segue sem contas.
+  let contas = null;
+  try {
+    contas = await saldosPorConta(cliente, cid, meses, prox, fimNoPassado, r[0], r[1]);
+  } catch (e) { contas = null; }
   return {
     condominio: { id: cid, nome: nome || '', fantasia: fantasia || '' },
     inicio, fim,
@@ -182,7 +188,48 @@ async function puxarDadosPrestacao(cliente, { idCondominio, inicio, fim, nome, f
     saldo_final_ref: r[1],
     balancetes: Object.fromEntries(r.slice(2, 2 + n)),
     despesas: [].concat(...r.slice(2 + n)),
+    contas,
   };
+}
+
+// 23/10/2026: saldo de cada conta bancária no primeiro dia de cada mês do período e no
+// primeiro dia do mês seguinte ao fim. O caixa/index com idContaBancaria devolve o saldo
+// daquela conta numa data (transferência entre contas não aparece como lançamento, então
+// o saldo por data é o único jeito confiável de ver um resgate do fundo de reserva).
+// Primeiro só início e fim de todas as contas; o mês a mês só nas contas que mudaram.
+// Confere que a soma das contas bate com o caixa total; se não bater, devolve null.
+async function saldosPorConta(cliente, cid, meses, prox, fimNoPassado, totalIni, totalFim) {
+  if (!fimNoPassado) return null; // mês ainda aberto: o saldo final de cada conta não existe
+  const lista = await cliente.get('contabancos/index', { idCondominio: cid });
+  if (!Array.isArray(lista) || !lista.length || lista.length > 30) return null;
+  const saldoConta = (idConta, y, m, d) => async () => {
+    const j = await cliente.get('caixa/index', { idCondominio: cid, dtInicio: dataSL(y, m, d), dtFim: dataSL(y, m, d), idContaBancaria: idConta });
+    const linha = Array.isArray(j) ? j.find((x) => x && x.saldoinicialconta !== undefined) : null;
+    return linha ? Number(linha.saldoinicialconta) : null;
+  };
+  const datas = meses.map(([y, m]) => [y, m]).concat([prox]);
+  const [y0, m0] = datas[0];
+  const [yf, mf] = datas[datas.length - 1];
+  const extremos = await emParalelo([].concat(...lista.map((c) => [saldoConta(c.id_contabanco_cb, y0, m0, 1), saldoConta(c.id_contabanco_cb, yf, mf, 1)])), SIMULTANEAS);
+  const contas = lista.map((c, i) => ({
+    id: String(c.id_contabanco_cb), nome: String(c.st_descricao_cb || '').trim(), tipo: String(c.id_tipocontabanco_tcb || ''),
+    ini: extremos[2 * i], fim: extremos[2 * i + 1],
+  }));
+  if (contas.some((c) => c.ini === null || c.fim === null)) return null;
+  const soma = (k) => contas.reduce((s, c) => s + c[k], 0);
+  if (Math.abs(soma('ini') - Number(totalIni)) > 1) return null;
+  if (totalFim !== null && totalFim !== undefined && Math.abs(soma('fim') - Number(totalFim)) > 1) return null;
+  // Mês a mês só das contas que mudaram (no máximo 8, as que mais variaram).
+  const mudaram = contas.filter((c) => Math.abs(c.fim - c.ini) > 0.5).sort((a, b) => Math.abs(b.fim - b.ini) - Math.abs(a.fim - a.ini)).slice(0, 8);
+  const meio = datas.slice(1, -1);
+  const tarefas = [].concat(...mudaram.map((c) => meio.map(([y, m]) => saldoConta(c.id, y, m, 1))));
+  const vals = await emParalelo(tarefas, SIMULTANEAS);
+  mudaram.forEach((c, k) => {
+    const serie = vals.slice(k * meio.length, (k + 1) * meio.length);
+    if (serie.every((v) => v !== null)) c.saldos = [c.ini].concat(serie, [c.fim]);
+  });
+  return contas.filter((c) => Math.abs(c.ini) > 0.004 || Math.abs(c.fim) > 0.004)
+    .map((c) => ({ nome: c.nome, tipo: c.tipo, ini: Math.round(c.ini * 100) / 100, fim: Math.round(c.fim * 100) / 100, saldos: c.saldos ? c.saldos.map((v) => Math.round(v * 100) / 100) : null }));
 }
 
 // ── Condomínios ──────────────────────────────────────────────────────────
