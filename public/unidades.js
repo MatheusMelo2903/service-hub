@@ -1700,6 +1700,9 @@ async function enviarUnidades() {
   let inqOk = 0, inqFail = 0, depOk = 0, depFail = 0;
   const erros = [];
   const BATCH = 10; // 10 unidades simultâneas
+  // Início da mensagem de erro de cada etapa: separa na tabela onde a unidade parou.
+  const FALHA_CRIAR = 'Não criou a unidade: ';
+  const FALHA_PROP = 'Criou a unidade, mas não gravou o proprietário: ';
 
   async function enviarUmaUnidade(u, idx, total) {
   const idxPad = String(idx).padStart(4, '0');
@@ -1724,21 +1727,21 @@ async function enviarUnidades() {
     const r1 = await apiPost('/unidades/post', p1.toString());
     d1 = await r1.json();
   } catch (e) {
-    addLog(logDiv, '[POST ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + ' rede ' + esc(e.message), 'err');
-    throw new Error('POST falhou: ' + e.message);
+    addLog(logDiv, '[Unidade ' + idxPad + '/' + totalPad + '] Falhou ' + esc(u._unidadeRaw) + ' sem conexão: ' + esc(e.message), 'err');
+    throw new Error(FALHA_CRIAR + 'sem conexão (' + e.message + ')');
   }
 
   const item = Array.isArray(d1) ? d1[0] : d1;
   // Guard reforcado pre-PUT: rejeita array vazio, status 500, id_unidade_uni ausente, id_contato_con ausente
   if (!item || item.status === '500' || item.status === 500 || !item.id_unidade_uni || !item.id_contato_con) {
-    const msg = item ? (item.msg || JSON.stringify(item).slice(0, 200)) : 'sem corpo';
-    addLog(logDiv, '[POST ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + ' ' + esc(msg), 'err');
-    throw new Error('POST falhou: ' + msg);
+    const msg = item ? (item.msg || JSON.stringify(item).slice(0, 200)) : 'o Superlógica não respondeu';
+    addLog(logDiv, '[Unidade ' + idxPad + '/' + totalPad + '] Falhou ' + esc(u._unidadeRaw) + ' ' + esc(msg), 'err');
+    throw new Error(FALHA_CRIAR + msg);
   }
 
   const idUnidade = item.id_unidade_uni;
   const idContato = item.id_contato_con;
-  addLog(logDiv, '[POST ' + idxPad + '/' + totalPad + '] OK ' + esc(u._unidadeRaw) + ' id_unidade=' + idUnidade + ' id_contato=' + idContato, 'ok');
+  addLog(logDiv, '[Unidade ' + idxPad + '/' + totalPad + '] Criada ' + esc(u._unidadeRaw) + ' (código ' + idUnidade + ')', 'ok');
 
   // PASSO 2 PUT: popula nome, CPF, RG, email, telefones e endereco do proprietario.
   const p2 = new URLSearchParams();
@@ -1775,14 +1778,14 @@ async function enviarUnidades() {
       body: p2.toString()
     });
   } catch (e) {
-    addLog(logDiv, '[PUT  ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + ' rede ' + esc(e.message), 'err');
-    throw new Error('PUT falhou: ' + e.message);
+    addLog(logDiv, '[Proprietário ' + idxPad + '/' + totalPad + '] Falhou ' + esc(u._unidadeRaw) + ' sem conexão: ' + esc(e.message), 'err');
+    throw new Error(FALHA_PROP + 'sem conexão (' + e.message + ')');
   }
 
   if (!r2.ok) {
     const txt = await r2.text().catch(() => '');
-    addLog(logDiv, '[PUT  ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + ' HTTP ' + r2.status + ' ' + esc(txt.slice(0, 200)), 'err');
-    throw new Error('PUT falhou: HTTP ' + r2.status);
+    addLog(logDiv, '[Proprietário ' + idxPad + '/' + totalPad + '] Falhou ' + esc(u._unidadeRaw) + ' código ' + r2.status + ' ' + esc(txt.slice(0, 200)), 'err');
+    throw new Error(FALHA_PROP + 'o Superlógica recusou (código ' + r2.status + ')');
   }
 
   let d2 = null;
@@ -1791,11 +1794,11 @@ async function enviarUnidades() {
   const statusItem = Array.isArray(d2) ? (d2[0] && d2[0].status) : (d2 && d2.status);
   if (String(statusItem) !== '200' && statusItem !== 200) {
     const msgErr = (d2 ? JSON.stringify(d2) : '').slice(0, 200);
-    addLog(logDiv, '[PUT  ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + ' ' + esc(msgErr), 'err');
-    throw new Error('PUT falhou: ' + msgErr);
+    addLog(logDiv, '[Proprietário ' + idxPad + '/' + totalPad + '] Falhou ' + esc(u._unidadeRaw) + ' ' + esc(msgErr), 'err');
+    throw new Error(FALHA_PROP + msgErr);
   }
 
-  addLog(logDiv, '[PUT  ' + idxPad + '/' + totalPad + '] OK ' + esc(u._unidadeRaw) + (u.prop_nome ? ' · ' + esc(u.prop_nome) : ''), 'ok');
+  addLog(logDiv, '[Proprietário ' + idxPad + '/' + totalPad + '] Gravado ' + esc(u._unidadeRaw) + (u.prop_nome ? ' · ' + esc(u.prop_nome) : ''), 'ok');
 
   // PASSO 3: envia inquilinos e dependentes desta unidade sequencialmente.
   // Só executa se a planilha unificada tiver contatos_extras populados.
@@ -1803,23 +1806,32 @@ async function enviarUnidades() {
   if (Array.isArray(u.contatos_extras) && u.contatos_extras.length > 0) {
     for (const contato of u.contatos_extras) {
       const res = await enviarContatoExtra(condId, idUnidade, contato, logDiv, idxPad + '/' + totalPad);
-      const tipoLabel = contato.tipo === 'inquilino' ? 'INQ' : 'DEP';
+      const tipoLabel = contato.tipo === 'inquilino' ? 'Inquilino' : 'Dependente';
       const nomeLabel = contato.nome ? ' ' + esc(contato.nome) : '';
       if (res.ok) {
-        addLog(logDiv, '[' + tipoLabel + '  ' + idxPad + '/' + totalPad + '] OK ' + esc(u._unidadeRaw) + nomeLabel + ' ' + esc(res.msg), 'ok');
+        addLog(logDiv, '[' + tipoLabel + ' ' + idxPad + '/' + totalPad + '] Gravado ' + esc(u._unidadeRaw) + nomeLabel + ' ' + esc(res.msg), 'ok');
         if (contato.tipo === 'inquilino') localInqOk++; else localDepOk++;
       } else {
-        addLog(logDiv, '[' + tipoLabel + '  ' + idxPad + '/' + totalPad + '] FAIL ' + esc(u._unidadeRaw) + nomeLabel + ' ' + esc(res.msg), 'err');
+        addLog(logDiv, '[' + tipoLabel + ' ' + idxPad + '/' + totalPad + '] Falhou ' + esc(u._unidadeRaw) + nomeLabel + ' ' + esc(res.msg), 'err');
         if (contato.tipo === 'inquilino') localInqFail++; else localDepFail++;
       }
     }
     // Resumo por unidade para facilitar leitura do log
-    addLog(logDiv, '[RES  ' + idxPad + '/' + totalPad + '] ' + esc(u._unidadeRaw) + ' inq ok ' + localInqOk + ' fail ' + localInqFail + ' dep ok ' + localDepOk + ' fail ' + localDepFail, 'info');
+    addLog(logDiv, '[Resumo ' + idxPad + '/' + totalPad + '] ' + esc(u._unidadeRaw) + ': inquilinos ' + localInqOk + ' gravados e ' + localInqFail + ' com falha, dependentes ' + localDepOk + ' gravados e ' + localDepFail + ' com falha', 'info');
   }
 
   return { idUnidade, idContato, inqOk: localInqOk, inqFail: localInqFail, depOk: localDepOk, depFail: localDepFail };
   }
 
+
+  // Texto do andamento em português: o que já foi criado e gravado e o que falhou.
+  function textoProgresso() {
+    var t = 'Processadas ' + done + ' de ' + processed.length + ' · unidades criadas ' + postOk + (postFail ? ' (' + postFail + ' com falha)' : '') +
+      ' · proprietários gravados ' + putOk + (putFail ? ' (' + putFail + ' com falha)' : '');
+    if (inqOk + inqFail) t += ' · inquilinos ' + inqOk + (inqFail ? ' (' + inqFail + ' com falha)' : '');
+    if (depOk + depFail) t += ' · dependentes ' + depOk + (depFail ? ' (' + depFail + ' com falha)' : '');
+    return t;
+  }
 
   // Processar em lotes paralelos
   let parou = false;
@@ -1849,16 +1861,16 @@ async function enviarUnidades() {
         return;
       }
       const msg = (s.reason && s.reason.message) ? s.reason.message : String(s.reason);
-      if (msg.startsWith('POST falhou')) {
+      if (msg.startsWith(FALHA_CRIAR)) {
         postFail++;
-        erros.push({ unidade: u._unidadeRaw, fase: 'POST', mensagem: msg });
-      } else if (msg.startsWith('PUT falhou')) {
+        erros.push({ unidade: u._unidadeRaw, fase: 'Criar unidade', mensagem: msg.slice(FALHA_CRIAR.length) });
+      } else if (msg.startsWith(FALHA_PROP)) {
         postOk++;
         putFail++;
-        erros.push({ unidade: u._unidadeRaw, fase: 'PUT', mensagem: msg });
+        erros.push({ unidade: u._unidadeRaw, fase: 'Gravar proprietário', mensagem: msg.slice(FALHA_PROP.length) });
       } else {
         postFail++;
-        erros.push({ unidade: u._unidadeRaw, fase: 'desconhecida', mensagem: msg });
+        erros.push({ unidade: u._unidadeRaw, fase: 'Não identificada', mensagem: msg });
       }
     });
 
@@ -1866,7 +1878,7 @@ async function enviarUnidades() {
     const pct = Math.round((done / processed.length) * 100);
     progressBar.style.width = pct + '%';
     if (progressTexto) {
-      progressTexto.textContent = 'POST ' + postOk + '/' + done + ' ok ' + postFail + ' fail · PUT ' + putOk + '/' + done + ' ok ' + putFail + ' fail · Inq ' + inqOk + ' ok ' + inqFail + ' fail · Dep ' + depOk + ' ok ' + depFail + ' fail · total ' + done + '/' + processed.length;
+      progressTexto.textContent = textoProgresso();
     }
 
     // Pausa minima entre lotes para nao sobrecarregar
@@ -1880,23 +1892,23 @@ async function enviarUnidades() {
   if (btnEnviar) btnEnviar.disabled = false;
   if (btnParar) btnParar.style.display = 'none';
   progressBar.style.width = '100%';
-  if (progressTexto) progressTexto.textContent = 'POST ' + postOk + '/' + done + ' ok ' + postFail + ' fail · PUT ' + putOk + '/' + done + ' ok ' + putFail + ' fail · Inq ' + inqOk + ' ok ' + inqFail + ' fail · Dep ' + depOk + ' ok ' + depFail + ' fail · total ' + done + '/' + processed.length;
+  if (progressTexto) progressTexto.textContent = textoProgresso();
 
   const totalErr = postFail + putFail;
   const totalInqDep = inqOk + inqFail + depOk + depFail;
 
   // Status final permanente com contadores de Inq/Dep quando houver
   statusFinal.style.display = 'block';
-  var inqDepResumo = totalInqDep > 0 ? (' Inq ok ' + inqOk + ' fail ' + inqFail + ', Dep ok ' + depOk + ' fail ' + depFail + '.') : '';
+  var inqDepResumo = totalInqDep > 0 ? (' Inquilinos: ' + inqOk + ' gravados, ' + inqFail + ' com falha. Dependentes: ' + depOk + ' gravados, ' + depFail + ' com falha.') : '';
   if (parou) {
     statusFinal.className = 'uni-status warn';
-    statusFinal.innerHTML = '<span>⏹</span><div><strong>Importação interrompida</strong><br>POST ok ' + postOk + ', POST fail ' + postFail + ', PUT ok ' + putOk + ', PUT fail ' + putFail + '.' + inqDepResumo + '</div>';
+    statusFinal.innerHTML = '<span>⏹</span><div><strong>Importação interrompida</strong><br>Unidades criadas: ' + postOk + ', com falha: ' + postFail + '. Proprietários gravados: ' + putOk + ', com falha: ' + putFail + '.' + inqDepResumo + '</div>';
   } else if (totalErr === 0) {
     statusFinal.className = 'uni-status success';
-    statusFinal.innerHTML = '<span>✓</span><div><strong>' + putOk + ' unidades importadas com sucesso!</strong><br>POST ok ' + postOk + ', PUT ok ' + putOk + '.' + inqDepResumo + ' Todos os dados foram enviados para o Superlógica.</div>';
+    statusFinal.innerHTML = '<span>✓</span><div><strong>' + putOk + ' unidades importadas com sucesso!</strong><br>Unidades criadas: ' + postOk + '. Proprietários gravados: ' + putOk + '.' + inqDepResumo + ' Todos os dados foram enviados para o Superlógica.</div>';
   } else {
     statusFinal.className = 'uni-status error';
-    statusFinal.innerHTML = '<span>⚠</span><div><strong>' + putOk + ' criadas, ' + totalErr + ' com erro</strong><br>POST ok ' + postOk + ', POST fail ' + postFail + ', PUT ok ' + putOk + ', PUT fail ' + putFail + '.' + inqDepResumo + ' Veja a tabela e o log para detalhes.</div>';
+    statusFinal.innerHTML = '<span>⚠</span><div><strong>' + putOk + ' criadas, ' + totalErr + ' com erro</strong><br>Unidades criadas: ' + postOk + ', com falha: ' + postFail + '. Proprietários gravados: ' + putOk + ', com falha: ' + putFail + '.' + inqDepResumo + ' Veja a tabela e o registro abaixo para os detalhes.</div>';
   }
 
   // Tabela de erros (DOM API, sem innerHTML em dado de planilha; preserva o padrao XSS-safe do pacote anterior)
@@ -2036,7 +2048,7 @@ function buildPayloadContatoExtra(idUnidade, condId, dados, tipo) {
 async function enviarContatoExtra(condId, idUnidade, contato, logDiv, contexto) {
   const proxy = getProxy();
   if (!proxy) {
-    return { ok: false, msg: 'Proxy nao configurado' };
+    return { ok: false, msg: 'conexão com o Superlógica não configurada' };
   }
   const url = proxy + '/v2/condor/unidades/post?ID_CONDOMINIO_COND=' + encodeURIComponent(condId);
   const payload = buildPayloadContatoExtra(idUnidade, condId, contato, contato.tipo);
@@ -2048,17 +2060,17 @@ async function enviarContatoExtra(condId, idUnidade, contato, logDiv, contexto) 
       body: payload.toString()
     });
   } catch (e) {
-    return { ok: false, msg: 'rede ' + e.message };
+    return { ok: false, msg: 'sem conexão (' + e.message + ')' };
   }
   let dados = null;
   try { dados = await resp.json(); } catch (_) {}
   // API responde array; sucesso quando data[0].status === '200' (mesmo padrão do PUT)
   const statusItem = Array.isArray(dados) ? (dados[0] && dados[0].status) : (dados && dados.status);
   if (String(statusItem) === '200' || statusItem === 200) {
-    const msgOk = (Array.isArray(dados) && dados[0] && dados[0].msg) ? dados[0].msg : 'ok';
+    const msgOk = (Array.isArray(dados) && dados[0] && dados[0].msg) ? dados[0].msg : '';
     return { ok: true, msg: msgOk };
   }
-  const msgErr = dados ? JSON.stringify(dados).slice(0, 200) : ('HTTP ' + (resp && resp.status));
+  const msgErr = dados ? JSON.stringify(dados).slice(0, 200) : ('o Superlógica recusou (código ' + (resp && resp.status) + ')');
   return { ok: false, msg: msgErr };
 }
 

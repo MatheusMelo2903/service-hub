@@ -1443,17 +1443,6 @@
     </div>
 
 
-    <div class="panel" id="panel-tarefas">
-      <div class="card">
-        <div class="empty">
-          <div class="empty-icon">✓</div>
-          <div class="empty-title">Tarefas: em breve</div>
-          <div class="empty-sub">gestão de demandas internas por condomínio</div>
-        </div>
-      </div>
-    </div>
-
-
     <!-- ATAS CONDOMINIAIS -->
     <div class="panel" id="panel-prestacao">
 
@@ -1585,8 +1574,7 @@
            decisoes e parametros) fica guardada por pessoa na pasta Em andamento (T49,
            servico/trabalhos.js); nada vai ao Superlogica. O src e definido sob demanda em
            previsaoInit() para carregar o modulo so quando a aba abre.
-           Fluxo antigo de PDF (previsao.js + rotas /api/previsao + tabela previsoes_orcamentarias)
-           foi descontinuado nesta aba e mantido no repo para reversibilidade. -->
+           O fluxo antigo de PDF (previsao.js) foi retirado; as rotas /api/previsao do servidor ficam. -->
       <iframe id="prev-iframe" title="Previsao Orcamentaria"
               style="width:100%;border:0;border-radius:10px;min-height:calc(100vh - 150px);background:#fff"></iframe>
 
@@ -2683,7 +2671,6 @@ const PAGE_META = {
   boletos:       { title: 'Boletos', sub: 'conferência dos boletos do mês antes de enviar' },
   conciliacao:   { title: 'Conciliação', sub: 'extrato importado no Superlógica comparado com os lançamentos' },
   entrada:       { title: 'Entrada de documentos', sub: 'boletos, notas e guias para lançar' },
-  tarefas:       { title: 'Tarefas', sub: 'em breve' },
   configuracoes: { title: 'Configurações', sub: 'credenciais e preferências' },
   prestacao:     { title: 'Prestação de Contas', sub: 'gerar apresentação financeira anual' },
   previsao:      { title: 'Previsão Orçamentária', sub: 'PDFs W011A e W045A geram planilha editável' },
@@ -3681,7 +3668,6 @@ const PANEL_TO_MODULO = {
   prestacao:      'prestacao_contas',
   atas:           'atas',
   consumo:        'leitura_consumo',
-  tarefas:        'tarefas',
   configuracoes:  'configuracoes'
 };
 
@@ -3820,7 +3806,6 @@ const MODULOS_CATALOGO = {
   atas:               { label: 'Atas Condominiais',   acoes: ['ver', 'gerar', 'edital', 'transcricao_livre'] },
   regras:             { label: 'Comunicados e Multas', acoes: ['ver', 'consultar', 'notificar', 'gerenciar'] },
   leitura_consumo:    { label: 'Leitura de Consumo',  acoes: ['ver', 'ler'] },
-  tarefas:            { label: 'Tarefas',             acoes: ['ver'] },
   configuracoes:      { label: 'Configurações',       acoes: ['ver', 'editar', 'convidar', 'ver_chaves', 'ver_auditoria'] }
 };
 
@@ -4290,8 +4275,6 @@ async function deletarUsuario(userId, email) {
 <script src="/prestacao.js"></script>
 <script src="/certidoes.js"></script>
 <script src="/central-alertas.js"></script>
-<!-- Previsao Orcamentaria: fluxo antigo de PDF descontinuado nesta aba (mantido para reversibilidade) -->
-<!-- <script src="/previsao.js"></script> -->
 <!-- Previsao Orcamentaria: modulo embutido (iframe) + handoff do condominio ativo -->
 <script src="/previsao-embed.js"></script>
 <!-- Menu em tópicos recolhíveis: por último, para pegar os itens que os outros scripts criam -->
