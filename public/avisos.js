@@ -417,10 +417,11 @@
       '<th style="padding:4px">Usuário no Superlógica</th><th style="padding:4px">Lançamentos</th><th style="padding:4px">Analista no Hub</th><th style="padding:4px">Carteira</th><th></th></tr>';
     us.forEach(function (u) {
       var sug = !u.carteira && u.sugestao_carteira ? '<div class="hint">Sugestão: ' + esc(nomeCarteira(u.sugestao_carteira)) + '</div>' : '';
-      h += '<tr style="border-top:1px solid rgba(127,127,127,0.15)"><td style="padding:4px">' + esc(u.apelido) + ' <span class="hint">#' + esc(u.id_usuario_sl) + '</span></td>' +
+      // Apelido e sugestao de carteira podem ser longos: quebram na propria celula em vez de empurrar a tabela
+      h += '<tr style="border-top:1px solid rgba(127,127,127,0.15)"><td class="td-livre" style="padding:4px" title="' + esc(u.apelido) + '"><div class="td-2l">' + esc(u.apelido) + ' <span class="hint">#' + esc(u.id_usuario_sl) + '</span></div></td>' +
         '<td style="padding:4px">' + (u.lancamentos || 0) + '</td>' +
         '<td style="padding:4px"><select id="av-p-' + esc(u.id_usuario_sl) + '" style="width:auto;max-width:240px">' + opAnalista(u.profile_id) + '</select></td>' +
-        '<td style="padding:4px"><select id="av-c-' + esc(u.id_usuario_sl) + '" style="width:auto;max-width:200px">' + opCarteira(u.carteira || u.sugestao_carteira) + '</select>' + sug + '</td>' +
+        '<td class="td-livre" style="padding:4px"><select id="av-c-' + esc(u.id_usuario_sl) + '" style="width:auto;max-width:200px">' + opCarteira(u.carteira || u.sugestao_carteira) + '</select>' + sug + '</td>' +
         '<td style="padding:4px"><button class="btn btn-ghost" data-v="salvar" data-id="' + esc(u.id_usuario_sl) + '">Salvar</button></td></tr>';
     });
     return h + '</table></div><div id="avisos-vinc-msg" class="hint" style="margin-top:8px"></div>';

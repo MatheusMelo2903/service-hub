@@ -90,21 +90,22 @@ async function cobrancaCarregar(forcar) {
     while (i < conds.length) {
       var c = conds[i++];
       var linha = document.createElement('tr');
-      linha.innerHTML = '<td>' + cobEsc(c.nome) + '</td><td colspan="5" class="ficha-sub">carregando...</td>';
+      // Nome do condominio e mensagem de erro sao textos livres: quebram na celula (td-livre no index.html)
+      linha.innerHTML = '<td class="td-livre" title="' + cobEsc(c.nome) + '"><div class="td-2l">' + cobEsc(c.nome) + '</div></td><td colspan="5" class="ficha-sub">carregando...</td>';
       document.getElementById('cob-t').appendChild(linha);
       try {
         var p = await cobJson('/api/cobranca/condominio/' + encodeURIComponent(c.id_superlogica) + (forcar ? '?forcar=1' : ''));
         if (seq !== cobEstado.seq) return;
         cobEstado.paineis[c.id_superlogica] = { cond: c, p: p };
         totalC += p.total_corrigido; totalU += p.quantidade_unidades;
-        linha.innerHTML = '<td>' + cobEsc(c.nome) + (p.cortado ? ' <span class="ficha-sub">(lista cortada)</span>' : '') + '</td>'
+        linha.innerHTML = '<td class="td-livre" title="' + cobEsc(c.nome) + '"><div class="td-2l">' + cobEsc(c.nome) + (p.cortado ? ' <span class="ficha-sub">(lista cortada)</span>' : '') + '</div></td>'
           + '<td class="n">' + p.quantidade_unidades + '</td><td class="n">' + cobBRL(p.total_original) + '</td><td class="n">' + cobBRL(p.total_corrigido) + '</td>'
           + '<td class="n">' + (p.sem_contato_90_dias == null ? '<span class="ficha-sub">sem dado</span>' : p.sem_contato_90_dias) + (p.crm_indisponivel ? ' <span class="ficha-sub">(CRM indisponível)</span>' : '') + '</td>'
           + '<td>' + (p.quantidade_unidades ? '<button class="btn btn-ghost cob-ver" data-id="' + cobEsc(c.id_superlogica) + '" style="font-size:11px;padding:4px 10px">Ver unidades</button>' : '') + '</td>';
         linha.dataset.total = p.total_corrigido;
       } catch (e) {
         if (seq !== cobEstado.seq) return;
-        linha.innerHTML = '<td>' + cobEsc(c.nome) + '</td><td colspan="5" class="ficha-erro">' + cobEsc(e.message) + '</td>';
+        linha.innerHTML = '<td class="td-livre" title="' + cobEsc(c.nome) + '"><div class="td-2l">' + cobEsc(c.nome) + '</div></td><td colspan="5" class="ficha-erro td-livre">' + cobEsc(e.message) + '</td>';
       }
       feitos++;
       info.textContent = (feitos < conds.length ? 'Lendo ' + feitos + ' de ' + conds.length + ' condomínios. ' : conds.length + ' condomínios. ')
@@ -132,12 +133,13 @@ function cobVerUnidades(idSL) {
     + '<table class="ficha-tab"><tr><th>Unidade</th><th>Responsável</th><th class="n">Cobranças</th><th class="n">Corrigido</th><th>Último contato</th><th></th></tr>'
     + p.unidades.map(function (u, k) {
       var c = u.ultimo_contato;
-      var contato = c ? cobEsc(c.data) + ' · ' + cobEsc(c.canal) + (c.por ? ' · ' + cobEsc(c.por) : '') + '<div class="ficha-sub">' + cobEsc(c.descricao) + '</div>'
+      // A descricao do ultimo contato vem do CRM e pode ser um paragrafo: fica em ate 2 linhas, inteira no title
+      var contato = c ? cobEsc(c.data) + ' · ' + cobEsc(c.canal) + (c.por ? ' · ' + cobEsc(c.por) : '') + '<div class="ficha-sub td-2l" title="' + cobEsc(c.descricao) + '">' + cobEsc(c.descricao) + '</div>'
         : (p.crm_indisponivel ? '<span class="ficha-sub">CRM indisponível agora</span>' : '<span class="ficha-erro" style="padding:0">sem contato registrado em 120 dias</span>');
       var semAcordo = u.recebimentos.filter(function (r) { return !r.acordo; });
       var opc = semAcordo.slice(-24).map(function (r) { return '<option value="' + cobEsc(r.id) + '">' + cobEsc(r.vencimento) + ' · ' + cobBRL(r.corrigido) + '</option>'; }).join('');
-      return '<tr><td>' + cobEsc(u.unidade) + (u.juridico ? ' <span class="ficha-tag">jurídico</span>' : '') + '</td><td>' + cobEsc(u.responsavel) + '</td>'
-        + '<td class="n">' + u.cobrancas + '</td><td class="n">' + cobBRL(u.valor_corrigido) + '</td><td>' + contato + '</td>'
+      return '<tr><td>' + cobEsc(u.unidade) + (u.juridico ? ' <span class="ficha-tag">jurídico</span>' : '') + '</td><td class="td-livre" title="' + cobEsc(u.responsavel) + '"><div class="td-2l">' + cobEsc(u.responsavel) + '</div></td>'
+        + '<td class="n">' + u.cobrancas + '</td><td class="n">' + cobBRL(u.valor_corrigido) + '</td><td class="td-livre">' + contato + '</td>'
         + '<td style="white-space:nowrap">'
         + (semAcordo.length ? '<button class="btn btn-ghost cob-acao" data-acao="abrir" data-k="' + k + '" style="font-size:11px;padding:4px 8px">Simular acordo</button>' : '<span class="ficha-sub">em acordo</span>')
         + '</td></tr>'
