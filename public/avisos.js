@@ -6,7 +6,9 @@
 // O servidor decide quem vê (OPERACIONAL não vê nada); aqui é só a tela. Nada é enviado para fora do Hub.
 // ============================================================
 (function () {
-  var est = { dados: null, sel: '', mostrarTudo: {}, verSil: {}, ultimaCarga: 0, carregando: false, vigia: null };
+  // mostrar: quantos itens cada lista exibe (cresce a cada "Ver mais"); abertos: linhas recolhidas que a pessoa abriu ou fechou.
+  var est = { dados: null, sel: '', mostrar: {}, abertos: {}, verSil: {}, ultimaCarga: 0, carregando: false, vigia: null };
+  var CACHE = 'avisos_cache';
   var GRAV = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
   var COR = { alta: 'var(--danger, #e05050)', media: '#d99a2b', baixa: 'var(--muted, #888)' };
 
@@ -43,23 +45,53 @@
     return c;
   }
 
+  // Cache da última resposta na aba (sessionStorage) para o card aparecer na hora ao recarregar a página.
+  // Guarda só uma impressão curta do login (não o token) para não mostrar o resumo de um login a outro.
+  function impressao(t) {
+    var s = String(t || ''), h = 5381;
+    for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36) + '.' + s.length;
+  }
+  function apagarCache() { try { sessionStorage.removeItem(CACHE); } catch (e) { /* armazenamento bloqueado: segue sem cache */ } }
+  function lerCache() {
+    try {
+      var x = JSON.parse(sessionStorage.getItem(CACHE) || 'null');
+      if (x && x.dono === impressao(window.AUTH_TOKEN) && x.dados && x.dados.mostrar) return x.dados;
+      if (x) apagarCache();
+    } catch (e) { apagarCache(); }
+    return null;
+  }
+  function gravarCache(j) {
+    try { sessionStorage.setItem(CACHE, JSON.stringify({ dono: impressao(est.token), dados: j })); } catch (e) { /* cheio ou bloqueado: segue sem cache */ }
+  }
+
   async function carregar(forcar) {
     if (est.carregando || !window.AUTH_TOKEN || typeof apiAuthFetch !== 'function') return;
     var card = garantirCard();
     if (!card) return;
     // Outro login na mesma aba: some com o card do anterior e carrega de novo na hora.
-    if (est.token !== window.AUTH_TOKEN) { est.token = window.AUTH_TOKEN; est.dados = null; card.style.display = 'none'; forcar = true; }
+    // Na primeira carga da página desenha o cache (se for deste login) enquanto busca o resumo novo.
+    if (est.token !== window.AUTH_TOKEN) {
+      var trocouLogin = est.token != null;
+      est.token = window.AUTH_TOKEN; est.dados = null; card.style.display = 'none'; forcar = true;
+      if (trocouLogin) apagarCache();
+      else {
+        var cache = lerCache();
+        if (cache) { est.dados = cache; card.style.display = ''; desenhar(); }
+      }
+    }
     if (!forcar && Date.now() - est.ultimaCarga < 60000) return;
     est.carregando = true;
     try {
       var r = await apiAuthFetch('/api/avisos/meu-dia');
       var j = await r.json().catch(function () { return {}; });
       est.ultimaCarga = Date.now();
-      if (!r.ok || !j.mostrar) { card.style.display = 'none'; est.dados = null; return; }
+      if (!r.ok || !j.mostrar) { card.style.display = 'none'; est.dados = null; apagarCache(); return; }
       est.dados = j;
+      gravarCache(j);
       card.style.display = '';
       desenhar();
-    } catch (e) { /* sem rede: o card some até a próxima tentativa */ } finally { est.carregando = false; }
+    } catch (e) { /* sem rede: fica o que já estava na tela até a próxima tentativa */ } finally { est.carregando = false; }
   }
 
   // 2. Desenho do card.
@@ -90,9 +122,44 @@
     return o + '</select>';
   }
   var LINHA = 'display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-bottom:1px solid rgba(127,127,127,0.15)';
-  function maisBotao(chave, total, vis) {
-    return total > vis ? '<button class="btn btn-ghost" data-acao="tudo" data-chave="' + esc(chave) + '" style="margin-top:6px">Mostrar todos (' + total + ')</button>' : '';
+  // Listas longas abrem aos poucos: começam no valor base e cada "Ver mais" soma um passo.
+  function quantos(chave, base) { var n = Number(est.mostrar[chave]); return n > 0 ? n : base; }
+  // nomes: [singular, plural] quando o botão diz o que vai aparecer ("Ver mais 8 analistas").
+  function maisBotao(chave, total, vis, passo, nomes) {
+    if (total <= vis) return '';
+    var falta = total - vis, prox = Math.min(passo, falta), txt;
+    if (nomes) txt = 'Ver mais ' + prox + ' ' + (prox === 1 ? nomes[0] : nomes[1]) + (falta > prox ? ' (faltam ' + falta + ')' : '');
+    else txt = 'Ver mais (' + falta + (falta === 1 ? ' restante)' : ' restantes)');
+    return '<button type="button" class="btn btn-ghost" data-acao="mais" data-chave="' + esc(chave) + '" data-vis="' + vis + '" data-passo="' + passo + '" style="margin-top:6px">' + esc(txt) + '</button>';
   }
+  // Linha recolhida: botão de verdade (teclado e leitor de tela) no mesmo desenho das linhas da lista.
+  function aberto(chave, padrao) { return Object.prototype.hasOwnProperty.call(est.abertos, chave) ? !!est.abertos[chave] : !!padrao; }
+  function botaoAbrir(chave, padrao, conteudo) {
+    var a = aberto(chave, padrao);
+    return '<button type="button" data-acao="abrir" data-chave="' + esc(chave) + '" aria-expanded="' + (a ? 'true' : 'false') + '" style="background:none;border:0;' + LINHA +
+      ';width:100%;color:inherit;font:inherit;text-align:left;cursor:pointer;align-items:center"><span class="hint" aria-hidden="true" style="width:12px">' + (a ? '▾' : '▸') + '</span>' + conteudo + '</button>';
+  }
+  var DENTRO = '<div style="margin-left:22px">';
+  // Agrupa mantendo a ordem de chegada; quem chama ordena os grupos como quiser (o sort do JS é estável).
+  function agrupar(lista, chaveDe) {
+    var mapa = Object.create(null), grupos = [];
+    (lista || []).forEach(function (x) {
+      var k = String(chaveDe(x));
+      if (!mapa[k]) { mapa[k] = { chave: k, itens: [] }; grupos.push(mapa[k]); }
+      mapa[k].itens.push(x);
+    });
+    return grupos;
+  }
+  function porGravidade(lista) {
+    var t = { alta: 0, media: 0, baixa: 0 };
+    (lista || []).forEach(function (i) { if (t[i.gravidade] != null) t[i.gravidade]++; });
+    return t;
+  }
+  // Só as gravidades que existem, para a linha recolhida ficar curta.
+  function contagemCurta(t) {
+    return ['alta', 'media', 'baixa'].filter(function (g) { return t[g]; }).map(function (g) { return t[g] + ' ' + GRAV[g].toLowerCase(); }).join(', ');
+  }
+  function piorGravidade(t) { return t.alta ? 'alta' : t.media ? 'media' : 'baixa'; }
   // T51: o servidor marca silenciado:true no que a pessoa desligou em "Meus alertas".
   // Some da lista e dos contadores; a linha "N silenciados por você · ver" mostra apagados.
   function silenciado(i) { return !!(i && i.silenciado === true); }
@@ -110,13 +177,28 @@
       esc(i.condominio || ('Condomínio ' + i.id_condominio)) + '</b>: ' + esc(i.titulo) + '</div>' +
       (i.detalhe ? '<div class="hint">' + esc(i.detalhe) + '</div>' : '') + '</div></div>';
   }
-  function listaItens(chave, todos, limite) {
+  // Itens da carteira agrupados por condomínio: cada condomínio é uma linha recolhida com a contagem por
+  // gravidade (os mais graves primeiro). Abrindo, mostra 10 itens e "Ver mais"; a lista mostra 10 condomínios por vez.
+  function listaItens(chave, todos) {
     var itens = naoSilenciados(todos);
     var sil = (todos || []).filter(silenciado);
     if (!itens.length) return '<div class="hint">Nada pendente.</div>' + linhaSilenciados(chave, sil, linhaItem);
-    var vis = est.mostrarTudo[chave] ? itens : itens.slice(0, limite || 12);
-    var h = vis.map(linhaItem).join('');
-    return h + maisBotao(chave, itens.length, vis.length) + linhaSilenciados(chave, sil, linhaItem);
+    var grupos = agrupar(itens, function (i) { return i.id_condominio != null ? i.id_condominio : i.condominio; });
+    grupos.forEach(function (g) { g.t = porGravidade(g.itens); });
+    grupos.sort(function (a, b) { return (b.t.alta - a.t.alta) || (b.t.media - a.t.media) || (b.itens.length - a.itens.length); });
+    var nC = Math.min(grupos.length, quantos(chave + '|conds', 10));
+    var h = grupos.slice(0, nC).map(function (g) {
+      var ch = chave + '|c|' + g.chave;
+      var nome = g.itens[0].condominio || ('Condomínio ' + g.itens[0].id_condominio);
+      var r = botaoAbrir(ch, false, selo(piorGravidade(g.t)) + '<span style="flex:1;font-size:13px"><b>' + esc(nome) + '</b> <span class="hint">(' +
+        g.itens.length + (g.itens.length === 1 ? ' item: ' : ' itens: ') + esc(contagemCurta(g.t)) + ')</span></span>');
+      if (aberto(ch, false)) {
+        var n = Math.min(g.itens.length, quantos(ch, 10));
+        r += DENTRO + g.itens.slice(0, n).map(linhaItem).join('') + maisBotao(ch, g.itens.length, n, 10) + '</div>';
+      }
+      return r;
+    }).join('');
+    return h + maisBotao(chave + '|conds', grupos.length, nC, 10, ['condomínio', 'condomínios']) + linhaSilenciados(chave, sil, linhaItem);
   }
   function contagem(t) {
     t = t || {};
@@ -134,10 +216,16 @@
     });
     return t;
   }
-  function blocoCarteira(c, chave) {
+  // recolhivel: quem não é GESTOR vê as carteiras em sequência, então cada uma vira uma linha que abre e fecha
+  // (padraoAberto diz se começa aberta). O GESTOR vê uma carteira por vez, sempre aberta.
+  function blocoCarteira(c, chave, recolhivel, padraoAberto) {
     var antigo = c.dia && est.dados && c.dia !== est.dados.hoje ? ', resumo de ' + dataBR(c.dia) : '';
-    return '<div style="margin:14px 0 6px;font-size:13px;font-weight:600">' + esc(c.nome) + ' <span class="hint">(' + contagem(totaisVisiveis(c)) + esc(antigo) + ')</span></div>' +
-      listaItens(chave || ('c' + c.id), c.itens || []);
+    var ch = chave || ('c' + c.id);
+    var resumo = esc(c.nome) + ' <span class="hint">(' + contagem(totaisVisiveis(c)) + esc(antigo) + ')</span>';
+    if (!recolhivel) return '<div style="margin:14px 0 6px;font-size:13px;font-weight:600">' + resumo + '</div>' + listaItens(ch, c.itens || []);
+    var chC = ch + '|cart';
+    var h = '<div style="margin-top:14px">' + botaoAbrir(chC, padraoAberto, '<span style="flex:1;font-size:13px;font-weight:600">' + resumo + '</span>') + '</div>';
+    return h + (aberto(chC, padraoAberto) ? '<div style="margin-top:6px">' + listaItens(ch, c.itens || []) + '</div>' : '');
   }
   function quadroCarteiras(d) {
     var h = '<div style="margin:10px 0 4px;font-size:13px;font-weight:600">Carteiras</div>';
@@ -158,29 +246,46 @@
       esc(e.descricao_tipo || e.tipo) + '</div><div class="hint">' + esc(partes) + '</div><div class="hint">' + esc(quem) +
       (link ? ' <a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer">Abrir o lançamento</a>' : '') + '</div></div></div>';
   }
-  function listaErros(chave, erros, gestor, limite) {
-    var vis = est.mostrarTudo[chave] ? erros : erros.slice(0, limite || 10);
-    return vis.map(function (e) { return linhaErro(e, gestor); }).join('') + maisBotao(chave, erros.length, vis.length);
+  // Erros agrupados por tipo (os tipos com mais erros primeiro). Cada tipo mostra 5 e abre de 10 em 10.
+  function tipoErro(e) { return e.descricao_tipo || e.tipo || 'Outros'; }
+  function blocoTipos(prefixo, erros, gestor) {
+    var grupos = agrupar(erros, tipoErro).sort(function (a, b) { return b.itens.length - a.itens.length; });
+    return grupos.map(function (g) {
+      var ch = prefixo + '|t|' + g.chave;
+      var n = Math.min(g.itens.length, quantos(ch, 5));
+      return '<div style="margin:8px 0 2px;font-size:12px;font-weight:600">' + esc(g.chave) + ' <span class="hint">(' + g.itens.length + ')</span></div>' +
+        g.itens.slice(0, n).map(function (e) { return linhaErro(e, gestor); }).join('') + maisBotao(ch, g.itens.length, n, 10);
+    }).join('');
   }
+  function qtdErros(n) { return n + (n === 1 ? ' erro' : ' erros'); }
   function blocoErros(d) {
     var erros = naoSilenciados(d.erros);
     var silE = (d.erros || []).filter(silenciado);
     var rodape = linhaSilenciados('erros', silE, function (e) { return linhaErro(e, !!d.gestor); });
     var h = '<div style="margin:18px 0 6px;font-size:13px;font-weight:600">' + (d.gestor ? 'Erros por analista' : 'Erros nos seus lançamentos') + '</div>';
-    if (!d.gestor) return h + (erros.length ? listaErros('meus', erros, false) : '<div class="hint">Nenhum erro nos seus lançamentos dos últimos dias.</div>') + rodape;
+    if (!d.gestor) {
+      if (!erros.length) return h + '<div class="hint">Nenhum erro nos seus lançamentos dos últimos dias.</div>' + rodape;
+      // Até 10 erros aparecem direto; acima disso a lista começa recolhida para não empurrar o resto da tela.
+      if (erros.length <= 10) return h + blocoTipos('meus', erros, false) + rodape;
+      h += botaoAbrir('meus', false, '<span style="flex:1;font-size:13px">' + qtdErros(erros.length) + ' <span class="hint">(' + porGravidade(erros).alta + ' de alta)</span></span>');
+      if (aberto('meus', false)) h += DENTRO + blocoTipos('meus', erros, false) + '</div>';
+      return h + rodape;
+    }
     if (!erros.length) return h + '<div class="hint">Nenhum erro ligado a um usuário do Superlógica.</div>' + rodape;
     var vinc = {};
     (d.vinculos || []).forEach(function (v) { vinc[String(v.id_usuario_sl)] = v; });
-    var grupos = {}, ordem = [];
-    erros.forEach(function (e) { var k = String(e.id_usuario_sl); if (!grupos[k]) { grupos[k] = []; ordem.push(k); } grupos[k].push(e); });
-    ordem.sort(function (a, b) { return grupos[b].length - grupos[a].length; });
-    ordem.forEach(function (k) {
-      var v = vinc[k];
+    // Um analista por linha recolhida (quem tem mais erros primeiro); abrindo, os erros dele por tipo.
+    var ordem = agrupar(erros, function (e) { return e.id_usuario_sl; }).sort(function (a, b) { return b.itens.length - a.itens.length; });
+    var nA = Math.min(ordem.length, quantos('analistas', 8));
+    ordem.slice(0, nA).forEach(function (g) {
+      var v = vinc[g.chave];
       var situacao = v && v.profile_id ? 'com analista no Hub' : 'sem analista vinculado';
-      h += '<div style="margin:10px 0 2px;font-size:13px"><b>' + esc(grupos[k][0].autor) + '</b> <span class="hint">(' + grupos[k].length + (grupos[k].length === 1 ? ' erro, ' : ' erros, ') + situacao + ')</span></div>' +
-        listaErros('u' + k, grupos[k], true, 3);
+      var ch = 'u' + g.chave;
+      h += botaoAbrir(ch, false, '<span style="flex:1;font-size:13px"><b>' + esc(g.itens[0].autor) + '</b> <span class="hint">(' + qtdErros(g.itens.length) + ', ' +
+        porGravidade(g.itens).alta + ' de alta, ' + situacao + ')</span></span>');
+      if (aberto(ch, false)) h += DENTRO + blocoTipos(ch, g.itens, true) + '</div>';
     });
-    return h + rodape;
+    return h + maisBotao('analistas', ordem.length, nA, 8, ['analista', 'analistas']) + rodape;
   }
 
   function desenhar() {
@@ -197,13 +302,21 @@
         if (d.meta && d.meta.parcial) h += '<div class="hint" style="margin-top:6px">Este resumo foi gerado só para algumas carteiras.</div>';
         if (d.meta && d.meta.falhas_total) h += '<div class="hint" style="margin-top:6px">' + d.meta.falhas_total + ' leituras do Superlógica falharam nesta geração; o que veio está acima.</div>';
       } else {
-        (d.carteiras || []).forEach(function (c) { h += blocoCarteira(c); });
+        // Várias carteiras em sequência: só a primeira começa aberta.
+        (d.carteiras || []).forEach(function (c, i) { h += blocoCarteira(c, null, true, i === 0); });
       }
       h += blocoErros(d);
     }
     card.innerHTML = h;
   }
   function msg(t) { var el = document.getElementById('avisos-msg'); if (el) el.textContent = t || ''; }
+  // O card é redesenhado inteiro; devolve o foco ao botão que abriu ou fechou para quem usa teclado.
+  function focarAbrir(chave) {
+    var card = document.getElementById('avisos-seu-dia');
+    if (!card || !card.querySelectorAll) return;
+    var bs = card.querySelectorAll('[data-acao="abrir"]');
+    for (var i = 0; i < bs.length; i++) if (bs[i].getAttribute('data-chave') === chave) { try { bs[i].focus(); } catch (e) { /* sem foco: segue */ } return; }
+  }
 
   function aoMudar(ev) {
     if (ev.target && ev.target.id === 'avisos-carteira') { est.sel = ev.target.value; desenhar(); }
@@ -212,7 +325,15 @@
     var alvo = ev.target.closest ? ev.target.closest('[data-acao]') : null;
     if (!alvo) return;
     var a = alvo.getAttribute('data-acao');
-    if (a === 'tudo') { est.mostrarTudo[alvo.getAttribute('data-chave')] = true; desenhar(); }
+    if (a === 'mais') {
+      var vis = Number(alvo.getAttribute('data-vis')), passo = Number(alvo.getAttribute('data-passo'));
+      if (vis >= 0 && passo > 0) { est.mostrar[alvo.getAttribute('data-chave')] = vis + passo; desenhar(); }
+    } else if (a === 'abrir') {
+      var chA = alvo.getAttribute('data-chave');
+      est.abertos[chA] = alvo.getAttribute('aria-expanded') !== 'true';
+      desenhar();
+      focarAbrir(chA);
+    }
     else if (a === 'sil') { ev.preventDefault(); var ch = alvo.getAttribute('data-chave'); est.verSil[ch] = !est.verSil[ch]; desenhar(); }
     else if (a === 'escolher') { est.sel = alvo.getAttribute('data-id') || ''; desenhar(); }
     else if (a === 'gerar') gerar();

@@ -332,6 +332,16 @@ function criarPainel(opcoes) {
       if (doDia()) return doDia();
     }
     if (!vencida(base)) return base;
+    // Base passou dos 10 minutos mas é do mesmo dia: devolve na hora e recalcula por trás, em vez
+    // de segurar a rota até 20 s. A tela mostra a hora do cálculo e o aviso de atualizando
+    // (recalculando:true) e relê sozinha. Só a primeira base do dia (servidor recém ligado ou
+    // virada do dia) ainda faz esperar. A base é a mesma para todos; o filtro por carteira e
+    // permissão continua na rota, depois daqui.
+    if (doDia()) {
+      const emEsperaAposErro = ultimoErro && Date.now() - Date.parse(ultimoErro) < ESPERA_APOS_ERRO;
+      if (!andamento && !emEsperaAposErro) recalcular();
+      return doDia();
+    }
     // C05: depois de uma falha, espera 2 minutos antes de tentar de novo (não dispara um recálculo por requisição).
     if (!andamento && ultimoErro && Date.now() - Date.parse(ultimoErro) < ESPERA_APOS_ERRO) {
       if (doDia()) return doDia();

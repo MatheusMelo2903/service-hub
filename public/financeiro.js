@@ -51,7 +51,7 @@
   function ativo(nome) { var p = document.getElementById('panel-' + nome); return !!(p && p.classList.contains('active')); }
   // Depois de abrir: o próprio showPanel do index.html já recusa sem permissão.
   function aoAbrir() {
-    if (ativo(PAINEL) && podeVer()) { finAbrir(); atalhos(); }
+    if (ativo(PAINEL) && podeVer()) { finAbrir().then(abrirComGuardado); atalhos(); }
     if (ativo('boletos') && podeAbrir('boletos')) boletosAbrir();
   }
   if (typeof window.showPanel === 'function') {
@@ -101,6 +101,81 @@
     throw new Error('O cálculo está demorando mais que o normal. Tente de novo em alguns minutos.');
   }
   function linkSeguro(u) { return /^https:\/\/[a-z0-9.-]+\.superlogica\.net\//i.test(String(u || '')) ? u : ''; }
+
+  // 3a. Último resultado guardado na aba do navegador (sessionStorage). O cálculo da carteira
+  // leva de segundos a minutos; guardando a última resposta, a tela abre na hora com ela e
+  // atualiza por trás. Nunca mistura logins: guardamos só uma impressão curta do token (nunca o
+  // token) e, se o token mudar (outro login, sair, renovação), apagamos tudo antes de ler.
+  // Qualquer falha do navegador (modo privado, cota cheia, bloqueio) só desliga o atalho.
+  var CACHE_PREFIXO = 'finTela:';
+  var CACHE_MAX = 1500000; // resposta maior que isso não vale ocupar a cota da aba
+  function impressaoLogin() {
+    var s = String(window.AUTH_TOKEN || '');
+    if (!s) return '';
+    var h = 5381;
+    for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36) + '.' + s.length.toString(36);
+  }
+  function cacheLimpar() {
+    try {
+      var apagar = [];
+      for (var i = 0; i < sessionStorage.length; i++) {
+        var k = sessionStorage.key(i);
+        if (k && k.indexOf(CACHE_PREFIXO) === 0) apagar.push(k);
+      }
+      apagar.forEach(function (k) { sessionStorage.removeItem(k); });
+    } catch (e) { /* sem sessionStorage: nada a limpar */ }
+  }
+  // Confere se o que está guardado é deste login; se não for, apaga e assume o login atual.
+  function cacheDoLogin() {
+    try {
+      var atual = impressaoLogin();
+      if (sessionStorage.getItem(CACHE_PREFIXO + 'dono') !== atual) {
+        cacheLimpar();
+        if (atual) sessionStorage.setItem(CACHE_PREFIXO + 'dono', atual);
+      }
+      return !!atual;
+    } catch (e) { return false; }
+  }
+  function cacheLer(chave) {
+    try {
+      if (!cacheDoLogin()) return null;
+      var v = sessionStorage.getItem(CACHE_PREFIXO + chave);
+      return v ? JSON.parse(v) : null;
+    } catch (e) { return null; }
+  }
+  function cacheGravar(chave, dados) {
+    try {
+      if (!cacheDoLogin()) return;
+      var v = JSON.stringify(dados);
+      if (v.length > CACHE_MAX) return;
+      sessionStorage.setItem(CACHE_PREFIXO + chave, v);
+    } catch (e) { /* cota cheia ou bloqueado: segue sem guardar */ }
+  }
+  function chaveQuadro() { var sel = document.getElementById('fin-carteira'); return 'resumo:' + ((sel && sel.value) || 'meus'); }
+
+  // 3b. Aviso de carregando no lugar do branco: faixas cinza claras (var(--bg3)) pulsando de leve.
+  // O estilo entra uma vez só, aqui, para não mexer no index.html; quem pede menos movimento
+  // no sistema (prefers-reduced-motion) recebe as faixas paradas.
+  function estiloEsqueleto() {
+    if (document.getElementById('tela-esqueleto-css')) return;
+    var st = document.createElement('style');
+    st.id = 'tela-esqueleto-css';
+    st.textContent = '.tela-esqueleto{display:flex;flex-direction:column;gap:8px;padding:4px 0}'
+      + '.tela-esqueleto span{display:block;height:14px;border-radius:8px;background:var(--bg3);animation:tela-esqueleto-pulso 1.2s ease-in-out infinite alternate}'
+      + '@keyframes tela-esqueleto-pulso{from{opacity:1}to{opacity:.45}}'
+      + '@media (prefers-reduced-motion: reduce){.tela-esqueleto span{animation:none}}';
+    document.head.appendChild(st);
+  }
+  function esqueleto(id, linhas) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    estiloEsqueleto();
+    var larg = [100, 92, 96, 88, 94, 90, 97, 86];
+    var html = '';
+    for (var i = 0; i < (linhas || 6); i++) html += '<span style="width:' + larg[i % larg.length] + '%"></span>';
+    el.innerHTML = '<div class="tela-esqueleto" role="status" aria-label="Carregando">' + html + '</div>';
+  }
 
   // 4. Abertura da aba: lista de carteiras (o GESTOR vê os grupos do Superlógica).
   async function finAbrir() {
@@ -152,25 +227,58 @@
   }
 
   // 5. Quadro da carteira.
-  window.finCarregar = async function (forcar) {
+  window.finCarregar = function (forcar) { return carregarQuadro(forcar, false); };
+
+  // Carrega o quadro. Com resultado guardado desta carteira, ele aparece na hora com o aviso
+  // "Atualizando" e a resposta nova substitui quando chegar; sem nada guardado, o esqueleto
+  // ocupa o lugar do branco. silencioso: nova leitura de fundo enquanto o servidor recalcula
+  // (não troca a tela por esqueleto nem mostra erro por cima do que já está certo).
+  async function carregarQuadro(forcar, silencioso) {
     await finAbrir();
     var sel = document.getElementById('fin-carteira');
     var seq = ++est.seqQ;
+    clearTimeout(est.timerQ);
+    var chave = chaveQuadro();
     var q = [];
     if (sel && sel.value) q.push('carteira=' + encodeURIComponent(sel.value));
     if (forcar) q.push('forcar=1');
-    document.getElementById('fin-quadro').innerHTML = '';
-    msg('fin-info', 'Carregando...');
+    var guardado = silencioso ? null : cacheLer(chave);
+    if (guardado) renderQuadro(guardado, true);
+    else if (!silencioso) { esqueleto('fin-quadro', 8); msg('fin-info', 'Carregando...'); }
+    var mostrando = !!guardado || silencioso;
     try {
       var j = await pegar('/api/financeiro/resumo' + (q.length ? '?' + q.join('&') : ''), function (t) {
-        if (seq === est.seqQ) msg('fin-info', 'Calculando os alertas de todos os condomínios (leva de 1 a 3 minutos na primeira vez)' + '.'.repeat(1 + (t % 3)));
+        if (seq === est.seqQ && !mostrando) msg('fin-info', 'Calculando os alertas de todos os condomínios (leva de 1 a 3 minutos na primeira vez)' + '.'.repeat(1 + (t % 3)));
       }, 'seqQ', seq);
       if (seq !== est.seqQ) return;
-      renderQuadro(j);
+      // Releitura de fundo que trouxe o mesmo cálculo: não redesenha (manteria a tela piscando e
+      // desfaria o que a pessoa abriu ou escolheu no quadro); só segue esperando o novo.
+      if (!(silencioso && j.gerado_em === est.geradoQ && j.recalculando)) renderQuadro(j);
+      est.geradoQ = j.gerado_em;
+      cacheGravar(chave, j);
+      agendarReleitura(j, seq, silencioso ? est.releiturasQ + 1 : 0);
     } catch (e) {
-      if (seq === est.seqQ && e.message !== 'cancelado') msg('fin-info', e.message, true);
+      if (seq !== est.seqQ || e.message === 'cancelado') return;
+      if (silencioso) return;
+      if (guardado) msg('fin-info', e.message + ' Mostrando o último resultado guardado.', true);
+      else { document.getElementById('fin-quadro').innerHTML = ''; msg('fin-info', e.message, true); }
     }
-  };
+  }
+  // O servidor devolve a base anterior e recalcula por trás (recalculando:true): a tela relê
+  // sozinha a cada 20 s, no máximo 9 vezes (3 minutos), enquanto a aba estiver aberta.
+  function agendarReleitura(j, seq, n) {
+    est.releiturasQ = n;
+    if (!j || !j.recalculando || n >= 9) return;
+    est.timerQ = setTimeout(function () {
+      if (seq === est.seqQ && ativo(PAINEL)) carregarQuadro(false, true);
+    }, 20000);
+  }
+  // Ao abrir a aba sem quadro na tela: se há resultado guardado desta carteira, mostra e atualiza.
+  function abrirComGuardado() {
+    var el = document.getElementById('fin-quadro');
+    if (!el || el.innerHTML.trim() || !ativo(PAINEL) || !podeVer()) return;
+    if (cacheLer(chaveQuadro())) carregarQuadro(false, false);
+  }
 
   // T51: tipos que a pessoa silenciou em "Meus alertas". O resumo chega com os números de tudo;
   // o servidor marca o tipo em por_tipo[tipo].silenciado (ou manda a lista tipos_silenciados)
@@ -196,7 +304,8 @@
       .map(function (t) { return esc(t.descricao) + ' (' + t.total + ')'; }).join('; ');
   }
 
-  function renderQuadro(j) {
+  // atualizando: é o resultado guardado na aba, mostrado enquanto a leitura nova não chega.
+  function renderQuadro(j, atualizando) {
     var globais = Array.isArray(j.tipos_silenciados) ? j.tipos_silenciados.map(String) : [];
     var lista = (j.condominios || []).map(function (c) { return semSilenciados(c, globais); });
     var qtdSil = lista.reduce(function (s, c) { return s + c.qtdSil; }, 0);
@@ -205,7 +314,7 @@
     var p = j.periodo || {};
     var info = 'Calculado em ' + horaBR(j.gerado_em) + '. Pagas desde ' + dataBR(p.pagas_desde) + ', pendentes até ' + dataBR(p.pendentes_ate)
       + ', mexidas dos dias ' + (p.auditoria_dias || []).map(dataBR).join(', ') + '.'
-      + (j.recalculando ? ' Atualizando em segundo plano.' : '')
+      + (atualizando ? ' Atualizando...' : (j.recalculando ? ' Atualizando em segundo plano.' : ''))
       + ((j.falhas || []).length ? ' Atenção: ' + j.falhas.length + ' leitura(s) falharam; os números podem estar incompletos.' : '');
     msg('fin-info', info);
     var el = document.getElementById('fin-quadro');
@@ -297,20 +406,40 @@
     document.getElementById('fin-alertas-atualizar').addEventListener('click', function () { carregarAlertas(true); });
     if (est.alertas) renderAlertas(); else carregarAlertas(false);
   }
+  // Com alertas na tela (ou guardados na aba para este condomínio), eles ficam visíveis com o
+  // aviso "Atualizando" até a resposta nova chegar; sem nada, o esqueleto ocupa o lugar do branco.
   async function carregarAlertas(forcar) {
     var c = est.cond;
     var seq = ++est.seqD;
-    msg('fin-alertas-info', 'Carregando...');
+    var chave = 'alertas:' + c.id;
+    if (!est.alertas) est.alertas = cacheLer(chave);
+    est.alertasAtualizando = !!est.alertas;
+    est.alertasSeq = seq;
+    if (est.alertas) { if (est.aba === 'alertas') renderAlertas(); }
+    else { esqueleto('fin-alertas-lista', 6); msg('fin-alertas-info', 'Carregando...'); }
     try {
       var j = await pegar('/api/financeiro/condominio/' + encodeURIComponent(c.id) + '/alertas' + (forcar ? '?forcar=1' : ''), function () {
-        if (seq === est.seqD) msg('fin-alertas-info', 'Calculando os alertas (leva de 1 a 3 minutos na primeira vez)...');
+        if (seq === est.seqD && !est.alertasAtualizando) msg('fin-alertas-info', 'Calculando os alertas (leva de 1 a 3 minutos na primeira vez)...');
       }, 'seqD', seq);
-      if (seq !== est.seqD || !est.cond || est.cond.id !== c.id) return;
+      // Atropelada por outra leitura (pré balancete usa a mesma sequência): solta o aviso
+      // "Atualizando" se nenhuma leitura de alertas mais nova o assumiu.
+      if (seq !== est.seqD || !est.cond || est.cond.id !== c.id) { if (est.alertasSeq === seq) est.alertasAtualizando = false; return; }
       est.alertas = j;
+      est.alertasAtualizando = false;
+      cacheGravar(chave, j);
       if (j.nome && !est.cond.nome) est.cond.nome = j.nome;
       if (est.aba === 'alertas') renderAlertas();
     } catch (e) {
-      if (seq === est.seqD && e.message !== 'cancelado') msg('fin-alertas-info', e.message, true);
+      if (est.alertasSeq === seq) est.alertasAtualizando = false;
+      if (seq !== est.seqD || e.message === 'cancelado') return;
+      if (est.alertas && est.cond && est.cond.id === c.id) {
+        if (est.aba === 'alertas') renderAlertas();
+        msg('fin-alertas-info', e.message + ' Mostrando o último resultado.', true);
+      } else {
+        var l = document.getElementById('fin-alertas-lista');
+        if (l) l.innerHTML = '';
+        msg('fin-alertas-info', e.message, true);
+      }
     }
   }
 
@@ -333,7 +462,7 @@
     var t = selTipo.value;
     var vis = base.filter(function (a) { return (!g || a.gravidade === g) && (!t || a.tipo === t); });
     msg('fin-alertas-info', base.length + ' alerta(s), ' + vis.length + ' na lista. Calculado em ' + horaBR(j.gerado_em) + '.'
-      + (j.analista ? ' Analista: ' + j.analista + '.' : '') + (j.recalculando ? ' Atualizando em segundo plano.' : ''));
+      + (j.analista ? ' Analista: ' + j.analista + '.' : '') + (est.alertasAtualizando ? ' Atualizando...' : (j.recalculando ? ' Atualizando em segundo plano.' : '')));
     var rodape = '';
     if (sil.length) {
       rodape = '<div class="hint" style="margin-top:8px">' + sil.length + (sil.length === 1 ? ' silenciado' : ' silenciados') + ' por você · <a href="#" id="fin-alertas-sil">' + (est.verSilDet ? 'esconder' : 'ver') + '</a></div>';
@@ -400,7 +529,7 @@
     var seq = ++est.seqB;
     var btn = document.getElementById('fin-bol-conferir');
     btn.disabled = true;
-    document.getElementById('fin-bol-lista').innerHTML = '';
+    esqueleto('fin-bol-lista', 6);
     msg('fin-bol-info', 'Lendo os boletos de ' + (c.nome || 'código ' + c.id) + ' no mês e nos 3 anteriores (pode levar até 1 minuto)...');
     try {
       var j = await pegar('/api/financeiro/boletos/' + encodeURIComponent(c.id) + '?competencia=' + encodeURIComponent(mes), null, 'seqB', seq);
@@ -408,7 +537,7 @@
       if (seq !== est.seqB || !agora || agora.id !== c.id) return;
       renderBoletos(j);
     } catch (e) {
-      if (seq === est.seqB && e.message !== 'cancelado') msg('fin-bol-info', e.message, true);
+      if (seq === est.seqB && e.message !== 'cancelado') { document.getElementById('fin-bol-lista').innerHTML = ''; msg('fin-bol-info', e.message, true); }
     } finally { if (seq === est.seqB && document.getElementById('fin-bol-conferir')) document.getElementById('fin-bol-conferir').disabled = false; }
   };
   function renderBoletos(j) {
@@ -447,14 +576,18 @@
     var mes = document.getElementById('fin-pre-mes').value;
     if (!/^\d{4}-\d{2}$/.test(mes)) { msg('fin-pre-info', 'Escolha o mês.', true); return; }
     var seq = ++est.seqD;
-    document.getElementById('fin-pre-lista').innerHTML = '';
+    esqueleto('fin-pre-lista', 6);
     msg('fin-pre-info', 'Lendo as despesas e as mexidas do mês (pode levar até 1 minuto)...');
     try {
       var j = await pegar('/api/financeiro/condominio/' + encodeURIComponent(c.id) + '/pre-balancete?competencia=' + encodeURIComponent(mes) + (forcar ? '&forcar=1' : ''), null, 'seqD', seq);
       if (seq !== est.seqD || !est.cond || est.cond.id !== c.id || est.aba !== 'pre') return;
       renderPre(j);
     } catch (e) {
-      if (seq === est.seqD && e.message !== 'cancelado') msg('fin-pre-info', e.message, true);
+      if (seq === est.seqD && e.message !== 'cancelado') {
+        var l = document.getElementById('fin-pre-lista');
+        if (l) l.innerHTML = '';
+        msg('fin-pre-info', e.message, true);
+      }
     }
   }
   function renderPre(j) {
