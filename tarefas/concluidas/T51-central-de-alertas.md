@@ -24,3 +24,7 @@ Mudar situação (visto, resolvido, reabrir) segue a rota PATCH /api/alertas/:id
 ## Banco
 Migração 023: tabela alertas_preferencias (user_id uuid pk, silenciados text[] not null default '{}', pausado boolean not null default false, atualizado_em timestamptz). RLS ligada sem policy, revoke de anon e authenticated. Aplicar só no Supabase de teste.
 Permissão: módulo central_alertas (ações ver, silenciar) no catálogo de módulos e na tabela de permissões da tela de Configurações; ver liberado para todos por padrão (como Dashboard), silenciar só GESTOR por padrão.
+
+## Entregue (22/10/2026 21:40, dev deploy 2ce96012)
+Servidor servico/central-alertas.js, tela public/central-alertas.js, silenciados nos cartões (dashboard.js, avisos.js, financeiro.js), migração 023 aplicada no teste. Testado no Chrome: Central abre com 87 condomínios, áreas Financeiro, Operacional, Documentos e jurídico, Segurança; silenciar Consumo moveu 46 alertas para "Silenciados (46)"; preferência restaurada depois.
+Decisão: silenciar é ação liberável pelo dono (GESTOR sempre); OPERACIONAL só se o dono liberar.
