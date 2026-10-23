@@ -1008,7 +1008,7 @@
     try {
       var j = await api(base() + '/notificacoes' + (q.length ? '?' + q.join('&') : ''));
       RN.lista = j.notificacoes || [];
-      box.innerHTML = RN.lista.length ? '<table style="width:100%;border-collapse:collapse"><thead><tr style="text-align:left;color:var(--muted);font-size:11px">' +
+      box.innerHTML = RN.lista.length ? '<table style="width:100%;border-collapse:collapse;table-layout:auto"><thead><tr style="text-align:left;color:var(--muted);font-size:11px">' +
         '<th>DATA</th><th>UNIDADE</th><th>TIPO</th><th>SITUAÇÃO</th><th>VALOR</th><th>OCORRÊNCIA</th><th></th></tr></thead><tbody>' +
         RN.lista.map(linhaLista).join('') + '</tbody></table>' : '<span style="color:var(--muted)">Nenhuma notificação com esse filtro.</span>';
     } catch (e) { box.innerHTML = '<span style="color:var(--danger)">' + esc(e.message) + '</span>'; }
@@ -1025,7 +1025,9 @@
       '<td>' + esc(NOME_TIPO[n.tipo] || n.tipo) + (n.origem === 'condgpt' ? ' <span style="color:var(--muted);font-size:11px">importada</span>' : '') + '</td>' +
       '<td><span class="badge ' + (COR_STATUS[n.status] || '') + '">' + esc(NOME_STATUS[n.status] || n.status) + '</span></td>' +
       '<td>' + (n.valor != null ? brl(n.valor) : '') + '</td>' +
-      '<td style="max-width:280px;color:var(--muted);font-size:12px">' + esc(String(n.ocorrencia || '').slice(0, 140)) + '</td>' +
+      // O td do Hub não quebra linha (white-space:nowrap global); aqui a ocorrência quebra em até
+      // 2 linhas e o texto inteiro aparece ao passar o mouse, sem invadir a coluna dos botões.
+      '<td style="white-space:normal;max-width:360px;min-width:180px;color:var(--muted);font-size:12px" title="' + esc(String(n.ocorrencia || '')) + '"><div style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word">' + esc(String(n.ocorrencia || '')) + '</div></td>' +
       '<td style="white-space:nowrap;text-align:right">' + acoes.join(' ') + '</td></tr>';
   }
 
