@@ -128,6 +128,12 @@ async function main() {
     const rAdv = await N.rascunho(dAdv, ID, { idUnidade: 501, relato: 'Barulho após as 22h.', data_fato: '10/10/2026', tipo_pedido: 'advertencia', hoje: HOJE });
     t('advertência pedida: sem linha de valor', rAdv.tipo === 'advertencia' && !/Valor da multa/.test(rAdv.texto), rAdv.texto);
     t('prazo que não está no trecho vira [a confirmar]', rAdv.prazo.dias === null && /Prazo para regularização: \[a confirmar\]/.test(rAdv.texto), rAdv.prazo);
+    // Veredito da tela de análise: resposta sem enquadramento e com trecho conferido cabe penalidade.
+    t('veredito: cabe penalidade com trecho conferido', r.veredito && r.veredito.situacao === 'cabe_penalidade', r.veredito);
+    t('veredito: sem trecho conferido não há regra, mesmo com enquadramento coberto', N.vereditoDoCaso({ aprovados: [], enquadramento: 'coberto', tipo: 'advertencia', valor: null }).situacao === 'sem_regra');
+    t('veredito: modelo diz que não cobre', N.vereditoDoCaso({ aprovados: [{}], enquadramento: 'nao_coberto', tipo: 'advertencia', valor: null }).situacao === 'sem_regra');
+    t('veredito: dúvida fica a confirmar', N.vereditoDoCaso({ aprovados: [{}], enquadramento: 'duvida', tipo: 'advertencia', valor: null }).situacao === 'a_confirmar');
+    t('veredito: multa sem valor fica a confirmar', N.vereditoDoCaso({ aprovados: [{}], enquadramento: 'coberto', tipo: 'multa', valor: { valor: null } }).situacao === 'a_confirmar');
     t('inquilino lido do Superlógica', r.unidade.inquilino === 'João Lima' && r.unidade.email_inquilino === 'joao@exemplo.com', r.unidade);
     t('sem hífen nem travessão na carta', !/[-–—]/.test(r.texto), r.texto.match(/.{0,20}[-–—].{0,20}/));
     t('sem < > na carta', !/[<>]/.test(r.texto));
