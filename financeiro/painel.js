@@ -188,6 +188,8 @@ async function montarBase(cliente, fila, hoje) {
     periodo: { pagas_desde: iniPagas, pendentes_ate: U.maisDias(hoje, 60), auditoria_dias: dias },
     totais: { parcelas: despesas.length, linhas_auditoria: auditoria.length, alertas: r.alertas.length },
     condominios, porCondominio, analistas: r.analistasPorCondominio, falhas,
+    // Juros e atrasos (financeiro/juros.js) monta o quadro da carteira com as mesmas parcelas.
+    despesas,
     janelas_pedidas: tarefas.length + tAud.length, janelas_falhas: janelasFalhas,
   };
 }

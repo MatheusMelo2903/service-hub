@@ -4466,6 +4466,17 @@ require('./financeiro/balancete-rotas').criarRotasBalancete(app, {
   cliente: () => clienteSL(), auditar: (req, acao, det, susp) => auditoria.evento(req, acao, det, susp),
 });
 
+// Juros e atrasos (dossiê por caso), dentro do item Financeiro. Rotas em financeiro/juros-rotas.js.
+// Só GET no Superlógica; registro, decisão (só GESTOR e GERENTE) e histórico nas tabelas fin_juros_*.
+require('./financeiro/juros-rotas').registrar({
+  app, express, requireAuth, exigirFinanceiro: _exigirFinanceiro, exigirLeituraSuperlogica,
+  exigirCarteira: (req, res, id) => _exigirCarteira(req, res, id), exigirEscopo: (req, res, id) => _exigirEscopoFinanceiro(req, res, id),
+  escopoFinanceiro: _escopoFinanceiro, lerPerfil, gruposCarteiras, clienteSL: () => clienteSL(),
+  obterBase: () => _painelFin.obterBase(false),
+  supabase: { url: SUPABASE_URL, chave: SUPABASE_SERVICE_ROLE_KEY },
+  auditar: (req, acao, det) => auditoria.evento(req, acao, det, false),
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // Conciliação (T35), item próprio do menu desde a T37 (módulos financeiro e conciliacao). Só GET no Superlógica (extrato já importado
 // pela equipe: conciliacao/index por condomínio e conta, e contabancos/index), no máximo
