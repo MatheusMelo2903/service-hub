@@ -67,6 +67,15 @@ function t(nome, cond) { if (cond) ok++; else { falhas++; console.log('FALHOU: '
   const b2 = await painel.obterBase(true);
   t('forçar logo depois devolve a mesma base sem reler', b1 && b2 === b1 && calls === antes);
 
+  // Base vencida do mesmo dia: devolve a anterior na hora e recalcula por trás
+  const agoraReal = Date.now;
+  Date.now = () => agoraReal() + 11 * 60 * 1000;
+  let b3;
+  try { b3 = await painel.obterBase(false); } finally { Date.now = agoraReal; }
+  t('vencida do dia volta na hora', b3 === b1 && painel.situacao().calculando === true);
+  await painel.recalcular().catch(() => {});
+  t('recalculo por trás troca a base', (await painel.obterBase(false)) !== b1);
+
   // Fila respeita o limite
   let ativos = 0, pico = 0;
   const fila = P.criarFila(2);

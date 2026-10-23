@@ -54,11 +54,73 @@ function previsaoInit() {
     var nome = (cond && cond.nome) ? cond.nome : '';
     previsaoCondCarregado = cond ? { nome: cond.nome || '', id_superlogica: cond.id_superlogica || null } : null;
     previsaoGeracao++;
+    // Antes do src: na primeira vez o iframe ainda esta vazio e pode ser embrulhado sem recarregar.
+    previsaoMostrarCarregando(iframe);
     // Passa o nome so como contexto. O modulo NAO sobrescreve com isso o nome
     // que ele mesmo extrai da planilha; ver SH_CONDOMINIO_ATIVO no modulo.
     iframe.src = PREVISAO_MODULO_URL + '?g=' + previsaoGeracao + (nome ? ('&cond=' + encodeURIComponent(nome)) : '');
     previsaoIframeCarregado = true;
   }
+}
+
+/* Aviso de carregando por cima do iframe. O modulo e um arquivo grande (bibliotecas de
+   planilha e PDF embutidas) e, ate ele terminar de iniciar, o quadro ficava em branco.
+   O aviso (faixas cinza claras pulsando, paradas para quem pede menos movimento) cobre o
+   iframe ate a ponte do modulo da carga atual dizer pronto. Se o modulo terminar de carregar
+   e nao avisar (erro dentro dele), sai depois de 2 s; teto de 60 s para nunca ficar preso.
+   Cada carga nova assume o aviso; a conferencia da carga antiga para sozinha. */
+var previsaoCarregandoTimer = null;
+function previsaoMostrarCarregando(iframe) {
+  try {
+    var moldura = iframe.parentNode;
+    if (!moldura) return;
+    if (!moldura.classList || !moldura.classList.contains('prev-moldura')) {
+      moldura = document.createElement('div');
+      moldura.className = 'prev-moldura';
+      moldura.style.position = 'relative';
+      iframe.parentNode.insertBefore(moldura, iframe);
+      moldura.appendChild(iframe);
+    }
+    if (!document.getElementById('tela-esqueleto-css')) {
+      var st = document.createElement('style');
+      st.id = 'tela-esqueleto-css';
+      st.textContent = '.tela-esqueleto{display:flex;flex-direction:column;gap:8px;padding:4px 0}'
+        + '.tela-esqueleto span{display:block;height:14px;border-radius:8px;background:var(--bg3);animation:tela-esqueleto-pulso 1.2s ease-in-out infinite alternate}'
+        + '@keyframes tela-esqueleto-pulso{from{opacity:1}to{opacity:.45}}'
+        + '@media (prefers-reduced-motion: reduce){.tela-esqueleto span{animation:none}}';
+      document.head.appendChild(st);
+    }
+    var aviso = document.getElementById('prev-carregando');
+    if (!aviso) {
+      aviso = document.createElement('div');
+      aviso.id = 'prev-carregando';
+      aviso.setAttribute('role', 'status');
+      aviso.setAttribute('aria-label', 'Carregando');
+      aviso.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;z-index:1;background:var(--bg2);border-radius:10px;padding:20px';
+      var faixas = '';
+      [60, 100, 92, 96, 88, 94, 40, 100, 90, 97].forEach(function (l) { faixas += '<span style="width:' + l + '%"></span>'; });
+      aviso.innerHTML = '<div style="font-size:12px;font-family:var(--mono);color:var(--muted);margin-bottom:12px">Abrindo a previsão orçamentária...</div>'
+        + '<div class="tela-esqueleto">' + faixas + '</div>';
+      moldura.appendChild(aviso);
+    }
+    aviso.style.display = '';
+    var geracao = previsaoGeracao;
+    var t0 = Date.now();
+    var completoDesde = 0;
+    clearTimeout(previsaoCarregandoTimer);
+    (function confere() {
+      if (geracao !== previsaoGeracao) return;
+      try {
+        var d = iframe.contentDocument;
+        if (!completoDesde && d && d.readyState === 'complete' && String(d.location.search).indexOf('g=' + geracao) >= 0) completoDesde = Date.now();
+      } catch (e) {}
+      if (previsaoPonte() || (completoDesde && Date.now() - completoDesde > 2000) || Date.now() - t0 > 60000) {
+        aviso.style.display = 'none';
+        return;
+      }
+      previsaoCarregandoTimer = setTimeout(confere, 150);
+    })();
+  } catch (e) { console.warn('[previsao] aviso de carregando', e); }
 }
 
 /* Devolve a ponte do modulo SO se for a carga atual e ja tiver terminado de iniciar. */

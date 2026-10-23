@@ -12,7 +12,14 @@
   'use strict';
   var PAINEL = 'centralalertas';
   var MODULO = 'central_alertas';
+  // Teto de segurança de cartões desenhados de uma vez, mesmo com tudo aberto.
   var MAX_LISTA = 500;
+  // Quantos condomínios aparecem de início e a cada "Ver mais"; idem para os alertas de um tipo.
+  var PASSO_COND = 15;
+  var PASSO_TIPO = 10;
+  // Cópia da última resposta nesta aba, para a tela abrir na hora enquanto busca de novo.
+  var CACHE = 'ca_cache_';
+  var CACHE_MAX = 2 * 1024 * 1024;
 
   // 1. Catálogo de permissões e título da aba (só se ninguém registrou antes).
   if (typeof MODULOS_CATALOGO !== 'undefined' && !MODULOS_CATALOGO[MODULO]) {
@@ -122,6 +129,25 @@
       '.ca-acoes .btn{font-size:11px;padding:4px 10px}',
       '.ca-vazio{font-size:13px;color:var(--muted);padding:18px 4px;text-align:center}',
       '.ca-vazio.ok{color:var(--success)}',
+      // Grupos recolhidos por condomínio e por tipo: mesmo cartão dos itens, só que clicável.
+      '.ca-lista-barra{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-bottom:10px}',
+      '.ca-lista-botoes{margin-left:auto;display:flex;gap:6px}',
+      '.ca-lista-botoes .btn{font-size:11px;padding:4px 10px}',
+      '.ca-cond{margin-top:8px}',
+      '.ca-cond-cab{width:100%;margin-bottom:0;padding:10px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font:inherit;font-size:14px;color:var(--text);text-align:left;cursor:pointer;transition:border-color .15s}',
+      '.ca-cond-cab:hover,.ca-tipo-cab:hover{border-color:var(--gs-blue)}',
+      '.ca-cond-cab:focus-visible,.ca-tipo-cab:focus-visible{outline:2px solid var(--gs-blue);outline-offset:2px}',
+      '.ca-cond-res{font-size:12px;color:var(--muted);margin-left:auto}',
+      '.ca-seta{display:inline-block;font-size:11px;color:var(--muted);transition:transform .15s}',
+      '[aria-expanded="true"]>.ca-seta{transform:rotate(90deg)}',
+      '.ca-cond-corpo{padding:8px 0 0 12px}',
+      '.ca-tipo-cab{width:100%;display:flex;align-items:center;gap:8px;flex-wrap:wrap;text-align:left;font:inherit;color:var(--text);cursor:pointer}',
+      '.ca-tipo-txt{font-size:13px;font-weight:500;word-break:break-word}',
+      '.ca-tipo-corpo{padding-left:12px}',
+      '.ca-mais{font-size:12px;padding:5px 12px;margin:2px 0 8px}',
+      '.ca-esq{height:44px;border-radius:8px;background:var(--bg3);margin-bottom:6px;animation:caEsq 1.6s ease-in-out infinite}',
+      '@keyframes caEsq{0%,100%{opacity:.5}50%{opacity:1}}',
+      '@media (prefers-reduced-motion:reduce){.ca-esq,.ca-pill i{animation:none}.ca-seta{transition:none}}',
       '.ca-sw{position:relative;display:inline-block;width:36px;height:20px;flex-shrink:0}',
       '.ca-sw input{position:absolute;opacity:0;width:0;height:0}',
       '.ca-sw span{position:absolute;inset:0;background:#C9CFD9;border-radius:20px;transition:background .15s;cursor:pointer}',
@@ -146,6 +172,8 @@
       '.ca-filtros select,.ca-filtros input{flex:1 1 100%;min-width:0}',
       '.ca-silenc{margin-left:0}',
       '.ca-data{margin-left:0;width:100%}',
+      '.ca-cond-res{margin-left:0;width:100%}',
+      '.ca-lista-botoes{margin-left:0}',
       '}'
     ].join('\n');
     document.head.appendChild(st);
@@ -199,7 +227,7 @@
       +   '</div>'
       + '</div>'
       + '<div class="card" id="ca-pref" style="display:none"></div>'
-      + '<div class="card"><div id="ca-lista"><div class="ca-vazio">Carregando...</div></div></div>';
+      + '<div class="card"><div id="ca-lista">' + esqueleto() + '</div></div>';
     dash.insertAdjacentElement('afterend', p);
     ligarEventos();
     pintarSituacao();
@@ -210,7 +238,13 @@
     seq: 0, dados: null, alertas: [], carregando: false, erro: '', carteirasOk: false, auto: 0, timer: null,
     f: { area: '', tipo: '', grav: '', cond: '', sit: { novo: true, visto: true, resolvido: false } },
     verSil: false,
-    pref: null, prefRasc: null, prefAberto: false, prefPedido: false
+    pref: null, prefRasc: null, prefAberto: false, prefPedido: false,
+    // Grupos abertos à mão (true ou false) e os abertos sozinhos pelo filtro de condomínio.
+    // Ficam só na memória: ao recarregar a página tudo volta recolhido.
+    abertos: Object.create(null), autoAbertos: Object.create(null),
+    tiposAbertos: Object.create(null), tiposAuto: Object.create(null),
+    limiteCond: PASSO_COND, limiteTipo: Object.create(null), sigFiltro: null, ordemCond: [],
+    carteiraDados: null, doCache: false, avisoCache: ''
   };
 
   function ligarEventos() {
@@ -245,12 +279,53 @@
     });
     $('ca-lista').addEventListener('click', function (ev) {
       var b = ev.target.closest('[data-ca-acao]');
-      if (!b) return;
+      if (b) {
+        ev.preventDefault();
+        var a = est.alertas[Number(b.getAttribute('data-ca-i'))];
+        if (!a) return;
+        var acao = b.getAttribute('data-ca-acao');
+        if (acao === 'abrir') abrirAlerta(a); else marcar(a, acao, b);
+        return;
+      }
+      // Abrir e fechar grupos e "Ver mais" redesenham só a lista, sem buscar nada de novo.
+      var g = ev.target.closest('[data-ca-cond],[data-ca-tipo],[data-ca-mais-cond],[data-ca-mais-tipo],[data-ca-todos]');
+      if (!g) return;
       ev.preventDefault();
-      var a = est.alertas[Number(b.getAttribute('data-ca-i'))];
-      if (!a) return;
-      var acao = b.getAttribute('data-ca-acao');
-      if (acao === 'abrir') abrirAlerta(a); else marcar(a, acao, b);
+      if (g.hasAttribute('data-ca-cond')) {
+        var kc = g.getAttribute('data-ca-cond');
+        est.abertos[kc] = !estaAberto(est.abertos, est.autoAbertos, kc);
+        renderLista();
+        focar('data-ca-cond', kc);
+      } else if (g.hasAttribute('data-ca-tipo')) {
+        var kt = g.getAttribute('data-ca-tipo');
+        est.tiposAbertos[kt] = !estaAberto(est.tiposAbertos, est.tiposAuto, kt);
+        renderLista();
+        focar('data-ca-tipo', kt);
+      } else if (g.hasAttribute('data-ca-mais-cond')) {
+        var antes = est.limiteCond;
+        est.limiteCond += PASSO_COND;
+        renderLista();
+        // O foco vai para o primeiro condomínio que acabou de aparecer.
+        if (est.ordemCond[antes]) focar('data-ca-cond', est.ordemCond[antes]);
+      } else if (g.hasAttribute('data-ca-mais-tipo')) {
+        var km = g.getAttribute('data-ca-mais-tipo');
+        est.limiteTipo[km] = (est.limiteTipo[km] || PASSO_TIPO) + PASSO_TIPO;
+        renderLista();
+        if (!focar('data-ca-mais-tipo', km)) focar('data-ca-tipo', km);
+      } else if (g.getAttribute('data-ca-todos') === 'abrir') {
+        est.ordemCond.forEach(function (k) { est.abertos[k] = true; });
+        renderLista();
+        focar('data-ca-todos', 'abrir');
+      } else {
+        // Marca como fechado à mão (e não só apaga) para uma leitura nova não reabrir o que o
+        // filtro de condomínio tinha aberto sozinho.
+        var tiposAuto = est.tiposAuto;
+        est.abertos = Object.create(null); est.tiposAbertos = Object.create(null);
+        est.ordemCond.forEach(function (k) { est.abertos[k] = false; });
+        Object.keys(tiposAuto).forEach(function (k) { est.tiposAbertos[k] = false; });
+        renderLista();
+        focar('data-ca-todos', 'recolher');
+      }
     });
   }
 
@@ -292,7 +367,8 @@
       var j = await r.json().catch(function () { return {}; });
       if (r.status === 202) {
         if (seq !== est.seq) throw new Error('cancelado');
-        info('Calculando os alertas da carteira (na primeira vez pode levar alguns minutos)' + '.'.repeat(1 + (t % 3)));
+        // Com a cópia da aba na tela, a pílula "Atualizando em segundo plano" já avisa; não troca a linha.
+        if (!est.doCache) info('Calculando os alertas da carteira (na primeira vez pode levar alguns minutos)' + '.'.repeat(1 + (t % 3)));
         await new Promise(function (ok) { setTimeout(ok, 6000); });
         if (seq !== est.seq) throw new Error('cancelado');
         continue;
@@ -315,14 +391,31 @@
     criarPainel();
     clearTimeout(est.timer);
     if (!silencioso) est.auto = 0;
+    // Antes de esperar a lista de carteiras (uma ida ao servidor para o GESTOR), já desenha a
+    // cópia da aba da carteira provável, para a tela não ficar vazia nesse meio tempo.
+    if (!silencioso && !est.dados) mostrarCopia(palpiteCarteira());
     await carregarCarteiras();
     var sel = document.getElementById('ca-carteira');
     var carteira = sel && sel.value ? sel.value : 'meus';
     var seq = ++est.seq;
     est.carregando = true;
     if (!silencioso) {
-      info('Carregando...');
-      if (!est.dados) document.getElementById('ca-lista').innerHTML = '<div class="ca-vazio">Carregando...</div>';
+      est.avisoCache = '';
+      if (est.dados && est.doCache && est.carteiraDados === carteira) {
+        renderInfo(); // a cópia certa já está na tela; segue buscando por trás
+      } else if (!est.dados || est.carteiraDados !== carteira) {
+        // Sem dados desta carteira na memória: usa a cópia da aba, se houver, e busca de novo
+        // por trás. Sem cópia, mostra o esqueleto até a resposta chegar.
+        if (!mostrarCopia(carteira)) {
+          est.doCache = false;
+          if (est.dados) { est.dados = null; est.alertas = []; est.carteiraDados = null; document.getElementById('ca-areas').innerHTML = ''; }
+          info('Carregando...');
+          document.getElementById('ca-lista').innerHTML = esqueleto();
+        }
+      } else {
+        est.doCache = false;
+        info('Carregando...');
+      }
     }
     var btn = document.getElementById('ca-atualizar');
     if (btn && !silencioso) btn.disabled = true;
@@ -330,6 +423,11 @@
       var j = await pegar('/api/central-alertas?carteira=' + encodeURIComponent(carteira) + '&forcar=' + (forcar ? '1' : '0'), seq);
       if (seq !== est.seq) return;
       est.erro = '';
+      est.doCache = false;
+      est.avisoCache = '';
+      est.carteiraDados = carteira;
+      salvarCache(carteira, j);
+      // receber redesenha mantendo filtros e grupos abertos, que ficam em est.
       receber(j);
       // Enquanto o servidor ainda calcula em segundo plano, lê de novo sozinho de vez em quando.
       if (j.atualizando && est.auto < 10) {
@@ -339,8 +437,15 @@
     } catch (e) {
       if (seq !== est.seq || e.message === 'cancelado') return;
       if (silencioso && est.dados) return; // mantém o que já está na tela
+      // A cópia da aba já está na tela: fica com ela e só avisa que não deu para atualizar.
+      if (est.doCache && est.dados) {
+        est.doCache = false;
+        est.avisoCache = 'Não foi possível atualizar agora; mostrando a última leitura desta aba.';
+        renderInfo();
+        return;
+      }
       est.erro = e.message || 'Não foi possível carregar os alertas agora.';
-      est.dados = null; est.alertas = [];
+      est.dados = null; est.alertas = []; est.carteiraDados = null;
       info('');
       document.getElementById('ca-areas').innerHTML = '';
       document.getElementById('ca-lista').innerHTML = '<div class="ca-vazio">' + esc(est.erro) + '</div>';
@@ -350,9 +455,56 @@
     }
   }
 
+  // Cópia na sessionStorage: some ao fechar a aba e só vale para a mesma pessoa, para quem
+  // entrar depois no mesmo navegador não ver, nem por um instante, os alertas de outra.
+  function usuarioAtual() { var u = window.AUTH_USER; return u && u.id ? String(u.id) : ''; }
+  function lerCache(carteira) {
+    try {
+      var s = sessionStorage.getItem(CACHE + carteira);
+      if (!s) return null;
+      var c = JSON.parse(s);
+      if (!c || !c.u || c.u !== usuarioAtual() || !c.j || typeof c.j !== 'object') return null;
+      return c.j;
+    } catch (e) { return null; }
+  }
+  function salvarCache(carteira, j) {
+    try {
+      var u = usuarioAtual();
+      if (!u) return;
+      var s = JSON.stringify({ u: u, j: j });
+      // Resposta grande demais não vale a cópia: tira a antiga para não mostrar coisa velha.
+      if (s.length > CACHE_MAX) { sessionStorage.removeItem(CACHE + carteira); return; }
+      sessionStorage.setItem(CACHE + carteira, s);
+    } catch (e) { /* aba sem espaço ou bloqueada: segue sem a cópia */ }
+  }
+
+  function mostrarCopia(carteira) {
+    var copia = lerCache(carteira);
+    if (!copia) return false;
+    est.doCache = true;
+    est.avisoCache = '';
+    est.carteiraDados = carteira;
+    receber(copia);
+    return true;
+  }
+  // Carteira que vai ser usada, antes de a lista de carteiras chegar (a última escolhida).
+  function palpiteCarteira() {
+    var sel = document.getElementById('ca-carteira');
+    if (est.carteirasOk) return sel && sel.value ? sel.value : 'meus';
+    if (window.USER_ROLE !== 'GESTOR') return 'meus';
+    try { return localStorage.getItem('ca_carteira') || 'meus'; } catch (e) { return 'meus'; }
+  }
+
+  // Quatro linhas cinza no lugar do texto enquanto a primeira leitura não chega.
+  function esqueleto() {
+    return '<div role="status" aria-busy="true" aria-label="Carregando alertas">'
+      + '<div class="ca-esq"></div><div class="ca-esq"></div><div class="ca-esq"></div><div class="ca-esq"></div></div>';
+  }
+
   // Normaliza o que veio do servidor uma vez, para os filtros ficarem simples.
   function receber(j) {
     est.dados = j || {};
+    est.dadosNovos = true; // a lista recalcula quais grupos o filtro de condomínio abre
     est.alertas = (Array.isArray(j.alertas) ? j.alertas : []).map(function (a) {
       a = a || {};
       return {
@@ -415,9 +567,10 @@
     if (j.gerado_em) partes.push('<span>Calculado em ' + esc(horaBR(j.gerado_em)) + '.</span>');
     var n = (j.condominios || []).length;
     if (n) partes.push('<span>' + n + ' condomínio' + (n > 1 ? 's' : '') + ' na carteira.</span>');
-    if (j.atualizando) partes.push('<span class="ca-pill"><i></i>Atualizando em segundo plano</span>');
+    if (j.atualizando || est.doCache) partes.push('<span class="ca-pill"><i></i>Atualizando em segundo plano</span>');
     var f = Array.isArray(j.falhas) ? j.falhas : [];
     if (f.length) partes.push('<span class="ca-aviso">Atenção: ' + f.length + ' leitura' + (f.length > 1 ? 's falharam' : ' falhou') + '; os números podem estar incompletos.</span>');
+    if (est.avisoCache) partes.push('<span class="ca-aviso">' + esc(est.avisoCache) + '</span>');
     el.innerHTML = partes.join('');
   }
 
@@ -464,6 +617,147 @@
     b.setAttribute('aria-pressed', est.verSil ? 'true' : 'false');
   }
 
+  // ==== INICIO AGRUPAMENTO PURO ====
+  // Funções sem tela e sem estado: recebem a lista normalizada e os índices visíveis e devolvem
+  // os grupos prontos. Separadas assim para poderem ser testadas fora do navegador.
+  function chaveCond(a) { return String(a.id_superlogica || a.condominio || 'sem'); }
+
+  // Nome curto que diferencia alertas do mesmo tipo: o fornecedor da recorrente (entre ": " e
+  // " (prevista") e o da conta a vencer (depois do último ": "). Nos outros tipos, o rótulo.
+  function nomeDistinto(a) {
+    var t = String(a.titulo || '');
+    if (a.tipo === 'recorrente_nao_lancada') {
+      var ini = t.indexOf(': '), fim = t.indexOf(' (prevista');
+      if (ini >= 0 && fim > ini) return t.slice(ini + 2, fim).trim() || a.rotulo;
+    } else if (a.tipo === 'conta_a_vencer') {
+      var ult = t.lastIndexOf(': ');
+      if (ult >= 0) return t.slice(ult + 2).trim() || a.rotulo;
+    }
+    return a.rotulo;
+  }
+
+  // Silenciados por último, depois gravidade e o mais recente primeiro (a ordem que já existia).
+  function compararAlertas(a, b) {
+    return (a.silenciado - b.silenciado) || (ORDEM_GRAV[a.gravidade] - ORDEM_GRAV[b.gravidade]) || String(b.data).localeCompare(String(a.data));
+  }
+
+  // Agrupa por condomínio e, dentro dele, por tipo. Condomínios com mais alertas de gravidade
+  // alta vêm primeiro; dentro do condomínio, o tipo mais grave e depois o mais numeroso.
+  // "curtos" é o mapa de rótulos curtos usado no resumo do cabeçalho.
+  function agruparAlertas(alertas, idxs, curtos) {
+    var mapa = Object.create(null);
+    var lista = [];
+    var cmp = function (x, y) { return compararAlertas(alertas[x], alertas[y]); };
+    idxs.forEach(function (i) {
+      var a = alertas[i];
+      var k = chaveCond(a);
+      var g = mapa[k];
+      if (!g) {
+        g = mapa[k] = { chave: k, nome: a.condominio || (a.id_superlogica ? 'Código ' + a.id_superlogica : 'Sem condomínio'), itens: [], alta: 0, porTipo: [], _t: Object.create(null) };
+        lista.push(g);
+      }
+      g.itens.push(i);
+      var tk = a.tipo || a.rotulo || 'alerta';
+      var t = g._t[tk];
+      if (!t) {
+        t = g._t[tk] = { tipo: tk, chave: k + '|' + tk, rotulo: a.rotulo, curto: (curtos && curtos[a.tipo]) || a.rotulo, itens: [], alta: 0, grav: 'baixa', nomes: [] };
+        g.porTipo.push(t);
+      }
+      t.itens.push(i);
+      if (a.gravidade === 'alta' && !a.silenciado) { g.alta++; t.alta++; }
+    });
+    lista.forEach(function (g) {
+      delete g._t;
+      g.itens.sort(cmp);
+      g.porTipo.forEach(function (t) {
+        t.itens.sort(cmp);
+        t.grav = alertas[t.itens[0]].gravidade;
+        // Nomes distintos, do mais repetido para o menos.
+        var cont = Object.create(null);
+        var nomes = [];
+        t.itens.forEach(function (i) {
+          var n = nomeDistinto(alertas[i]);
+          if (!(n in cont)) { cont[n] = 0; nomes.push(n); }
+          cont[n]++;
+        });
+        t.nomes = nomes.map(function (n, p) { return { n: n, c: cont[n], p: p }; })
+          .sort(function (x, y) { return y.c - x.c || x.p - y.p; })
+          .map(function (x) { return x.n; });
+      });
+      g.porTipo.sort(function (x, y) {
+        return (ORDEM_GRAV[x.grav] - ORDEM_GRAV[y.grav]) || (y.itens.length - x.itens.length) || String(x.rotulo).localeCompare(String(y.rotulo), 'pt-BR');
+      });
+    });
+    lista.sort(function (gx, gy) {
+      return gy.alta - gx.alta || gy.itens.length - gx.itens.length || gx.nome.localeCompare(gy.nome, 'pt-BR');
+    });
+    return lista;
+  }
+
+  // Resumo curto do cabeçalho do condomínio, por exemplo "Recorrente 28 · Sem nota 2".
+  // Aqui a ordem é pela quantidade, que é o que salta aos olhos de quem bate o olho.
+  function resumoTipos(g) {
+    var MAXT = 4;
+    var tipos = g.porTipo.slice().sort(function (x, y) { return y.itens.length - x.itens.length; });
+    var partes = tipos.slice(0, MAXT).map(function (t) { return t.curto + ' ' + t.itens.length; });
+    var resto = g.porTipo.length - MAXT;
+    if (resto > 0) partes.push('mais ' + resto + ' tipo' + (resto > 1 ? 's' : ''));
+    return partes.join(' · ');
+  }
+
+  // Nomes da linha resumo de um tipo, por exemplo "ESCELSA e mais 27". Quando o nome é só o
+  // rótulo (tipos sem fornecedor no título), não repete o rótulo e devolve vazio.
+  function resumoNomes(t) {
+    var nomes = t.nomes.filter(function (n) { return n && n !== t.rotulo; });
+    if (!nomes.length) return '';
+    var mostra = nomes.slice(0, 2);
+    var resto = t.itens.length - mostra.length;
+    return resto > 0 ? mostra.join(', ') + ' e mais ' + resto : mostra.join(' e ');
+  }
+
+  // Linha resumo completa de um tipo com 3 ou mais alertas.
+  function linhaTipo(t) {
+    var nomes = resumoNomes(t);
+    return t.rotulo + ' · ' + t.itens.length + (nomes ? ' · ' + nomes : '');
+  }
+  // ==== FIM AGRUPAMENTO PURO ====
+
+  function estaAberto(manual, auto, k) { return manual[k] === true || (manual[k] !== false && auto[k] === true); }
+
+  // Devolve o foco ao botão equivalente depois de redesenhar a lista (teclado e leitor de tela).
+  function focar(attr, valor) {
+    var el = document.getElementById('ca-lista');
+    if (!el) return false;
+    var alvo = Array.prototype.find.call(el.querySelectorAll('[' + attr + ']'), function (x) { return x.getAttribute(attr) === valor; });
+    if (alvo && alvo.focus) { alvo.focus(); return true; }
+    return false;
+  }
+
+  // Tudo que muda o resultado da lista. Quando muda, a lista volta aos primeiros condomínios
+  // e o filtro de condomínio decide de novo quais grupos vêm abertos.
+  function assinaturaFiltro() {
+    var f = est.f;
+    return [f.area, f.tipo, f.grav, semAcento(f.cond.trim()), f.sit.novo, f.sit.visto, f.sit.resolvido, est.verSil].join('|');
+  }
+
+  // Com o filtro de condomínio preenchido, os condomínios que batem vêm abertos; com um só
+  // condomínio no resultado, abre também os tipos dele. Fica separado do que a pessoa abriu
+  // à mão, para que limpar o filtro não deixe dezenas de grupos abertos. "filtroMudou" falso é
+  // só dado novo com o mesmo filtro: aí respeita o que a pessoa fechou à mão.
+  function aplicarAberturaAuto(grupos, filtroMudou) {
+    est.autoAbertos = Object.create(null);
+    est.tiposAuto = Object.create(null);
+    var marcar = function (k) { est.autoAbertos[k] = true; if (filtroMudou && est.abertos[k] === false) delete est.abertos[k]; };
+    if (est.f.cond.trim()) grupos.forEach(function (g) { marcar(g.chave); });
+    if (grupos.length === 1) {
+      marcar(grupos[0].chave);
+      grupos[0].porTipo.forEach(function (t) {
+        est.tiposAuto[t.chave] = true;
+        if (filtroMudou && est.tiposAbertos[t.chave] === false) delete est.tiposAbertos[t.chave];
+      });
+    }
+  }
+
   function renderLista() {
     var el = document.getElementById('ca-lista');
     var nSil = 0;
@@ -474,7 +768,12 @@
       vis.push(i);
     });
     atualizarBotaoSil(nSil);
+    var sig = assinaturaFiltro();
+    var mudou = sig !== est.sigFiltro;
+    est.sigFiltro = sig;
+    if (mudou) est.limiteCond = PASSO_COND;
     if (!vis.length) {
+      est.ordemCond = [];
       var s = est.f.sit;
       var filtrando = est.f.area || est.f.tipo || est.f.grav || est.f.cond.trim() || !(s.novo && s.visto && !s.resolvido);
       var algum = est.alertas.some(function (a) { return !a.silenciado && a.status !== 'resolvido'; });
@@ -483,41 +782,74 @@
         : '<div class="ca-vazio ok">Nenhum alerta aberto na carteira.</div>';
       return;
     }
-    // Agrupa por condomínio; quem tem mais alertas de gravidade alta vem primeiro.
-    var grupos = {};
-    var ordem = [];
-    vis.forEach(function (i) {
-      var a = est.alertas[i];
-      var k = a.id_superlogica || a.condominio || 'sem';
-      if (!grupos[k]) { grupos[k] = { nome: a.condominio || (a.id_superlogica ? 'Código ' + a.id_superlogica : 'Sem condomínio'), itens: [], alta: 0 }; ordem.push(k); }
-      grupos[k].itens.push(i);
-      if (a.gravidade === 'alta' && !a.silenciado) grupos[k].alta++;
-    });
-    ordem.sort(function (x, y) {
-      var gx = grupos[x], gy = grupos[y];
-      return gy.alta - gx.alta || gy.itens.length - gx.itens.length || gx.nome.localeCompare(gy.nome, 'pt-BR');
-    });
-    var feitos = 0;
-    var html = '';
-    ordem.forEach(function (k) {
-      if (feitos >= MAX_LISTA) return;
-      var g = grupos[k];
-      g.itens.sort(function (x, y) {
-        var a = est.alertas[x], b = est.alertas[y];
-        return (a.silenciado - b.silenciado) || (ORDEM_GRAV[a.gravidade] - ORDEM_GRAV[b.gravidade]) || String(b.data).localeCompare(String(a.data));
-      });
-      html += '<div class="ca-grupo"><div class="ca-grupo-cab"><b>' + esc(g.nome) + '</b>'
-        + '<span class="ca-cont">' + g.itens.length + ' alerta' + (g.itens.length > 1 ? 's' : '') + '</span>'
-        + (g.alta ? '<span class="ca-cont alta">' + g.alta + ' alta' + (g.alta > 1 ? 's' : '') + '</span>' : '') + '</div>';
-      g.itens.forEach(function (i) {
-        if (feitos >= MAX_LISTA) return;
-        feitos++;
-        html += itemHtml(est.alertas[i], i);
-      });
-      html += '</div>';
-    });
-    if (vis.length > MAX_LISTA) html += '<div class="hint" style="margin-top:8px">Mostrando ' + MAX_LISTA + ' de ' + vis.length + '. Use os filtros para ver os outros.</div>';
+    var grupos = agruparAlertas(est.alertas, vis, ROTULO);
+    if (mudou || est.dadosNovos) aplicarAberturaAuto(grupos, mudou);
+    est.dadosNovos = false;
+    est.ordemCond = grupos.map(function (g) { return g.chave; });
+    var limite = Math.min(est.limiteCond, grupos.length);
+    var conta = { n: 0, cortou: false };
+    var html = '<div class="ca-lista-barra"><span>' + grupos.length + ' condomínio' + (grupos.length > 1 ? 's' : '') + ' · '
+      + vis.length + ' alerta' + (vis.length > 1 ? 's' : '') + '</span>'
+      + '<span class="ca-lista-botoes"><button type="button" class="btn btn-ghost" data-ca-todos="abrir">Abrir todos</button>'
+      + '<button type="button" class="btn btn-ghost" data-ca-todos="recolher">Recolher todos</button></span></div>';
+    for (var gi = 0; gi < limite; gi++) html += grupoHtml(grupos[gi], gi, conta);
+    var faltam = grupos.length - limite;
+    if (faltam > 0) {
+      var prox = Math.min(PASSO_COND, faltam);
+      html += '<button type="button" class="btn btn-ghost ca-mais" data-ca-mais-cond="1">Ver mais ' + prox + ' condomínio' + (prox > 1 ? 's' : '')
+        + (faltam > prox ? ' (faltam ' + faltam + ')' : '') + '</button>';
+    }
+    if (conta.cortou) html += '<div class="hint" style="margin-top:8px">Mostrando ' + MAX_LISTA + ' alertas abertos de uma vez. Recolha alguns grupos ou use os filtros para ver os outros.</div>';
     el.innerHTML = html;
+  }
+
+  // Cartão de um alerta respeitando o teto de segurança de cartões desenhados.
+  function itemContado(i, conta) {
+    if (conta.n >= MAX_LISTA) { conta.cortou = true; return ''; }
+    conta.n++;
+    return itemHtml(est.alertas[i], i);
+  }
+
+  // Condomínio: cabeçalho clicável com totais e resumo por tipo; o corpo só é montado aberto.
+  function grupoHtml(g, gi, conta) {
+    var aberto = estaAberto(est.abertos, est.autoAbertos, g.chave);
+    var id = 'ca-g-' + gi;
+    var n = g.itens.length;
+    var h = '<div class="ca-grupo ca-cond">'
+      + '<button type="button" class="ca-grupo-cab ca-cond-cab" data-ca-cond="' + esc(g.chave) + '" aria-expanded="' + aberto + '" aria-controls="' + id + '">'
+      + '<span class="ca-seta" aria-hidden="true">▸</span><b>' + esc(g.nome) + '</b>'
+      + '<span class="ca-cont">' + n + ' alerta' + (n > 1 ? 's' : '') + '</span>'
+      + (g.alta ? '<span class="ca-cont alta">' + g.alta + ' alta' + (g.alta > 1 ? 's' : '') + '</span>' : '')
+      + '<span class="ca-cond-res">' + esc(resumoTipos(g)) + '</span>'
+      + '</button>'
+      + '<div class="ca-cond-corpo" id="' + id + '"' + (aberto ? '' : ' hidden') + '>';
+    if (aberto) g.porTipo.forEach(function (t, ti) { h += tipoHtml(t, id + '-' + ti, conta); });
+    return h + '</div></div>';
+  }
+
+  // Tipo dentro do condomínio: até 2 alertas aparecem direto; 3 ou mais viram uma linha resumo
+  // recolhida, que abre mostrando 10 por vez.
+  function tipoHtml(t, id, conta) {
+    if (t.itens.length < 3) return t.itens.map(function (i) { return itemContado(i, conta); }).join('');
+    var aberto = estaAberto(est.tiposAbertos, est.tiposAuto, t.chave);
+    var cor = COR[t.grav] || 'var(--muted)';
+    var h = '<button type="button" class="ca-item ca-tipo-cab" style="border-left-color:' + cor + '" data-ca-tipo="' + esc(t.chave) + '" aria-expanded="' + aberto + '" aria-controls="' + id + '">'
+      + '<span class="ca-seta" aria-hidden="true">▸</span>'
+      + '<span class="ca-tipo-txt">' + esc(linhaTipo(t)) + '</span>'
+      + (t.alta ? '<span class="ca-cont alta">' + t.alta + ' alta' + (t.alta > 1 ? 's' : '') + '</span>' : '')
+      + '</button>'
+      + '<div class="ca-tipo-corpo" id="' + id + '"' + (aberto ? '' : ' hidden') + '>';
+    if (aberto) {
+      var lim = est.limiteTipo[t.chave] || PASSO_TIPO;
+      t.itens.slice(0, lim).forEach(function (i) { h += itemContado(i, conta); });
+      var faltam = t.itens.length - lim;
+      if (faltam > 0) {
+        var prox = Math.min(PASSO_TIPO, faltam);
+        h += '<button type="button" class="btn btn-ghost ca-mais" data-ca-mais-tipo="' + esc(t.chave) + '">Ver mais ' + prox
+          + (faltam > prox ? ' (faltam ' + faltam + ')' : '') + '</button>';
+      }
+    }
+    return h + '</div>';
   }
 
   function itemHtml(a, i) {
