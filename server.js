@@ -5730,6 +5730,10 @@ require('./servico/apresentacao').criarRotasApresentacao(app, {
   exigirCarteira: (req, res, id) => carteiraT18.exigir(req, res, id),
   prestacaoPdf: { url: PRESTACAO_PDF_API_URL, segredo: INTERNAL_API_SECRET },
   banco: supabaseAdminRequest, storageSignedUrl: supabaseStorageSignedUrl,
+  // Item de prestação de contas com os números do Superlógica (servico/apresentacao-financeiro.js):
+  // mesmas chaves e mesma permissão da prestação de contas.
+  superlogica: superlogicaNativa() ? { base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN } : null,
+  podeUsarSuperlogica: SUPABASE_SERVICE_ROLE_KEY ? podeUsarSuperlogica : null,
 });
 
 // T49: trabalhos em andamento (pastinha). Detalhes em servico/trabalhos.js.

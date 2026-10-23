@@ -26,8 +26,10 @@
     DOCS: 30, DOC_BYTES: 25 * 1024 * 1024, ENVIO_BYTES: 150 * 1024 * 1024, FOTOS: 40, IMAGENS_DOCS: 120,
     DOC_CHARS: 15000, DOCS_TOTAL_CHARS: 90000, EDITAL_CHARS: 20000,
     FOTO_LADO: 1600, FOTO_QUALIDADE: 0.85, TRIAGEM_LADO: 1000, LOGO_LADO: 1200,
-    LADO_MIN: 200, AREA_MIN: 0.04, AREA_CANDIDATA: 0.20, PAGINA_SEM_TEXTO: 30
+    LADO_MIN: 200, AREA_MIN: 0.04, AREA_CANDIDATA: 0.20, PAGINA_SEM_TEXTO: 30,
+    MINI_LADO: 384, MINI_QUALIDADE: 0.7 // miniatura da triagem barata (todas as imagens)
   };
+  var LEITURA = window.AprLeitura || null; // EMF e WMF (public/apresentacao-leitura.js)
   var ETAPAS = ['lendo os documentos', 'conferindo as imagens dos documentos', 'montando o roteiro', 'desenhando os slides'];
   var ETAPAS_ATU = ['lendo a apresentação', 'conferindo as imagens dos documentos', 'montando o que falta', 'desenhando os slides'];
   var PPTX_BYTES = 60 * 1024 * 1024;
@@ -206,7 +208,7 @@
       if (!tipo) { avisos.push(a.name + ': só PDF ou PowerPoint (.pptx)'); continue; }
       if (a.size > LIM.DOC_BYTES) { avisos.push(a.name + ': passou de 25 MB'); continue; }
       if (est.docs.length >= LIM.DOCS) { avisos.push('limite de ' + LIM.DOCS + ' documentos atingido; ' + a.name + ' ficou fora'); continue; }
-      var doc = { chave: ++est.seq, nome: a.name, tipo: tipo, tamanho: a.size, status: 'lendo', texto: '', paginas: 0, pdf_b64: null, imagens: [], semTexto: [], progresso: '' };
+      var doc = { chave: ++est.seq, nome: a.name, tipo: tipo, tamanho: a.size, status: 'lendo', texto: '', paginas: 0, pdf_b64: null, imagens: [], vetores: [], semTexto: [], progresso: '' };
       est.docs.push(doc);
       desenharDocs();
       lerUmDoc(doc, a);
@@ -350,6 +352,8 @@
         if (area < LIM.AREA_MIN) continue;
         var mime = ATA_MIME_POR_EXT[(r.alvo.split('.').pop() || '').toLowerCase()];
         var media = zip.file(r.alvo);
+        // EMF e WMF: o navegador não abre; vão crus e o servidor converte.
+        if (!mime && media && LEITURA && LEITURA.ehVetorial(r.alvo)) { await LEITURA.guardarVetorial(est, doc, numero, media, r.alvo, area); continue; }
         if (!mime || !media) continue;
         var aberta = await ataAbrirImagem(new Blob([await media.async('arraybuffer')], { type: mime }));
         if (!aberta) continue;
@@ -370,6 +374,7 @@
       chave: ++est.seq, pagina: pagina, largura: Math.round(w), altura: Math.round(h), area: Math.round(area * 1000) / 1000, lado: lado, hash: hash,
       b64: paraImagem(fonte, w, h, LIM.FOTO_LADO, LIM.FOTO_QUALIDADE),
       b64_triagem: candidata ? paraImagem(fonte, w, h, LIM.TRIAGEM_LADO, 0.8) : null,
+      b64_mini: paraImagem(fonte, w, h, LIM.MINI_LADO, LIM.MINI_QUALIDADE),
       legenda: legenda, legendaPadrao: legenda, legenda_editada: false, triagem: null
     });
   }
@@ -398,7 +403,7 @@
         var partes = [d.paginas + (d.tipo === 'pptx' ? ' slide(s)' : ' página(s)')];
         partes.push(letras(d.texto) >= 30 ? 'com texto' : '<span style="color:var(--warning)">sem texto</span>');
         if (d.semTexto.length && letras(d.texto) >= 30) partes.push(d.semTexto.length + ' sem texto');
-        partes.push(d.imagens.length + ' imagem(ns)');
+        partes.push((d.imagens.length + (d.vetores || []).length) + ' imagem(ns)');
         if (n > cabe) partes.push('<span style="color:var(--warning)">texto longo: só o começo entra</span>');
         info = partes.join(', ');
       }
@@ -458,7 +463,7 @@
       if (!/^image\//.test(a.type) && !/\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(a.name)) { avisos.push(a.name + ': não é imagem'); continue; }
       var ab = await abrirImagem(a);
       if (!ab || !ab.w) { avisos.push(a.name + ': este navegador não abre esse formato (no caso de HEIC, converta para JPG)'); continue; }
-      est.fotos.push({ chave: ++est.seq, nome: a.name, legenda: '', b64: paraImagem(ab.fonte, ab.w, ab.h, LIM.FOTO_LADO, LIM.FOTO_QUALIDADE) });
+      est.fotos.push({ chave: ++est.seq, nome: a.name, legenda: '', b64: paraImagem(ab.fonte, ab.w, ab.h, LIM.FOTO_LADO, LIM.FOTO_QUALIDADE), b64_mini: paraImagem(ab.fonte, ab.w, ab.h, LIM.MINI_LADO, LIM.MINI_QUALIDADE) });
       if (ab.fonte.close) ab.fonte.close();
     }
     if (avisos.length) aviso(avisos.join('. ') + '.', 'warn');
@@ -507,8 +512,9 @@
   }
   function tamanhoEnvio() {
     var soma = 0;
-    est.docs.forEach(function (d) { soma += (d.pdf_b64 || '').length; d.imagens.forEach(function (im) { soma += im.b64.length + (im.b64_triagem || '').length; }); });
-    est.fotos.forEach(function (f) { soma += f.b64.length; });
+    est.docs.forEach(function (d) { soma += (d.pdf_b64 || '').length; d.imagens.forEach(function (im) { soma += im.b64.length + (im.b64_triagem || '').length + (im.b64_mini || '').length; }); });
+    est.fotos.forEach(function (f) { soma += f.b64.length + (f.b64_mini || '').length; });
+    if (LEITURA) soma += LEITURA.tamanho(est.docs);
     soma += (est.logo || '').length;
     return Math.round(soma * 3 / 4);
   }
@@ -518,7 +524,7 @@
     if (est.modo === 'acrescentar') return resumoAcrescentar(alvo);
     var docsOk = est.docs.filter(function (d) { return d.status === 'ok'; });
     var nImgs = 0, semTexto = 0;
-    docsOk.forEach(function (d) { nImgs += d.imagens.length; semTexto += d.semTexto.length; });
+    docsOk.forEach(function (d) { nImgs += d.imagens.length + (d.vetores || []).length; semTexto += d.semTexto.length; });
     var linhas = [];
     linhas.push('Pauta: ' + (est.pauta.length ? est.pauta.length + ' item(ns) encontrados no edital' : (letras(est.edital.texto) ? 'lista numerada não encontrada, o sistema lê o edital inteiro' : 'sem edital')));
     linhas.push('Documentos: ' + docsOk.length + (est.lendo ? ' (lendo ' + est.lendo + ')' : '') + (semTexto ? ', ' + semTexto + ' página(s) sem texto' : '') + (nImgs ? ', ' + nImgs + ' imagem(ns) aproveitáveis' : ''));
@@ -551,21 +557,23 @@
     docsOk.forEach(function (d, i) {
       d.imagens.forEach(function (im) {
         imagens.push({
-          doc: i, pagina: im.pagina, largura: im.largura, altura: im.altura, area: im.area, hash: im.hash, b64: im.b64, b64_triagem: im.b64_triagem,
+          doc: i, pagina: im.pagina, largura: im.largura, altura: im.altura, area: im.area, hash: im.hash, b64: im.b64, b64_triagem: im.b64_triagem, b64_mini: im.b64_mini,
           legenda: im.legenda, legenda_editada: im.legenda_editada, triagem: im.triagem, _im: im
         });
       });
     });
+    var vet = LEITURA ? LEITURA.vetoresDoEnvio(docsOk) : { lista: [], refs: [] };
     return {
       corpo: {
         idSuperlogica: idCond(c) || undefined, condominio: c ? c.nome : undefined,
         pedido: (el('apr-pedido') || {}).value || '', edital_texto: String(est.edital.texto || '').slice(0, 400000),
         documentos: docsOk.map(function (d) { return { nome: d.nome, tipo: d.tipo, texto: d.texto, paginas: d.paginas, pdf_b64: d.tipo === 'pdf' ? d.pdf_b64 : null }; }),
-        fotos: est.fotos.map(function (f) { return { nome: f.nome, legenda: f.legenda, b64: f.b64 }; }),
+        fotos: est.fotos.map(function (f) { return { nome: f.nome, legenda: f.legenda, b64: f.b64, b64_mini: f.b64_mini }; }),
         imagens_documentos: imagens.map(function (x) { var o = Object.assign({}, x); delete o._im; return o; }),
+        imagens_vetoriais: vet.lista.length ? vet.lista : undefined,
         logo_cliente_b64: est.logo || undefined
       },
-      imagens: imagens
+      imagens: imagens, vetores: vet.refs
     };
   }
   async function acompanhar(jobId) {
@@ -624,6 +632,7 @@
         if (x.triagem) alvoIm.triagem = x.triagem;
         if (!alvoIm.legenda_editada && x.legenda) alvoIm.legenda = x.legenda;
       });
+      if (LEITURA) LEITURA.aplicarResultado(fim.imagens, envio.vetores);
       desenharImagensDocs();
       est.resultado = fim;
       mostrarResultado(fim);
@@ -913,7 +922,7 @@
 
   function resumoAcrescentar(alvo) {
     var docsOk = est.docs.filter(function (d) { return d.status === 'ok'; });
-    var nImgs = 0; docsOk.forEach(function (d) { nImgs += d.imagens.length; });
+    var nImgs = 0; docsOk.forEach(function (d) { nImgs += d.imagens.length + (d.vetores || []).length; });
     var linhas = [];
     linhas.push('Apresentação pronta: ' + (est.pronta ? esc(est.pronta.nome) + ', ' + (est.pronta.roteiro.slides || []).length + ' slides no roteiro' : '<span style="color:var(--warning)">escolha da pasta ou anexe o PowerPoint</span>'));
     linhas.push('Documentos novos: ' + docsOk.length + (est.lendo ? ' (lendo ' + est.lendo + ')' : '') + (nImgs ? ', ' + nImgs + ' imagem(ns) aproveitáveis' : ''));
