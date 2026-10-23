@@ -71,7 +71,8 @@
     if (!est.lista.length) { l.innerHTML = ''; return; }
     l.innerHTML = '<table class="tbl" style="width:100%;font-size:12px"><thead><tr><th>Impressão</th><th>Gerado em</th><th>Título</th><th>Mês</th><th>Situação</th><th></th></tr></thead><tbody>'
       + est.lista.map(function (x) {
-        return '<tr><td>' + esc(x.id) + '</td><td>' + esc(x.criado_em) + '</td><td>' + esc(x.titulo) + '</td><td>' + esc(x.descricao) + (x.da_competencia ? '' : ' (outro mês)')
+        // Titulo da impressao e texto livre do Superlogica: quebra em ate 2 linhas para nao alargar a tabela
+        return '<tr><td>' + esc(x.id) + '</td><td>' + esc(x.criado_em) + '</td><td class="td-livre" title="' + esc(x.titulo) + '"><div class="td-2l">' + esc(x.titulo) + '</div></td><td>' + esc(x.descricao) + (x.da_competencia ? '' : ' (outro mês)')
           + '</td><td>' + (x.publicado ? 'Publicado' : 'Só administração') + '</td><td><button class="btn btn-ghost" style="font-size:11px;padding:4px 10px" data-bal-conferir="' + esc(x.id) + '"'
           + (x.da_competencia ? '' : ' disabled') + '>' + (x.conferencia === 'pronto' ? 'Ver conferência' : 'Conferir') + '</button></td></tr>';
       }).join('') + '</tbody></table>';

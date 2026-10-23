@@ -114,7 +114,8 @@ function cmpRender() {
     + CMP_COLS.map(function (c) { return '<th class="n">' + c[1] + '</th>'; }).join('') + '<th class="n">Total no período</th></tr>';
   html += ok.map(function (x) {
     var r = x.r;
-    return '<tr><td>' + cmpEsc(x.cond.nome) + '</td><td class="n">' + r.unidades + '</td>'
+    // Nome do condominio quebra em ate 2 linhas (td-livre no index.html) para nao alargar a tabela
+    return '<tr><td class="td-livre" title="' + cmpEsc(x.cond.nome) + '"><div class="td-2l">' + cmpEsc(x.cond.nome) + '</div></td><td class="n">' + r.unidades + '</td>'
       + CMP_COLS.map(function (c) {
         var v = r.por_unidade_mes[c[0]];
         // Plano de contas não reconhecido é diferente de não ter gasto.
@@ -125,7 +126,7 @@ function cmpRender() {
       + '<td class="n">' + cmpBRL(r.totais.total) + '</td></tr>';
   }).join('');
   html += regs.filter(function (x) { return x.erro; }).map(function (x) {
-    return '<tr><td>' + cmpEsc(x.cond.nome) + '</td><td colspan="' + (CMP_COLS.length + 2) + '" class="ficha-erro">' + cmpEsc(x.erro) + '</td></tr>';
+    return '<tr><td class="td-livre" title="' + cmpEsc(x.cond.nome) + '"><div class="td-2l">' + cmpEsc(x.cond.nome) + '</div></td><td colspan="' + (CMP_COLS.length + 2) + '" class="ficha-erro td-livre">' + cmpEsc(x.erro) + '</td></tr>';
   }).join('');
   html += '</table>';
   document.getElementById('cmp-tabela').innerHTML = '<div style="overflow-x:auto">' + html + '</div>';
@@ -170,8 +171,10 @@ async function comparativoFornecedores() {
     + comuns.slice(0, 80).map(function (m) {
       m.por.sort(function (a, b) { return (b.por_unidade || 0) - (a.por_unidade || 0); });
       return m.por.map(function (p, k) {
-        return '<tr>' + (k === 0 ? '<td rowspan="' + m.por.length + '">' + cmpEsc(m.nome) + '</td><td rowspan="' + m.por.length + '" class="ficha-sub">' + cmpEsc(Object.keys(m.contas).slice(0, 3).join(', ')) + '</td>' : '')
-          + '<td>' + cmpEsc(p.cond) + '</td><td class="n">' + cmpBRL(p.media_mes) + '</td><td class="n">' + (p.por_unidade != null ? cmpBRL(Math.round(p.por_unidade * 100) / 100) : '') + '</td></tr>';
+        // Fornecedor, contas e condominio sao textos livres: quebram em ate 2 linhas, inteiros no title
+        var contas = Object.keys(m.contas).slice(0, 3).join(', ');
+        return '<tr>' + (k === 0 ? '<td rowspan="' + m.por.length + '" class="td-livre" title="' + cmpEsc(m.nome) + '"><div class="td-2l">' + cmpEsc(m.nome) + '</div></td><td rowspan="' + m.por.length + '" class="ficha-sub td-livre" title="' + cmpEsc(contas) + '"><div class="td-2l">' + cmpEsc(contas) + '</div></td>' : '')
+          + '<td class="td-livre" title="' + cmpEsc(p.cond) + '"><div class="td-2l">' + cmpEsc(p.cond) + '</div></td><td class="n">' + cmpBRL(p.media_mes) + '</td><td class="n">' + (p.por_unidade != null ? cmpBRL(Math.round(p.por_unidade * 100) / 100) : '') + '</td></tr>';
       }).join('');
     }).join('') + '</table></div>';
 }

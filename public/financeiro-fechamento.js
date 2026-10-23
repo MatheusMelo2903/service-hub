@@ -93,7 +93,8 @@
 
   function renderAnexos(j) {
     var s = j.resumo || {};
-    var info = s.anexos + ' anexo(s) em ' + s.despesas + ' despesa(s) paga(s): ' + (s.lidos_texto || 0) + ' lido(s) pelo texto, ' + (s.lidos_interna || 0) + ' escaneado(s) lido(s)'
+    // || 0: resposta sem o resumo completo mostrava "undefined anexo(s)" na tela
+    var info = (s.anexos || 0) + ' anexo(s) em ' + (s.despesas || 0) + ' despesa(s) paga(s): ' + (s.lidos_texto || 0) + ' lido(s) pelo texto, ' + (s.lidos_interna || 0) + ' escaneado(s) lido(s)'
       + (s.escaneados_nao_lidos ? ', ' + s.escaneados_nao_lidos + ' escaneado(s) só listado(s)' : '') + (s.outros_formatos ? ', ' + s.outros_formatos + ' em outro formato' : '')
       + (s.falhas ? ', ' + s.falhas + ' que não deu para baixar' : '') + '. ' + (s.sem_anexo ? s.sem_anexo + ' despesa(s) sem anexo (aparecem no pré balancete). ' : '')
       + 'Conferido em ' + horaBR(j.gerado_em) + '.'
@@ -115,9 +116,11 @@
           return '<div style="margin-bottom:4px">' + selo(a.gravidade) + ' <b>' + esc(a.titulo) + '</b>' + (a.arquivo ? ' <span style="color:var(--muted);font-size:11px">(' + esc(a.arquivo) + (a.leitura === 'interna' ? ', escaneado' : '') + ')</span>' : '')
             + '<br><span style="font-size:11px;color:var(--muted)">' + esc(a.motivo) + '</span></div>';
         }).join('');
-        html += '<tr><td ' + TD + '>' + esc(d.fornecedor) + (d.documento ? '<br><span style="color:var(--muted);font-size:11px">doc. ' + esc(d.documento) + '</span>' : '') + '</td>'
+        // Fornecedor quebra em ate 2 linhas e os achados quebram inteiros (td-livre no index.html):
+        // antes o motivo de cada achado ficava numa linha so e abria rolagem lateral no cartao
+        html += '<tr><td ' + TD + ' class="td-livre" title="' + esc(d.fornecedor) + '"><div class="td-2l">' + esc(d.fornecedor) + '</div>' + (d.documento ? '<span style="color:var(--muted);font-size:11px">doc. ' + esc(d.documento) + '</span>' : '') + '</td>'
           + '<td ' + TD + '>' + brl(d.valor) + '<br><span style="font-size:11px;color:var(--muted)">pago ' + esc(d.liquidacao.split(' ').map(function (x) { return x.replace(/^(\d{2})\/(\d{2})\/(\d{4})$/, '$2/$1/$3'); }).join(', ')) + '</span></td>'
-          + '<td ' + TD + '>' + achados + '</td>'
+          + '<td ' + TD + ' class="td-livre">' + achados + '</td>'
           + '<td ' + TD + '>' + (link ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer" style="font-size:12px;white-space:nowrap">Abrir no Superlógica</a>' : '') + '</td></tr>';
       });
       html += '</tbody></table></div>';

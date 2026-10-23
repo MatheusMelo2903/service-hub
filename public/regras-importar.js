@@ -129,14 +129,15 @@
       var codigo = m.situacao === 'ignorado' ? '<span style="color:var(--muted)">' + esc(m.observacao || '') + '</span>' :
         '<input type="text" inputmode="numeric" id="rimp-cod-' + esc(m.slug) + '" value="' + esc(m.id_superlogica || '') + '" style="width:80px;font-family:var(--mono);font-size:12px"> ' +
         '<button class="btn btn-ghost" style="padding:3px 8px;font-size:11px" data-slug="' + esc(m.slug) + '">Salvar</button>';
+      // Nomes, observacao e erro da importacao sao textos livres: quebram na celula (td-livre no index.html)
       return '<tr>' +
-        '<td>' + esc(m.nome || m.slug) + '<div style="font-size:11px;color:var(--muted);font-family:var(--mono)">' + esc(m.slug) + '</div></td>' +
+        '<td class="td-livre" title="' + esc(m.nome || m.slug) + '"><div class="td-2l">' + esc(m.nome || m.slug) + '</div><div style="font-size:11px;color:var(--muted);font-family:var(--mono)">' + esc(m.slug) + '</div></td>' +
         '<td style="font-family:var(--mono)">' + esc(fmtCnpj(m.cnpj)) + '</td>' +
         '<td>' + num((c.docs || []).length) + '</td>' +
         '<td>' + num((c.notif || []).length) + '</td>' +
-        '<td>' + esc(m.nome_superlogica || '') + '</td>' +
-        '<td><span class="badge ' + s[0] + '">' + esc(s[1]) + '</span>' + (res ? '<div style="font-size:11px;margin-top:3px;color:' + (res.erro ? 'var(--danger)' : 'var(--success)') + '">' + esc(res.erro ? 'Falhou: ' + res.erro : 'Importado') + '</div>' : '') + '</td>' +
-        '<td>' + codigo + '</td>' +
+        '<td class="td-livre" title="' + esc(m.nome_superlogica || '') + '"><div class="td-2l">' + esc(m.nome_superlogica || '') + '</div></td>' +
+        '<td class="td-livre"><span class="badge ' + s[0] + '">' + esc(s[1]) + '</span>' + (res ? '<div style="font-size:11px;margin-top:3px;color:' + (res.erro ? 'var(--danger)' : 'var(--success)') + '">' + esc(res.erro ? 'Falhou: ' + res.erro : 'Importado') + '</div>' : '') + '</td>' +
+        '<td' + (m.situacao === 'ignorado' ? ' class="td-livre"' : '') + '>' + codigo + '</td>' +
       '</tr>';
     }).join('');
     el('rimp-resumo-mapa').textContent = num(ok) + ' ligados, ' + num(falta) + ' sem código';

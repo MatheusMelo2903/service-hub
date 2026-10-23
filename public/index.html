@@ -368,6 +368,20 @@
   tr:last-child td { border-bottom: none; }
   tr:hover td { background: var(--bg3); }
 
+  /* Celula de texto livre (descricao, historico, fornecedor, ocorrencia). A regra do td acima nao
+     quebra linha, entao texto comprido invadia a coluna vizinha e abria rolagem lateral no cartao.
+     Aqui o texto quebra e fica em ate 2 linhas; o texto inteiro vai no title da celula. */
+  td.td-livre { white-space: normal; overflow-wrap: anywhere; }
+  .td-2l {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    min-width: 80px;
+    max-width: 360px;
+  }
+
   .badge {
     display: inline-block;
     font-size: 10px;
@@ -943,7 +957,8 @@
   .consumo-tabela-wrap { overflow-x: auto; }
   .consumo-tabela { width: 100%; border-collapse: collapse; font-size: 12px; }
   .consumo-tabela th { text-align: left; font-size: 10px; font-family: var(--mono); color: var(--muted); text-transform: uppercase; padding: 6px; border-bottom: 1px solid var(--border); }
-  .consumo-tabela td { padding: 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  /* white-space normal: sem isso o nome do arquivo e os avisos da situacao herdavam o nowrap do td global e alargavam a tabela */
+  .consumo-tabela td { padding: 6px; border-bottom: 1px solid var(--border); vertical-align: top; white-space: normal; }
   .consumo-tabela td.num { font-family: var(--mono); text-align: right; white-space: nowrap; }
   .consumo-tabela tr.suspeita { background: rgba(245, 158, 11, 0.08); }
   .consumo-tabela .consumo-input { width: 130px; }
@@ -1305,7 +1320,7 @@
       <div class="card">
         <div class="card-header">
           <span class="card-title">Processar documento fora do padrão</span>
-          <span style="font-size:10px;font-family:var(--mono);color:var(--muted)">opcional — se a planilha já está no formato 26 colunas, pula direto pra "Importar Unidades" abaixo</span>
+          <span style="font-size:10px;font-family:var(--mono);color:var(--muted)">opcional: se a planilha já está no formato 26 colunas, pula direto pra "Importar Unidades" abaixo</span>
         </div>
         <div id="normalizar-dropzone" style="background:var(--bg3);border:1.5px dashed var(--border2);border-radius:var(--radius);padding:14px 18px;transition:all 0.2s"
           ondragover="normalizarDragOver(event)"
@@ -1753,7 +1768,7 @@
           </div>
           <div id="ata-arquivar" style="display:none;padding:0 22px"></div>
           <div id="ata-gerada-conteudo" style="flex:1;overflow:auto;padding:24px 28px;background:#fff;color:#1a1a1a;font-family:Arial,Helvetica,sans-serif;font-size:12pt;line-height:1.5"></div>
-          <div style="padding:12px 22px;background:var(--bg3);border-top:1px solid var(--border);font-size:11px;font-family:var(--mono);color:var(--muted);line-height:1.6">⚠ Revise tudo antes de baixar. Campos marcados como <code>[a confirmar]</code> indicam dados não extraíveis da transcrição — preencha manualmente.<br>📄 <b>Na janela de impressão, desative "Cabeçalhos e rodapés"</b> (em "Mais configurações") para um PDF limpo, sem URL nem numeração de página.</div>
+          <div style="padding:12px 22px;background:var(--bg3);border-top:1px solid var(--border);font-size:11px;font-family:var(--mono);color:var(--muted);line-height:1.6">⚠ Revise tudo antes de baixar. Campos marcados como <code>[a confirmar]</code> indicam dados não extraíveis da transcrição; preencha manualmente.<br>📄 <b>Na janela de impressão, desative "Cabeçalhos e rodapés"</b> (em "Mais configurações") para um PDF limpo, sem URL nem numeração de página.</div>
         </div>
       </div>
     </div>
@@ -2112,8 +2127,8 @@
           <div class="form-group">
             <label>Função</label>
             <select id="conv-role" style="width:100%;padding:9px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:13px">
-              <option value="OPERACIONAL">OPERACIONAL — acesso mínimo, configurável</option>
-              <option value="GERENTE">GERENTE — acesso configurável + opção de convidar</option>
+              <option value="OPERACIONAL">OPERACIONAL: acesso mínimo, configurável</option>
+              <option value="GERENTE">GERENTE: acesso configurável + opção de convidar</option>
             </select>
           </div>
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
@@ -2585,7 +2600,7 @@ const CAMPOS_UNIDADE = [
           if (!condEl.value && state.config.condNome) {
             condEl.value = state.config.condNome;
           }
-          toast('✓ Transcrição carregada automaticamente — preencha os dados e clique em Gerar Ata', 'ok');
+          toast('✓ Transcrição carregada automaticamente: preencha os dados e clique em Gerar Ata', 'ok');
           // Scroll para o card da ata
           document.getElementById('ata-transcricao').scrollIntoView({ behavior: 'smooth', block: 'center' });
         }, 500);
@@ -2649,7 +2664,7 @@ async function testConnection() {
     const r = await apiGet(url);
     const data = await r.json();
     if (r.ok && !data.msg?.includes('desativado') && !data.status?.includes('403')) {
-      toast('Conexão OK — API Superlógica respondendo ✓', 'ok');
+      toast('Conexão OK: Superlógica respondendo ✓', 'ok');
       document.getElementById('stat-api').textContent = 'OK';
       document.getElementById('stat-api').className = 'stat-value ok';
     } else {
@@ -2692,7 +2707,9 @@ var PAINEL_MODULOS = {
 };
 // Nomes antigos de tela (guardados no navegador) que mudaram de lugar. 'comunicados' virou aba
 // interna do painel Comunicados e Multas (id regras); regras.js abre direto nessa aba.
-var PAINEL_ALIAS = { financeiro: 'conciliacao', nf: 'entrada', comunicados: 'regras' };
+// 'tarefas' saiu do menu (a tela só dizia "em breve"): quem tinha ela guardada cai no Dashboard
+// em vez de abrir uma tela sem item marcado no menu.
+var PAINEL_ALIAS = { financeiro: 'conciliacao', nf: 'entrada', comunicados: 'regras', tarefas: 'dashboard' };
 // Cargos que abrem o painel mesmo sem o módulo: o antigo painel de comunicados abria para
 // GESTOR e GERENTE pelo cargo e agora está dentro de Comunicados e Multas.
 var PAINEL_CARGOS = { regras: ['GESTOR', 'GERENTE'] };
@@ -3334,9 +3351,15 @@ function renderPreview(type, headers, rows, filename) {
   info.textContent = `${filename} · ${rows.length} linhas · ${headers.length} colunas`;
 
   const previewRows = rows.slice(0, 8);
-  let html = '<tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr>';
+  // Conteudo da planilha vai escapado: a planilha e de terceiro e nao pode injetar HTML na tela.
+  // Celula com texto comprido quebra em ate 2 linhas (td-livre) com o texto inteiro no title.
+  const celula = (v) => {
+    const t = v == null ? '' : String(v);
+    return t.length > 40 ? `<td class="td-livre" title="${escHtml(t)}"><div class="td-2l">${escHtml(t)}</div></td>` : `<td>${escHtml(t)}</td>`;
+  };
+  let html = '<tr>' + headers.map(h => `<th>${escHtml(h)}</th>`).join('') + '</tr>';
   previewRows.forEach(row => {
-    html += '<tr>' + headers.map((_, i) => `<td>${row[i] || ''}</td>`).join('') + '</tr>';
+    html += '<tr>' + headers.map((_, i) => celula(row[i])).join('') + '</tr>';
   });
   if (rows.length > 8) html += `<tr><td colspan="${headers.length}" style="color:var(--muted);text-align:center;">... mais ${rows.length - 8} linhas</td></tr>`;
   table.innerHTML = html;
@@ -3470,6 +3493,17 @@ function addHistorico(texto) {
   container.insertBefore(div, container.firstChild);
 }
 
+// Erros técnicos do navegador chegam em inglês dentro de e.message e iam direto para o aviso.
+// Troca só esses casos conhecidos; qualquer outro texto passa igual.
+function textoAvisoAmigavel(msg) {
+  const t = String(msg == null ? '' : msg);
+  const REDE = /(TypeError: )?(Failed to fetch|NetworkError[^.]*|Load failed|network error)\.?/i;
+  const JSON_RUIM = /(SyntaxError: )?(Unexpected token|Unexpected end of JSON|JSON\.parse|(?:"[^"]*"|\S+) is not valid JSON)[\s\S]*$/i;
+  let r = t;
+  if (REDE.test(t)) r = t.replace(REDE, 'sem conexão com o servidor. Confira a internet e tente de novo.');
+  else if (JSON_RUIM.test(t)) r = t.replace(JSON_RUIM, 'o servidor respondeu fora do esperado. Tente de novo em instantes.');
+  return r === t ? t : r.charAt(0).toUpperCase() + r.slice(1);
+}
 function toast(msg, type) {
   // Usa DOM API em vez de innerHTML para evitar XSS via msg interpolada.
   // Varredura de callers confirmou zero usos com HTML intencional (2026-04-29).
@@ -3482,7 +3516,7 @@ function toast(msg, type) {
   const span = document.createElement('span');
   span.style.color = colorMap[type] || 'var(--info)';
   span.textContent = icons[type] || '';
-  t.append(span, ' ', document.createTextNode(msg));
+  t.append(span, ' ', document.createTextNode(textoAvisoAmigavel(msg)));
   wrap.appendChild(t);
   // 4000ms: tempo suficiente para ler mensagens curtas sem travar a UI nem sumir rápido demais em mensagens mais longas
   setTimeout(() => t.remove(), 4000);
@@ -3560,7 +3594,22 @@ async function apiAuthFetch(url, options = {}) {
   const token = window.AUTH_TOKEN;
   const headers = { ...(options.headers || {}) };
   if (token) headers['Authorization'] = 'Bearer ' + token;
-  const resp = await fetch(url, { ...options, headers });
+  let resp;
+  try {
+    resp = await fetch(url, { ...options, headers });
+  } catch (e) {
+    // Sem rede o navegador lança "Failed to fetch" em inglês, que ia direto para a tela.
+    // Cancelamento pedido pelo próprio código (AbortError) segue como veio.
+    if (e && e.name === 'AbortError') throw e;
+    throw new Error('Sem conexão com o servidor. Confira a internet e tente de novo.');
+  }
+  // Quando o servidor cai ou o proxy devolve uma página em vez de JSON, o json() do navegador
+  // lança "Unexpected token" em inglês. Aqui vira uma mensagem em português; quem já trata
+  // o erro com .catch continua recebendo a rejeição do mesmo jeito.
+  const jsonOriginal = resp.json.bind(resp);
+  resp.json = () => jsonOriginal().catch(() => {
+    throw new Error('O servidor respondeu fora do esperado (código ' + resp.status + '). Tente de novo em instantes.');
+  });
   // T16: usuário bloqueado sai na hora.
   if (resp.status === 401) {
     resp.clone().json().then((j) => {

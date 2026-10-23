@@ -59,6 +59,21 @@
     </style>
   `;
 
+  // O serviço de login devolve as mensagens em inglês e elas iam direto para a tela.
+  // Aqui viram português; o que não for conhecido cai na mensagem padrão de cada tela.
+  function erroLoginEmPortugues(error, padrao) {
+    const m = String((error && error.message) || '');
+    if (/invalid login credentials/i.test(m)) return 'Email ou senha incorretos.';
+    if (/email not confirmed/i.test(m)) return 'Email ainda não confirmado. Abra o link que chegou no seu email.';
+    if (/rate limit|too many|only request this after|security purposes/i.test(m)) return 'Muitas tentativas seguidas. Espere um minuto e tente de novo.';
+    if (/should be different from the old/i.test(m)) return 'A nova senha precisa ser diferente da atual.';
+    if (/weak|pwned|compromised|password should/i.test(m)) return 'Essa senha não é aceita (curta, fraca ou já vazada). Escolha outra.';
+    if (/session.*(missing|expired|not found)|expired|invalid.*(token|link)/i.test(m)) return 'O link ou a sessão expirou. Peça um novo link e tente de novo.';
+    if (/banned/i.test(m)) return 'Seu acesso foi bloqueado. Fale com a administração.';
+    if (/failed to fetch|networkerror|load failed|network/i.test(m)) return 'Sem conexão com o servidor. Confira a internet e tente de novo.';
+    return padrao;
+  }
+
   function showGate() {
     if (document.getElementById('auth-gate')) return;
     document.body.insertAdjacentHTML('afterbegin', GATE_HTML);
@@ -74,9 +89,7 @@
       const password = document.getElementById('auth-password').value;
       const { data, error } = await window.__SUPABASE__.auth.signInWithPassword({ email, password });
       if (error) {
-        errEl.textContent = error.message === 'Invalid login credentials'
-          ? 'Email ou senha incorretos.'
-          : (error.message || 'Falha no login.');
+        errEl.textContent = erroLoginEmPortugues(error, 'Falha no login. Tente de novo.');
         btn.disabled = false; btn.textContent = 'Entrar';
         return;
       }
@@ -87,7 +100,7 @@
       errEl.style.color = '#E03A3A';
       if (!email) { errEl.textContent = 'Digite seu email acima e clique de novo em Esqueci minha senha.'; return; }
       const { error } = await window.__SUPABASE__.auth.resetPasswordForEmail(email, { redirectTo: location.origin + '/hub' });
-      if (error) { errEl.textContent = error.message || 'Falha ao enviar o email.'; return; }
+      if (error) { errEl.textContent = erroLoginEmPortugues(error, 'Falha ao enviar o email. Tente de novo.'); return; }
       errEl.style.color = '#2E9E6A';
       errEl.textContent = 'Se esse email estiver cadastrado, chega um link para criar uma nova senha.';
     });
@@ -135,7 +148,7 @@
       ok.disabled = true; ok.textContent = 'Salvando...';
       const { error } = await window.__SUPABASE__.auth.updateUser({ password: s1 });
       if (error) {
-        err.textContent = error.message || 'Falha ao salvar a senha.';
+        err.textContent = erroLoginEmPortugues(error, 'Falha ao salvar a senha. Tente de novo.');
         ok.disabled = false; ok.textContent = 'Salvar senha';
         return;
       }

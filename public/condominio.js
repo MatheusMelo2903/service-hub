@@ -117,6 +117,13 @@ function fichaRenderCadastro(p) {
   el.innerHTML = html;
 }
 
+// Celula de texto livre: quebra em ate 2 linhas (td-livre e td-2l no index.html) e guarda o texto
+// inteiro no title. Sem isso nome de fornecedor ou descricao longa alargava a ficha e invadia a coluna vizinha.
+function fichaTdLivre(texto, extraHtml, titulo) {
+  var t = fichaEsc(titulo != null ? titulo : texto);
+  return '<td class="td-livre" title="' + t + '"><div class="td-2l">' + fichaEsc(texto) + (extraHtml || '') + '</div></td>';
+}
+
 function fichaRenderContas(p) {
   var el = document.getElementById('ficha-contas');
   if (!el || fichaParteErro(el, p)) return;
@@ -124,7 +131,7 @@ function fichaRenderContas(p) {
   if (!d.contas.length) { el.innerHTML = '<div class="ficha-sub">Nenhuma conta ativa.</div>'; return; }
   el.innerHTML = '<table class="ficha-tab"><tr><th>Conta</th><th>Banco</th><th class="n">Saldo</th></tr>'
     + d.contas.map(function (c) {
-      return '<tr><td>' + fichaEsc(c.descricao) + (c.principal ? ' <span class="ficha-tag">principal</span>' : '') + '</td><td>' + fichaEsc(c.banco) + (c.conta ? ' · ' + fichaEsc(c.conta) : '') + '</td><td class="n' + (c.saldo < 0 ? ' neg' : '') + '">' + fichaBRL(c.saldo) + '</td></tr>';
+      return '<tr>' + fichaTdLivre(c.descricao, c.principal ? ' <span class="ficha-tag">principal</span>' : '') + fichaTdLivre((c.banco || '') + (c.conta ? ' · ' + c.conta : '')) + '<td class="n' + (c.saldo < 0 ? ' neg' : '') + '">' + fichaBRL(c.saldo) + '</td></tr>';
     }).join('')
     + '<tr class="tot"><td colspan="2">Total</td><td class="n">' + fichaBRL(d.total) + '</td></tr></table>';
 }
@@ -134,7 +141,8 @@ function fichaTabelaDespesas(lista, colData) {
   return '<table class="ficha-tab"><tr><th>' + colData + '</th><th>Fornecedor</th><th>Descrição</th><th class="n">Valor</th></tr>'
     + lista.itens.map(function (x) {
       var dt = colData === 'Pago em' ? x.liquidacao : x.vencimento;
-      return '<tr><td>' + fichaEsc(dt) + '</td><td>' + fichaEsc(x.fornecedor) + '</td><td>' + fichaEsc(x.descricao) + (x.complemento && x.complemento !== x.descricao ? ' <span class="ficha-sub">' + fichaEsc(x.complemento) + '</span>' : '') + '</td><td class="n">' + fichaBRL(x.valor) + '</td></tr>';
+      var compl = x.complemento && x.complemento !== x.descricao ? x.complemento : '';
+      return '<tr><td>' + fichaEsc(dt) + '</td>' + fichaTdLivre(x.fornecedor) + fichaTdLivre(x.descricao, compl ? ' <span class="ficha-sub">' + fichaEsc(compl) + '</span>' : '', (x.descricao || '') + (compl ? ' ' + compl : '')) + '<td class="n">' + fichaBRL(x.valor) + '</td></tr>';
     }).join('')
     + '<tr class="tot"><td colspan="3">Total (' + lista.quantidade + ')</td><td class="n">' + fichaBRL(lista.total) + '</td></tr></table>'
     + (lista.truncado ? '<div class="ficha-sub">Lista cortada: há mais itens no Superlógica.</div>' : '');
@@ -163,7 +171,7 @@ function fichaRenderInad(p) {
     + fichaBRL(d.total_original) + ' em aberto · ' + fichaBRL(d.total_corrigido) + ' com juros e multa</div>'
     + '<table class="ficha-tab"><tr><th>Unidade</th><th>Responsável</th><th class="n">Cobranças</th><th>Mais antiga</th><th class="n">Em aberto</th><th class="n">Corrigido</th></tr>'
     + d.unidades.map(function (u) {
-      return '<tr><td>' + fichaEsc(u.unidade + (u.bloco ? ' ' + u.bloco : '')) + (u.juridico ? ' <span class="ficha-tag">jurídico</span>' : '') + '</td><td>' + fichaEsc(u.responsavel) + '</td><td class="n">' + u.cobrancas + '</td><td>' + fichaEsc(u.vencimento_mais_antigo) + '</td><td class="n">' + fichaBRL(u.valor_original) + '</td><td class="n">' + fichaBRL(u.valor_corrigido) + '</td></tr>';
+      return '<tr><td>' + fichaEsc(u.unidade + (u.bloco ? ' ' + u.bloco : '')) + (u.juridico ? ' <span class="ficha-tag">jurídico</span>' : '') + '</td>' + fichaTdLivre(u.responsavel) + '<td class="n">' + u.cobrancas + '</td><td>' + fichaEsc(u.vencimento_mais_antigo) + '</td><td class="n">' + fichaBRL(u.valor_original) + '</td><td class="n">' + fichaBRL(u.valor_corrigido) + '</td></tr>';
     }).join('') + '</table>'
     + (d.truncado ? '<div class="ficha-sub">Lista cortada: há mais unidades no Superlógica.</div>' : '');
 }
@@ -187,7 +195,7 @@ async function fichaRodarAuditoria() {
       + (f.unidades_sem_fracao.length ? '. Sem fração: ' + fichaEsc(f.unidades_sem_fracao.join(', ')) : '') + '</div>';
     if (a.pendencias.length) {
       html += '<table class="ficha-tab"><tr><th>Unidade</th><th>Proprietário</th><th>Falta</th></tr>'
-        + a.pendencias.map(function (p) { return '<tr><td>' + fichaEsc(p.unidade) + '</td><td>' + fichaEsc(p.proprietario) + '</td><td>' + fichaEsc(p.falta.join(', ')) + '</td></tr>'; }).join('')
+        + a.pendencias.map(function (p) { return '<tr><td>' + fichaEsc(p.unidade) + '</td>' + fichaTdLivre(p.proprietario) + fichaTdLivre(p.falta.join(', ')) + '</tr>'; }).join('')
         + '</table>';
     }
     if (a.truncado) html += '<div class="ficha-sub">Lista cortada: o condomínio tem mais unidades do que o limite da consulta.</div>';
@@ -224,7 +232,8 @@ async function fichaBuscar(ev) {
       + '<table class="ficha-tab"><tr><th>Condomínio</th><th>Unidade</th><th>Proprietário</th><th>Contatos</th><th></th></tr>'
       + r.itens.map(function (u, i) {
         var hub = u.id_superlogica && window.CondSeletor ? (CondSeletor.lista() || []).find(function (c) { return String(c.id_superlogica) === String(u.id_superlogica); }) : null;
-        return '<tr><td>' + fichaEsc(u.condominio) + ' <span class="ficha-sub">código ' + fichaEsc(u.id_superlogica) + '</span></td><td>' + fichaEsc(u.unidade + (u.bloco ? ' ' + u.bloco : '')) + '</td><td>' + fichaEsc(u.proprietario) + '</td><td>'
+        // Contatos ficam um por linha e podem passar de 2, por isso so quebram (sem limite de linhas)
+        return '<tr>' + fichaTdLivre(u.condominio, ' <span class="ficha-sub">código ' + fichaEsc(u.id_superlogica) + '</span>') + '<td>' + fichaEsc(u.unidade + (u.bloco ? ' ' + u.bloco : '')) + '</td>' + fichaTdLivre(u.proprietario) + '<td class="td-livre">'
           + u.contatos.map(function (c) { return fichaEsc(c.nome) + (c.papel ? ' <span class="ficha-sub">(' + fichaEsc(c.papel) + ')</span>' : ''); }).join('<br>')
           + '</td><td>' + (hub ? '<button class="btn btn-ghost ficha-abrir" data-hub="' + fichaEsc(hub.id) + '" style="font-size:11px;padding:4px 10px">Abrir ficha</button>' : '') + '</td></tr>';
       }).join('') + '</table>';

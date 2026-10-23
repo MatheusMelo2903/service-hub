@@ -61,11 +61,12 @@ async function segCarregarRegistro() {
     const j = await r.json();
     if (!r.ok) throw new Error(j.detalhe || r.status);
     if (!j.itens.length) { box.innerHTML = '<div class="hint">Nada encontrado.</div>'; return; }
+    // Email e acao com motivo quebram em ate 2 linhas (td-livre no index.html): motivo longo alargava o cartao
     box.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr style="background:var(--bg3)"><th style="text-align:left;padding:6px">Quando</th><th style="text-align:left;padding:6px">Quem</th><th style="text-align:left;padding:6px">O quê</th><th style="text-align:left;padding:6px">Cond.</th><th style="text-align:left;padding:6px">Resultado</th></tr></thead><tbody>' +
       j.itens.map((i) => `<tr style="border-bottom:1px solid var(--border);${i.suspeito ? 'background:rgba(245,166,35,0.08)' : ''}">
         <td style="padding:6px;white-space:nowrap">${_segData(i.criado_em)}</td>
-        <td style="padding:6px">${_segEsc(i.email || '')}</td>
-        <td style="padding:6px;font-family:var(--mono)">${_segEsc(i.acao)}${i.motivo ? ' <span style="color:var(--warning)">(' + _segEsc(i.motivo) + ')</span>' : ''}</td>
+        <td class="td-livre" style="padding:6px" title="${_segEsc(i.email || '')}"><div class="td-2l">${_segEsc(i.email || '')}</div></td>
+        <td class="td-livre" style="padding:6px;font-family:var(--mono)" title="${_segEsc(i.acao + (i.motivo ? ' (' + i.motivo + ')' : ''))}"><div class="td-2l">${_segEsc(i.acao)}${i.motivo ? ' <span style="color:var(--warning)">(' + _segEsc(i.motivo) + ')</span>' : ''}</div></td>
         <td style="padding:6px">${i.id_superlogica || ''}</td>
         <td style="padding:6px">${i.status || ''}${i.ip ? ' <span style="color:var(--muted)">' + _segEsc(i.ip) + '</span>' : ''}</td></tr>`).join('') + '</tbody></table>';
   } catch (e) { box.innerHTML = '<div class="hint" style="color:var(--danger)">Falha ao carregar: ' + _segEsc(e.message) + '</div>'; }

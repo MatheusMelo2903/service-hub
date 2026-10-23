@@ -119,20 +119,23 @@ function renderPreviewUnidades(processed, filename) {
   info.textContent = filename + ' · ' + processed.length + ' unidades · normalizadas e prontas para envio';
   const previewRows = processed.slice(0, 8);
   let html = '<tr><th>Unidade</th><th>Bloco</th><th>Proprietário</th><th>CPF/CNPJ</th><th>Celular</th><th>Email</th><th>Cidade</th><th>Fração</th></tr>';
+  // Nome, email e cidade vem da planilha e podem ser longos: quebram em ate 2 linhas (td-livre no index.html)
+  const tdL = (v, estilo) => '<td class="td-livre"' + (estilo ? ' style="' + estilo + '"' : '') + ' title="' + esc(v) + '"><div class="td-2l">' + esc(v) + '</div></td>';
   previewRows.forEach(function(r) {
     html += '<tr>' +
       '<td><b>' + esc(r.ST_UNIDADE_UNI) + '</b></td>' +
       '<td>' + (r.ST_BLOCO_UNI ? esc(r.ST_BLOCO_UNI) : '&mdash;') + '</td>' +
-      '<td>' + (r.prop_nome ? esc(r.prop_nome) : '<span style="color:var(--muted)">&mdash;</span>') + '</td>' +
+      (r.prop_nome ? tdL(r.prop_nome) : '<td><span style="color:var(--muted)">&mdash;</span></td>') +
       '<td style="font-family:var(--mono);font-size:11px">' + (r.prop_cpf ? esc(r.prop_cpf) : '&mdash;') + '</td>' +
       '<td>' + (r.prop_cel || r.prop_fone ? esc(r.prop_cel || r.prop_fone) : '&mdash;') + '</td>' +
-      '<td style="font-size:11px">' + (r.prop_email ? esc(r.prop_email) : '&mdash;') + '</td>' +
-      '<td>' + (r.prop_cidade ? esc(r.prop_cidade) : '&mdash;') + '</td>' +
+      (r.prop_email ? tdL(r.prop_email, 'font-size:11px') : '<td style="font-size:11px">&mdash;</td>') +
+      (r.prop_cidade ? tdL(r.prop_cidade) : '<td>&mdash;</td>') +
       '<td style="font-family:var(--mono);font-size:11px">' + (r.prop_fracao ? esc(r.prop_fracao) : '&mdash;') + '</td>' +
       '</tr>';
   });
   if (processed.length > 8) {
-    html += '<tr><td colspan="7" style="color:var(--muted);text-align:center;padding:12px">... mais ' + (processed.length - 8) + ' unidades</td></tr>';
+    // A previa tem 8 colunas; com colspan 7 a ultima coluna ficava sem borda nessa linha
+    html += '<tr><td colspan="8" style="color:var(--muted);text-align:center;padding:12px">... mais ' + (processed.length - 8) + ' unidades</td></tr>';
   }
   table.innerHTML = html;
   // T49: a pré visualização final pronta é uma etapa da conferência; guarda na pasta Em andamento.
@@ -1792,7 +1795,7 @@ async function enviarUnidades() {
     throw new Error('PUT falhou: ' + msgErr);
   }
 
-  addLog(logDiv, '[PUT  ' + idxPad + '/' + totalPad + '] OK ' + esc(u._unidadeRaw) + (u.prop_nome ? ' — ' + esc(u.prop_nome) : ''), 'ok');
+  addLog(logDiv, '[PUT  ' + idxPad + '/' + totalPad + '] OK ' + esc(u._unidadeRaw) + (u.prop_nome ? ' · ' + esc(u.prop_nome) : ''), 'ok');
 
   // PASSO 3: envia inquilinos e dependentes desta unidade sequencialmente.
   // Só executa se a planilha unificada tiver contatos_extras populados.
@@ -1922,7 +1925,8 @@ async function enviarUnidades() {
       [e.unidade || '', e.fase || '', e.mensagem || ''].forEach(c => {
         const td = document.createElement('td');
         td.textContent = String(c);
-        td.style.cssText = 'padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:top';
+        // white-space normal: a mensagem de erro e um texto livre e, com o nowrap global do td, alargava a tabela
+        td.style.cssText = 'padding:6px 10px;border-bottom:1px solid var(--border);vertical-align:top;white-space:normal;overflow-wrap:anywhere';
         tr.appendChild(td);
       });
       tbody.appendChild(tr);

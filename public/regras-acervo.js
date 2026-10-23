@@ -420,7 +420,8 @@
       box.innerHTML = '<div class="ra-doc-sub" style="margin-bottom:8px">' + (j.com_pendencia || 0) + ' de ' + (j.total || 0) + ' condomínios com pendência.</div>' +
         (com.length ? '<div class="table-wrap"><table><thead><tr><th>Condomínio</th><th>Documentos</th><th>Pendências</th></tr></thead><tbody>' + com.map(function (x) {
           var ct = x.contagens || {};
-          return '<tr><td><a href="#" data-sl="' + esc(x.id_superlogica) + '" style="color:var(--gs-blue)">' + esc(x.nome || ('código ' + x.id_superlogica)) + '</a></td>' +
+          // Nome do condominio quebra em ate 2 linhas (td-livre no index.html) para nao alargar a tabela
+          return '<tr><td class="td-livre" title="' + esc(x.nome || ('código ' + x.id_superlogica)) + '"><div class="td-2l"><a href="#" data-sl="' + esc(x.id_superlogica) + '" style="color:var(--gs-blue)">' + esc(x.nome || ('código ' + x.id_superlogica)) + '</a></div></td>' +
             '<td>' + (ct.convencao || 0) + ' conv. · ' + (ct.regimento || 0) + ' reg. · ' + (ct.ata || 0) + ' atas</td>' +
             '<td style="white-space:normal">' + x.pendencias.map(function (p) { return esc(p.texto); }).join('<br>') + '</td></tr>';
         }).join('') + '</tbody></table></div>' : '<div class="ra-vazio" style="color:var(--success)">Nenhum condomínio com pendência.</div>');

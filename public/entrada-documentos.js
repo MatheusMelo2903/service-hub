@@ -140,9 +140,12 @@
           var al = (it.alertas || []);
           var graves = al.filter(function (a) { return a.nivel !== 'aviso'; }).length;
           var marca = lote ? '<td onclick="event.stopPropagation()">' + (it.pronto_para_lote && it.liberado ? '<input type="checkbox" class="ent-sel" value="' + esc(it.id) + '" onchange="entSelecao()">' : '') + '</td>' : '';
-          return '<tr style="cursor:pointer" onclick="entAbrirItem(\'' + esc(it.id) + '\')">' + marca + '<td>' + esc(it.nome_arquivo) + '</td><td>' + esc(NOME_TIPO[d.tipo] || '') + '</td><td>' + esc(d.nome_condominio || 'a definir') +
-            '</td><td>' + esc(d.nome_fornecedor || 'a definir') + '</td><td>' + esc(d.conta ? d.conta + (d.nome_conta ? ' ' + d.nome_conta : '') : 'a definir') + '</td><td>' + esc(brl(d.valor)) + '</td><td>' + esc(dataBR(d.vencimento)) + '</td><td style="color:' + (graves ? 'var(--danger)' : 'var(--muted)') + '">' + (al.length ? al.length + (graves ? ' (' + graves + ' para resolver)' : '') : '') +
-            '</td><td>' + esc(situacao(it)) + '</td></tr>';
+          // Arquivo, condominio, fornecedor e categoria sao textos livres: quebram em ate 2 linhas
+          // (td-livre no index.html) com o texto inteiro no title, para nao empurrar Valor e Vencimento
+          var tdL = function (t) { return '<td class="td-livre" title="' + esc(t) + '"><div class="td-2l">' + esc(t) + '</div></td>'; };
+          return '<tr style="cursor:pointer" onclick="entAbrirItem(\'' + esc(it.id) + '\')">' + marca + tdL(it.nome_arquivo) + '<td>' + esc(NOME_TIPO[d.tipo] || '') + '</td>' + tdL(d.nome_condominio || 'a definir') +
+            tdL(d.nome_fornecedor || 'a definir') + tdL(d.conta ? d.conta + (d.nome_conta ? ' ' + d.nome_conta : '') : 'a definir') + '<td>' + esc(brl(d.valor)) + '</td><td>' + esc(dataBR(d.vencimento)) + '</td><td class="td-livre" style="color:' + (graves ? 'var(--danger)' : 'var(--muted)') + '">' + (al.length ? al.length + (graves ? ' (' + graves + ' para resolver)' : '') : '') +
+            '</td><td class="td-livre">' + esc(situacao(it)) + '</td></tr>';
         }).join('') + '</tbody></table>' : '';
     } catch (e) { msg('ent-info', e.message, true); alvo.innerHTML = ''; }
   }

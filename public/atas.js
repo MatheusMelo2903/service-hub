@@ -250,7 +250,7 @@ async function fetchComTimeout(url, opts, ms, signalExterno) {
   try {
     return await fetch(url, Object.assign({}, opts, { signal: ac.signal }));
   } catch (e) {
-    if (estourou) { const err = new Error('esta etapa demorou demais (timeout)'); err.__timeout = true; throw err; }
+    if (estourou) { const err = new Error('esta etapa demorou demais'); err.__timeout = true; throw err; }
     throw e;
   } finally {
     clearTimeout(timer);
@@ -889,7 +889,7 @@ async function gerarAtaIA() {
       if (st.status === 304) continue;                 // não modificado (defensivo): reconsulta
       if (st.status === 404) continue;                 // job ainda não visível ou processo reiniciou
       if (st.status === 429) { await new Promise((r) => setTimeout(r, 6000)); continue; } // rate limit: espera mais
-      if (st.status === 401 || st.status === 403) throw new Error('sessão expirada — entre novamente e refaça');
+      if (st.status === 401 || st.status === 403) throw new Error('sessão expirada: entre novamente e refaça');
       if (!st.ok) {                                     // 5xx/inesperado: tolera transitório, desiste após 3
         if (++errosSeguidos >= 3) throw new Error('erro no servidor ao consultar o status (HTTP ' + st.status + ')');
         continue;
@@ -902,7 +902,7 @@ async function gerarAtaIA() {
     }
     if (!payload) throw new Error('resposta incompleta do servidor');
     const texto = (payload.ata || '').trim();
-    if (!texto) throw new Error('engine retornou ata vazia');
+    if (!texto) throw new Error('o servidor devolveu a ata vazia; tente gerar de novo');
 
     _ataTextoGerado = texto;
     // T47: tempo de cada etapa da geração, para acompanhar a velocidade.

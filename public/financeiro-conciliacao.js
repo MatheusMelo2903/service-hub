@@ -25,8 +25,18 @@
     if (typeof el === 'string') el = document.getElementById(el);
     if (el) el.innerHTML = texto ? '<div style="font-size:12px;font-family:var(--mono);color:' + (erro ? 'var(--danger)' : 'var(--muted)') + '">' + esc(texto) + '</div>' : '';
   }
-  var TH = 'style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border2);white-space:nowrap"';
+  // Cabecalho pode quebrar: com 8 colunas de rotulo comprido ("Maior atraso (dias úteis)") e sem
+  // quebra, o quadro passava da largura do cartao e abria rolagem lateral mesmo com numeros curtos.
+  var TH = 'style="text-align:left;padding:6px 8px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border2);white-space:normal"';
   var TD = 'style="padding:6px 8px;font-size:12px;border-bottom:1px solid var(--border);vertical-align:top"';
+  // Celula de texto livre: quebra em ate 2 linhas (td-livre e td-2l no index.html) e o texto inteiro
+  // fica no title. Sem isso descricao de lancamento ou de conta invadia a coluna vizinha.
+  // texto e sub chegam crus (sem escape); sub vira uma segunda linha menor, tambem limitada.
+  function tdL(texto, sub, extraHtml) {
+    texto = texto == null ? '' : String(texto);
+    return '<td ' + TD + ' class="td-livre" title="' + esc(texto + (sub ? '\n' + sub : '')) + '"><div class="td-2l">' + esc(texto) + (extraHtml || '') + '</div>'
+      + (sub ? '<div class="td-2l" style="font-size:11px;color:var(--muted)">' + esc(sub) + '</div>' : '') + '</td>';
+  }
   function cor(v, alerta, perigo) { return v >= perigo ? 'var(--danger)' : (v >= alerta ? 'var(--warning)' : 'var(--muted)'); }
 
   async function pegar(url, aoEsperar, chave, seq) {
@@ -54,14 +64,14 @@
   function linhaConta(k) {
     var q = k.quadro || {};
     var dif = q.diferenca_saldo;
-    return '<tr><td ' + TD + '>' + esc(k.descricao) + (k.principal ? ' <span style="color:var(--muted);font-size:11px">principal</span>' : '') + '<br><span style="color:var(--muted);font-size:11px">' + esc(k.banco || '') + ' · ' + esc(k.id) + '</span></td>'
+    return '<tr>' + tdL(k.descricao, (k.banco || '') + ' · ' + k.id, k.principal ? ' <span style="color:var(--muted);font-size:11px">principal</span>' : '')
       + (k.situacao === 'ok'
         ? '<td ' + TD + '>' + esc(dataBR(q.ultimo_extrato)) + '</td>'
-          + '<td ' + TD + '><b style="color:' + (q.movimento_baixo && !k.principal ? 'var(--muted)' : cor(q.dias_sem_extrato || 0, 3, 6)) + '">' + (q.dias_sem_extrato == null ? '' : q.dias_sem_extrato) + '</b>' + (q.movimento_baixo && !k.principal ? '<br><span style="font-size:11px;color:var(--muted)">pouco movimento, pode não faltar extrato</span>' : '') + '</td>'
+          + '<td ' + TD + ' class="td-livre"><b style="color:' + (q.movimento_baixo && !k.principal ? 'var(--muted)' : cor(q.dias_sem_extrato || 0, 3, 6)) + '">' + (q.dias_sem_extrato == null ? '' : q.dias_sem_extrato) + '</b>' + (q.movimento_baixo && !k.principal ? '<br><span style="font-size:11px;color:var(--muted)">pouco movimento, pode não faltar extrato</span>' : '') + '</td>'
           + '<td ' + TD + '><b style="color:' + cor(q.dias_nao_conciliados || 0, 1, 3) + '">' + (q.dias_nao_conciliados || 0) + '</b></td>'
-          + '<td ' + TD + '>' + (dif ? '<span style="color:var(--danger)">' + brl(dif) + '</span><br><span style="color:var(--muted);font-size:11px">sistema ' + brl(q.saldo_sistema) + ', banco ' + brl(q.saldo_banco) + ' em ' + esc(dataBR(q.data_saldo)) + '</span>' : '<span style="color:var(--success)">sem diferença</span>') + '</td>'
+          + '<td ' + TD + ' class="td-livre">' + (dif ? '<span style="color:var(--danger)">' + brl(dif) + '</span><br><span style="color:var(--muted);font-size:11px">sistema ' + brl(q.saldo_sistema) + ', banco ' + brl(q.saldo_banco) + ' em ' + esc(dataBR(q.data_saldo)) + '</span>' : '<span style="color:var(--success)">sem diferença</span>') + '</td>'
         : '<td ' + TD + ' colspan="4"><span style="color:var(--muted)">' + esc(SITUACAO[k.situacao] || k.situacao) + '</span></td>')
-      + '<td ' + TD + '>' + (k.situacao === 'conta_caixa' ? '' : textoBloqueio(k.bloqueio)) + '</td></tr>';
+      + '<td ' + TD + ' class="td-livre">' + (k.situacao === 'conta_caixa' ? '' : textoBloqueio(k.bloqueio)) + '</td></tr>';
   }
   function tabelaContas(contas) {
     return '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Conta</th><th ' + TH + '>Último extrato</th><th ' + TH + '>Dias úteis sem extrato</th><th ' + TH + '>Dias não conciliados</th><th ' + TH + '>Diferença de saldo</th><th ' + TH + '>Bloqueio de lançamentos</th></tr></thead><tbody>'
@@ -150,7 +160,7 @@
     var html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Condomínio</th><th ' + TH + '>Contas com extrato</th><th ' + TH + '>Maior atraso (dias úteis)</th><th ' + TH + '>Dias não conciliados</th><th ' + TH + '>Contas com diferença</th><th ' + TH + '>Contas sem extrato</th><th ' + TH + '>Contas sem bloqueio</th><th ' + TH + '></th></tr></thead><tbody>';
     lista.forEach(function (c, i) {
       html += '<tr data-conc-i="' + i + '" style="cursor:pointer" title="Ver as contas">'
-        + '<td ' + TD + '><b>' + esc(c.condominio || ('Código ' + c.id_condominio)) + '</b> <span style="color:var(--muted);font-family:var(--mono);font-size:11px">' + esc(c.id_condominio) + '</span>' + (c.falhas ? '<br><span style="color:var(--danger);font-size:11px">' + c.falhas + ' conta(s) não lidas</span>' : '') + '</td>'
+        + '<td ' + TD + ' class="td-livre" title="' + esc(c.condominio || ('Código ' + c.id_condominio)) + '"><div class="td-2l"><b>' + esc(c.condominio || ('Código ' + c.id_condominio)) + '</b> <span style="color:var(--muted);font-family:var(--mono);font-size:11px">' + esc(c.id_condominio) + '</span></div>' + (c.falhas ? '<span style="color:var(--danger);font-size:11px">' + c.falhas + ' conta(s) não lidas</span>' : '') + '</td>'
         + '<td ' + TD + '>' + c.contas_com_extrato + '</td>'
         + '<td ' + TD + '><b style="color:' + cor(c.maior_atraso_extrato || 0, 3, 6) + '">' + (c.maior_atraso_extrato == null ? 'sem extrato' : c.maior_atraso_extrato) + '</b></td>'
         + '<td ' + TD + '><b style="color:' + cor(c.dias_nao_conciliados || 0, 1, 5) + '">' + c.dias_nao_conciliados + '</b></td>'
@@ -239,15 +249,16 @@
     msg('fin-conc-info', contas.length + ' conta(s), ' + mes + ' (' + dataBR(j.inicio) + ' a ' + dataBR(j.fim) + '). Lido em ' + horaBR(j.gerado_em) + '.');
     var soB = [], soS = [], val = [], dat = [], div = [], aguardando = 0;
     contas.forEach(function (k) {
-      var nome = esc(k.descricao);
-      (k.banco_sem_lancamento || []).forEach(function (x) { soB.push('<tr>' + td(nome) + td(esc(dataBR(x.data))) + td(brl(x.valor)) + td(esc(x.descricao)) + td(esc(x.categoria || '')) + '</tr>'); });
-      (k.lancamento_sem_banco || []).forEach(function (x) { soS.push('<tr>' + td(nome) + td(esc(dataBR(x.data))) + td(brl(x.valor)) + td(esc(x.descricao)) + td(esc(x.documento || '')) + '</tr>'); });
-      (k.valor_diferente || []).forEach(function (x) { val.push('<tr>' + td(nome) + td(esc(dataBR(x.data_sistema)) + (x.data_banco !== x.data_sistema ? '<br><span style="font-size:11px;color:var(--muted)">banco ' + esc(dataBR(x.data_banco)) + '</span>' : '')) + td(brl(x.lancado)) + td(brl(x.no_banco)) + td('<b style="color:var(--danger)">' + brl(x.diferenca) + '</b>') + td(esc(x.descricao) + '<br><span style="font-size:11px;color:var(--muted)">' + esc(x.descricao_banco) + '</span>') + '</tr>'); });
-      (k.data_diferente || []).forEach(function (x) { dat.push('<tr>' + td(nome) + td(esc(dataBR(x.data_sistema))) + td(esc(dataBR(x.data_banco))) + td((x.dias > 0 ? '+' : '') + x.dias) + td(brl(x.valor)) + td(esc(x.descricao) + '<br><span style="font-size:11px;color:var(--muted)">' + esc(x.descricao_banco) + '</span>') + '</tr>'); });
+      var nome = tdL(k.descricao);
+      (k.banco_sem_lancamento || []).forEach(function (x) { soB.push('<tr>' + nome + td(esc(dataBR(x.data))) + td(brl(x.valor)) + tdL(x.descricao) + tdL(x.categoria || '') + '</tr>'); });
+      (k.lancamento_sem_banco || []).forEach(function (x) { soS.push('<tr>' + nome + td(esc(dataBR(x.data))) + td(brl(x.valor)) + tdL(x.descricao) + tdL(x.documento || '') + '</tr>'); });
+      (k.valor_diferente || []).forEach(function (x) { val.push('<tr>' + nome + td(esc(dataBR(x.data_sistema)) + (x.data_banco !== x.data_sistema ? '<br><span style="font-size:11px;color:var(--muted)">banco ' + esc(dataBR(x.data_banco)) + '</span>' : '')) + td(brl(x.lancado)) + td(brl(x.no_banco)) + td('<b style="color:var(--danger)">' + brl(x.diferenca) + '</b>') + tdL(x.descricao, x.descricao_banco) + '</tr>'); });
+      (k.data_diferente || []).forEach(function (x) { dat.push('<tr>' + nome + td(esc(dataBR(x.data_sistema))) + td(esc(dataBR(x.data_banco))) + td((x.dias > 0 ? '+' : '') + x.dias) + td(brl(x.valor)) + tdL(x.descricao, x.descricao_banco) + '</tr>'); });
       (k.divergencias || []).forEach(function (x) {
         var det = x.tipo === 'lancado_e_desconsiderado' ? esc(dataBR(x.data)) + ', ' + brl(x.valor) + ': ' + esc(x.descricao) + ' x ' + esc(x.descricao_banco)
           : 'Mês ' + esc(String(x.mes || '').split('-').reverse().join('/')) + ': banco ' + brl(x.banco) + ' (' + (x.itens_banco || 0) + ' itens), sistema ' + brl(x.sistema) + (x.diferenca ? ', diferença ' + brl(x.diferenca) : '') + (x.descricao_banco ? ' · ' + esc(x.descricao_banco) : '');
-        div.push('<tr>' + td(nome) + td(esc(NOME_DIV[x.tipo] || x.tipo)) + td(det) + '</tr>');
+        // det ja chega escapado e sem tags, por isso pode ir direto no title
+        div.push('<tr>' + nome + tdL(NOME_DIV[x.tipo] || x.tipo) + '<td ' + TD + ' class="td-livre" title="' + det + '"><div class="td-2l">' + det + '</div></td></tr>');
       });
       aguardando += (k.totais && k.totais.aguardando_extrato) || 0;
     });

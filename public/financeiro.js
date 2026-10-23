@@ -77,6 +77,14 @@
   function mesISO(delta) { var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + delta); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
   var COR = { alta: 'var(--danger)', media: 'var(--warning)', baixa: 'var(--muted)' };
   var NOME_GRAV = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
+  // Celula de texto livre: quebra em ate 2 linhas (td-livre e td-2l no index.html) e o texto inteiro
+  // fica no title. Sem isso fornecedor ou detalhe longo invadia a coluna vizinha e abria rolagem lateral.
+  // texto e sub chegam crus; sub vira uma segunda linha menor. estilo e o atributo style da celula.
+  function tdL(estilo, texto, sub, extraHtml) {
+    texto = texto == null ? '' : String(texto);
+    return '<td ' + estilo + ' class="td-livre" title="' + esc(texto + (sub ? '\n' + sub : '')) + '"><div class="td-2l">' + esc(texto) + (extraHtml || '') + '</div>'
+      + (sub ? '<div class="td-2l" style="color:var(--muted);font-size:11px">' + esc(sub) + '</div>' : '') + '</td>';
+  }
   function selo(g) {
     return '<span style="display:inline-block;min-width:52px;text-align:center;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;color:#fff;background:' + (COR[g] || 'var(--muted)') + '">' + esc(NOME_GRAV[g] || g) + '</span>';
   }
@@ -330,13 +338,13 @@
       if (c.tiposSil.length) tipos += '<span data-fin-sil style="display:none;opacity:0.5">' + (tipos ? '<br>' : '') + 'Silenciados: ' + principais(c.tiposSil) + '</span>';
       var g = c.por_gravidade || {};
       html += '<tr data-fin-cond="' + esc(c.id_condominio) + '" data-fin-nome="' + esc(c.condominio) + '" style="cursor:pointer" title="Abrir os alertas">'
-        + '<td ' + td + '><b>' + esc(c.condominio || ('Código ' + c.id_condominio)) + '</b> <span style="color:var(--muted);font-family:var(--mono);font-size:11px">' + esc(c.id_condominio) + '</span></td>'
-        + '<td ' + td + '>' + esc(c.analista || '') + '</td>'
+        + '<td ' + td + ' class="td-livre" title="' + esc(c.condominio || ('Código ' + c.id_condominio)) + '"><div class="td-2l"><b>' + esc(c.condominio || ('Código ' + c.id_condominio)) + '</b> <span style="color:var(--muted);font-family:var(--mono);font-size:11px">' + esc(c.id_condominio) + '</span></div></td>'
+        + tdL(td, c.analista || '')
         + '<td ' + td + '><b style="color:' + (g.alta ? 'var(--danger)' : 'var(--muted)') + '">' + (g.alta || 0) + '</b></td>'
         + '<td ' + td + '><span style="color:' + (g.media ? 'var(--warning)' : 'var(--muted)') + '">' + (g.media || 0) + '</span></td>'
         + '<td ' + td + '><span style="color:var(--muted)">' + (g.baixa || 0) + '</span></td>'
         + '<td ' + td + '>' + (c.valor_alta ? brl(c.valor_alta) : '') + '</td>'
-        + '<td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">' + tipos + '</td>'
+        + '<td class="td-livre" style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:11px;color:var(--muted)">' + tipos + '</td>'
         + (fechamentoLigado() ? '<td ' + td + ' data-fin-fech="' + esc(c.id_condominio) + '"></td>' : '') + '</tr>';
     });
     el.innerHTML = html + '</tbody></table></div>';
@@ -485,12 +493,12 @@
       var datas = [a.dt_vencimento ? 'venc. ' + dataBR(a.dt_vencimento) : '', a.dt_liquidacao ? 'pago ' + dataBR(a.dt_liquidacao) : '', a.dt_lancamento ? 'lançado ' + dataBR(a.dt_lancamento) : ''].filter(Boolean).join('<br>');
       var link = linkSeguro(a.link);
       html += '<tr><td ' + TD + '>' + selo(a.gravidade) + '</td>'
-        + '<td ' + TD + '>' + esc(a.mexida || a.descricao_tipo || a.tipo) + '</td>'
-        + '<td ' + TD + '>' + esc(a.fornecedor || '') + (a.documento ? '<br><span style="color:var(--muted);font-size:11px">doc. ' + esc(a.documento) + '</span>' : '') + '</td>'
+        + tdL(TD, a.mexida || a.descricao_tipo || a.tipo)
+        + tdL(TD, a.fornecedor || '', a.documento ? 'doc. ' + a.documento : '')
         + '<td ' + TD + ' >' + (a.valor ? brl(a.valor) : '') + '</td>'
         + '<td ' + TD + '><span style="font-size:11px">' + datas + '</span></td>'
-        + '<td ' + TD + '>' + esc(a.detalhe || '') + '</td>'
-        + '<td ' + TD + '>' + esc(a.usuario || a.analista || '') + '</td>'
+        + tdL(TD, a.detalhe || '')
+        + tdL(TD, a.usuario || a.analista || '')
         + '<td ' + TD + '>' + (link ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer" style="font-size:12px;white-space:nowrap">Abrir no Superlógica</a>' : '') + '</td></tr>';
     });
     return html + '</tbody></table></div>';
@@ -550,7 +558,7 @@
     var html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Gravidade</th><th ' + TH + '>Tipo</th><th ' + TH + '>Unidade</th><th ' + TH + '>O que houve</th></tr></thead><tbody>';
     lista.forEach(function (a) {
       html += '<tr><td ' + TD + '>' + selo(a.gravidade) + '</td><td ' + TD + '>' + esc(NOME_BOLETO[a.tipo] || a.tipo) + '</td><td ' + TD + '>' + esc(a.unidade || '') + '</td>'
-        + '<td ' + TD + '><b>' + esc(a.titulo || '') + '</b><br>' + esc(a.detalhe || '') + '</td></tr>';
+        + '<td ' + TD + ' class="td-livre" title="' + esc((a.titulo || '') + '\n' + (a.detalhe || '')) + '"><div class="td-2l"><b>' + esc(a.titulo || '') + '</b></div><div class="td-2l">' + esc(a.detalhe || '') + '</div></td></tr>';
     });
     el.innerHTML = html + '</tbody></table></div>';
   }
@@ -595,7 +603,7 @@
     var mes = String(j.competencia || '').split('-').reverse().join('/');
     var cab = j.pode_fechar
       ? '<div style="padding:12px 14px;border-radius:10px;background:rgba(45,174,114,0.10);color:var(--success);font-weight:600;margin-bottom:10px">Nada impede fechar ' + esc(mes) + '.' + (j.para_conferir ? ' ' + j.para_conferir + ' item(ns) de gravidade baixa para conferir.' : '') + '</div>'
-      : '<div style="padding:12px 14px;border-radius:10px;background:rgba(224,58,58,0.08);color:var(--danger);font-weight:600;margin-bottom:10px">' + j.pendencias + ' pendência(s) impedem fechar ' + esc(mes) + '.' + (j.para_conferir ? ' Mais ' + j.para_conferir + ' para conferir.' : '') + '</div>';
+      : '<div style="padding:12px 14px;border-radius:10px;background:rgba(224,58,58,0.08);color:var(--danger);font-weight:600;margin-bottom:10px">' + (j.pendencias || 0) + ' pendência(s) impedem fechar ' + esc(mes) + '.' + (j.para_conferir ? ' Mais ' + j.para_conferir + ' para conferir.' : '') + '</div>';
     msg('fin-pre-info', (j.parcelas_pagas || 0) + ' parcela(s) paga(s) no mês, ' + brl(j.valor_pago) + '. Gerado em ' + horaBR(j.gerado_em) + '.'
       + ((j.falhas || []).length ? ' Atenção: ' + j.falhas.length + ' leitura(s) falharam; o resultado pode estar incompleto.' : ''));
     var html = cab;
@@ -609,8 +617,8 @@
         html += '<div style="overflow-x:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse"><tbody>';
         g.itens.slice(0, 200).forEach(function (a) {
           var link = linkSeguro(a.link);
-          html += '<tr><td ' + TD + '>' + selo(a.gravidade) + '</td><td ' + TD + '>' + esc(a.fornecedor || '') + (a.documento ? '<br><span style="color:var(--muted);font-size:11px">doc. ' + esc(a.documento) + '</span>' : '') + '</td>'
-            + '<td ' + TD + '>' + (a.valor ? brl(a.valor) : '') + '</td><td ' + TD + '>' + esc(a.detalhe || '') + (a.usuario ? '<br><span style="color:var(--muted);font-size:11px">' + esc(a.usuario) + '</span>' : '') + '</td>'
+          html += '<tr><td ' + TD + '>' + selo(a.gravidade) + '</td>' + tdL(TD, a.fornecedor || '', a.documento ? 'doc. ' + a.documento : '')
+            + '<td ' + TD + '>' + (a.valor ? brl(a.valor) : '') + '</td>' + tdL(TD, a.detalhe || '', a.usuario || '')
             + '<td ' + TD + '>' + (link ? '<a href="' + esc(link) + '" target="_blank" rel="noopener noreferrer" style="font-size:12px;white-space:nowrap">Abrir no Superlógica</a>' : '') + '</td></tr>';
         });
         html += '</tbody></table></div>';

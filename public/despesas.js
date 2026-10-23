@@ -129,7 +129,7 @@ async function validateAndPreview() {
       if (m) {
         obj.DT_VENCIMENTO_PDES = m[2] + '/' + m[1] + '/' + m[3]; // DD/MM → MM/DD
       } else {
-        obj._erros.push('Data inválida — use DD/MM/AAAA');
+        obj._erros.push('Data inválida: use DD/MM/AAAA');
       }
     }
 
@@ -173,8 +173,8 @@ async function validateAndPreview() {
   renderValidatedTable(validated, 'todos');
   setTabByName('tab-envio');
 
-  if (err > 0) toast(`${err} linha(s) com problema — corrija antes de enviar`, 'warn');
-  else toast(`${ok} linhas válidas — pronto para enviar!`, 'ok');
+  if (err > 0) toast(`${err} linha(s) com problema: corrija antes de enviar`, 'warn');
+  else toast(`${ok} linhas válidas, pronto para enviar!`, 'ok');
 }
 
 // ============================================================
@@ -193,6 +193,7 @@ function renderValidatedTable(rows, filter) {
 
   // Conteúdo da planilha vai escapado (planilha de terceiro não pode injetar HTML).
   const e = (v) => String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  // Descricao e lista de erros sao textos livres da planilha: quebram na celula (td-livre no index.html)
   filtered.forEach(r => {
     const badge = r._valido
       ? '<span class="badge badge-ok">✓ ok</span>'
@@ -203,8 +204,8 @@ function renderValidatedTable(rows, filter) {
       <td class="${r._erros.some(x=>x.includes('Data')) ? 'field-err' : ''}">${e(r.DT_VENCIMENTO_PDES || '—')}</td>
       <td class="${r._erros.some(x=>x.includes('Valor')) ? 'field-err' : ''}">${r.VL_VALOR_PDES ? 'R$ ' + e(r.VL_VALOR_PDES) : '—'}</td>
       <td class="${!r.ST_CONTA_CONT ? 'field-warn' : ''}">${e(r.ST_CONTA_CONT || '—')}</td>
-      <td>${e(r.ST_DESCRICAO || '—')}</td>
-      <td>${badge}</td>
+      <td class="td-livre" title="${e(r.ST_DESCRICAO || '')}"><div class="td-2l">${e(r.ST_DESCRICAO || '—')}</div></td>
+      <td class="td-livre">${badge}</td>
     </tr>`;
   });
 
@@ -336,7 +337,7 @@ async function enviarDespesas() {
   addHistorico(`Despesas: ${ok} enviadas, ${err} erros`);
 
   if (err === 0) toast(`${ok} despesas enviadas com sucesso! ✓`, 'ok');
-  else toast(`${ok} enviadas, ${err} com erro — veja o log`, 'warn');
+  else toast(`${ok} enviadas, ${err} com erro: veja o log`, 'warn');
 }
 
 // Trocou de condomínio (T02): a planilha carregada era para o anterior. Descarta e volta ao passo 1.
