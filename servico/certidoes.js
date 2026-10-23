@@ -27,7 +27,8 @@ const TIPOS = [
   { tipo: 'municipal', nome: 'Municipal', link: null },
   { tipo: 'trabalhista', nome: 'Trabalhista (TST)', link: 'https://cndt-certidao.tst.jus.br/gerarCertidao' },
   { tipo: 'fgts', nome: 'FGTS (Caixa)', link: 'https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf' },
-  { tipo: 'falencia', nome: 'Falência e Recuperação (TJES)', link: 'https://sistemas.tjes.jus.br/certidao-negativa/emitir' },
+  { tipo: 'falencia', nome: 'Falência e Recuperação (TJES)', link: 'https://sistemas.tjes.jus.br/certidao-negativa/emitir',
+    dica: 'No TJES, em Natureza da Certidão, marque "Recuperação Judicial e Extrajudicial". A opção "Todas (exceto família)" inclui o Cível e trava por causa das cobranças de cota do condomínio.' },
 ];
 const CHAVES = new Set(TIPOS.map((t) => t.tipo));
 // Nome curto para o título do alerta ("Certidão FGTS vence em ...").
@@ -226,7 +227,7 @@ function tiposDaTela(busca, cnpj, cidade) {
     if (link && busca.linkPreenchido) {
       try { const l = busca.linkPreenchido(t.tipo, soDig(cnpj), cidade); if (typeof l === 'string' && /^https:\/\//.test(l)) link = l; } catch (e) { /* fica o link normal */ }
     }
-    return { tipo: t.tipo, nome, link, automatica: busca.ehAutomatica ? !!busca.ehAutomatica(t.tipo, cidade) : busca.TIPOS_AUTOMATICOS.has(t.tipo) };
+    return { tipo: t.tipo, nome, link, dica: t.dica || null, automatica: busca.ehAutomatica ? !!busca.ehAutomatica(t.tipo, cidade) : busca.TIPOS_AUTOMATICOS.has(t.tipo) };
   });
 }
 

@@ -460,6 +460,7 @@
       var alerta = cert && cert.situacao === 'positiva' ? 'Positiva: consta pendência no órgão.' : '';
       h += '<div class="cert-linha" data-drop="tipo" data-tipo="' + esc(t.tipo) + '">'
         + '<div><div class="cert-nome">' + esc(t.nome) + '</div><div class="cert-det">' + esc(det.join(' · ')) + '</div>'
+        + (t.dica && !ehValida(s.estado) ? '<div class="cert-det">' + esc(t.dica) + '</div>' : '')
         + (cert && cert.situacao === 'positiva_com_efeito_negativa' ? '<div class="cert-det">Positiva com efeito de negativa</div>' : '')
         + (alerta ? '<div class="cert-alerta">' + esc(alerta) + '</div>' : '') + '</div>'
         + '<div class="cert-sit ' + sitCls + '">' + esc(sitTxt) + '</div>'
@@ -975,6 +976,71 @@
     return prestacaoBlobGuardado(tipo);
   }
 
+  // ── Antes de gerar e logo depois de gerar (23/10/2026, pedido do Matheus) ──
+  // Antes de gerar, pergunta se a prestação leva certidões. Com certidões, elas precisam estar
+  // anexadas antes (gerar de novo custa caro): sem nenhuma, não gera e abre o quadro; faltando
+  // alguma, pergunta se gera só com as que já estão. Devolve true para seguir com a geração.
+  function idSLDaTela() {
+    if (emModoLivre() || typeof prestacaoState === 'undefined') return null;
+    return prestacaoState.condIdSuperlogica ? String(prestacaoState.condIdSuperlogica) : null;
+  }
+  function mostrarQuadroCertidoes() {
+    if (temTrabalho()) abrirNoGuardado(); else desenharPrestacao();
+    rolarAte(document.getElementById(temTrabalho() ? 'prest-guardado-cert' : 'prest-cert-card2'));
+  }
+  async function confirmarAntesDeGerar() {
+    var idSL = idSLDaTela();
+    if (!idSL) return true; // fora do Superlógica não há certidões
+    var quer = window.confirm('Incluir as certidões negativas nesta prestação?\n\n'
+      + 'OK: incluir. As certidões precisam estar anexadas antes de gerar.\n'
+      + 'Cancelar: gerar sem certidões.');
+    if (!quer) { pacote.incluir = false; desenharPrestacao(); return true; }
+    pacote.incluir = true;
+    try { await carregar(idSL, true); } catch (e) { /* o resumo abaixo trata a falta de dados */ }
+    var r = resumo(idSL);
+    if (!r) {
+      mostrarQuadroCertidoes();
+      aviso('Não foi possível ler as certidões deste condomínio agora. Tente de novo em instantes.', 'err');
+      return false;
+    }
+    if (!r.validas) {
+      mostrarQuadroCertidoes();
+      aviso('Nenhuma certidão válida anexada ainda. Anexe as certidões no quadro e depois gere a prestação.', 'warn');
+      return false;
+    }
+    if (r.faltando.length) {
+      var segue = window.confirm('Estão anexadas ' + r.validas + ' de ' + r.total + ' certidões. Faltam: ' + r.faltando.join(', ') + '.\n\n'
+        + 'OK: gerar só com as ' + r.validas + ' anexadas.\n'
+        + 'Cancelar: voltar e anexar as que faltam.');
+      if (!segue) { mostrarQuadroCertidoes(); return false; }
+    }
+    desenharPrestacao();
+    return true;
+  }
+
+  // Resultado recém gerado (pdf_b64 e pptx_b64): devolve uma cópia já com as certidões válidas,
+  // para o primeiro download sair completo. Sem certidões a incluir, ou se a montagem falhar,
+  // devolve o resultado como veio (avisando), e o "Baixar tudo" tenta de novo depois.
+  async function comCertidoes(r, idSuperlogica) {
+    var idSL = idSuperlogica ? String(idSuperlogica) : idSLDaTela();
+    if (!r || !pacote.incluir || !idSL || (!r.pdf_b64 && !r.pptx_b64)) return r;
+    try {
+      var j = await chamar('/api/certidoes/' + encodeURIComponent(idSL) + '/na-prestacao', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pdf_b64: r.pdf_b64 || null, pptx_b64: r.pptx_b64 || null })
+      });
+      var novo = Object.assign({}, r);
+      if (j.pdf_b64) novo.pdf_b64 = j.pdf_b64;
+      if (j.pptx_b64) novo.pptx_b64 = j.pptx_b64;
+      novo.slides_certidoes = j.slides || 0;
+      return novo;
+    } catch (e) {
+      if (e && e.codigo === 'sem_certidoes') aviso('Nenhuma certidão válida para incluir: a prestação saiu sem certidões.', 'warn');
+      else aviso('As certidões não entraram no arquivo: ' + (e && e.message ? e.message : e) + ' Use "Baixar tudo" para tentar de novo.', 'warn');
+      return r;
+    }
+  }
+
   // ── Baixar tudo ──
   // PDF e PowerPoint baixam como arquivos separados (abrem igual no Windows e no Mac, sem
   // descompactar nada), já com um slide por certidão no fim. Outros documentos baixam em
@@ -1119,6 +1185,8 @@
     atualizar: atualizar,
     baixarTudo: baixarTudo,
     blobFinal: blobFinal,
+    confirmarAntesDeGerar: confirmarAntesDeGerar,
+    comCertidoes: comCertidoes,
     SUFIXO_AGUARDANDO: SUFIXO_AGUARDANDO
   };
 

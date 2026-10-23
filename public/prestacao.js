@@ -1930,6 +1930,15 @@ function prestacaoOferecerArquivo(pdfB64) {
   });
 }
 
+// 23/10/2026: com "Incluir certidões" marcado, o primeiro download já sai com as certidões
+// (public/certidoes.js monta). Sem certidões ou se a montagem falhar, baixa como veio.
+async function prestacaoBaixarComCertidoes(r, idSuperlogica, btn) {
+  if (!window.Certidoes || !Certidoes.comCertidoes) return prestacaoBaixarResultado(r);
+  if (btn) btn.textContent = 'Colocando as certidões...';
+  var final = await Certidoes.comCertidoes(r, idSuperlogica);
+  return prestacaoBaixarResultado(final);
+}
+
 function prestacaoBaixarResultado(r) {
   // Só oferece arquivar o PDF quando o PDF também foi baixado (formato PDF ou ambos).
   var fmtArq = document.querySelector('input[name="prest-formato"]:checked');
@@ -1961,6 +1970,8 @@ function prestacaoBaixarResultado(r) {
 async function prestacaoGerarV13() {
   var btn = document.getElementById('prest-btn-gerar');
   if (!btn || prestacaoState.gerando) return;
+  if (window.Certidoes && Certidoes.confirmarAntesDeGerar && !(await Certidoes.confirmarAntesDeGerar())) return;
+  if (prestacaoState.gerando) return;
   var textoOriginal = btn.textContent;
   var resultado = 'fim';
   prestacaoState.gerando = true;
@@ -2014,7 +2025,7 @@ async function prestacaoExecutarV13(btn) {
     if (r.erro === 'servico_desatualizado') return 'caminho_antigo';
     throw new Error(r.detalhe || 'Não foi possível gerar a prestação.');
   }
-  var baixados = prestacaoBaixarResultado(r);
+  var baixados = await prestacaoBaixarComCertidoes(r, prestacaoState.condIdSuperlogica, btn);
   (r.avisos || []).forEach(function(a) { toast(a, 'warn'); });
   if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
   prestacaoMostrarAjuste(jobId, r);
@@ -2058,6 +2069,9 @@ async function prestacaoAcompanharJob(jobId, btn) {
 async function prestacaoGerarSuperlogica() {
   var btn = document.getElementById('prest-btn-superlogica');
   if (!btn || prestacaoState.gerando) return;
+  // Pergunta das certidões antes de gastar a geração (public/certidoes.js).
+  if (window.Certidoes && Certidoes.confirmarAntesDeGerar && !(await Certidoes.confirmarAntesDeGerar())) return;
+  if (prestacaoState.gerando) return;
   var textoOriginal = btn.textContent;
   prestacaoState.gerando = true;
   btn.disabled = true;
@@ -2089,7 +2103,7 @@ async function prestacaoGerarSuperlogica() {
       if (r.erro === 'servico_desatualizado') throw new Error('O serviço de geração deste ambiente ainda está na versão antiga.');
       throw new Error(r.detalhe || 'Não foi possível gerar a prestação.');
     }
-    var baixados = prestacaoBaixarResultado(r);
+    var baixados = await prestacaoBaixarComCertidoes(r, ctx.idSuperlogica, btn);
     (r.avisos || []).forEach(function(a) { toast(a, 'warn'); });
     if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
     toast('Prestação gerada com os dados do Superlógica (' + (r.duracao_s || 0) + 's): '
@@ -2450,7 +2464,7 @@ async function prestacaoGerarComAjuste() {
     var jobId = (await resp.json()).jobId;
     var r = await prestacaoAcompanharJob(jobId, btn);
     if (r.status === 'error') throw new Error(r.detalhe || 'Não foi possível montar com os ajustes.');
-    var baixados = prestacaoBaixarResultado(r);
+    var baixados = await prestacaoBaixarComCertidoes(r, (prestTrabalho.ctx || {}).idSuperlogica || prestacaoState.condIdSuperlogica, btn);
     (r.avisos || []).forEach(function(a) { toast(a, 'warn'); });
     if (!baixados.length) throw new Error('Nenhum arquivo foi baixado. Tente novamente.');
     toast('Prestação com os ajustes: ' + baixados.join(' e ') + ' baixado' + (baixados.length > 1 ? 's' : '') + '.', 'ok');
