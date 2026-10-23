@@ -9,6 +9,9 @@
   MODULOS_CATALOGO.ficha_condominio = { label: 'Ficha do Condomínio', acoes: ['ver'] };
   MODULOS_CATALOGO.cobranca = { label: 'Cobrança', acoes: ['ver', 'segunda_via'] };
   MODULOS_CATALOGO.comparativo = { label: 'Comparativo', acoes: ['ver'] };
+  // T51: Central de alertas. "ver" vem marcado para todos (migration 023); "silenciar" é o que
+  // libera "Meus alertas" (GESTOR sempre). O servidor confere de novo.
+  if (!MODULOS_CATALOGO.central_alertas) MODULOS_CATALOGO.central_alertas = { label: 'Central de alertas', acoes: ['ver', 'silenciar'] };
   if (MODULOS_CATALOGO.configuracoes && MODULOS_CATALOGO.configuracoes.acoes.indexOf('todas_carteiras') < 0) {
     MODULOS_CATALOGO.configuracoes.acoes.push('todas_carteiras');
   }

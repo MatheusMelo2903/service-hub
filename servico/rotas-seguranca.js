@@ -90,16 +90,17 @@ function criarRotasSeguranca(app, d) {
   });
 
   // Alertas de uso indevido (calculados na hora a partir do registro e das transcrições).
-  app.get('/api/seguranca/alertas', requireAuth, async (req, res) => {
-    const n = await exigirNivel(req, res); if (!n) return;
+  // T51: o cálculo fica numa função própria para a Central de alertas usar o mesmo, sem cópia.
+  // Devolve a lista ou null quando não deu para ler.
+  async function alertasUso(req, n) {
     const filtro = await auditoria.filtroVisivel(req, n);
-    if (filtro === null) return res.status(500).json({ erro: 'falha_leitura' });
+    if (filtro === null) return null;
     const desde = new Date(Date.now() - 30 * 86400000).toISOString();
     const [sus, tr] = await Promise.all([
       banco('GET', '/rest/v1/auditoria?select=id,criado_em,email,acao,id_superlogica,detalhe,motivo&suspeito=eq.true&criado_em=gte.' + desde + '&order=criado_em.desc&limit=500' + filtro),
       banco('GET', '/rest/v1/transcricoes?select=id,criado_em,email,id_superlogica,condominio_nome,origem,usada_em_ata,caracteres&criado_em=gte.' + desde + '&apagada_em=is.null&order=criado_em.desc&limit=500' + filtro),
     ]);
-    if (sus.status !== 200 || tr.status !== 200) return res.status(500).json({ erro: 'falha_leitura' });
+    if (sus.status !== 200 || tr.status !== 200) return null;
     const alertas = [];
     const NOMES = {
       acesso_negado: 'Tentou abrir algo sem permissão', fora_do_horario: 'Uso fora do horário (antes das 7h, depois das 21h ou domingo)',
@@ -129,6 +130,12 @@ function criarRotasSeguranca(app, d) {
       else if (!t.usada_em_ata && agora - new Date(t.criado_em).getTime() > 48 * 3600000) alertas.push({ tipo: 'transcricao_sem_ata', titulo: 'Transcrição feita e nenhuma ata gerada em 48h', email: t.email, vezes: 1, ultima: t.criado_em, transcricao_id: t.id, condominio: t.condominio_nome });
     }
     alertas.sort((a, b) => String(b.ultima).localeCompare(String(a.ultima)));
+    return alertas;
+  }
+  app.get('/api/seguranca/alertas', requireAuth, async (req, res) => {
+    const n = await exigirNivel(req, res); if (!n) return;
+    const alertas = await alertasUso(req, n);
+    if (!alertas) return res.status(500).json({ erro: 'falha_leitura' });
     res.set('Cache-Control', 'no-store').json({ alertas });
   });
 
@@ -184,6 +191,8 @@ function criarRotasSeguranca(app, d) {
     auditoria.evento(req, bloquear ? 'usuario_bloqueado' : 'usuario_desbloqueado', { alvo: id, email_alvo: alvo.email });
     res.json({ ok: true, bloqueado: bloquear });
   });
+
+  return { alertasUso };
 }
 
 module.exports = { criarRotasSeguranca };

@@ -13,6 +13,7 @@ const envio = require('./avisos-envio');
 const finBanco = require('./banco');
 const finPainel = require('./painel');
 const regras = require('./regras');
+const central = require('../servico/central-alertas');
 const U = regras.util;
 
 const RX_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -31,7 +32,8 @@ function filtrarCarteira(c, ids) {
 const ordemCarteira = (a, b) => ((b.totais && b.totais.alta) || 0) - ((a.totais && a.totais.alta) || 0) || String(a.nome).localeCompare(String(b.nome));
 
 // d: { app, express, requireAuth, requireGestor, lerPerfil, carteira (T18), gruposCarteiras, clienteSL,
-//      superlogicaNativa, supabaseUrl, supabaseChave, supabaseAdminRequest, env, log }
+//      superlogicaNativa, supabaseUrl, supabaseChave, supabaseAdminRequest, env, log,
+//      preferencias?: (req) => Promise<{ silenciados, pausado } | null> (T51) }
 function registrar(d) {
   const { app, requireAuth, requireGestor } = d;
   const env = d.env || {};
@@ -110,6 +112,19 @@ function registrar(d) {
       }
       resp.carteiras = carteiras.sort(ordemCarteira);
       resp.erros = erros.sort((a, b) => (PESO[b.gravidade] || 0) - (PESO[a.gravidade] || 0) || (Number(b.valor) || 0) - (Number(a.valor) || 0));
+      // T51: "Meus alertas". Tipo silenciado (ou tudo, se pausado) ganha silenciado:true; nada sai
+      // da resposta e os totais ficam iguais (a tela esconde e desconta). Falha ao ler a
+      // preferência mostra tudo.
+      if (typeof d.preferencias === 'function') {
+        let prefs = null;
+        try { prefs = await d.preferencias(req); } catch (e) { prefs = null; }
+        if (prefs) {
+          const marcar = (l) => central.aplicarPreferencias(l, prefs);
+          resp.carteiras = resp.carteiras.map((c) => Object.assign({}, c, { itens: marcar(c.itens || []) }));
+          if (resp.sem_carteira && Array.isArray(resp.sem_carteira.itens)) resp.sem_carteira = Object.assign({}, resp.sem_carteira, { itens: marcar(resp.sem_carteira.itens) });
+          resp.erros = marcar(resp.erros);
+        }
+      }
       res.json(resp);
     } catch (e) {
       log('[avisos] meu dia falhou: ' + (e && e.message));
