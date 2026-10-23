@@ -77,7 +77,7 @@ const ok = (nome, fn) => Promise.resolve().then(fn).then(() => { n++; console.lo
     assert.strictEqual(a.id_despesa, 87654321);
   });
   await ok('banco recusa projeto que nao e o de teste', () => {
-    assert.throws(() => criarBanco({ url: 'https://mtucxdfepkwsfnqpfydb.supabase.co', chave: 'k' }), /supabase_nao_permitido/);
+    assert.throws(() => criarBanco({ url: 'https://outroprojetoqualquer1.supabase.co', chave: 'k' }), /supabase_nao_permitido/);
     assert.throws(() => criarBanco({ url: 'https://ledgyprytkuvgtbunsck.supabase.co.evil.com', chave: 'k' }), /supabase_nao_permitido/);
     assert.doesNotThrow(() => criarBanco({ url: 'https://ledgyprytkuvgtbunsck.supabase.co', chave: 'k' }));
   });

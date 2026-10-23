@@ -1,9 +1,9 @@
 'use strict';
 // Gravação nas tabelas fin_* pelo PostgREST com service_role (só no servidor).
-// Trava: só grava no Supabase de TESTE enquanto a produção não for autorizada.
+// Trava: só grava nos Supabase conhecidos (teste e produção; produção liberada pelo Matheus em 23/10/2026).
 const https = require('https');
 
-const REFS_PERMITIDAS = ['ledgyprytkuvgtbunsck'];
+const REFS_PERMITIDAS = ['ledgyprytkuvgtbunsck', 'mtucxdfepkwsfnqpfydb'];
 const LOTE = 500;
 
 function criarBanco({ url, chave }) {

@@ -394,7 +394,7 @@ t('erros: teto por usuário', () => {
   assert.strictEqual(r.cortados, 50);
 });
 t('banco dos avisos recusa o Supabase de produção', () => {
-  assert.throws(() => finBanco.criarBanco({ url: 'https://mtucxdfepkwsfnqpfydb.supabase.co', chave: 'x' }), /supabase_nao_permitido/);
+  assert.throws(() => finBanco.criarBanco({ url: 'https://outroprojetoqualquer1.supabase.co', chave: 'x' }), /supabase_nao_permitido/);
 });
 
 (async () => {

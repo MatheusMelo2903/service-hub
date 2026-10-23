@@ -4699,7 +4699,7 @@ function _credFin() {
   return { base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN, supabaseUrl: SUPABASE_URL, supabaseChave: SUPABASE_SERVICE_ROLE_KEY };
 }
 const _FIN_ERROS = {
-  supabase_nao_permitido: [403, 'A cópia do financeiro só está liberada no ambiente de teste.'],
+  supabase_nao_permitido: [403, 'A cópia do financeiro não está liberada neste banco.'],
   supabase_nao_configurado: [503, 'Banco não configurado neste ambiente.'],
   sincronizacao_em_andamento: [409, 'Já existe uma sincronização em andamento. Aguarde terminar.'],
 };
