@@ -567,3 +567,56 @@ async def v13_apresentacao(
         raise HTTPException(status_code=500, detail={"erro": "apresentacao_falhou", "acao": "revisao_humana"})
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Leitura dos documentos da apresentação de assembleia (23/10/2026):
+#   /v13/imagens/converter        EMF e WMF dos PowerPoints viram JPEG (app/apresentacao_imagens.py)
+#   /v13/apresentacao/financeiro  dados brutos do Superlógica viram o resumo do item de
+#                                 prestação de contas (app/apresentacao_financeiro.py)
+# ─────────────────────────────────────────────────────────────────────────
+from . import apresentacao_imagens  # noqa: E402
+from . import apresentacao_financeiro  # noqa: E402
+
+
+@app.post("/v13/imagens/converter")
+async def v13_imagens_converter(
+    payload: dict = Body(...),
+    _: None = Depends(verificar_secret),
+):
+    inicio_t = time.perf_counter()
+    tmpdir = tempfile.mkdtemp(prefix="apr_img_")
+    try:
+        try:
+            lista = await run_in_threadpool(apresentacao_imagens.converter, payload.get("imagens"), tmpdir)
+        except apresentacao_imagens.ErroEntrada as e:
+            raise _ap_422(str(e))
+        _log("v13_imagens_convertidas", total=len(lista), ok=sum(1 for x in lista if x.get("ok")),
+             duracao_ms=int((time.perf_counter() - inicio_t) * 1000))
+        return {"imagens": lista}
+    except HTTPException:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail={"erro": "conversao_falhou"})
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@app.post("/v13/apresentacao/financeiro")
+async def v13_apresentacao_financeiro(
+    payload: dict = Body(...),
+    _: None = Depends(verificar_secret),
+):
+    inicio_t = time.perf_counter()
+    try:
+        r = await run_in_threadpool(apresentacao_financeiro.resumo, payload)
+    except v13_superlogica.ErroDados as e:
+        _log("v13_apresentacao_financeiro_recusou", motivo=str(e)[:200])
+        raise _422(str(e))
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail={"erro": "financeiro_falhou"})
+    _log("v13_apresentacao_financeiro_ok", meses=len(r["periodo"]), categorias=len(r["categorias"]),
+         duracao_ms=int((time.perf_counter() - inicio_t) * 1000))
+    return r

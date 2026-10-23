@@ -20,6 +20,10 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+// Leitura das imagens (EMF/WMF e triagem barata de todas) e item de prestação de contas com os
+// números do Superlógica: lógica nos arquivos abaixo, aqui só os ganchos.
+const leitura = require('./apresentacao-leitura');
+const financeiro = require('./apresentacao-financeiro');
 
 const LIM = {
   DOCS: 30,
@@ -58,6 +62,7 @@ Para cada imagem diga:
 tipo: "foto" (foto de local, obra, produto ou equipamento), "informacao" (tabela, orçamento, planilha, projeto, planta, documento escaneado, placa com preço ou medida) ou "decorativa" (logo, ícone, fundo, assinatura, carimbo, enfeite).
 legenda: descrição curta do que a imagem mostra, até 12 palavras, em português, sem hífen nem travessão.
 texto_extra: só a informação da imagem que NÃO está no texto da página: valores, itens, quantidades, medidas, nomes, datas. Copie números exatamente como aparecem. Vazio se não houver nada novo ou se for decorativa. Página escaneada (sem texto): transcreva o conteúdo útil.
+Print de texto (regimento, ata, contrato, lei, mensagem): transcreva o texto útil; o que estiver grifado, destacado ou riscado vai marcado assim: [grifado: texto] ou [riscado: texto]. Tabela ou demonstrativo: uma linha por item com o valor, na ordem da imagem.
 Responda SÓ com JSON: {"imagens":[{"k":1,"tipo":"foto","legenda":"...","texto_extra":""}]}`;
 
 // Hoje no horário de Brasília (o servidor roda em UTC).
@@ -125,8 +130,9 @@ function validarPedido(b, opcoes) {
   let somaB64 = 0;
   const somar = (v) => { if (typeof v === 'string') somaB64 += v.length; };
   docsIn.forEach((d) => somar(d && d.pdf_b64));
-  fotosIn.forEach((f) => somar(f && f.b64));
-  imgsIn.forEach((im) => { somar(im && im.b64); somar(im && im.b64_triagem); });
+  fotosIn.forEach((f) => { somar(f && f.b64); somar(f && f.b64_mini); });
+  imgsIn.forEach((im) => { somar(im && im.b64); somar(im && im.b64_triagem); somar(im && im.b64_mini); });
+  (Array.isArray(b.imagens_vetoriais) ? b.imagens_vetoriais : []).forEach((v) => somar(v && v.b64));
   somar(b.logo_cliente_b64);
   somaB64 += Number(op.bytesExtras) || 0;
   if (somaB64 > Math.ceil(LIM.ENVIO_BYTES / 3) * 4) return erro(413, 'envio_grande', 'O envio passou de 150 MB. Tire alguns documentos ou fotos e tente de novo.');
@@ -152,7 +158,7 @@ function validarPedido(b, opcoes) {
     const f = fotosIn[i] || {};
     const nome = linhaLimpa(f.nome, 120) || ('foto ' + (i + 1));
     if (!b64Valido(f.b64, LIM.IMAGEM_B64) || !ehJpeg(f.b64)) return erro(400, 'foto_invalida', 'A foto "' + nome + '" não pôde ser lida. Tire ela da lista e anexe de novo.');
-    fotos.push({ id: 'f' + (fotos.length + 1), nome, legenda: linhaLimpa(f.legenda, LIM.LEGENDA_CHARS), b64: f.b64, origem: 'enviada' });
+    fotos.push({ id: 'f' + (fotos.length + 1), nome, legenda: linhaLimpa(f.legenda, LIM.LEGENDA_CHARS), b64: f.b64, b64_mini: leitura.miniValida(f.b64_mini), origem: 'enviada' });
   }
 
   // Imagens dos documentos: confere de novo o descarte de logos, ícones e repetidas.
@@ -181,7 +187,7 @@ function validarPedido(b, opcoes) {
     }
     fotos.push({
       id: 'f' + (fotos.length + 1), nome: legendaPadrao, legenda: editada ? linhaLimpa(im.legenda, LIM.LEGENDA_CHARS) : legendaPadrao,
-      legenda_editada: editada, b64: im.b64, b64_triagem: triagemB64, origem: 'documento', doc, pagina, largura, altura, area, previa, local: i,
+      legenda_editada: editada, b64: im.b64, b64_triagem: triagemB64, b64_mini: leitura.miniValida(im.b64_mini), origem: 'documento', doc, pagina, largura, altura, area, previa, local: i,
     });
   }
   let logo = null;
@@ -189,10 +195,13 @@ function validarPedido(b, opcoes) {
     if (!b64Valido(b.logo_cliente_b64, LIM.IMAGEM_B64) || !(ehJpeg(b.logo_cliente_b64) || ehPng(b.logo_cliente_b64))) return erro(400, 'logo_invalida', 'A logo do cliente não pôde ser lida. Anexe de novo em JPG ou PNG.');
     logo = b.logo_cliente_b64;
   }
+  const vet = leitura.validarVetoriais(b.imagens_vetoriais, documentos);
+  if (vet.erro) return vet;
+  avisos.push(...vet.avisos);
   if (op.atualizar) {
     if (!pedido && !documentos.length && !fotos.length) return erro(400, 'sem_conteudo', 'Anexe o material novo ou escreva o que precisa entrar.');
   } else if (!pedido && !edital && !documentos.length) return erro(400, 'sem_conteudo', 'Escreva o que você precisa ou anexe o edital.');
-  return { dados: { pedido, edital, pauta: extrairPauta(edital), documentos, fotos, logo, avisos, descartadas } };
+  return { dados: { pedido, edital, pauta: extrairPauta(edital), documentos, fotos, vetoriais: vet.vetoriais, logo, avisos, descartadas } };
 }
 
 // Imagens que vão para a conferência: página sem texto ou imagem grande (20% ou mais),
@@ -209,7 +218,7 @@ function candidatasTriagem(fotos) {
     const ctx = textoPagina(f.doc, f.pagina);
     f.paginaSemTexto = letras(ctx) < LIM.PAGINA_SEM_TEXTO;
     f.contexto = ctx.replace(/\s+/g, ' ').slice(0, LIM.TRIAGEM_CONTEXTO);
-    if (f.paginaSemTexto || f.area >= LIM.AREA_CANDIDATA) cands.push(f);
+    if (leitura.precisaLeitura(f, LIM)) cands.push(f);
   });
   cands.sort((a, b) => (b.area - a.area) || ((b.largura * b.altura) - (a.largura * a.altura)));
   return { escolhidas: cands.slice(0, LIM.TRIAGEM_MAX), fora: Math.max(0, cands.length - LIM.TRIAGEM_MAX) };
@@ -383,6 +392,11 @@ function validarRoteiro(roteiro, { fotos, documentos, pauta }) {
       if (uma.length) s = { tipo: 'fotos', numero: s.numero, titulo: s.titulo, fotos: uma.map((id) => ({ id })) };
       else if (Array.isArray(s.topicos) && s.topicos.length) s = virarTopicos(s, s.topicos);
       else continue;
+    } else if (s.tipo === 'painel' || s.tipo === 'grafico_colunas') {
+      const c = financeiro.conferirSlide(s);
+      if (c.fora) { avisos.push(c.fora); continue; }
+      if (c.aviso) avisos.push(c.aviso);
+      s = c.slide;
     } else if (s.tipo === 'documento') {
       // Documento sem o PDF (modo atualizar): só as páginas que já estavam desenhadas (prontas).
       const d = docs.get(s.documento);
@@ -720,6 +734,7 @@ function criarRotasApresentacao(app, deps) {
   const exigirCarteira = deps.exigirCarteira || null;
   const caminhoGuia = deps.caminhoGuia || path.join(__dirname, 'apresentacao', 'guia.md');
   const agora = deps.agora || Date.now;
+  const depsFin = financeiro.dependencias(deps, motor);
   const jobs = new Map(); // jobId -> { dono, status, etapa, criadoEm, payload?, erro? }
 
   // Guia lido do disco; recarrega se o arquivo mudar (sem reiniciar o servidor).
@@ -759,7 +774,7 @@ function criarRotasApresentacao(app, deps) {
         let r = null;
         try {
           r = await chamarModelo({
-            modelo: modelos.modelo('apresentacao_imagens'), maxTokens: 6000, system: PROMPT_TRIAGEM, cache: true,
+            modelo: modelos.modelo('apresentacao_imagens'), maxTokens: 10000, system: PROMPT_TRIAGEM, cache: true,
             content: conteudoTriagem(lote), rotulo: 'apresentacao_imagens', funcao: 'apresentacao_imagens',
             usuario: ctx.usuario, condominio: ctx.condominio, timeoutMs: 120000,
           });
@@ -781,13 +796,20 @@ function criarRotasApresentacao(app, deps) {
   // Imagens dos documentos: conferência barata só nas candidatas, legendas e texto que só
   // está nas imagens junto da página dele. Devolve quantas imagens foram conferidas.
   async function prepararMaterial(dados, ctx, avisos, etapa) {
+    // EMF e WMF viram JPEG no motor e entram como imagens do documento; depois a triagem
+    // barata classifica todas pelas miniaturas e só documento, tabela e gráfico seguem.
+    await leitura.converterVetoriais(dados, { motor, avisos });
     dados.fotos.forEach((f) => { if (f.previa) f.triagem = f.previa; });
+    const rapida = await leitura.triagemRapida(dados.fotos, { chamarModelo, extrairJson, modelos, ctx });
+    if (rapida.falhas) avisos.push(rapida.falhas + ' imagem(ns) não puderam ser classificadas; entraram pela regra das imagens grandes.');
+    dados.leituraInfo = { rapidas: rapida.enviadas, chamadasRapidas: rapida.chamadas };
     const { escolhidas, fora } = candidatasTriagem(dados.fotos);
     let triadas = 0;
     if (escolhidas.length) {
       etapa('conferindo as imagens dos documentos');
       const r = await triar(escolhidas, ctx);
       triadas = r.enviadas;
+      dados.leituraInfo.chamadasAlta = Math.ceil(escolhidas.length / LIM.TRIAGEM_LOTE);
       if (r.falhas) avisos.push(r.falhas + ' imagem(ns) dos documentos não puderam ser conferidas; confira as legendas dessas fotos.');
     }
     if (fora) avisos.push(fora + ' imagem(ns) dos documentos passaram do limite de ' + LIM.TRIAGEM_MAX + ' conferências e entraram só com a legenda.');
@@ -837,12 +859,16 @@ function criarRotasApresentacao(app, deps) {
       return falhar('A função de apresentação não está configurada neste ambiente.', 'indisponivel');
     }
 
-    // 2. Imagens dos documentos.
+    // 2. Imagens dos documentos e, ao mesmo tempo, os números da prestação de contas.
+    const finP = financeiro.prepararFinanceiro({ dados, ctx, deps: depsFin, agora: agora() });
     const triadas = await prepararMaterial(dados, ctx, avisos, etapa);
+    const fin = await finP;
+    avisos.push(...fin.avisos);
 
     // 3. Roteiro (só texto).
     etapa('montando o roteiro');
-    const principal = montarConteudo({ condominio: ctx.cond, hoje: hojeBrasilia(agora()), edital: dados.edital, pauta: dados.pauta, documentos: dados.documentos, fotos: dados.fotos, pedido: dados.pedido });
+    const principal = montarConteudo({ condominio: ctx.cond, hoje: hojeBrasilia(agora()), edital: dados.edital, pauta: dados.pauta, documentos: dados.documentos, fotos: dados.fotos, pedido: dados.pedido })
+      + (fin.instrucao ? '\n\n' + fin.instrucao : '');
     const chamar = (content) => chamarModelo({
       modelo: modelos.modelo('apresentacao'), maxTokens: 8000, system: guia, cache: true, content,
       esforco: modelos.esforco('apresentacao'), rotulo: 'apresentacao', funcao: 'apresentacao',
@@ -866,6 +892,7 @@ function criarRotasApresentacao(app, deps) {
 
     // Avisos que vieram no roteiro e conferência em código (ids, pauta, valores, traços).
     const avisosRoteiro = Array.isArray(roteiro.avisos) ? roteiro.avisos.filter((a) => typeof a === 'string' && a.trim()).map((a) => semTraco(a.trim()).slice(0, 300)).slice(0, 30) : [];
+    if (fin.slides) roteiro = financeiro.encaixar(roteiro, fin, avisos);
     const disponiveis = dados.fotos.filter((f) => !(f.triagem && f.triagem.tipo === 'decorativa'));
     const conf = validarRoteiro(roteiro, {
       fotos: disponiveis.map((f) => f.id), pauta: dados.pauta,
@@ -891,12 +918,13 @@ function criarRotasApresentacao(app, deps) {
         pptx_b64: j.pptx_b64 || null, pdf_b64: j.pdf_b64 || null, slides: nSlides,
         avisos: todosAvisos, pauta: dados.pauta, titulo_arquivo: nomeArquivo(roteiro.titulo_arquivo || j.titulo_arquivo), roteiro,
         // Para a tela atualizar as legendas e guardar a conferência (não paga de novo ao gerar outra vez).
-        imagens: dados.fotos.filter((f) => f.origem === 'documento').map((f) => ({ local: f.local, id: f.id, legenda: f.legenda, triagem: f.triagem || null })),
+        imagens: dados.fotos.filter((f) => f.origem === 'documento').map((f) => ({ local: f.local, vetor: f.vetor, id: f.id, legenda: f.legenda, triagem: f.triagem || null })),
         duracao_s: Math.round((Date.now() - t0) / 1000),
       };
     }
     console.log('[apresentacao] gerada cond=' + (ctx.condominio || '-') + ' slides=' + nSlides + ' fotos=' + disponiveis.length
-      + ' docs=' + dados.documentos.length + ' imagens_triadas=' + triadas + ' avisos=' + todosAvisos.length + ' ms=' + (Date.now() - t0) + ' usuario=' + ctx.usuarioLog);
+      + ' docs=' + dados.documentos.length + ' imagens_triadas=' + triadas + ' avisos=' + todosAvisos.length + ' ms=' + (Date.now() - t0) + ' usuario=' + ctx.usuarioLog
+      + financeiro.logLeitura(dados, fin));
     agendarLimpeza(jobId);
   }
 
@@ -975,7 +1003,7 @@ function criarRotasApresentacao(app, deps) {
     const c = await condominioDoPedido(req, res, b);
     if (!c) return;
     const cond = c.cond;
-    const ctx = { cond, condominio: cond && cond.id, usuario: req.user && req.user.sub, usuarioLog: usuarioLog(req) };
+    const ctx = { cond, condominio: cond && cond.id, usuario: req.user && req.user.sub, usuarioLog: usuarioLog(req), interno: req.authMode === 'internal' };
     iniciarJob(req, res, 'lendo os documentos', (jobId) => {
       if (auditoria) auditoria.evento(req, 'apresentacao_gerada', { id_superlogica: cond && cond.id, documentos: v.dados.documentos.length, fotos: v.dados.fotos.length });
       return executar(jobId, v.dados, ctx);
@@ -1050,11 +1078,16 @@ function criarRotasApresentacao(app, deps) {
     const maxF = maiorId([...citAntigos.fotos, ...fotosAntigas.map((f) => f.id)], 'f');
     const maxD = maiorId([...citAntigos.documentos, ...paginasAntigas.map((p) => p.id)], 'd');
     renumerarNovos(dados, maxF, maxD);
+    dados.idBaseFotos = maxF; // imagens EMF convertidas continuam depois das fotos antigas
+    const finP = financeiro.prepararFinanceiroAtualizar({ antiga, dados, ctx, deps: depsFin, agora: agora() });
     const triadas = await prepararMaterial(dados, ctx, avisos, etapa);
+    const fin = await finP;
+    avisos.push(...fin.avisos);
 
     // 3. Só o que falta (resumo do existente, material novo e pedido).
     etapa('montando o que falta');
-    const conteudo = montarConteudoAtualizar({ condominio: ctx.cond, hoje: hojeBrasilia(agora()), roteiro: antiga, documentos: dados.documentos, fotos: dados.fotos, pedido: dados.pedido, maxF, maxD });
+    const conteudo = montarConteudoAtualizar({ condominio: ctx.cond, hoje: hojeBrasilia(agora()), roteiro: antiga, documentos: dados.documentos, fotos: dados.fotos, pedido: dados.pedido, maxF, maxD })
+      + (fin.instrucao ? '\n\n' + fin.instrucao : '');
     const chamar = (content) => chamarModelo({
       modelo: modelos.modelo('apresentacao'), maxTokens: 8000, system: guia, cache: true, content,
       esforco: modelos.esforco('apresentacao'), rotulo: 'apresentacao', funcao: 'apresentacao',
@@ -1078,6 +1111,7 @@ function criarRotasApresentacao(app, deps) {
 
     // 4. Junta, renumera e confere em código.
     const junto = juntarAtualizacao(antiga, resp);
+    if (fin.slides) junto.roteiro = financeiro.encaixarAtualizar(junto.roteiro, fin, avisos);
     const novasDisp = dados.fotos.filter((f) => !(f.triagem && f.triagem.tipo === 'decorativa'));
     const docsAntigos = new Map();
     paginasAntigas.forEach((p) => {
@@ -1116,12 +1150,13 @@ function criarRotasApresentacao(app, deps) {
         avisos: todosAvisos, inseridos: junto.inseridos.map((x) => Object.assign({}, x, { titulo: semTraco(x.titulo) })),
         pauta: sPauta && Array.isArray(sPauta.itens) ? sPauta.itens.map((it) => linhaLimpa(textoItemPauta(it), 300)) : [],
         titulo_arquivo: nomeArquivo(roteiro.titulo_arquivo), roteiro,
-        imagens: dados.fotos.filter((f) => f.origem === 'documento').map((f) => ({ local: f.local, id: f.id, legenda: f.legenda, triagem: f.triagem || null })),
+        imagens: dados.fotos.filter((f) => f.origem === 'documento').map((f) => ({ local: f.local, vetor: f.vetor, id: f.id, legenda: f.legenda, triagem: f.triagem || null })),
         duracao_s: Math.round((Date.now() - t0) / 1000),
       };
     }
     console.log('[apresentacao] atualizada cond=' + (ctx.condominio || '-') + ' slides=' + nSlides + ' novos=' + junto.inseridos.reduce((s, x) => s + x.slides, 0)
-      + ' fotos_novas=' + novasDisp.length + ' docs_novos=' + dados.documentos.length + ' imagens_triadas=' + triadas + ' avisos=' + todosAvisos.length + ' ms=' + (Date.now() - t0) + ' usuario=' + ctx.usuarioLog);
+      + ' fotos_novas=' + novasDisp.length + ' docs_novos=' + dados.documentos.length + ' imagens_triadas=' + triadas + ' avisos=' + todosAvisos.length + ' ms=' + (Date.now() - t0) + ' usuario=' + ctx.usuarioLog
+      + financeiro.logLeitura(dados, fin));
     agendarLimpeza(jobId);
   }
 
@@ -1147,7 +1182,7 @@ function criarRotasApresentacao(app, deps) {
     const c = await condominioDoPedido(req, res, b);
     if (!c) return;
     const cond = c.cond;
-    const ctx = { cond, condominio: cond && cond.id, usuario: req.user && req.user.sub, usuarioLog: usuarioLog(req) };
+    const ctx = { cond, condominio: cond && cond.id, usuario: req.user && req.user.sub, usuarioLog: usuarioLog(req), interno: req.authMode === 'internal' };
     iniciarJob(req, res, 'lendo a apresentação', (jobId) => {
       if (auditoria) auditoria.evento(req, 'apresentacao_atualizada', { id_superlogica: cond && cond.id, documentos: v.dados.documentos.length, fotos: v.dados.fotos.length, origem: trabalhoId ? 'pasta' : 'arquivo' });
       return executarAtualizar(jobId, v.dados, ctx);
