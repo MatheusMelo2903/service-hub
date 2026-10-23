@@ -5243,10 +5243,28 @@ app.post('/api/consumo/:idSuperlogica/lancar', requireAuth, express.json({ limit
 // e lançamento em financeiro/entrada.js. Lançamento só nos condomínios de
 // ENTRADA_LANCAMENTO_LIBERADO (T40; padrão: só o 167, de teste).
 // ─────────────────────────────────────────────────────────────────────────
-require('./servico/rotas-entrada').criarRotasEntrada(app, {
+const _entradaDocs = require('./servico/rotas-entrada').criarRotasEntrada(app, {
   requireAuth, express, banco: supabaseAdminRequest, perfilDe, podeModulo, carteiraT18, exigirLeituraSuperlogica, superlogicaNativa,
   clienteSL, credSL: _credSL, dentroDoLimite, auditoria, processar, carteiraEstrita: _carteiraEstrita,
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Documentos do financeiro por EMAIL: caixas IMAP cadastradas pelo GESTOR (senha cifrada com
+// EMAIL_FINANCEIRO_CHAVE), lidas a cada 5 minutos só com EMAIL_FINANCEIRO=on (padrão desligado).
+// Cada anexo vira item da entrada de documentos acima. Detalhes em financeiro/email-financeiro.js
+// e servico/rotas-email-financeiro.js. Nunca apaga email do servidor.
+// ─────────────────────────────────────────────────────────────────────────
+const _emailFin = require('./financeiro/email-financeiro');
+const _leitorEmail = _emailFin.criarLeitor({
+  banco: supabaseAdminRequest, entrada: _entradaDocs, auditoria, gruposCarteiras,
+  abrirImap: (opcoes) => { const { ImapFlow } = require('imapflow'); return new ImapFlow(opcoes); },
+  parsear: (buf) => require('mailparser').simpleParser(buf, { skipImageLinks: true, skipTextLinks: true, maxHtmlLengthToParse: 2 * 1024 * 1024 }),
+  condominios: async () => [...(await require('./financeiro/entrada').cadastroCondominios(clienteSL())).porId.values()],
+});
+require('./servico/rotas-email-financeiro').criarRotasEmailFinanceiro(app, {
+  requireAuth, requireGestor, express, banco: supabaseAdminRequest, leitor: _leitorEmail, auditoria, gruposCarteiras,
+});
+if (require.main === module && superlogicaNativa() && SUPABASE_SERVICE_ROLE_KEY) _leitorEmail.agendar();
 
 // ─────────────────────────────────────────────────────────────────────────
 // Fechamento do mês e conferência dos anexos (T38), dentro do item Financeiro: rotas em

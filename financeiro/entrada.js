@@ -213,6 +213,30 @@ function chaveNota(t) {
   }
   return null;
 }
+// Chave de acesso da NF-e (44 dígitos) em qualquer ponto do texto, com o dígito verificador
+// conferido (módulo 11), UF válida e modelo 55 ou 65. Serve para juntar o PDF (DANFE) com o XML e
+// para achar a mesma nota chegando de novo. null quando não acha.
+function dvChaveNfe(c43) {
+  let soma = 0, peso = 2;
+  for (let i = c43.length - 1; i >= 0; i--) { soma += Number(c43[i]) * peso; peso = peso === 9 ? 2 : peso + 1; }
+  const r = 11 - (soma % 11);
+  return r >= 10 ? 0 : r;
+}
+function chaveNfeValida(c) {
+  c = soDig(c);
+  if (c.length !== 44 || !/^(55|65)$/.test(c.slice(20, 22))) return false;
+  const uf = Number(c.slice(0, 2));
+  if (uf < 11 || uf > 53) return false;
+  return dvChaveNfe(c.slice(0, 43)) === Number(c[43]);
+}
+function chaveNfeDoTexto(texto) {
+  const t = String(texto || '');
+  const re = /(?<!\d)((?:\d[\s.]?){43}\d)(?!\d)/g;
+  let m;
+  // Não conferiu: tenta de novo começando no próximo caractere (o número pode começar no meio).
+  while ((m = re.exec(t))) { const c = soDig(m[1]); if (chaveNfeValida(c)) return c; re.lastIndex = m.index + 1; }
+  return null;
+}
 // Lê os campos do texto do PDF. Nada é inventado: o que não aparece fica null.
 function lerCampos(texto, hojeIso) {
   const t = String(texto || '').replace(/\r/g, '').replace(/[ \t ]+/g, ' ');
@@ -588,7 +612,7 @@ function confianca(d) {
 
 // Alertas do rascunho. GRAVES precisam ser vistos e aceitos na tela antes de lançar;
 // IMPEDE não deixa lançar de jeito nenhum.
-const GRAVES = ['duplicidade', 'outro_condominio', 'condominio_diferente_do_documento', 'na_fila', 'cnpj_repetido', 'comprovante'];
+const GRAVES = ['duplicidade', 'outro_condominio', 'condominio_diferente_do_documento', 'na_fila', 'cnpj_repetido', 'comprovante', 'condominio_pelo_email'];
 // Avisos que o lote não aceita (só lançando pelo documento, olhando).
 const FORA_DO_LOTE = ['vencido', 'emissao_mes_fechado', 'valor_diferente_linha'];
 const IMPEDE = ['sem_condominio', 'sem_fornecedor', 'sem_valor', 'sem_vencimento', 'sem_conta', 'conferencia_incompleta', 'fora_da_carteira',
@@ -614,6 +638,12 @@ async function conferir(cliente, d, opts) {
   if (d.valor_linha && d.valor && Math.abs(d.valor_linha - d.valor) >= 0.01) add('valor_diferente_linha', 'O valor informado é diferente do valor da linha digitável (R$ ' + d.valor_linha.toFixed(2).replace('.', ',') + ').');
   if (d.cond_documento && d.id_superlogica && String(d.cond_documento) !== String(d.id_superlogica)) add('condominio_diferente_do_documento', 'O CNPJ do pagador ou tomador no documento é de outro condomínio.');
   if (Array.isArray(o.naFila) && o.naFila.length) add('na_fila', 'O mesmo documento já está na fila do Hub.', { itens: o.naFila.slice(0, 5) });
+  // Documento vindo por email sem CNPJ de condomínio: o condomínio veio do nome no assunto ou no
+  // corpo, do remetente ou da caixa. Precisa ser visto na tela (nunca vai no lote sem olhar).
+  if (d.condominio_por && d.id_superlogica && String(d.id_superlogica) === String(d.condominio_sugerido || '')) {
+    const por = { nome_no_email: 'pelo nome citado no email', remetente: 'pelo remetente (lançamentos anteriores)', caixa: 'pela caixa de email' }[d.condominio_por] || 'pelo email';
+    add('condominio_pelo_email', 'O condomínio foi sugerido ' + por + ', não pelo CNPJ do documento. Confira se é o condomínio certo.');
+  }
   // Condomínio com CNPJ que aparece em outro cadastro (exemplo: o 167 de teste): conferir à mão.
   if (d.id_superlogica) {
     try {
@@ -710,13 +740,20 @@ function corpoOk(r) {
   const ok = r.status >= 200 && r.status < 300 && !!item && typeof item === 'object' && String(item.status) === '200';
   return { ok, item, msg: item && item.msg ? limpar(item.msg).replace(/<[^>]*>/g, '').slice(0, 200) : (r.status ? 'HTTP ' + r.status : 'sem resposta') };
 }
-const nomeArquivoSeguro = (n) => (limpar(n).replace(/[^A-Za-z0-9 ._()-]/g, '_').replace(/\.pdf$/i, '').slice(0, 80) || 'documento') + '.pdf';
-async function enviarArquivo(cred, idFornecedor, buf, nome) {
+// Tipo do arquivo guardado (fin_entrada.arquivo_mime) -> extensão. Documento vindo por email pode
+// ser o XML da nota ou uma foto; o resto é PDF.
+const EXTENSAO = { 'application/pdf': '.pdf', 'application/xml': '.xml', 'image/jpeg': '.jpg', 'image/png': '.png' };
+const nomeArquivoSeguro = (n, mime) => {
+  const ext = EXTENSAO[mime] || '.pdf';
+  return (limpar(n).replace(/[^A-Za-z0-9 ._()-]/g, '_').replace(/\.(pdf|xml|jpe?g|png)$/i, '').slice(0, 80) || 'documento') + ext;
+};
+async function enviarArquivo(cred, idFornecedor, buf, nome, mime) {
+  const tipo = EXTENSAO[mime] ? mime : 'application/pdf';
   const fronteira = '----hub' + crypto.randomBytes(12).toString('hex');
   const campo = (n, v) => Buffer.from('--' + fronteira + '\r\nContent-Disposition: form-data; name="' + n + '"\r\n\r\n' + v + '\r\n', 'utf8');
   const corpo = Buffer.concat([
     campo('ID_RESPONSAVEL_ARQ', String(idFornecedor)), campo('FL_TIPO_ARQ', '9'),
-    Buffer.from('--' + fronteira + '\r\nContent-Disposition: form-data; name="ARQUIVO"; filename="' + nomeArquivoSeguro(nome) + '"\r\nContent-Type: application/pdf\r\n\r\n', 'utf8'),
+    Buffer.from('--' + fronteira + '\r\nContent-Disposition: form-data; name="ARQUIVO"; filename="' + nomeArquivoSeguro(nome, tipo) + '"\r\nContent-Type: ' + tipo + '\r\n\r\n', 'utf8'),
     buf, Buffer.from('\r\n--' + fronteira + '--\r\n', 'utf8'),
   ]);
   const c = corpoOk(await pedir(cred, 'POST', 'arquivos/', null, corpo, 'multipart/form-data; boundary=' + fronteira));
@@ -758,8 +795,9 @@ function provaDe(parc, d, idArquivo) {
 }
 // Lança a despesa com o PDF: envia o arquivo, cria a despesa já com o arquivo, anexa de novo se
 // não ficou, põe a etiqueta e prova relendo. Devolve { ok, incerto, msg, id_despesa, id_parcela, id_arquivo, conferido }.
-async function lancar(cred, cliente, d, pdf, nome) {
-  const arq = await enviarArquivo(cred, d.id_fornecedor, pdf, nome);
+// mime: tipo do arquivo guardado (PDF quando não informado; XML da nota ou foto vindos por email).
+async function lancar(cred, cliente, d, pdf, nome, mime) {
+  const arq = await enviarArquivo(cred, d.id_fornecedor, pdf, nome, mime);
   if (!arq.id) return { ok: false, incerto: false, msg: 'O Superlógica recusou o arquivo: ' + arq.msg };
   const r = await pedir(cred, 'POST', 'despesas/', null, Buffer.from(corpoDespesa(Object.assign({}, d, { id_arquivo: arq.id })), 'utf8'));
   const c = corpoOk(r);
@@ -801,7 +839,7 @@ async function lancar(cred, cliente, d, pdf, nome) {
 module.exports = {
   MAX_PDF_BYTES, NAO_CONDOMINIOS, TIPOS_DOC_SL, GRAVES, IMPEDE, FORA_DO_LOTE, provaDe,
   cnpjValido, formatarCnpj, cnpjsDoTexto, linhaBoletoValida, linhaArrecValida, barrasDaLinha, vencimentoDoFator, acharLinha,
-  lerDinheiro, brParaIso, isoParaSL, slParaIso, lerCampos, camposDaLeitura, chaveNota, faltaEssencial, juntarLeituras, classificar, acharDocumento, textoUtil, ehPdf, hashDe, extrairTexto,
+  lerDinheiro, brParaIso, isoParaSL, slParaIso, lerCampos, chaveNfeDoTexto, chaveNfeValida, EXTENSAO, camposDaLeitura, chaveNota, faltaEssencial, juntarLeituras, classificar, acharDocumento, textoUtil, ehPdf, hashDe, extrairTexto,
   mapaCondominios, cadastroCondominios, cnpjsRepetidos, condominioPorId, fornecedorPorCnpj, fornecedorPorId, contasDoPlano, contaPrincipal, contasBanco, resumoContas, dataSL, identificar,
   acharDuplicidades, contaSugerida, despesasHistorico, confianca, conferir, podeLancar, liberados, lancamentoLiberado, corpoDespesa, lancar, limparCache, nomeArquivoSeguro,
 };
