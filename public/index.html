@@ -3970,24 +3970,25 @@ function renderPermissoesForm(u) {
     const atual = u.permissoes[modulo] || { visivel: false, acoes: [] };
     const checks = def.acoes.map(a => {
       const c = (atual.acoes || []).includes(a);
-      // Travada: módulo escondido, ou ação que você não pode liberar nem tirar.
-      const travada = !atual.visivel || !tenhoAcao(modulo, a);
+      // Travada só a ação que você não pode liberar nem tirar. Marcar uma ação de módulo
+      // escondido já deixa o módulo visível (antes a caixa ficava travada e parecia quebrada).
+      const travada = !tenhoAcao(modulo, a) || (!atual.visivel && !tenhoModulo(modulo));
       return `<label style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;font-size:11px;font-family:var(--mono);color:var(--text);cursor:pointer">
         <input type="checkbox" data-modulo="${modulo}" data-acao="${a}" ${c ? 'checked' : ''} ${travada ? 'disabled' : ''}> ${esc(a.replace(/_/g, ' '))}
       </label>`;
     }).join('');
     const visTravada = !tenhoModulo(modulo);
     return `<tr style="border-bottom:1px solid var(--border)">
-      <td style="padding:8px 10px;font-size:12px;color:var(--text);width:42%">${esc(def.label)}</td>
-      <td style="padding:8px 10px;text-align:center;width:18%">
+      <td style="padding:8px 10px;font-size:12px;color:var(--text);width:32%">${esc(def.label)}</td>
+      <td style="padding:8px 10px;text-align:center;width:10%">
         <label style="cursor:pointer">
           <input type="checkbox" data-modulo-visivel="${modulo}" ${atual.visivel ? 'checked' : ''} ${visTravada ? 'disabled title="Você não pode liberar nem tirar esse módulo"' : ''}>
         </label>
       </td>
-      <td style="padding:8px 10px">${checks || '<span style="font-size:10px;color:var(--muted);font-family:var(--mono)">—</span>'}</td>
+      <td style="padding:8px 10px;white-space:normal;line-height:2">${checks || '<span style="font-size:10px;color:var(--muted);font-family:var(--mono)">—</span>'}</td>
     </tr>`;
   }).join('');
-  return cargo + podeConvidar + renderConcedeForm(u) + renderCarteirasForm(u) + `<table style="width:100%;border-collapse:collapse">
+  return cargo + podeConvidar + renderConcedeForm(u) + renderCarteirasForm(u) + `<table style="width:100%;border-collapse:collapse;table-layout:fixed">
     <thead><tr style="background:var(--bg3)">
       <th style="padding:9px 10px;text-align:left;font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Módulo</th>
       <th style="padding:9px 10px;text-align:center;font-size:11px;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:0.05em">Visível</th>
@@ -4033,6 +4034,12 @@ function renderCarteirasForm(u) {
 
 // Listener delegado pra reagir ao toggle "visível" (re-renderiza pra habilitar/desabilitar checkboxes de ação)
 document.addEventListener('change', (ev) => {
+  // Ação marcada em módulo escondido: mostra o módulo junto (sem isso a ação não vale).
+  if (ev.target.dataset?.acao && ev.target.dataset?.modulo && ev.target.checked) {
+    const vis = document.querySelector('[data-modulo-visivel="' + ev.target.dataset.modulo + '"]');
+    if (vis && !vis.checked && !vis.disabled) vis.checked = true;
+    return;
+  }
   if (!ev.target.dataset?.moduloVisivel && ev.target.id !== 'perm-role') return;
   const corpo = document.getElementById('perms-corpo');
   if (!corpo || !_perfilEditando) return;
