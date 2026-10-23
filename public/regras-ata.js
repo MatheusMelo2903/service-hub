@@ -74,7 +74,7 @@ async function regrasAtaBuscar(o, seq, c) {
 // Monta a lista de pontos: assunto, gravidade, descrição, trecho da ata e artigo citado literal.
 function regrasAtaRender(c, j, idSL) {
   if (j.sem_regras) {
-    c.innerHTML = regrasAtaTitulo() + '<div style="color:var(--muted)">' + regrasAtaEsc(j.aviso || 'Sem convenção e regimento cadastrados.') + ' Envie os documentos na aba Regras do Condomínio para conferir as próximas atas.</div>';
+    c.innerHTML = regrasAtaTitulo() + '<div style="color:var(--muted)">' + regrasAtaEsc(j.aviso || 'Sem convenção e regimento cadastrados.') + ' Envie os documentos em Comunicados e Multas, aba Documentos, para conferir as próximas atas.</div>';
     return;
   }
   var itens = Array.isArray(j.itens) ? j.itens : [];

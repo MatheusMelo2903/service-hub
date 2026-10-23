@@ -14,7 +14,7 @@
   var TOPICOS = [
     { id: 'principal', nome: 'Principal', paineis: ['dashboard', 'centralalertas', 'tarefas'] },
     { id: 'financeiro', nome: 'Financeiro', icone: '$', paineis: ['fincontrole', 'boletos', 'conciliacao', 'entrada', 'cobranca', 'despesas'] },
-    { id: 'condominio', nome: 'Condomínio', icone: '▦', paineis: ['condominio', 'prestacao', 'previsao', 'atas', 'comunicados', 'regras', 'comparativo', 'consumo', 'unidades'] },
+    { id: 'condominio', nome: 'Condomínio', icone: '▦', paineis: ['condominio', 'prestacao', 'previsao', 'atas', 'regras', 'comparativo', 'consumo', 'unidades'] },
     { id: 'administracao', nome: 'Administração', icone: '⚙', paineis: ['seguranca', 'custo'] },
     { id: 'outros', nome: 'Outros', icone: '…', paineis: [] }
   ];

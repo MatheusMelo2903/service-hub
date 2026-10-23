@@ -59,7 +59,7 @@ t('alias nf vira entrada', gestor.alias.nf === 'entrada');
 t('menu sem Notas Fiscais', !/>\s*<span class="nav-icon">[^<]*<\/span> Notas Fiscais/.test(html));
 t('menu com Entrada de documentos', html.includes("showPanel('entrada')") && html.includes('</span> Entrada de documentos'));
 const menu = html.slice(html.indexOf('<nav class="nav">'), html.indexOf('</nav>'));
-t('só Tarefas com em breve no menu', (menu.match(/em breve/g) || []).length === 1 && /Tarefas\s*<span class="nav-badge">em breve/.test(menu));
+t('nenhum item em breve no menu (Tarefas saiu em 23/10/2026)', !(menu.match(/em breve/g) || []).length);
 t('sem tela vazia de Notas Fiscais', !html.includes('id="panel-nf"') && !html.includes('Conciliação bancária'));
 
 console.log(ok + ' ok, ' + falha + ' falha(s)');

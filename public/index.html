@@ -1044,11 +1044,10 @@
     <div class="nav-item" onclick="showPanel('condominio')">
       <span class="nav-icon">⌂</span> Ficha do Condomínio
     </div>
-    <div class="nav-item" id="nav-comunicados" style="display:none" onclick="showPanel('comunicados')">
-      <span class="nav-icon">✉</span> Comunicados e Multas
-    </div>
+    <!-- Comunicados e Multas: um item só para o painel unificado (antigos Comunicados e Regras do Condomínio).
+         Aparece para quem tem o módulo regras ou o cargo que publicava comunicados (podeAbrirPainel). -->
     <div class="nav-item" id="nav-regras" style="display:none" onclick="showPanel('regras')">
-      <span class="nav-icon">§</span> Regras do Condomínio
+      <span class="nav-icon">✉</span> Comunicados e Multas
     </div>
     <div class="nav-item" onclick="showPanel('cobranca')">
       <span class="nav-icon">$</span> Cobrança
@@ -1760,92 +1759,62 @@
     </div>
 
     <!-- FICHA DO CONDOMÍNIO (T04): consulta só de leitura, JS em public/condominio.js -->
-    <!-- REGRAS DO CONDOMÍNIO (substitui o CondGPT): cada parte monta a própria tela no seu contêiner.
-         JS: regras.js (abas), regras-consulta.js, regras-notificacao.js, regras-acervo.js, regras-ata.js, regras-importar.js -->
+    <!-- COMUNICADOS E MULTAS (painel unificado, id regras): reúne o antigo painel de comunicados e as
+         Regras do Condomínio, para a multa existir num lugar só (aba Notificações e multas).
+         Cada parte monta a própria tela no seu contêiner.
+         JS: regras.js (abas), regras-notificacao.js, comunicados.js (aba Comunicados), regras-consulta.js,
+         regras-acervo.js, regras-ata.js, regras-importar.js -->
     <div class="panel" id="panel-regras">
       <div class="tabs" style="margin-bottom:12px">
-        <div class="tab active" id="regras-tab-consulta" onclick="regrasAba('consulta')">Consultar regras</div>
-        <div class="tab" id="regras-tab-notificacao" onclick="regrasAba('notificacao')">Notificações e multas</div>
+        <div class="tab active" id="regras-tab-notificacao" onclick="regrasAba('notificacao')">Notificações e multas</div>
+        <div class="tab" id="regras-tab-comunicados" onclick="regrasAba('comunicados')">Comunicados</div>
+        <div class="tab" id="regras-tab-consulta" onclick="regrasAba('consulta')">Consultar regras</div>
         <div class="tab" id="regras-tab-acervo" onclick="regrasAba('acervo')">Documentos</div>
         <div class="tab" id="regras-tab-mandatos" onclick="regrasAba('mandatos')">Mandatos</div>
-        <div class="tab" id="regras-tab-importar" style="display:none" onclick="regrasAba('importar')">Importar do sistema antigo</div>
+        <div class="tab" id="regras-tab-importar" style="display:none" onclick="regrasAba('importar')">Importar</div>
       </div>
-      <div id="regras-consulta" class="regras-parte"></div>
-      <div id="regras-notificacao" class="regras-parte" style="display:none"></div>
+      <!-- A dica fica fora do contêiner porque regras-notificacao.js reescreve o conteúdo dele. -->
+      <div class="hint" data-regras-aba="notificacao" style="margin:0 0 10px">Descreva o que aconteceu e escolha a unidade. O Hub sugere advertência ou multa pelo regimento e pelo histórico da unidade, cita o artigo e calcula o valor com a taxa do mês anterior. Nada vai para o Superlógica sem a sua confirmação.</div>
+      <div id="regras-notificacao" class="regras-parte"></div>
+      <!-- Comunicado aos moradores (veio do antigo painel comunicados, mesmos ids; lógica em comunicados.js).
+         Publica no Superlógica só com confirmação; só GESTOR e GERENTE (o servidor confere). -->
+      <div id="regras-comunicados" class="regras-parte" style="display:none">
+        <div class="hint" style="margin:0 0 10px">Para avisos a todos os moradores. Marque Citar regimento e convenção para o texto já trazer o artigo.</div>
+        <div class="card">
+          <div class="card-header"><span class="card-title">Comunicado aos moradores</span></div>
+          <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;margin-bottom:12px">
+            <div class="form-group" style="margin:0"><label>Tipo</label>
+              <select id="com-tipo"><option value="comunicado">Comunicado geral</option><option value="multa_condominio">Multa recebida pelo condomínio</option></select></div>
+            <div class="form-group" style="margin:0"><label>Assunto</label><input type="text" id="com-assunto" autocomplete="off" placeholder="ex: limpeza da caixa d'água no dia 10"></div>
+          </div>
+          <div class="form-group"><label>Detalhes (datas, valores, horários; o que não estiver aqui sai como [a confirmar])</label><textarea id="com-detalhes" rows="3" style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:13px;width:100%;box-sizing:border-box"></textarea></div>
+          <button class="btn btn-ghost" id="com-btn-gerar" onclick="comGerarTexto('com')">Gerar texto no padrão</button>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px">
+            <div>
+              <div class="form-group"><label>Título</label><input type="text" id="com-titulo" autocomplete="off" oninput="comPrevia('com')"></div>
+              <div class="form-group"><label>Texto (revise aqui)</label><textarea id="com-texto" rows="12" style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:13px;width:100%;box-sizing:border-box" oninput="comPrevia('com')"></textarea></div>
+            </div>
+            <div><label style="font-size:11px;font-family:var(--mono);color:var(--muted)">PRÉVIA</label>
+              <div id="com-previa" style="background:#fff;color:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:14px;min-height:240px;font-family:Arial,sans-serif;font-size:13px;line-height:1.5"></div></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+            <div class="form-group" style="margin:0"><label>Para quem</label>
+              <select id="com-destinatario"><option value="1">Unidades deste condomínio</option><option value="2">Responsáveis legais deste condomínio</option><option value="3">Todos deste condomínio</option></select></div>
+            <div class="form-group" style="margin:0"><label>Canal</label>
+              <select id="com-canal"><option value="1">Área do condômino</option><option value="4">Email e área do condômino</option><option value="3">Carta e área do condômino</option><option value="2">Carta</option><option value="5">Email, carta e área do condômino</option></select></div>
+          </div>
+          <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin-top:10px"><input type="checkbox" id="com-notificar"> Marcar para notificar os moradores (fica na fila do Superlógica)</label>
+          <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin-top:10px;color:var(--warning)"><input type="checkbox" id="com-confirma" onchange="document.getElementById('com-btn-gravar').disabled=!this.checked"> <span id="com-confirma-rotulo">Confirmo publicar</span></label>
+          <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+            <button class="btn btn-primary" id="com-btn-gravar" disabled onclick="comPublicar()">Publicar no Superlógica</button>
+          </div>
+          <div id="com-resultado" style="font-size:12px;font-family:var(--mono);color:var(--muted);margin-top:10px"></div>
+        </div>
+      </div>
+      <div id="regras-consulta" class="regras-parte" style="display:none"></div>
       <div id="regras-acervo" class="regras-parte" style="display:none"></div>
       <div id="regras-mandatos" class="regras-parte" style="display:none"></div>
       <div id="regras-importar" class="regras-parte" style="display:none"></div>
-    </div>
-
-    <!-- T10: comunicados e multas (grava no Superlógica só com confirmação; só GESTOR e GERENTE) -->
-    <div class="panel" id="panel-comunicados">
-      <div class="card">
-        <div class="card-header"><span class="card-title">Comunicado aos moradores</span></div>
-        <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px;margin-bottom:12px">
-          <div class="form-group" style="margin:0"><label>Tipo</label>
-            <select id="com-tipo"><option value="comunicado">Comunicado geral</option><option value="multa_condominio">Multa recebida pelo condomínio</option></select></div>
-          <div class="form-group" style="margin:0"><label>Assunto</label><input type="text" id="com-assunto" autocomplete="off" placeholder="ex: limpeza da caixa d'água no dia 10"></div>
-        </div>
-        <div class="form-group"><label>Detalhes (datas, valores, horários; o que não estiver aqui sai como [a confirmar])</label><textarea id="com-detalhes" rows="3" style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:13px;width:100%;box-sizing:border-box"></textarea></div>
-        <button class="btn btn-ghost" id="com-btn-gerar" onclick="comGerarTexto('com')">Gerar texto no padrão</button>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px">
-          <div>
-            <div class="form-group"><label>Título</label><input type="text" id="com-titulo" autocomplete="off" oninput="comPrevia('com')"></div>
-            <div class="form-group"><label>Texto (revise aqui)</label><textarea id="com-texto" rows="12" style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:13px;width:100%;box-sizing:border-box" oninput="comPrevia('com')"></textarea></div>
-          </div>
-          <div><label style="font-size:11px;font-family:var(--mono);color:var(--muted)">PRÉVIA</label>
-            <div id="com-previa" style="background:#fff;color:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:14px;min-height:240px;font-family:Arial,sans-serif;font-size:13px;line-height:1.5"></div></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-          <div class="form-group" style="margin:0"><label>Para quem</label>
-            <select id="com-destinatario"><option value="1">Unidades deste condomínio</option><option value="2">Responsáveis legais deste condomínio</option><option value="3">Todos deste condomínio</option></select></div>
-          <div class="form-group" style="margin:0"><label>Canal</label>
-            <select id="com-canal"><option value="1">Área do condômino</option><option value="4">Email e área do condômino</option><option value="3">Carta e área do condômino</option><option value="2">Carta</option><option value="5">Email, carta e área do condômino</option></select></div>
-        </div>
-        <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin-top:10px"><input type="checkbox" id="com-notificar"> Marcar para notificar os moradores (fica na fila do Superlógica)</label>
-        <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin-top:10px;color:var(--warning)"><input type="checkbox" id="com-confirma" onchange="document.getElementById('com-btn-gravar').disabled=!this.checked"> <span id="com-confirma-rotulo">Confirmo publicar</span></label>
-        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
-          <button class="btn btn-primary" id="com-btn-gravar" disabled onclick="comPublicar()">Publicar no Superlógica</button>
-        </div>
-        <div id="com-resultado" style="font-size:12px;font-family:var(--mono);color:var(--muted);margin-top:10px"></div>
-      </div>
-
-      <div class="card">
-        <div class="card-header"><span class="card-title">Multa ou ocorrência na unidade</span></div>
-        <div style="display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:12px">
-          <div class="form-group" style="margin:0"><label>Unidade</label><select id="mul-unidade"><option value="">Selecione um condomínio</option></select></div>
-          <div class="form-group" style="margin:0"><label>Data da ocorrência</label><input type="text" id="mul-data" placeholder="DD/MM/AAAA" autocomplete="off"></div>
-          <div class="form-group" style="margin:0"><label>Tipo</label><select id="mul-tipo"><option value="3">Infração com multa</option><option value="1">Infração sem multa (advertência)</option></select></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 2fr;gap:12px">
-          <div class="form-group" style="margin:0"><label>Assunto</label><input type="text" id="mul-assunto" autocomplete="off" placeholder="ex: barulho após as 22h"></div>
-          <div class="form-group" style="margin:0"><label>Detalhes (artigo, valor, data do fato)</label><input type="text" id="mul-detalhes" autocomplete="off"></div>
-        </div>
-        <button class="btn btn-ghost" id="mul-btn-gerar" style="margin-top:10px" onclick="comGerarTexto('mul')">Gerar texto no padrão</button>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px">
-          <div>
-            <div class="form-group"><label>Título</label><input type="text" id="mul-titulo" autocomplete="off" oninput="comPrevia('mul')"></div>
-            <div class="form-group"><label>Texto (revise aqui)</label><textarea id="mul-texto" rows="10" style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:13px;width:100%;box-sizing:border-box" oninput="comPrevia('mul')"></textarea></div>
-          </div>
-          <div><label style="font-size:11px;font-family:var(--mono);color:var(--muted)">PRÉVIA</label>
-            <div id="mul-previa" style="background:#fff;color:#1a1a1a;border:1px solid var(--border);border-radius:8px;padding:14px;min-height:200px;font-family:Arial,sans-serif;font-size:13px;line-height:1.5"></div></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:10px">
-          <div class="form-group" style="margin:0"><label>Notificar</label><select id="mul-notificar"><option value="1">Não notificar</option><option value="3">Proprietário</option><option value="2">Inquilino</option></select></div>
-          <label style="display:flex;gap:8px;align-items:center;font-size:12px"><input type="checkbox" id="mul-email"> Avisar por email</label>
-          <label style="display:flex;gap:8px;align-items:center;font-size:12px"><input type="checkbox" id="mul-carta"> Gerar carta</label>
-        </div>
-        <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin-top:10px"><input type="checkbox" id="mul-cobrar" onchange="comMultaCobrancaToggle()"> Lançar a cobrança da multa (ainda travado pela administração)</label>
-        <div id="mul-cobranca-campos" style="display:none;grid-template-columns:1fr 1fr 1fr 2fr;gap:12px;margin-top:8px">
-          <div class="form-group" style="margin:0"><label>Valor R$</label><input type="text" id="mul-valor" inputmode="decimal" autocomplete="off"></div>
-          <div class="form-group" style="margin:0"><label>Vencimento</label><input type="text" id="mul-venc" placeholder="DD/MM/AAAA" autocomplete="off"></div>
-          <div class="form-group" style="margin:0"><label>Conta categoria</label><input type="text" id="mul-conta-cat" placeholder="ex: 1.9" autocomplete="off"></div>
-          <div class="form-group" style="margin:0"><label>Conta bancária</label><select id="mul-conta"></select></div>
-        </div>
-        <label style="display:flex;gap:8px;align-items:center;font-size:12px;margin-top:10px;color:var(--warning)"><input type="checkbox" id="mul-confirma" onchange="document.getElementById('mul-btn-gravar').disabled=!this.checked"> <span id="mul-confirma-rotulo">Confirmo registrar</span></label>
-        <div style="margin-top:12px"><button class="btn btn-primary" id="mul-btn-gravar" disabled onclick="comRegistrarMulta()">Registrar no Superlógica</button></div>
-        <div id="mul-resultado" style="font-size:12px;font-family:var(--mono);color:var(--muted);margin-top:10px"></div>
-      </div>
     </div>
 
     <div class="panel" id="panel-condominio">
@@ -2706,8 +2675,7 @@ const PAGE_META = {
   atas:          { title: 'Atas Condominiais', sub: 'geração automática' },
   consumo:       { title: 'Leitura de Consumo', sub: 'fotos de medidores → Superlógica' },
   condominio:    { title: 'Ficha do Condomínio', sub: 'consulta ao Superlógica, só leitura' },
-  comunicados:   { title: 'Comunicados e Multas', sub: 'grava no Superlógica só com confirmação' },
-  regras:        { title: 'Regras do Condomínio', sub: 'convenção, regimento, atas e notificações' },
+  regras:        { title: 'Comunicados e Multas', sub: 'comunicados, advertências, multas e regras do condomínio' },
   cobranca:      { title: 'Cobrança', sub: 'inadimplência por carteira, acordo e 2ª via' },
   comparativo:   { title: 'Comparativo', sub: 'custo por unidade e fornecedores entre condomínios' },
   seguranca:     { title: 'Segurança', sub: 'uso do sistema por pessoa' },
@@ -2722,13 +2690,21 @@ var PAINEL_MODULOS = {
   entrada:     ['entrada_documentos'],
   regras:      ['regras']
 };
-// Nomes antigos de tela (guardados no navegador) que mudaram de lugar.
-var PAINEL_ALIAS = { financeiro: 'conciliacao', nf: 'entrada' };
+// Nomes antigos de tela (guardados no navegador) que mudaram de lugar. 'comunicados' virou aba
+// interna do painel Comunicados e Multas (id regras); regras.js abre direto nessa aba.
+var PAINEL_ALIAS = { financeiro: 'conciliacao', nf: 'entrada', comunicados: 'regras' };
+// Cargos que abrem o painel mesmo sem o módulo: o antigo painel de comunicados abria para
+// GESTOR e GERENTE pelo cargo e agora está dentro de Comunicados e Multas.
+var PAINEL_CARGOS = { regras: ['GESTOR', 'GERENTE'] };
 // Falha fechada: sem permissões carregadas não mostra. O GESTOR vê tudo (o servidor faz igual).
 function podeAbrirPainel(nome) {
+  // Nome antigo responde pela tela onde ele foi parar (comunicados segue a regra de regras).
+  if (PAINEL_ALIAS[nome]) nome = PAINEL_ALIAS[nome];
   var mods = PAINEL_MODULOS[nome];
   if (!mods) return true;
   if (window.USER_ROLE === 'GESTOR' && window.USER_PERMS) return true;
+  var cargos = PAINEL_CARGOS[nome];
+  if (cargos && window.USER_PERMS && cargos.indexOf(window.USER_ROLE) >= 0) return true;
   var p = window.USER_PERMS;
   if (!p || typeof p !== 'object') return false;
   return mods.every(function (m) {
@@ -2753,9 +2729,11 @@ function aplicarVisibilidadePaineisFinanceiros() {
 function showPanel(name) {
   // T37: telas financeiras com falha fechada. Sem permissão (ou antes de carregar as
   // permissões) abre o Dashboard; o pedido fica guardado e é refeito depois de carregar.
+  // O pedido original fica guardado para, depois das permissões, cair na aba certa (ex.: comunicados).
+  const pedido = name;
   if (PAINEL_ALIAS[name]) name = PAINEL_ALIAS[name];
   if (PAINEL_MODULOS[name] && !podeAbrirPainel(name)) {
-    window._painelPendente = window.USER_PERMS ? null : name;
+    window._painelPendente = window.USER_PERMS ? null : pedido;
     name = 'dashboard';
   } else if (name !== 'dashboard') {
     window._painelPendente = null;
@@ -2799,9 +2777,6 @@ function showPanel(name) {
   if (name === 'condominio') {
     if (typeof condominioFichaAbrir === 'function') condominioFichaAbrir();
   }
-  if (name === 'comunicados') {
-    if (typeof comunicadosAbrir === 'function') comunicadosAbrir();
-  }
   if (name === 'atas') {
     if (typeof ataCondInit === 'function') ataCondInit();
   }
@@ -2813,9 +2788,11 @@ function showPanel(name) {
 // Restaura painel ativo ao carregar
 (function restorePanel() {
   try {
-    let saved = localStorage.getItem('sh_active_panel');
-    if (saved && PAINEL_ALIAS[saved]) saved = PAINEL_ALIAS[saved];
-    if (saved && document.getElementById('panel-' + saved)) {
+    const saved = localStorage.getItem('sh_active_panel');
+    // Confere a tela pelo nome novo, mas chama com o lembrado: showPanel faz a troca e, para
+    // 'comunicados', regras.js ainda precisa do nome antigo para abrir na aba Comunicados.
+    const destino = saved && PAINEL_ALIAS[saved] ? PAINEL_ALIAS[saved] : saved;
+    if (destino && document.getElementById('panel-' + destino)) {
       // Adia para garantir que os overrides (ex: condominios) já estejam ativos
       setTimeout(() => showPanel(saved), 0);
     }
@@ -3792,7 +3769,7 @@ const MODULOS_CATALOGO = {
   conciliacao:        { label: 'Conciliação (precisa também do Financeiro)', acoes: ['ver'] },
   prestacao_contas:   { label: 'Prestação de Contas', acoes: ['ver', 'gerar', 'ajustar_estrutura'] },
   atas:               { label: 'Atas Condominiais',   acoes: ['ver', 'gerar', 'edital', 'transcricao_livre'] },
-  regras:             { label: 'Regras do Condomínio', acoes: ['ver', 'consultar', 'notificar', 'gerenciar'] },
+  regras:             { label: 'Comunicados e Multas', acoes: ['ver', 'consultar', 'notificar', 'gerenciar'] },
   leitura_consumo:    { label: 'Leitura de Consumo',  acoes: ['ver', 'ler'] },
   tarefas:            { label: 'Tarefas',             acoes: ['ver'] },
   configuracoes:      { label: 'Configurações',       acoes: ['ver', 'editar', 'convidar', 'ver_chaves', 'ver_auditoria'] }

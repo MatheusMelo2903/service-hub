@@ -1,12 +1,18 @@
 // ============================================================
 // COMUNICADOS E MULTAS (T10)
 // Comunicado: texto no padrão gerado a partir do assunto (rascunho), prévia, publicar no
-// Superlógica só com confirmação na tela. Multa: ocorrência na unidade, carta e cobrança
-// opcional, também só com confirmação. Só GESTOR e GERENTE (o servidor confere).
+// Superlógica só com confirmação na tela. Só GESTOR e GERENTE (o servidor confere).
+// O formulário agora fica na aba interna Comunicados do painel Comunicados e Multas (id regras,
+// contêiner #regras-comunicados), com os mesmos ids de antes. A multa simples saiu da tela: a
+// multa passa a ser só pela aba Notificações e multas (regras-notificacao.js). As funções da
+// multa simples ficam aqui sem uso na tela, marcadas abaixo.
 // Rotas: /api/comunicados/rascunho, /publicar, /disparar, /api/condominio/:id/multa-opcoes,
 // /api/multas/registrar e, com "Citar regimento e convenção", /api/regras/:id/comunicado/rascunho.
 // ============================================================
 var comEstado = { idOpcoes: null, opcoes: null, seq: 0 };
+
+// Quem usa a aba Comunicados: o mesmo cargo que o servidor aceita para publicar (GESTOR e GERENTE).
+function comunicadosPode() { return window.USER_ROLE === 'GESTOR' || window.USER_ROLE === 'GERENTE'; }
 
 function comEsc(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -165,6 +171,7 @@ async function comDisparar() {
   catch (e) { document.getElementById('com-resultado').textContent = e.message; toast(e.status === 423 ? 'Disparo travado pela administração' : 'Não disparou: ' + e.message, 'warn'); }
 }
 
+// Multa simples: substituída pela aba Notificações e multas. Sem os campos mul na tela, sai sem fazer nada.
 async function comCarregarOpcoes(forcar) {
   var cond = comCond();
   var sel = document.getElementById('mul-unidade'), sc = document.getElementById('mul-conta');
@@ -189,11 +196,13 @@ async function comCarregarOpcoes(forcar) {
   }
 }
 
+// Multa simples: substituída pela aba Notificações e multas (campos retirados da tela).
 function comMultaCobrancaToggle() {
   var on = document.getElementById('mul-cobrar').checked;
   document.getElementById('mul-cobranca-campos').style.display = on ? 'grid' : 'none';
 }
 
+// Multa simples: substituída pela aba Notificações e multas (botão retirado da tela).
 async function comRegistrarMulta() {
   var cond = comCond();
   if (!cond || !cond.id_superlogica) { toast('Selecione um condomínio com código do Superlógica', 'err'); return; }
@@ -247,11 +256,7 @@ window.addEventListener('condominioAtivo:trocou', function () {
   comMostrarFundamentos(null);
   ['com-previa', 'mul-previa', 'com-resultado', 'mul-resultado'].forEach(function (k) { var el = document.getElementById(k); if (el) el.textContent = ''; });
   comAtualizarConfirmacoes();
-  var p = document.getElementById('panel-comunicados');
-  if (p && p.classList.contains('active')) comCarregarOpcoes(true);
 });
-// Só gestor e gerente veem o item do menu (o servidor também confere).
-document.addEventListener('auth:ready', function () {
-  var nav = document.getElementById('nav-comunicados');
-  if (nav) nav.style.display = (window.USER_ROLE === 'GESTOR' || window.USER_ROLE === 'GERENTE') ? '' : 'none';
-});
+// A aba Comunicados do painel unificado prepara o formulário quando aparece. O item de menu
+// agora é um só (nav-regras) e quem decide se aparece é podeAbrirPainel no index.html.
+window.addEventListener('regras-aba', function (e) { if (e && e.detail === 'comunicados') comunicadosAbrir(); });
