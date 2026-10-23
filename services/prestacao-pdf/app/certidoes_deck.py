@@ -59,7 +59,7 @@ SITUACOES = {
 
 def _data_br(iso) -> str:
     m = re.match(r'^(\d{4})-(\d{2})-(\d{2})', str(iso or ''))
-    return f'{m.group(3)}/{m.group(2)}/{m.group(1)}' if m else 'não informada'
+    return f'{m.group(3)}/{m.group(2)}/{m.group(1)}' if m else 'ver documento'
 
 
 def _rodar(args: list[str], cwd: str, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -122,10 +122,15 @@ def _paginas_em_imagem(pdf: bytes, pasta: str, n: int) -> list[str]:
 
 # ── rodapé e número de páginas da apresentação gerada ──
 
+_EH_RODAPE = re.compile(r'•\s+EXERCÍCIO\s')
+
+
 def _rodape_do_pptx(prs: Presentation) -> str:
     for slide in reversed(list(prs.slides)):
         for sh in slide.shapes:
-            if sh.has_text_frame and 'EXERCÍCIO' in sh.text_frame.text:
+            # O rodapé é "<CONDOMÍNIO>    •    EXERCÍCIO <período>"; o encerramento também tem
+            # "RESULTADO DO EXERCÍCIO", por isso a conferência do separador.
+            if sh.has_text_frame and _EH_RODAPE.search(sh.text_frame.text):
                 return sh.text_frame.text.strip()
     return ''
 
@@ -138,7 +143,7 @@ def _rodape_do_pdf(pdf_path: str, pasta: str) -> tuple[str, int]:
     if paginas:
         texto = _rodar(['pdftotext', '-layout', '-f', str(paginas), '-l', str(paginas), pdf_path, '-'], pasta, 30).stdout
     for linha in texto.splitlines():
-        if 'EXERCÍCIO' in linha:
+        if _EH_RODAPE.search(linha):
             # "<CONDOMÍNIO>    •    EXERCÍCIO <período>   12" -> sem o número da página no fim
             return re.sub(r'\s+\d+\s*$', '', linha.strip()), paginas
     return '', paginas
@@ -184,7 +189,7 @@ def _slide(prs: Presentation, cert: dict, img_path: str, pag: int, pag_tot: int,
         G.rect(s, x, y, 3.35, 1.35, G.CARD, True, 0.06)
         G.rect(s, x, y, 0.12, 1.35, c if c is not G.TXT else G.GS_AZUL)
         G.text(s, x + 0.35, y + 0.18, 2.9, 0.35, lab, 14, G.TXT3, True)
-        G.text(s, x + 0.35, y + 0.6, 2.9, 0.55, val, 28, c, True)
+        G.text(s, x + 0.35, y + 0.6, 2.9, 0.55, val, G.ajusta(val, 2.9, 28, True, 14), c, True)
 
     G.text(s, 0.5, 5.9, 6.9, 0.9,
            'Documento oficial na íntegra ao lado. A autenticidade pode ser conferida no site do órgão emissor.',

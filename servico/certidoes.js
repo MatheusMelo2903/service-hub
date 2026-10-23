@@ -102,6 +102,10 @@ function lerEmissao(textoNorm) {
     new RegExp('emiss.{0,60}?' + D),
   ];
   for (const re of res) { const m = t.match(re); const iso = m && dataIso(m[1]); if (iso) return iso; }
+  // Data por extenso (SEFAZ ES: "certidão emitida ... no dia 23 de outubro de 2026").
+  const MESES_EXT = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const ext = t.match(new RegExp('emitida.{0,200}?no dia (\\d{1,2}) de (' + MESES_EXT.join('|') + ') de (\\d{4})'));
+  if (ext) { const iso = dataIso(ext[1] + '/' + (MESES_EXT.indexOf(ext[2]) + 1) + '/' + ext[3]); if (iso) return iso; }
   return null;
 }
 
