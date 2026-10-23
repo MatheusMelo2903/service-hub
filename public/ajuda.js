@@ -187,6 +187,10 @@
       alvo: '#prest-btn-superlogica', onde: 'titulo', assunto: 'Gerar a prestação',
       texto: 'Puxa do Superlógica os dados do período escolhido e gera a prestação de contas em PDF, PowerPoint ou os dois. O trabalho fica guardado na pasta Em andamento. Nada é publicado para os condôminos.'
     },
+    prestObservacoes: {
+      alvo: '#prest-observacoes', onde: 'anterior', assunto: 'Observações da prestação',
+      texto: 'Opcional. Use para explicar ou dar ênfase aos números. Se houve déficit, obra, compra fora da previsão ou uso do fundo de reserva, explique aqui o motivo, que ele aparece na apresentação junto do número. Exemplo: a reforma do salão foi aprovada na assembleia de março e paga com o fundo de reserva.'
+    },
     prestCertidoes: {
       alvo: '#panel-prestacao .cert-chk', todos: true, assunto: 'Certidões negativas',
       texto: 'Junta as certidões negativas do condomínio à prestação, cada uma em um arquivo separado. As já guardadas e válidas entram sozinhas; as que faltam o Hub tenta buscar, e para as outras abre o site com o CNPJ copiado para você baixar o PDF e arrastar aqui.'

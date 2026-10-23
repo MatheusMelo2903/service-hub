@@ -410,6 +410,231 @@ async function curarComClaude(apiKey, dados, observacoes, ctx) {
   return { ok: true, comp, uso, lotes: lotes.length, falhas };
 }
 
+// ── Explicação dos números negativos (pedido do Matheus, 23/10/2026) ─────
+// Déficit, caixa caindo ou mês negativo não podem aparecer "secos" no slide: o morador
+// lê como má gestão antes de chegar ao detalhamento. O microserviço já investiga a causa
+// (dados.sinais, ver services/prestacao-pdf/app/justificativas.py) e escreve um texto
+// padrão; esta chamada pequena, em paralelo aos lotes, reescreve com naturalidade e com o
+// porquê das observações do usuário. O que não passar na conferência cai no padrão.
+const LIMITES_EXPLICACAO = { resumo: 240, caixa: 90, meses: 80, rubricas: 160, contas: 220 };
+const ITENS_POR_GRUPO = 4;
+
+const SYSTEM_EXPLICACOES = [
+  'Você escreve frases curtas que explicam, na prestação de contas de um condomínio, os números que podem assustar o morador: déficit no período, caixa caindo, mês negativo ou receita que não cobriu a despesa.',
+  'A frase aparece no mesmo slide do número. Tom tranquilo e didático, para quem não entende de contabilidade, sem tom de defesa e sem alarme.',
+  '',
+  'Regras:',
+  '1. Fatos só dos sinais e das observações do usuário recebidos. Nunca invente causa, compra, obra, aprovação, data ou valor. Sem observação que diga o porquê, descreva o que aconteceu sem supor motivo.',
+  '2. As observações do usuário são a melhor fonte do porquê (ex.: aprovação em assembleia, pagamento com o fundo de reserva). Use quando vierem, sem mudar números.',
+  '3. Diga o que foi comprado ou contratado e para quê, pelos rótulos dos itens dos grupos (ex.: "reforma do salão de festas, com medições da obra e armários" ou "compra de TV, geladeira e cervejeira para o salão"), e de onde saiu o dinheiro pelas contas (ex.: "saíram R$ 201 mil do fundo de reserva, que foi de R$ 234 mil para R$ 93 mil").',
+  '4. Quando houver grupo nao_recorrente e cobertura_sem_nao_recorrentes for 98 ou mais, pode dizer que sem essas despesas a receita cobriria X% das despesas (X é esse número arredondado). Percentual só os que vierem nos sinais.',
+  '5. Valores só os que aparecem nos sinais, no formato R$ 1.234,56 ou arredondados para mil como "R$ 214 mil" (só acima de R$ 10 mil). Nunca some, subtraia nem calcule valor novo.',
+  '6. Não cite nome de pessoa (funcionário, prestador, morador) nem de fornecedor: descreva o serviço ou a compra.',
+  '7. Nenhum hífen ou travessão como pontuação: use vírgula ou ponto. Frases diretas, sem abreviação.',
+  '8. Limites de caracteres: resumo 240, caixa 90, cada mês 80, cada rubrica 160, contas 220.',
+  '9. Use só as chaves de meses (campo "mes" de meses_negativos) e de rubricas (campo "chave" dos grupos) recebidas. Omita o campo que não tiver fato para explicar.',
+  '',
+  'O que vai em cada campo:',
+  'resumo: slide do resultado do período. O que causou o déficit ou os meses negativos, de onde saiu o dinheiro e, quando couber, a cobertura sem as despesas fora da rotina.',
+  'caixa: rótulo curto ao lado do saldo (ex.: "Uso planejado do fundo de reserva para a reforma do salão").',
+  'meses: para cada mês negativo, o que puxou o resultado (ex.: "reforma do salão de festas, R$ 48 mil").',
+  'rubricas: para cada grupo, o que foi comprado ou contratado e para quê.',
+  'contas: o movimento das contas de reserva no período.',
+  'textos_base traz a versão automática: reescreva com mais naturalidade, sem acrescentar fato.',
+  '',
+  'Responda SOMENTE com um objeto JSON válido, sem texto antes ou depois e sem cercas de código, neste formato:',
+  '{"resumo": "...", "caixa": "...", "meses": {"abr/26": "..."}, "rubricas": {"CATEGORIA|RUBRICA": "..."}, "contas": "..."}',
+].join('\n');
+
+// Só o que a explicação precisa: sem a série mensal, até 4 itens por grupo e só as
+// contas que mudaram. Fica em poucos milhares de caracteres mesmo em condomínio grande.
+function entradaExplicacoes(dados, observacoes) {
+  const s = (dados && dados.sinais) || {};
+  const num = (v) => (v == null || !isFinite(Number(v)) ? null : Math.round(Number(v) * 100) / 100);
+  const contas = (Array.isArray(s.contas) ? s.contas : [])
+    .filter((c) => c && (Math.abs(Number(c.variacao) || 0) > 0.004 || (Array.isArray(c.saidas) && c.saidas.length)))
+    .map((c) => ({ nome: c.nome, reserva: !!c.reserva, ini: num(c.ini), fim: num(c.fim), variacao: num(c.variacao), saidas: (c.saidas || []).slice(0, 12), total_saidas: num(c.total_saidas) }));
+  return {
+    condominio: dados && dados.condominio,
+    periodo: dados && (dados.meses_label || dados.periodo),
+    observacoes_do_usuario: observacoes || null,
+    sinais: {
+      resultado: num(s.resultado),
+      cobertura: num(s.cobertura),
+      cobertura_sem_nao_recorrentes: num(s.cobertura_sem_nao_recorrentes),
+      resultado_sem_nao_recorrentes: num(s.resultado_sem_nao_recorrentes),
+      saldo_inicial: num(s.saldo_inicial),
+      saldo_final: num(s.saldo_final),
+      caixa_cobriu: !!s.caixa_cobriu,
+      total_nao_recorrente: num(s.total_nao_recorrente),
+      total_sazonal: num(s.total_sazonal),
+      grupos: (Array.isArray(s.grupos) ? s.grupos : []).map((g) => ({
+        chave: g.categoria + '|' + g.rubrica, nome: g.nome, tipo: g.tipo, periodo: g.periodo,
+        valor: num(g.valor), excesso: num(g.excesso),
+        itens: (g.itens || []).slice(0, ITENS_POR_GRUPO).map((i) => ({ rotulo: i.rotulo, valor: num(i.valor) })),
+      })),
+      meses_negativos: (Array.isArray(s.meses_negativos) ? s.meses_negativos : []).map((m) => ({ mes: m.mes, resultado: num(m.resultado), motivos: m.motivos || [] })),
+      quedas_arrecadacao: (Array.isArray(s.quedas_arrecadacao) ? s.quedas_arrecadacao : []).map((q) => ({ mes: q.mes, receita: num(q.receita), mediana: num(q.mediana) })),
+      contas,
+    },
+    textos_base: s.textos || {},
+  };
+}
+
+// Valores em reais que podem aparecer na explicação (em centavos, sempre positivos).
+function valoresDosSinais(s) {
+  const ok = new Set();
+  const add = (v) => { if (v != null && isFinite(Number(v)) && Number(v) !== 0) ok.add(Math.abs(centavos(v))); };
+  ['resultado', 'resultado_sem_nao_recorrentes', 'saldo_inicial', 'saldo_final', 'total_nao_recorrente', 'total_sazonal'].forEach((k) => add(s[k]));
+  if (s.saldo_inicial != null && s.saldo_final != null) add(Number(s.saldo_inicial) - Number(s.saldo_final));
+  const grupos = Array.isArray(s.grupos) ? s.grupos : [];
+  grupos.forEach((g) => { add(g.valor); add(g.excesso); (g.itens || []).forEach((i) => add(i.valor)); });
+  // "as duas somaram": soma de dois grupos e de todos os fora da rotina.
+  for (let i = 0; i < grupos.length; i++) for (let j = i + 1; j < grupos.length; j++) add(Number(grupos[i].valor) + Number(grupos[j].valor));
+  add(grupos.filter((g) => g.tipo === 'nao_recorrente').reduce((t, g) => t + (Number(g.valor) || 0), 0));
+  (s.meses_negativos || []).forEach((m) => add(m.resultado));
+  (s.quedas_arrecadacao || []).forEach((q) => { add(q.receita); add(q.mediana); });
+  let saidasReserva = 0;
+  (s.contas || []).forEach((c) => {
+    add(c.ini); add(c.fim); add(c.variacao); add(c.total_saidas);
+    (c.saidas || []).forEach((x) => add(x.valor));
+    if (c.reserva) saidasReserva += Number(c.total_saidas) || 0;
+  });
+  add(saidasReserva);
+  return [...ok];
+}
+
+// Percentuais que podem aparecer: cobertura com e sem as despesas fora da rotina e as
+// quedas de arrecadação ("23% abaixo da média").
+function percentuaisDosSinais(s) {
+  const ok = [];
+  [s.cobertura, s.cobertura_sem_nao_recorrentes].forEach((v) => { if (v != null && isFinite(Number(v))) ok.push(Number(v)); });
+  (s.meses_negativos || []).forEach((m) => (m.motivos || []).forEach((t) => {
+    const r = /(\d+(?:,\d+)?)%/.exec(String(t)); if (r) ok.push(Number(r[1].replace(',', '.')));
+  }));
+  (s.quedas_arrecadacao || []).forEach((q) => { if (q.mediana > 0) ok.push((1 - q.receita / q.mediana) * 100); });
+  return ok;
+}
+
+// Todo "R$" do texto tem de virar um valor conferido. Exato (R$ 1.234,56): 1 centavo de
+// folga. Arredondado (R$ 214 mil): 1 mil de folga. Milhão (R$ 1,2 milhão): 50 mil de folga.
+const RE_REAIS_EXPL = /R\$\s?(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d{1,2}))?(?:\s*(milh(?:ão|ões|ao|oes)|mil)(?![a-zà-ú]))?/gi;
+function valoresConferem(texto, permitidos) {
+  const ocorrencias = (texto.match(/R\$/g) || []).length;
+  let lidos = 0;
+  let m;
+  RE_REAIS_EXPL.lastIndex = 0;
+  while ((m = RE_REAIS_EXPL.exec(texto)) !== null) {
+    lidos++;
+    const inteiro = Number(m[1].replace(/\./g, ''));
+    const dec = m[2] ? Number('0.' + m[2]) : 0;
+    const escala = m[3] ? (/^mil$/i.test(m[3]) ? 1000 : 1e6) : 1;
+    const valor = Math.round((inteiro + dec) * escala * 100);           // centavos
+    const folga = escala === 1000 ? 100000 : escala === 1e6 ? 5000000 : (m[2] && m[2].length === 2 ? 1 : 100);
+    if (!permitidos.some((p) => Math.abs(p - valor) <= folga)) return false;
+  }
+  return lidos === ocorrencias;
+}
+
+function percentuaisConferem(texto, permitidos) {
+  const re = /(\d+(?:,\d+)?)\s?%/g;
+  let m;
+  while ((m = re.exec(texto)) !== null) {
+    const v = Number(m[1].replace(',', '.'));
+    if (!permitidos.some((p) => Math.abs(p - v) <= 1)) return false;
+  }
+  return true;
+}
+
+// Nada do que o morador vê fala da ferramenta que escreveu o texto.
+const RE_PROIBIDO_EXPL = /\b(IA|I\.A\.|intelig[êe]ncia artificial|Claude|Anthropic|modelo de linguagem|chatbot)\b/i;
+
+// Texto longo: corta no fim da última frase que cabe; sem frase inteira que caiba, sai.
+function cortarNoLimite(t, limite) {
+  if (t.length <= limite) return t;
+  const parte = t.slice(0, limite);
+  const fim = Math.max(parte.lastIndexOf('. '), parte.endsWith('.') ? parte.length - 1 : -1, parte.lastIndexOf('; '));
+  if (fim < 20) return null;
+  return parte.slice(0, fim + 1).replace(/;$/, '.').trim();
+}
+
+// Confere a resposta: só chaves conhecidas, meses e rubricas que existem nos sinais,
+// limites, sem travessão, sem citar a ferramenta, e todo valor e percentual conferido.
+// Texto que não confere sai e o slide fica com o texto padrão do microserviço.
+function sanearExplicacoes(exp, sinais) {
+  if (!exp || typeof exp !== 'object' || Array.isArray(exp) || !sinais) return null;
+  const valores = valoresDosSinais(sinais);
+  const pcts = percentuaisDosSinais(sinais);
+  let descartadas = 0;
+  const limpar = (s, limite) => {
+    if (typeof s !== 'string') { if (s != null) descartadas++; return null; }
+    let t = semTravessao(s).replace(/^["']|["']$/g, '').trim();
+    if (!t) return null;
+    t = cortarNoLimite(t, limite);
+    if (!t || RE_PROIBIDO_EXPL.test(t) || !valoresConferem(t, valores) || !percentuaisConferem(t, pcts)) { descartadas++; return null; }
+    return t;
+  };
+  const saida = {};
+  ['resumo', 'caixa', 'contas'].forEach((k) => {
+    const t = limpar(exp[k], LIMITES_EXPLICACAO[k]);
+    if (t) saida[k] = t;
+  });
+  const mesesOk = new Set((sinais.meses_negativos || []).map((m) => String(m.mes)));
+  const rubricasOk = new Set((sinais.grupos || []).map((g) => g.categoria + '|' + g.rubrica));
+  [['meses', mesesOk], ['rubricas', rubricasOk]].forEach(([k, validas]) => {
+    const v = exp[k];
+    if (v == null) return;
+    if (typeof v !== 'object' || Array.isArray(v)) { descartadas++; return; }
+    const o = {};
+    Object.entries(v).forEach(([chave, texto]) => {
+      if (!validas.has(chave)) { descartadas++; return; }
+      const t = limpar(texto, LIMITES_EXPLICACAO[k]);
+      if (t) o[chave] = t;
+    });
+    if (Object.keys(o).length) saida[k] = o;
+  });
+  Object.keys(exp).forEach((k) => { if (!Object.prototype.hasOwnProperty.call(LIMITES_EXPLICACAO, k)) descartadas++; });
+  return { exp: saida, descartadas };
+}
+
+// Chamada única e pequena: mesmo modelo e jeito da curadoria, saída curta. Nunca lança.
+async function explicarSinais(apiKey, dados, observacoes, ctx) {
+  try {
+    const modelo = (ctx && ctx.modelo) || modelos.modelo('prestacao');
+    const esforco = ctx && ctx.esforco !== undefined ? ctx.esforco : modelos.esforco('prestacao');
+    const corpo = JSON.stringify({
+      model: modelo,
+      ...(esforco ? { output_config: { effort: esforco } } : {}),
+      max_tokens: 1500,
+      system: [{ type: 'text', text: SYSTEM_EXPLICACOES, cache_control: { type: 'ephemeral' } }],
+      messages: [{
+        role: 'user',
+        content: 'Escreva as explicações dos números desta prestação.\n\nDados (JSON):\n' + JSON.stringify(entradaExplicacoes(dados, observacoes)),
+      }],
+    });
+    for (let tentativa = 0; tentativa < 2; tentativa++) {
+      const r = await requisitar('https://api.anthropic.com/v1/messages', {
+        headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        corpo,
+        timeoutMs: (ctx && ctx.timeoutMs) || 120000,
+      });
+      if ((r.status === 429 || r.status === 529) && tentativa === 0) {
+        await new Promise((ok) => setTimeout(ok, (ctx && ctx.esperaMs) != null ? ctx.esperaMs : 20000));
+        continue;
+      }
+      if (r.json && r.json.usage) custo.registrar({ funcao: 'prestacao', modelo, usage: r.json.usage, usuario: ctx && ctx.usuario, condominio: ctx && ctx.condominio, ok: r.status === 200, status: r.status });
+      if (r.status !== 200 || !r.json) return { ok: false, motivo: 'api_' + (r.status || r.erro) };
+      const texto = ((r.json.content || []).find((b) => b.type === 'text') || {}).text || '';
+      const exp = extrairJson(texto);
+      if (!exp) return { ok: false, motivo: r.json.stop_reason === 'max_tokens' ? 'resposta_cortada' : 'json_invalido', uso: r.json.usage };
+      return { ok: true, exp, uso: r.json.usage };
+    }
+    return { ok: false, motivo: 'api_429' };
+  } catch (e) {
+    return { ok: false, motivo: 'excecao' };
+  }
+}
+
 // ── Registro das rotas ───────────────────────────────────────────────────
 module.exports = function registrarPrestacaoV13(app, {
   requireAuth, ANTHROPIC_KEY, INTERNAL_API_SECRET, PRESTACAO_PDF_API_URL,
@@ -552,10 +777,17 @@ module.exports = function registrarPrestacaoV13(app, {
     let uso = null;
     let motivoIA = null;
     let parcialIA = false;
+    const ctxIA = { usuario: req && req.user && req.user.sub, condominio: (fonteSL && fonteSL.idCondominio) || (condBase && condBase.id) };
+    // 2b. Explicação dos números negativos: só com alerta nos sinais, começa já (em
+    // paralelo aos lotes) e nunca derruba a prestação; sem resposta, vale o texto padrão.
+    const sinais = dados && dados.sinais;
+    const promExplicacoes = (ANTHROPIC_KEY && sinais && sinais.ha_alerta === true)
+      ? explicarSinais(ANTHROPIC_KEY, dados, observacoes, ctxIA).catch(() => ({ ok: false, motivo: 'excecao' }))
+      : null;
     if (ANTHROPIC_KEY && dados.modo === 'detalhado') {
       etapa('escrevendo a composição de cada despesa');
       try {
-        const c = await curarComClaude(ANTHROPIC_KEY, dados, observacoes, { usuario: req && req.user && req.user.sub, condominio: (fonteSL && fonteSL.idCondominio) || (condBase && condBase.id) });
+        const c = await curarComClaude(ANTHROPIC_KEY, dados, observacoes, ctxIA);
         uso = c.uso || null;
         if (c.ok) {
           const s = sanearComposicao(c.comp, dados);
@@ -574,6 +806,23 @@ module.exports = function registrarPrestacaoV13(app, {
         motivoIA = 'excecao';
       }
       if (motivoIA) console.warn('[prestacao-v13] curadoria falhou motivo=' + motivoIA + '; segue com a automática');
+    }
+    if (promExplicacoes) {
+      etapa('explicando os números do período');
+      const e = await promExplicacoes;
+      const s = e && e.ok ? sanearExplicacoes(e.exp, sinais) : null;
+      if (s && Object.keys(s.exp).length) {
+        // Sem curadoria (modo simples ou falha), vai só a explicação: o microserviço
+        // completa as rubricas com a composição automática.
+        if (!composicaoIA) composicaoIA = { rubricas: {}, categorias: {}, receitas_nomes: {} };
+        composicaoIA.explicacoes = s.exp;
+      }
+      if (e && e.ok) {
+        console.log('[prestacao-v13] explicacoes ok campos=' + (s ? Object.keys(s.exp).length : 0) + ' descartadas=' + (s ? s.descartadas : 0)
+          + (e.uso ? ' tokens_in=' + (e.uso.input_tokens || 0) + ' tokens_out=' + (e.uso.output_tokens || 0) : ''));
+      } else {
+        console.warn('[prestacao-v13] explicacoes falharam motivo=' + ((e && e.motivo) || 'sem_resposta') + '; segue com o texto padrão');
+      }
     }
 
     // 3. Montar, auditar e converter (código da skill).
@@ -778,4 +1027,5 @@ module.exports = function registrarPrestacaoV13(app, {
 };
 
 // Exportados para teste.
-module.exports._interno = { curarComClaude, entradaParaIA, sanearComposicao, valoresCitados, extrairJson, semTravessao, dividirEmLotes, SYSTEM_PROMPT };
+module.exports._interno = { curarComClaude, entradaParaIA, sanearComposicao, valoresCitados, extrairJson, semTravessao, dividirEmLotes, SYSTEM_PROMPT,
+  explicarSinais, entradaExplicacoes, sanearExplicacoes, SYSTEM_EXPLICACOES, LIMITES_EXPLICACAO };
