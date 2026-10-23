@@ -10,6 +10,9 @@
 // O servidor (servico/apresentacao.js, rotas /api/apresentacao/*) confere de novo os limites
 // e a permissão, confere as imagens que podem ter informação, monta o roteiro e pede os slides.
 // Módulo "apresentacao" (ver, gerar) entra no catálogo de permissões aqui.
+// Dois modos no topo da tela: "Nova apresentação" e "Acrescentar a uma apresentação pronta"
+// (escolhida da pasta Em andamento ou anexada; só o material novo é lido e o resto da
+// apresentação é reaproveitado, rota /api/apresentacao/atualizar).
 // ============================================================
 (function () {
   var PAINEL = 'apresentacao';
@@ -26,11 +29,15 @@
     LADO_MIN: 200, AREA_MIN: 0.04, AREA_CANDIDATA: 0.20, PAGINA_SEM_TEXTO: 30
   };
   var ETAPAS = ['lendo os documentos', 'conferindo as imagens dos documentos', 'montando o roteiro', 'desenhando os slides'];
+  var ETAPAS_ATU = ['lendo a apresentação', 'conferindo as imagens dos documentos', 'montando o que falta', 'desenhando os slides'];
+  var PPTX_BYTES = 60 * 1024 * 1024;
+  var NS_AP = 'urn:servicezone:apresentacao:1'; // parte de dados que o sistema põe dentro do PowerPoint gerado
 
   // Estado da tela.
   var est = {
     edital: { nome: '', texto: '' }, pauta: [], docs: [], fotos: [], logo: null,
-    lendo: 0, gerando: false, seq: 0, resultado: null, trabalhoId: null
+    lendo: 0, gerando: false, seq: 0, resultado: null, trabalhoId: null,
+    modo: 'nova', pronta: null // pronta: { origem: 'pasta'|'arquivo', trabalhoId?, nome, b64?, roteiro }
   };
 
   function podeVer() { return typeof window.podeAbrirPainel === 'function' && window.podeAbrirPainel(PAINEL); }
@@ -56,9 +63,11 @@
   window.addEventListener('condominioAtivo:changed', function () { if (painelAtivo()) mostrarCond(); });
 
   function aprAbrir() {
+    montarModo();
     mostrarCond();
     var b = el('apr-gerar');
-    if (b) { b.disabled = !podeGerar() || est.gerando; b.title = podeGerar() ? '' : 'Seu usuário não pode gerar apresentações.'; }
+    if (b) { b.disabled = !podeGerar() || est.gerando; b.title = podeGerar() ? '' : 'Seu usuário não pode gerar apresentações.'; if (!est.gerando) b.textContent = est.modo === 'acrescentar' ? 'Acrescentar' : 'Gerar apresentação'; }
+    if (est.modo === 'acrescentar') desenharPasta();
     aprResumo();
   }
   function mostrarCond() {
@@ -86,6 +95,7 @@
     if (tipo === 'docs') return lerDocs(arqs);
     if (tipo === 'fotos') return lerFotos(arqs);
     if (tipo === 'logo') return lerLogo(arqs[0]);
+    if (tipo === 'pronta') return lerPronta(arqs[0]);
   }
 
   // Lê um arquivo como base64 (sem o prefixo data:).
@@ -505,6 +515,7 @@
   window.aprResumo = function () {
     var alvo = el('apr-resumo');
     if (!alvo) return;
+    if (est.modo === 'acrescentar') return resumoAcrescentar(alvo);
     var docsOk = est.docs.filter(function (d) { return d.status === 'ok'; });
     var nImgs = 0, semTexto = 0;
     docsOk.forEach(function (d) { nImgs += d.imagens.length; semTexto += d.semTexto.length; });
@@ -524,8 +535,9 @@
     var alvo = el('apr-etapas');
     if (!alvo) return;
     if (atual == null) { alvo.innerHTML = ''; return; }
-    var idx = ETAPAS.indexOf(atual);
-    alvo.innerHTML = ETAPAS.map(function (e, i) {
+    var lista = est.modo === 'acrescentar' ? ETAPAS_ATU : ETAPAS;
+    var idx = lista.indexOf(atual);
+    alvo.innerHTML = lista.map(function (e, i) {
       var feito = atual === 'pronto' || (idx >= 0 && i < idx);
       var agora = i === idx;
       var cor = feito ? 'var(--success)' : agora ? (erro ? 'var(--danger)' : 'var(--text)') : 'var(--muted)';
@@ -572,10 +584,11 @@
       desenharEtapas(r.etapa);
       var b = el('apr-gerar');
       var s = r.esperando_s || 0;
-      if (b) b.textContent = 'Gerando (' + Math.floor(s / 60) + 'min ' + String(s % 60).padStart(2, '0') + 's)';
+      if (b) b.textContent = (est.modo === 'acrescentar' ? 'Acrescentando (' : 'Gerando (') + Math.floor(s / 60) + 'min ' + String(s % 60).padStart(2, '0') + 's)';
     }
   }
   window.aprGerar = async function () {
+    if (est.modo === 'acrescentar') return aprAcrescentar();
     if (est.gerando) return;
     if (!podeGerar()) { aviso('Seu usuário não pode gerar apresentações.', 'err'); return; }
     if (est.lendo) { aviso('Espere terminar a leitura dos documentos.', 'warn'); return; }
@@ -615,7 +628,7 @@
       est.resultado = fim;
       mostrarResultado(fim);
       baixar(fim);
-      guardarNaPasta(fim, c);
+      guardarNaPasta(fim, c, null);
     } catch (e) {
       aviso(e.message || String(e), 'err');
       var et = el('apr-etapas'); if (et) et.innerHTML += '<div style="font-size:12px;font-family:var(--mono);color:var(--danger);margin-top:6px">' + esc(e.message || String(e)) + '</div>';
@@ -654,10 +667,19 @@
     var botoes = arquivosGuardados
       ? arquivosGuardados.map(function (a, i) { return '<button class="btn btn-primary" onclick="aprBaixarGuardado(' + i + ')">Baixar ' + (/\.pdf$/i.test(a.nome) ? 'PDF' : 'PowerPoint') + '</button>'; }).join(' ')
       : (r.pptx_b64 ? '<button class="btn btn-primary" onclick="aprBaixar(\'pptx\')">Baixar PowerPoint</button> ' : '') + (r.pdf_b64 ? '<button class="btn btn-primary" onclick="aprBaixar(\'pdf\')">Baixar PDF</button>' : '');
-    alvo.innerHTML = '<div class="card-header"><span class="card-title">Apresentação pronta</span>'
+    var entrou = Array.isArray(r.inseridos) && r.inseridos.length
+      ? '<div style="margin-top:14px;font-size:13px;font-weight:600">O que entrou</div><ul style="margin:6px 0 0;padding-left:20px;font-size:13px">'
+        + r.inseridos.map(function (x) {
+          return '<li>' + esc(x.slides) + (x.slides === 1 ? ' slide' : ' slides') + (x.item ? ' no item ' + esc(x.item) + (x.novo ? ' (item novo)' : '') : '') + (x.titulo ? ': ' + esc(x.titulo) : '') + '</li>';
+        }).join('') + '</ul>'
+      : '';
+    var podeAcrescentar = arquivosGuardados && r.versao >= 2 && est.trabalhoId && podeGerar();
+    alvo.innerHTML = '<div class="card-header"><span class="card-title">' + (r.modo === 'atualizar' ? 'Apresentação atualizada' : 'Apresentação pronta') + '</span>'
       + (r.slides ? '<span class="hint" style="margin:0">' + esc(r.slides) + ' slides</span>' : '') + '</div>'
       + '<div style="font-size:13px;margin-bottom:10px">' + esc(nomeBase(r)) + '</div>'
-      + '<div style="display:flex;gap:8px;flex-wrap:wrap">' + botoes + '</div>'
+      + '<div style="display:flex;gap:8px;flex-wrap:wrap">' + botoes
+      + (podeAcrescentar ? ' <button class="btn btn-ghost" onclick="aprAcrescentarNesta()">Acrescentar a esta apresentação</button>' : '') + '</div>'
+      + entrou
       + '<div style="margin-top:14px;font-size:13px;font-weight:600">O que conferir antes de apresentar</div>'
       + (avisos.length ? '<ul style="margin:6px 0 0;padding-left:20px;font-size:13px">' + avisos.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul>'
         : '<div class="hint">Nada apontado. Mesmo assim, confira valores, nomes e datas.</div>');
@@ -668,13 +690,15 @@
   // 8. Pasta Em andamento: roteiro e os dois arquivos ficam guardados (prepara a edição de
   // um slide só no futuro). Falha aqui não atrapalha: os arquivos já foram baixados.
   function nomeGuardar(base, ext) { return (String(base).normalize('NFC').replace(/[^A-Za-z0-9 _.()À-ÿ]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 110) || 'Apresentacao') + '.' + ext; }
-  async function guardarNaPasta(r, c) {
+  // versao 2: o PowerPoint guardado leva o roteiro dentro e pode receber acréscimos.
+  // idExistente: acréscimo numa apresentação da pasta atualiza o mesmo trabalho.
+  async function guardarNaPasta(r, c, idExistente) {
     if (!window.Trabalhos || typeof Trabalhos.salvar !== 'function') return;
     var titulo = 'Apresentação ' + nomeBase(r);
     try {
       var id = await Trabalhos.salvar('apresentacao', {
-        idSuperlogica: idCond(c) || null, titulo: titulo.slice(0, 160),
-        dados: { versao: 1, roteiro: r.roteiro || null, avisos: r.avisos || [], pauta: r.pauta || [], titulo_arquivo: nomeBase(r), slides: r.slides || 0, geradoEm: new Date().toISOString(), condNome: c ? c.nome : '' }
+        id: idExistente || undefined, idSuperlogica: idCond(c) || null, titulo: titulo.slice(0, 160),
+        dados: { versao: 2, roteiro: r.roteiro || null, avisos: r.avisos || [], pauta: r.pauta || [], inseridos: r.inseridos || [], titulo_arquivo: nomeBase(r), slides: r.slides || 0, geradoEm: new Date().toISOString(), condNome: c ? c.nome : '' }
       });
       est.trabalhoId = id;
       var arqs = [];
@@ -693,7 +717,7 @@
     var d = t.dados || {};
     est.resultado = null;
     est.trabalhoId = t.id;
-    mostrarResultado({ titulo_arquivo: d.titulo_arquivo, slides: d.slides, avisos: d.avisos }, (t.arquivos || []).map(function (a) { return { nome: a.nome, url: a.url }; }));
+    mostrarResultado({ titulo_arquivo: d.titulo_arquivo, slides: d.slides, avisos: d.avisos, inseridos: d.inseridos, versao: d.versao || 1 }, (t.arquivos || []).map(function (a) { return { nome: a.nome, url: a.url }; }));
     var alvo = el('apr-resultado');
     if (alvo) alvo.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
@@ -708,10 +732,267 @@
   try { if (window.Trabalhos && typeof Trabalhos.registrar === 'function') Trabalhos.registrar('apresentacao', { nome: 'Apresentação de assembleia', painel: PAINEL, restaurar: restaurar }); }
   catch (e) { /* sem a pasta, a tela funciona igual */ }
 
+  // 9. ACRESCENTAR A UMA APRESENTAÇÃO PRONTA. A apresentação vem da pasta Em andamento (o
+  // servidor lê o PowerPoint guardado) ou é anexada; só o material novo é lido aqui na tela,
+  // igual à geração. O PowerPoint gerado pelo sistema leva o roteiro dentro: a tela lê esse
+  // roteiro só para mostrar a pauta e os slides que já existem.
+  var NOME_TIPO = {
+    capa: 'Capa', pauta: 'Pauta', orientacoes: 'Orientações', item: 'Divisor do item', texto: 'Texto', topicos: 'Tópicos', colunas: 'Colunas',
+    orcamento: 'Orçamento', comparativo: 'Comparativo', tabela: 'Tabela', numeros: 'Números', barras: 'Barras', cards: 'Cartões', passos: 'Passos',
+    pontos: 'Pontos levantados', fotos: 'Fotos', foto_texto: 'Foto e texto', antes_depois: 'Antes e depois', documento: 'Documento', regimento: 'Regimento',
+    custeio: 'Forma de custeio', votacao: 'Votação', eleicao: 'Eleição', linha_do_tempo: 'Linha do tempo', encerramento: 'Encerramento'
+  };
+
+  // Escolha do modo no topo da tela e o cartão da apresentação pronta (criados uma vez).
+  function montarModo() {
+    if (el('apr-modo')) return;
+    var cnd = el('apr-cond');
+    if (!cnd || !cnd.parentNode) return;
+    var box = document.createElement('div');
+    box.id = 'apr-modo';
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', 'O que fazer');
+    box.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px';
+    box.innerHTML = '<button type="button" class="btn" data-apr-modo="nova" onclick="aprModo(\'nova\')">Nova apresentação</button>'
+      + '<button type="button" class="btn" data-apr-modo="acrescentar" onclick="aprModo(\'acrescentar\')">Acrescentar a uma apresentação pronta</button>';
+    cnd.parentNode.insertBefore(box, cnd);
+    var card = document.createElement('div');
+    card.className = 'card';
+    card.id = 'apr-pronta-card';
+    card.style.display = 'none';
+    card.innerHTML = '<div class="card-header"><span class="card-title" id="apr-titulo-pronta">Apresentação pronta</span><span class="hint" style="margin:0">gerada pelo sistema</span></div>'
+      + '<div id="apr-pronta-pasta" style="margin-bottom:10px"></div>'
+      + '<div class="dropzone" id="apr-drop-pronta" style="padding:22px 16px" ondragover="handleDrag(event, this)" ondragleave="handleDragLeave(this)" ondrop="aprSoltar(event, \'pronta\')">'
+      + '<input type="file" id="apr-pronta-arquivo" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation" onchange="aprEscolher(event, \'pronta\')">'
+      + '<div class="drop-title">Ou arraste o PowerPoint da apresentação</div><div class="drop-sub">o arquivo .pptx que o sistema gerou</div></div>'
+      + '<div id="apr-pronta-status" class="hint"></div><div id="apr-pronta-resumo" style="margin-top:8px"></div>';
+    var primeiro = box.closest('.card');
+    primeiro.parentNode.insertBefore(card, primeiro.nextSibling);
+    window.addEventListener('trabalhos:lista', function () { if (est.modo === 'acrescentar') desenharPasta(); });
+    desenharModo();
+  }
+  // Troca só o texto do título, sem apagar o "?" da ajuda que fica dentro dele.
+  function trocarTexto(alvo, txt) {
+    if (!alvo) return;
+    var no = [].slice.call(alvo.childNodes).find(function (n) { return n.nodeType === 3; });
+    if (no) no.nodeValue = txt; else alvo.insertBefore(document.createTextNode(txt), alvo.firstChild);
+  }
+  function cartaoDe(id) { var x = el(id); return x && x.closest ? x.closest('.card') : null; }
+  function desenharModo() {
+    var acr = est.modo === 'acrescentar';
+    [].slice.call(document.querySelectorAll('#apr-modo [data-apr-modo]')).forEach(function (b) {
+      var ativo = b.getAttribute('data-apr-modo') === est.modo;
+      b.className = 'btn ' + (ativo ? 'btn-primary' : 'btn-ghost');
+      b.setAttribute('aria-pressed', ativo ? 'true' : 'false');
+    });
+    var ed = cartaoDe('apr-titulo-edital'); if (ed) ed.style.display = acr ? 'none' : '';
+    var lg = el('apr-titulo-logo'); if (lg && lg.parentNode) lg.parentNode.style.display = acr ? 'none' : '';
+    var pc = el('apr-pronta-card'); if (pc) pc.style.display = acr ? '' : 'none';
+    trocarTexto(el('apr-titulo-docs'), acr ? 'Documentos novos' : 'Documentos');
+    trocarTexto(el('apr-titulo-fotos'), acr ? 'Fotos novas' : 'Fotos');
+    trocarTexto(el('apr-titulo-pedido'), acr ? 'O que precisa entrar' : 'O que você precisa');
+    var ped = el('apr-pedido');
+    if (ped) ped.placeholder = acr ? 'Ex.: incluir a apresentação da brigada de incêndio no item 3' : 'Ex.: Monte a AGE do dia 16/10 com os 3 orçamentos do parquinho, destaque o menor valor e a taxa extra em 3 vezes';
+    var b = el('apr-gerar'); if (b && !est.gerando) b.textContent = acr ? 'Acrescentar' : 'Gerar apresentação';
+    var res = el('apr-resultado'); if (res && !est.gerando) { res.style.display = 'none'; res.innerHTML = ''; }
+    desenharEtapas(null);
+    if (acr) { desenharPasta(); desenharPronta(); }
+    aprResumo();
+  }
+  window.aprModo = function (m) {
+    if (est.gerando || (m !== 'nova' && m !== 'acrescentar') || m === est.modo) return;
+    est.modo = m;
+    desenharModo();
+  };
+
+  // Apresentações da pasta Em andamento que têm o PowerPoint guardado.
+  function desenharPasta() {
+    var alvo = el('apr-pronta-pasta');
+    if (!alvo) return;
+    var lista = (window.Trabalhos && typeof Trabalhos.lista === 'function' ? Trabalhos.lista() : []).filter(function (t) {
+      return t.tipo === 'apresentacao' && (t.arquivos || []).some(function (n) { return /\.pptx$/i.test(String(n)); });
+    });
+    if (!lista.length) { alvo.innerHTML = '<div class="hint" style="margin:0">Nenhuma apresentação na pasta Em andamento. Anexe o PowerPoint abaixo.</div>'; return; }
+    alvo.innerHTML = '<div class="hint" style="margin:0 0 6px">Escolha da pasta Em andamento:</div><div style="display:flex;flex-direction:column;gap:6px">'
+      + lista.map(function (t) {
+        var escolhida = est.pronta && est.pronta.trabalhoId === t.id;
+        return '<div style="display:flex;gap:8px;align-items:center;font-size:12px;font-family:var(--mono);border:1px solid ' + (escolhida ? 'var(--gs-blue)' : 'var(--border)') + ';border-radius:8px;padding:6px 10px">'
+          + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + esc(t.titulo) + '">' + esc(t.titulo) + '</span>'
+          + (escolhida ? '<span style="color:var(--success)">escolhida</span>'
+            : '<button type="button" class="btn btn-ghost" style="padding:2px 10px;font-size:11px" onclick="aprUsarTrabalho(\'' + esc(t.id) + '\')">Usar esta</button>')
+          + '</div>';
+      }).join('') + '</div>';
+  }
+  function statusPronta(html) { var st = el('apr-pronta-status'); if (st) st.innerHTML = html || ''; }
+  window.aprUsarTrabalho = async function (id) {
+    if (est.gerando || !/^[0-9a-f-]{36}$/i.test(String(id))) return;
+    statusPronta('Abrindo a apresentação...');
+    try {
+      var r = await apiAuthFetch('/api/trabalhos/' + encodeURIComponent(id), { cache: 'no-store' });
+      var t = await r.json().catch(function () { return {}; });
+      if (!r.ok) throw new Error(t.detalhe || 'não foi possível abrir');
+      var d = t.dados || {};
+      if (!d.roteiro || !Array.isArray(d.roteiro.slides) || (d.versao || 1) < 2) {
+        est.pronta = null;
+        statusPronta('<span style="color:var(--warning)">Esta apresentação foi gerada antes desta função e não recebe acréscimos. Gere uma nova.</span>');
+      } else {
+        est.pronta = { origem: 'pasta', trabalhoId: t.id, nome: t.titulo, roteiro: d.roteiro, idSuperlogica: t.id_superlogica || null };
+        statusPronta('');
+      }
+    } catch (e) {
+      est.pronta = null;
+      statusPronta('<span style="color:var(--danger)">Não foi possível abrir: ' + esc(e.message || e) + '</span>');
+    }
+    desenharPasta(); desenharPronta(); aprResumo();
+  };
+
+  // Roteiro guardado dentro do PowerPoint gerado pelo sistema (ou null).
+  async function roteiroDoPptx(buf) {
+    if (!window.JSZip) throw new Error('leitor de PowerPoint não carregou, recarregue a página');
+    var zip = await window.JSZip.loadAsync(buf);
+    var itens = zip.file(/^customXml\/item\d+\.xml$/);
+    for (var i = 0; i < itens.length; i++) {
+      try {
+        var doc = new DOMParser().parseFromString(await itens[i].async('string'), 'application/xml');
+        var raiz = doc.documentElement;
+        if (raiz && raiz.namespaceURI === NS_AP && raiz.localName === 'apresentacao') {
+          var meta = JSON.parse(raiz.textContent || '');
+          if (meta && meta.roteiro && Array.isArray(meta.roteiro.slides) && meta.roteiro.slides.length) return meta.roteiro;
+        }
+      } catch (e) { /* outra parte de dados: segue */ }
+    }
+    return null;
+  }
+  async function lerPronta(arq) {
+    if (est.gerando || !arq) return;
+    if (!/\.pptx$/i.test(arq.name)) { statusPronta('<span style="color:var(--danger)">Anexe o PowerPoint (.pptx) que o sistema gerou.</span>'); return; }
+    if (arq.size > PPTX_BYTES) { statusPronta('<span style="color:var(--danger)">A apresentação passou de 60 MB.</span>'); return; }
+    statusPronta('Lendo a apresentação...');
+    try {
+      var roteiro = await roteiroDoPptx(await arq.arrayBuffer());
+      if (!roteiro) {
+        est.pronta = null;
+        statusPronta('<span style="color:var(--warning)">Esta apresentação não foi gerada pelo sistema. Gere uma nova.</span>');
+      } else {
+        est.pronta = { origem: 'arquivo', nome: arq.name, b64: await lerBase64(arq), roteiro: roteiro };
+        statusPronta('');
+      }
+    } catch (e) {
+      est.pronta = null;
+      statusPronta('<span style="color:var(--danger)">Não foi possível ler: ' + esc(e.message || e) + '</span>');
+    }
+    desenharPasta(); desenharPronta(); aprResumo();
+  }
+  window.aprTirarPronta = function () { if (est.gerando) return; est.pronta = null; statusPronta(''); desenharPasta(); desenharPronta(); aprResumo(); };
+
+  // Pauta e slides que já existem, em lista curta.
+  function desenharPronta() {
+    var alvo = el('apr-pronta-resumo');
+    if (!alvo) return;
+    var p = est.pronta;
+    var dz = el('apr-drop-pronta'); if (dz) dz.style.display = p ? 'none' : '';
+    if (!p) { alvo.innerHTML = ''; return; }
+    var slides = p.roteiro.slides || [];
+    var pauta = slides.find(function (s) { return s && s.tipo === 'pauta'; });
+    var itens = pauta && Array.isArray(pauta.itens) ? pauta.itens : [];
+    var txt = function (it) { return typeof it === 'string' ? it : (it && it.titulo) || ''; };
+    alvo.innerHTML = '<div style="display:flex;gap:8px;align-items:center;font-size:13px;margin-bottom:8px"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+      + (p.origem === 'pasta' ? 'Da pasta: ' : 'Arquivo: ') + '<b>' + esc(p.nome) + '</b></span>'
+      + '<button type="button" class="btn btn-ghost" style="padding:2px 8px;font-size:11px" onclick="aprTirarPronta()">Trocar</button></div>'
+      + (itens.length ? '<div class="hint" style="margin:0 0 4px">Pauta atual:</div><ol style="margin:0 0 8px;padding-left:20px;font-size:13px">' + itens.map(function (it) { return '<li>' + esc(txt(it)) + '</li>'; }).join('') + '</ol>' : '')
+      + '<details><summary class="hint" style="cursor:pointer;margin:0">Slides que já existem (' + slides.length + ')</summary>'
+      + '<div style="margin-top:6px;max-height:240px;overflow:auto;font-size:12px;font-family:var(--mono);display:flex;flex-direction:column;gap:2px">'
+      + slides.map(function (s, i) {
+        var n = s && s.numero != null && s.numero !== '' ? 'item ' + s.numero + ', ' : '';
+        var tipo = NOME_TIPO[s && s.tipo] || (s && s.tipo) || 'slide';
+        var t = (s && s.titulo) || '';
+        if (normal(t) === normal(tipo)) t = ''; // "Votação: Votação" vira só "Votação"
+        return '<div><span style="color:var(--muted)">' + (i + 1) + '.</span> ' + esc(n + tipo) + (t ? ': ' + esc(t) : '') + '</div>';
+      }).join('') + '</div></details>';
+  }
+
+  function resumoAcrescentar(alvo) {
+    var docsOk = est.docs.filter(function (d) { return d.status === 'ok'; });
+    var nImgs = 0; docsOk.forEach(function (d) { nImgs += d.imagens.length; });
+    var linhas = [];
+    linhas.push('Apresentação pronta: ' + (est.pronta ? esc(est.pronta.nome) + ', ' + (est.pronta.roteiro.slides || []).length + ' slides no roteiro' : '<span style="color:var(--warning)">escolha da pasta ou anexe o PowerPoint</span>'));
+    linhas.push('Documentos novos: ' + docsOk.length + (est.lendo ? ' (lendo ' + est.lendo + ')' : '') + (nImgs ? ', ' + nImgs + ' imagem(ns) aproveitáveis' : ''));
+    linhas.push('Fotos novas: ' + est.fotos.length + (est.fotos.length ? ', ' + est.fotos.filter(function (f) { return !f.legenda.trim(); }).length + ' sem legenda' : ''));
+    var tam = tamanhoEnvio() + (est.pronta && est.pronta.b64 ? Math.round(est.pronta.b64.length * 3 / 4) : 0);
+    linhas.push('Tamanho do envio: ' + mb(tam) + (tam > LIM.ENVIO_BYTES ? ' <span style="color:var(--danger)">passou de 150 MB, tire alguns arquivos</span>' : ''));
+    linhas.push('Só o material novo é lido; os slides que já existem são reaproveitados como estão.');
+    alvo.innerHTML = linhas.join('<br>');
+  }
+
+  async function aprAcrescentar() {
+    if (est.gerando) return;
+    if (!podeGerar()) { aviso('Seu usuário não pode gerar apresentações.', 'err'); return; }
+    if (est.lendo) { aviso('Espere terminar a leitura dos documentos.', 'warn'); return; }
+    var p = est.pronta;
+    if (!p) { aviso('Escolha a apresentação na pasta Em andamento ou anexe o PowerPoint gerado pelo sistema.', 'err'); return; }
+    var pedido = ((el('apr-pedido') || {}).value || '').trim();
+    var docsOk = est.docs.filter(function (d) { return d.status === 'ok'; });
+    if (!pedido && !docsOk.length && !est.fotos.length) { aviso('Anexe o material novo ou escreva o que precisa entrar.', 'err'); return; }
+    var tam = tamanhoEnvio() + (p.b64 ? Math.round(p.b64.length * 3 / 4) : 0);
+    if (tam > LIM.ENVIO_BYTES) { aviso('O envio passou de 150 MB. Tire alguns documentos ou fotos.', 'err'); return; }
+    var semFoto = est.fotos.filter(function (f) { return !f.legenda.trim(); }).length;
+    if (semFoto && !window.confirm(semFoto + ' foto(s) estão sem legenda. Sem legenda o sistema adivinha o item pelo nome do arquivo. Acrescentar mesmo assim?')) return;
+    // Apresentação da pasta: vale o condomínio dela, mesmo que o topo esteja em outro.
+    var c = cond();
+    if (p.idSuperlogica && idCond(c) !== String(p.idSuperlogica)) c = { id_superlogica: String(p.idSuperlogica), nome: '' };
+    est.gerando = true;
+    var btn = el('apr-gerar');
+    if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+    var res = el('apr-resultado'); if (res) { res.style.display = 'none'; res.innerHTML = ''; }
+    desenharEtapas('lendo a apresentação');
+    var envio = montarEnvio();
+    var corpo = envio.corpo;
+    delete corpo.edital_texto; delete corpo.logo_cliente_b64;
+    corpo.idSuperlogica = idCond(c) || undefined; corpo.condominio = c && c.nome ? c.nome : undefined;
+    if (p.origem === 'pasta') corpo.trabalho_id = p.trabalhoId; else corpo.pptx_b64 = p.b64;
+    try {
+      var r = await apiAuthFetch('/api/apresentacao/atualizar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+      var j = await r.json().catch(function () { return {}; });
+      if (!r.ok || !j.jobId) throw new Error(j.detalhe || (r.status === 413 ? 'O envio passou do tamanho aceito.' : 'Não foi possível começar.'));
+      var fim = await acompanhar(j.jobId);
+      if (fim.status !== 'done') { desenharEtapas(null); throw new Error(fim.detalhe || 'O acréscimo falhou. Tente de novo.'); }
+      desenharEtapas('pronto');
+      est.resultado = fim;
+      mostrarResultado(fim);
+      baixar(fim);
+      await guardarNaPasta(fim, c, p.origem === 'pasta' ? p.trabalhoId : null);
+      // A versão nova vira a base do próximo acréscimo; o material já usado sai da tela
+      // (clicar de novo não repete os mesmos slides).
+      est.pronta = p.origem === 'pasta' ? Object.assign({}, p, { roteiro: fim.roteiro })
+        : { origem: 'arquivo', nome: nomeBase(fim) + '.pptx', b64: fim.pptx_b64, roteiro: fim.roteiro };
+      est.docs = []; est.fotos = [];
+      var ped = el('apr-pedido'); if (ped) ped.value = '';
+      desenharDocs(); desenharImagensDocs(); desenharFotos(); desenharPasta(); desenharPronta();
+    } catch (e) {
+      aviso(e.message || String(e), 'err');
+      var et = el('apr-etapas'); if (et) et.innerHTML += '<div style="font-size:12px;font-family:var(--mono);color:var(--danger);margin-top:6px">' + esc(e.message || String(e)) + '</div>';
+    } finally {
+      est.gerando = false;
+      if (btn) { btn.disabled = !podeGerar(); btn.textContent = est.modo === 'acrescentar' ? 'Acrescentar' : 'Gerar apresentação'; }
+      aprResumo();
+    }
+  }
+
+  // Da apresentação aberta pela pasta Em andamento direto para o modo acrescentar.
+  window.aprAcrescentarNesta = function () {
+    if (est.gerando || !est.trabalhoId) return;
+    var id = est.trabalhoId;
+    est.modo = 'acrescentar';
+    desenharModo();
+    aprUsarTrabalho(id);
+    var pc = el('apr-pronta-card'); if (pc) pc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   window.aprLimpar = function () {
     if (est.gerando) return;
-    if ((est.docs.length || est.fotos.length) && !window.confirm('Limpar edital, documentos, fotos e pedido desta tela?')) return;
-    est.edital = { nome: '', texto: '' }; est.pauta = []; est.docs = []; est.fotos = []; est.logo = null; est.resultado = null;
+    if ((est.docs.length || est.fotos.length || est.pronta) && !window.confirm(est.modo === 'acrescentar' ? 'Limpar a apresentação escolhida, o material novo e o pedido desta tela?' : 'Limpar edital, documentos, fotos e pedido desta tela?')) return;
+    est.edital = { nome: '', texto: '' }; est.pauta = []; est.docs = []; est.fotos = []; est.logo = null; est.resultado = null; est.pronta = null;
+    desenharPronta();
     ['apr-edital-texto', 'apr-pedido'].forEach(function (id) { var x = el(id); if (x) x.value = ''; });
     ['apr-edital-status', 'apr-pauta', 'apr-logo-status'].forEach(function (id) { var x = el(id); if (x) x.innerHTML = ''; });
     var res = el('apr-resultado'); if (res) { res.style.display = 'none'; res.innerHTML = ''; }

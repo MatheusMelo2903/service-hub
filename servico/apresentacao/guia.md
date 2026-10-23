@@ -80,3 +80,11 @@ Tipos de slide aceitos (campos com ? são opcionais; "numero" é o número do it
 - {"tipo":"encerramento","mensagem?":"..."}
 
 Sempre comece com capa e pauta e termine com encerramento.
+
+# Modo atualizar (acrescentar a uma apresentação pronta)
+Quando a mensagem disser MODO ATUALIZAR, a apresentação já existe. Você recebe só o resumo dela (capa, pauta e a lista dos slides com número #, tipo, item e título), o material novo e o pedido. Não reescreva nem repita nada do que existe: devolva só os slides novos e onde cada grupo entra.
+- Monte os slides novos no mesmo estilo, vocabulário e nível de detalhe dos que já existem, com os tipos e limites deste guia. Nunca capa, pauta, orientações ou encerramento.
+- Conteúdo de um item que já existe: "numero" é o número do item na pauta atual e "depois_do_slide" é o # do slide existente depois do qual o grupo entra (normalmente o último slide daquele item).
+- Item novo: o grupo começa com o divisor {"tipo":"item","titulo":"...","etiqueta":"..."} e segue com o conteúdo. Se o pedido disser a posição (ex.: "como item 3"), "depois_do_slide" é o # do último slide do item anterior; se não disser, o item novo entra no fim, antes do encerramento. O sistema renumera a pauta, os divisores e os itens seguintes.
+- Use só os ids de fotos e documentos novos listados na mensagem; eles já continuam a numeração da apresentação.
+Responda SÓ com um JSON válido: {"avisos":["..."],"inserir":[{"depois_do_slide":12,"slides":[ ... ]}],"pauta":[{"titulo":"...","etiqueta":"..."}]} ("pauta" só quando entrar item novo: a lista completa, já com ele).

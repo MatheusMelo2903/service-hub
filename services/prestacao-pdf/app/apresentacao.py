@@ -23,20 +23,29 @@ varredura troca hífen e travessão usados como pontuação por vírgula.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import io
+import json
 import math
 import os
 import re
 import subprocess
 import sys
 import unicodedata
+import uuid
+import zipfile
 from pathlib import Path
 
 import numpy as np
+from lxml import etree
 from PIL import Image, ImageOps
 from pptx import Presentation
-from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE
 from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.opc.constants import RELATIONSHIP_TYPE as RT
+from pptx.opc.package import Part
+from pptx.opc.packuri import PackURI
 from pptx.util import Emu, Inches, Pt
 
 from .v13 import SCRIPTS, ErroPrestacao
@@ -416,13 +425,30 @@ def _parece_grafico(im: Image.Image) -> bool:
 
 
 class Imagem:
-    def __init__(self, caminho, tam, grafico):
-        self.caminho, self.tam, self.grafico = caminho, tam, grafico
+    """Imagem pronta para o slide. "rotulo" vira o nome da forma no PPTX ("foto:f3",
+    "doc:d1:p2"), para o modo atualizar achar a imagem original só com o arquivo."""
+
+    def __init__(self, caminho, tam, grafico, rotulo=None):
+        self.caminho, self.tam, self.grafico, self.rotulo = caminho, tam, grafico, rotulo
+
+
+def _nomear(forma, rotulo):
+    if rotulo:
+        forma.name = str(rotulo)[:120]
+    return forma
 
 
 def _carregar(dado: bytes, pasta: str, nome: str) -> Imagem:
     im = Image.open(io.BytesIO(dado))
     im.load()
+    caminho = os.path.join(pasta, nome + '.jpg')
+    # JPEG já no tamanho e sem giro (foto do navegador ou tirada de uma apresentação gerada
+    # aqui): vai como veio, sem comprimir de novo a cada atualização.
+    if (im.format == 'JPEG' and im.mode == 'RGB' and max(im.size) <= MAX_FOTO_PX
+            and im.getexif().get(0x0112, 1) == 1):
+        with open(caminho, 'wb') as f:
+            f.write(dado)
+        return Imagem(caminho, im.size, _parece_grafico(im))
     im = ImageOps.exif_transpose(im)
     rgba = im.convert('RGBA')
     transparente = rgba.getchannel('A').getextrema()[0] < 250
@@ -435,17 +461,15 @@ def _carregar(dado: bytes, pasta: str, nome: str) -> Imagem:
         im = im.convert('RGB')
     im.thumbnail((MAX_FOTO_PX, MAX_FOTO_PX), Image.LANCZOS)
     grafico = transparente or _parece_grafico(im)
-    caminho = os.path.join(pasta, nome + '.jpg')
     im.save(caminho, 'JPEG', quality=85, optimize=True)
     return Imagem(caminho, im.size, grafico)
 
 
-_SEQ = [0]
-
-
 def por_imagem(s, img: Imagem, x, y, w, h, inteira=None, foco=(0.5, 0.5)):
     """Foto comum: recorte central na proporção do quadro (preenche, sem distorcer).
-    Imagem com texto embutido: inteira, centralizada sobre painel claro."""
+    Imagem com texto embutido: inteira, centralizada sobre painel claro.
+    O recorte é feito pela moldura da própria imagem (recorte do PowerPoint), então o
+    arquivo guarda a foto inteira e o modo atualizar consegue recuperar a original."""
     inteira = img.grafico if inteira is None else inteira
     if inteira:
         cartao(s, x, y, w, h, PAINEL_CLARO, 0.03)
@@ -453,27 +477,22 @@ def por_imagem(s, img: Imagem, x, y, w, h, inteira=None, foco=(0.5, 0.5)):
         iw, ih = img.tam
         esc = min((w - 2 * pad) / iw, (h - 2 * pad) / ih)
         pw, ph = iw * esc, ih * esc
-        s.shapes.add_picture(img.caminho, Inches(x + (w - pw) / 2), Inches(y + (h - ph) / 2), Inches(pw), Inches(ph))
+        _nomear(s.shapes.add_picture(img.caminho, Inches(x + (w - pw) / 2), Inches(y + (h - ph) / 2), Inches(pw), Inches(ph)), img.rotulo)
         return
-    with Image.open(img.caminho) as im0:
-        im = im0.convert('RGB')
-    iw, ih = im.size
+    iw, ih = img.tam
     ar = w / h
+    esq = dir_ = cima = baixo = 0.0
     if iw / ih > ar:
         nw = int(ih * ar)
         x0 = int((iw - nw) * foco[0])
-        im = im.crop((x0, 0, x0 + nw, ih))
+        esq, dir_ = x0 / iw, (iw - x0 - nw) / iw
     else:
         nh = int(iw / ar)
         y0 = int((ih - nh) * foco[1])
-        im = im.crop((0, y0, iw, y0 + nh))
-    mx = min(MAX_FOTO_PX, int(w * 220))
-    if im.width > mx:
-        im = im.resize((mx, max(1, int(mx / ar))), Image.LANCZOS)
-    _SEQ[0] += 1
-    out = os.path.join(os.path.dirname(img.caminho), f'quadro_{_SEQ[0]:04d}.jpg')
-    im.save(out, 'JPEG', quality=85, optimize=True)
-    s.shapes.add_picture(out, Inches(x), Inches(y), Inches(w), Inches(h))
+        cima, baixo = y0 / ih, (ih - y0 - nh) / ih
+    pic = s.shapes.add_picture(img.caminho, Inches(x), Inches(y), Inches(w), Inches(h))
+    pic.crop_left, pic.crop_right, pic.crop_top, pic.crop_bottom = esq, dir_, cima, baixo
+    _nomear(pic, img.rotulo)
 
 
 class Logo:
@@ -537,19 +556,24 @@ class Logo:
         y = y + (maxh - th) / 2
         if self.placa:
             cartao(s, x, y, tw, th, PAINEL_CLARO, 0.1)
-        s.shapes.add_picture(self.png(cor_fundo), Inches(x + pad), Inches(y + pad), Inches(w), Inches(h))
+        _nomear(s.shapes.add_picture(self.png(cor_fundo), Inches(x + pad), Inches(y + pad), Inches(w), Inches(h)), 'logo_cliente')
         return x, y, tw, th
 
 
 # ───────────────────────── contexto da montagem ─────────────────────────
 
 class Ctx:
-    def __init__(self, fotos, documentos, pasta, logo=None):
+    def __init__(self, fotos, documentos, pasta, logo=None, paginas=None, graficos=None):
         self.prs = Presentation()
         self.prs.slide_width, self.prs.slide_height = Inches(SW), Inches(SH)
         self.layout = self.prs.slide_layouts[6]
         self.fotos = fotos or {}
         self.documentos = documentos or {}
+        # Modo atualizar: páginas de documento já desenhadas, tiradas da apresentação anterior
+        # ({id: {"total": n, "paginas": {p: bytes}}}), e o jeito como cada foto foi mostrada
+        # (inteira ou recortada), para os slides antigos saírem iguais.
+        self.paginas_prontas = paginas or {}
+        self.graficos = graficos or {}
         self.pasta = pasta
         self.logo: Logo | None = logo
         self.avisos: list[str] = []
@@ -610,6 +634,9 @@ class Ctx:
             try:
                 nome = 'foto_%03d_%s' % (len(self._fotos_ok), re.sub(r'[^A-Za-z0-9_]', '_', fid)[:40])
                 r = _carregar(dado, self.pasta, nome)
+                r.rotulo = f'foto:{fid}'
+                if isinstance(self.graficos.get(fid), bool):
+                    r.grafico = self.graficos[fid]
             except Exception:
                 self.aviso(f'a foto "{fid}" não é uma imagem válida; ficou de fora.')
         self._fotos_ok[fid] = r
@@ -621,6 +648,11 @@ class Ctx:
         if did in self._docs_ok:
             return self._docs_ok[did]
         dado = self.documentos.get(did)
+        pronta = self.paginas_prontas.get(did)
+        if not dado and pronta and pronta.get('paginas'):
+            total = _inteiro(pronta.get('total')) or max(pronta['paginas'])
+            self._docs_ok[did] = (None, max(total, max(pronta['paginas'])), {})
+            return self._docs_ok[did]
         if not dado:
             self.aviso(f'o documento "{did}" não foi enviado; ficou de fora.')
             self._docs_ok[did] = None
@@ -650,6 +682,9 @@ class Ctx:
         caminho, n, cache = info
         if pag in cache:
             return cache[pag]
+        if caminho is None:
+            cache[pag] = self._pagina_pronta(did, pag)
+            return cache[pag]
         base = caminho[:-4] + f'_p{pag}'
         r = None
         try:
@@ -661,13 +696,36 @@ class Ctx:
                     im.thumbnail((MAX_FOTO_PX, MAX_FOTO_PX), Image.LANCZOS)
                     destino = base + '.jpg'
                     im.save(destino, 'JPEG', quality=88, optimize=True)
-                    r = Imagem(destino, im.size, True)
+                    r = Imagem(destino, im.size, True, f'doc:{_limpa(did)}:p{pag}')
         except Exception:
             r = None
         if r is None:
             self.aviso(f'a página {pag} do documento "{_limpa(did)}" não pôde ser convertida; ficou de fora.')
         cache[pag] = r
         return r
+
+    def _pagina_pronta(self, did, pag) -> Imagem | None:
+        """Página já desenhada numa apresentação anterior (sem o PDF): entra como veio."""
+        did = _limpa(did)
+        dado = (self.paginas_prontas.get(did) or {}).get('paginas', {}).get(pag)
+        if not dado:
+            self.aviso(f'a página {pag} do documento "{did}" não está na apresentação anterior; ficou de fora.')
+            return None
+        try:
+            im = Image.open(io.BytesIO(dado))
+            im.load()
+            destino = os.path.join(self.pasta, 'pronta_%s_p%d.jpg' % (re.sub(r'[^A-Za-z0-9_]', '_', did)[:40], pag))
+            if im.format == 'JPEG' and im.mode == 'RGB' and max(im.size) <= MAX_FOTO_PX:
+                with open(destino, 'wb') as f:
+                    f.write(dado)
+            else:
+                im = im.convert('RGB')
+                im.thumbnail((MAX_FOTO_PX, MAX_FOTO_PX), Image.LANCZOS)
+                im.save(destino, 'JPEG', quality=88, optimize=True)
+            return Imagem(destino, im.size, True, f'doc:{did}:p{pag}')
+        except Exception:
+            self.aviso(f'a página {pag} do documento "{did}" não pôde ser lida; ficou de fora.')
+            return None
 
 
 # ───────────────────────── cabeçalho e faixas ─────────────────────────
@@ -2144,7 +2202,7 @@ def s_documento(ctx, sl):
             w, h = img.tam[0] * esc, img.tam[1] * esc
             fx, fy = ax1 - (w + 2 * pad), ay0 + (mh - h) / 2
             cartao(s, fx, fy, w + 2 * pad, h + 2 * pad, G.rgb('FFFFFF'), 0.02)
-            s.shapes.add_picture(img.caminho, Inches(fx + pad), Inches(fy + pad), Inches(w), Inches(h))
+            _nomear(s.shapes.add_picture(img.caminho, Inches(fx + pad), Inches(fy + pad), Inches(w), Inches(h)), img.rotulo)
         else:
             y = cabecalho(ctx, s, sl, sl.get('titulo') or 'Documento', f'Página {p} de {total}')
             por_imagem(s, img, X0, y, W, BASE - y, inteira=True)
@@ -2589,13 +2647,18 @@ def auditar(pptx_path: str, pasta: str) -> list[str]:
 
 def desenhar(roteiro: dict, fotos: dict, documentos: dict, pasta: str, logo_cliente: bytes | None = None):
     """Monta só o PPTX. Devolve (Presentation, avisos)."""
+    ctx = _desenhar(roteiro, fotos, documentos, pasta, logo_cliente)
+    return ctx.prs, ctx.avisos
+
+
+def _desenhar(roteiro, fotos, documentos, pasta, logo_cliente=None, paginas=None, graficos=None) -> Ctx:
     logo, avisos_logo = None, []
     if logo_cliente:
         try:
             logo = Logo(logo_cliente, pasta)
         except Exception:
             avisos_logo.append('A logo do cliente não é uma imagem válida; a apresentação saiu sem ela.')
-    ctx = Ctx(fotos, documentos, pasta, logo)
+    ctx = Ctx(fotos, documentos, pasta, logo, paginas, graficos)
     ctx.avisos.extend(avisos_logo)
     slides = roteiro.get('slides') if isinstance(roteiro, dict) else None
     if not isinstance(slides, list) or not slides:
@@ -2641,7 +2704,7 @@ def desenhar(roteiro: dict, fotos: dict, documentos: dict, pasta: str, logo_clie
     if not len(ctx.prs.slides):
         raise ErroPrestacao('Nenhum slide do roteiro pôde ser desenhado.')
     varrer_tracos(ctx.prs)
-    return ctx.prs, ctx.avisos
+    return ctx
 
 
 def converter_pdf(pptx_path: str, pasta: str) -> bytes:
@@ -2658,15 +2721,155 @@ def converter_pdf(pptx_path: str, pasta: str) -> bytes:
     return Path(pdf).read_bytes()
 
 
-def montar(roteiro: dict, fotos: dict, documentos: dict, pasta: str, logo_cliente: bytes | None = None):
+def montar(roteiro: dict, fotos: dict, documentos: dict, pasta: str, logo_cliente: bytes | None = None,
+           paginas: dict | None = None, graficos: dict | None = None):
     """Devolve (bytes_pptx, bytes_pdf, avisos, n_slides). Os avisos do próprio roteiro
-    (campo "avisos" no topo, escritos pela IA) vêm primeiro, depois os do motor e os da auditoria."""
+    (campo "avisos" no topo, escritos pela IA) vêm primeiro, depois os do motor e os da auditoria.
+    paginas e graficos só vêm no modo atualizar (ver Ctx). O roteiro usado vai dentro do PPTX."""
     os.makedirs(pasta, exist_ok=True)
     avisos = [f'Roteiro: {a}' for a in _lista(roteiro.get('avisos'))] if isinstance(roteiro, dict) else []
-    prs, av_motor = desenhar(roteiro, fotos or {}, documentos or {}, pasta, logo_cliente)
-    avisos += av_motor
+    ctx = _desenhar(roteiro, fotos or {}, documentos or {}, pasta, logo_cliente, paginas, graficos)
+    avisos += ctx.avisos
+    embutir(ctx, roteiro, logo_cliente)
+    prs = ctx.prs
     pptx_path = os.path.join(pasta, 'apresentacao.pptx')
     prs.save(pptx_path)
     avisos += auditar(pptx_path, pasta)
     pdf = converter_pdf(pptx_path, pasta)
     return Path(pptx_path).read_bytes(), pdf, avisos, len(prs.slides)
+
+
+# ───────────────────────── apresentação autossuficiente (modo atualizar) ─────────────────────────
+# O PPTX leva dentro, numa parte de dados do próprio pacote (customXml, que o PowerPoint guarda
+# ao salvar), o roteiro usado, quantas páginas cada documento tinha, como cada foto foi mostrada,
+# a logo original do cliente e uma impressão dos textos. As imagens ficam nas formas com nome
+# rastreável ("foto:f3", "doc:d1:p2", "logo_cliente"). Com só o arquivo dá para refazer tudo.
+
+NS_AP = 'urn:servicezone:apresentacao:1'
+CT_ITEM_PROPS = 'application/vnd.openxmlformats-officedocument.customXmlProperties+xml'
+MAX_META = 40 * 1024 * 1024        # parte de dados (roteiro e logo)
+MAX_DESCOMPACTADO = 400 * 1024 * 1024
+MAX_IMAGEM_LIDA = 30 * 1024 * 1024
+_RE_DOC = re.compile(r'^doc:(.+):p(\d{1,4})$')
+
+
+class SemRoteiro(Exception):
+    """PPTX que não foi gerado pelo sistema (ou gerado antes do modo atualizar)."""
+
+
+def impressao_textos(prs) -> str:
+    """Impressão dos textos de todos os slides: se mudar, alguém editou o arquivo à mão."""
+    partes = []
+    for slide in prs.slides:
+        partes.append('\x1f'.join(sh.text_frame.text for sh in _formas(slide.shapes) if sh.has_text_frame))
+    return hashlib.sha1('\x1e'.join(partes).encode('utf-8')).hexdigest()
+
+
+def _formas(shapes):
+    for sh in shapes:
+        if sh.shape_type == MSO_SHAPE_TYPE.GROUP:
+            yield from _formas(sh.shapes)
+        else:
+            yield sh
+
+
+def embutir(ctx: Ctx, roteiro: dict, logo_cliente: bytes | None):
+
+    rot = {k: v for k, v in roteiro.items() if k != 'avisos'}
+    meta = {
+        'versao': 1, 'roteiro': rot,
+        'documentos': {d: {'paginas': info[1]} for d, info in ctx._docs_ok.items() if info},
+        'fotos': {f: {'grafico': bool(im.grafico)} for f, im in ctx._fotos_ok.items() if im},
+        'logo_cliente_b64': base64.b64encode(logo_cliente).decode('ascii') if (logo_cliente and ctx.logo) else None,
+        'impressao': impressao_textos(ctx.prs),
+    }
+    raiz = etree.Element(f'{{{NS_AP}}}apresentacao', nsmap={'ap': NS_AP})
+    raiz.set('versao', '1')
+    # ensure_ascii: o texto fica só com caracteres que o XML aceita.
+    raiz.text = json.dumps(meta, ensure_ascii=True)
+    usados = {str(p.partname) for p in ctx.prs.part.package.iter_parts()}
+    n = 1
+    while f'/customXml/item{n}.xml' in usados:
+        n += 1
+    pacote = ctx.prs.part.package
+    item = Part.load(PackURI(f'/customXml/item{n}.xml'), 'application/xml', pacote,
+                     etree.tostring(raiz, xml_declaration=True, encoding='UTF-8', standalone=True))
+    props = ('<?xml version="1.0" encoding="UTF-8" standalone="no"?>\n'
+             f'<ds:datastoreItem ds:itemID="{{{str(uuid.uuid4()).upper()}}}" '
+             'xmlns:ds="http://schemas.openxmlformats.org/officeDocument/2006/customXml">'
+             f'<ds:schemaRefs><ds:schemaRef ds:uri="{NS_AP}"/></ds:schemaRefs></ds:datastoreItem>').encode('utf-8')
+    item_props = Part.load(PackURI(f'/customXml/itemProps{n}.xml'), CT_ITEM_PROPS, pacote, props)
+    item.relate_to(item_props, RT.CUSTOM_XML_PROPS)
+    ctx.prs.part.relate_to(item, RT.CUSTOM_XML)
+
+
+def ler(dado: bytes) -> dict:
+    """Do PPTX gerado aqui: roteiro, fotos, páginas de documento e logo originais.
+    Levanta SemRoteiro se o arquivo não for uma apresentação do sistema."""
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(dado))
+        infos = zf.infolist()
+    except Exception:
+        raise SemRoteiro('arquivo não é um PowerPoint')
+    if sum(i.file_size for i in infos) > MAX_DESCOMPACTADO:
+        raise SemRoteiro('arquivo grande demais depois de aberto')
+    meta = None
+    parser = etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=True)
+    for info in infos:
+        if not re.fullmatch(r'customXml/item\d+\.xml', info.filename) or info.file_size > MAX_META:
+            continue
+        try:
+            raiz = etree.fromstring(zf.read(info), parser)
+            if raiz.tag == f'{{{NS_AP}}}apresentacao':
+                meta = json.loads(raiz.text or '')
+                break
+        except Exception:
+            continue
+    rot = meta.get('roteiro') if isinstance(meta, dict) else None
+    if not isinstance(rot, dict) or not isinstance(rot.get('slides'), list) or not rot['slides']:
+        raise SemRoteiro('sem roteiro')
+    try:
+        prs = Presentation(io.BytesIO(dado))
+    except Exception:
+        raise SemRoteiro('o PowerPoint não abre')
+
+    fotos, paginas, logo_forma = {}, {}, None
+    for slide in prs.slides:
+        for sh in _formas(slide.shapes):
+            if sh.shape_type != MSO_SHAPE_TYPE.PICTURE:
+                continue
+            nome = sh.name or ''
+            if not (nome.startswith('foto:') or nome.startswith('doc:') or nome == 'logo_cliente'):
+                continue
+            try:
+                blob = sh.image.blob
+            except Exception:
+                continue
+            if not blob or len(blob) > MAX_IMAGEM_LIDA:
+                continue
+            if nome.startswith('foto:'):
+                fotos.setdefault(nome[5:], blob)
+            elif nome == 'logo_cliente':
+                logo_forma = logo_forma or blob
+            else:
+                m = _RE_DOC.match(nome)
+                if m:
+                    paginas.setdefault((m.group(1), int(m.group(2))), blob)
+    docs = meta.get('documentos') if isinstance(meta.get('documentos'), dict) else {}
+    grafs = meta.get('fotos') if isinstance(meta.get('fotos'), dict) else {}
+    b64 = lambda b: base64.b64encode(b).decode('ascii')  # noqa: E731
+    logo = meta.get('logo_cliente_b64') if isinstance(meta.get('logo_cliente_b64'), str) else None
+    if logo is None and logo_forma:
+        logo = b64(logo_forma)
+    total_de = lambda d, p: (_inteiro((docs.get(d) or {}).get('paginas')) if isinstance(docs.get(d), dict) else None) or p  # noqa: E731
+    return {
+        'roteiro': rot,
+        'fotos': [dict({'id': f, 'b64': b64(b)}, **({'grafico': grafs[f]['grafico']} if isinstance(grafs.get(f), dict)
+                                                     and isinstance(grafs[f].get('grafico'), bool) else {}))
+                  for f, b in fotos.items()],
+        'documentos_paginas': [{'id': d, 'pagina': p, 'total': total_de(d, p), 'b64': b64(b)}
+                               for (d, p), b in sorted(paginas.items())],
+        'logo_cliente_b64': logo,
+        'alterada': bool(meta.get('impressao')) and meta.get('impressao') != impressao_textos(prs),
+    }

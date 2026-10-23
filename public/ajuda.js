@@ -107,7 +107,15 @@
     // Apresentação de assembleia
     aprTitulo: {
       alvo: '#panel-apresentacao .card-title', assunto: 'Apresentação de assembleia',
-      texto: 'Monta os slides da assembleia na ordem da pauta do edital, com os orçamentos, comparativos, forma de custeio e fotos. Anexe o edital, os documentos e as fotos, escreva o que você precisa e clique em Gerar. No fim saem o PowerPoint e o PDF, com a lista do que conferir antes de apresentar.'
+      texto: 'Monta os slides da assembleia na ordem da pauta do edital, com os orçamentos, comparativos, forma de custeio e fotos. Anexe o edital, os documentos e as fotos, escreva o que você precisa e clique em Gerar. No fim saem o PowerPoint e o PDF, com a lista do que conferir antes de apresentar. Chegou material depois? Use Acrescentar a uma apresentação pronta.'
+    },
+    aprModo: {
+      alvo: '#apr-modo', assunto: 'Nova ou acrescentar',
+      texto: 'Nova apresentação monta tudo do zero. Acrescentar a uma apresentação pronta serve quando chega material depois (ex.: o sexto documento): o sistema lê só o que é novo, cria só os slides que faltam no mesmo estilo e devolve a apresentação inteira, com os slides que já existiam iguais.'
+    },
+    aprPronta: {
+      alvo: '#apr-titulo-pronta', assunto: 'Apresentação pronta',
+      texto: 'Escolha a apresentação na pasta Em andamento ou anexe o PowerPoint que o sistema gerou. Só funciona com apresentação gerada pelo sistema a partir desta versão. Mudanças feitas à mão no PowerPoint não entram na versão nova: o sistema avisa quando achar alguma.'
     },
     aprEdital: {
       alvo: '#apr-titulo-edital', assunto: 'Edital',
@@ -123,11 +131,11 @@
     },
     aprPedido: {
       alvo: '#apr-titulo-pedido', assunto: 'O que você precisa',
-      texto: 'Diga com suas palavras o que a apresentação precisa ter: a data, o que destacar, a forma de pagamento, o que tirar. Quanto mais claro, menos ajuste depois.'
+      texto: 'Diga com suas palavras o que a apresentação precisa ter: a data, o que destacar, a forma de pagamento, o que tirar. Quanto mais claro, menos ajuste depois. Ao acrescentar, diga onde entra (ex.: incluir a apresentação da brigada no item 3); sem dizer, o material vai para o item a que pertence ou vira um item novo no fim.'
     },
     aprGerar: {
       alvo: '#apr-gerar', onde: 'depois', assunto: 'Gerar apresentação',
-      texto: 'Confere as imagens dos documentos, monta o roteiro e desenha os slides. Leva alguns minutos. No fim baixa o PowerPoint e o PDF e guarda os dois na pasta Em andamento.'
+      texto: 'Confere as imagens dos documentos, monta o roteiro e desenha os slides. Leva alguns minutos. No fim baixa o PowerPoint e o PDF e guarda os dois na pasta Em andamento. Ao acrescentar, mostra também o que entrou (quantos slides e em que item); se entrou item novo no meio, a pauta e os números dos itens seguintes são refeitos.'
     },
 
     // Cobrança

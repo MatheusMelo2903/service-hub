@@ -416,6 +416,8 @@ AP_MAX_FOTOS = 80
 AP_MAX_DOCS = 30
 AP_MAX_SLIDES = 80
 AP_MAX_CORPO = 160 * 1024 * 1024
+AP_MAX_PAGINAS = 160
+AP_MAX_LER = 90 * 1024 * 1024       # PPTX de até ~60 MB em base64
 
 
 def _ap_422(detalhe: str):
@@ -447,6 +449,65 @@ def _ap_lista(payload: dict, campo: str, limite: int, rotulo: str) -> dict:
     return saida
 
 
+def _ap_paginas(payload: dict) -> dict:
+    """Páginas de documento já desenhadas (modo atualizar): [{id, pagina, total?, b64}]
+    viram {id: {"total": n, "paginas": {pagina: bytes}}}."""
+    itens = payload.get("documentos_paginas") or []
+    if not isinstance(itens, list):
+        raise _ap_422("O campo documentos_paginas precisa ser uma lista.")
+    if len(itens) > AP_MAX_PAGINAS:
+        raise _ap_422(f"No máximo {AP_MAX_PAGINAS} páginas de documento por apresentação; vieram {len(itens)}.")
+    saida = {}
+    for i, it in enumerate(itens):
+        pag = it.get("pagina") if isinstance(it, dict) else None
+        if (not isinstance(it, dict) or not isinstance(it.get("id"), str) or not it["id"].strip()
+                or isinstance(pag, bool) or not isinstance(pag, int) or not 0 < pag < 5000):
+            raise _ap_422(f"A página {i + 1} de documentos_paginas precisa de id, pagina e b64.")
+        did = it["id"].strip()[:80]
+        doc = saida.setdefault(did, {"total": None, "paginas": {}})
+        tot = it.get("total")
+        if isinstance(tot, int) and not isinstance(tot, bool) and 0 < tot < 5000:
+            doc["total"] = max(doc["total"] or 0, tot)
+        doc["paginas"][pag] = _ap_b64(it.get("b64"), f'página {pag} do documento "{did}"')
+    return saida
+
+
+@app.post("/v13/apresentacao/ler")
+async def v13_apresentacao_ler(
+    request: Request,
+    _: None = Depends(verificar_secret),
+):
+    """Modo atualizar: devolve o roteiro, as fotos, as páginas de documento e a logo que
+    estão dentro de um PPTX gerado pelo sistema. PPTX de fora: 422 sem_roteiro."""
+    tam = request.headers.get("content-length")
+    if tam and tam.isdigit() and int(tam) > AP_MAX_LER:
+        raise _ap_422("A apresentação passou do tamanho aceito.")
+    corpo = await request.body()
+    if len(corpo) > AP_MAX_LER:
+        raise _ap_422("A apresentação passou do tamanho aceito.")
+    try:
+        payload = json.loads(corpo)
+    except Exception:
+        raise _ap_422("O corpo do pedido não é um JSON válido.")
+    corpo = None
+    if not isinstance(payload, dict):
+        raise _ap_422("O corpo do pedido precisa ser um objeto JSON.")
+    dado = _ap_b64(payload.get("pptx_b64"), "da apresentação")
+    payload = None
+    try:
+        r = await run_in_threadpool(apresentacao.ler, dado)
+    except apresentacao.SemRoteiro as e:
+        _log("v13_apresentacao_ler_sem_roteiro", motivo=str(e)[:80])
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={"erro": "sem_roteiro", "detalhe": "Esta apresentação não foi gerada pelo sistema. Gere uma nova."})
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail={"erro": "leitura_falhou", "acao": "revisao_humana"})
+    _log("v13_apresentacao_ler_ok", slides=len(r["roteiro"].get("slides") or []), fotos=len(r["fotos"]),
+         paginas=len(r["documentos_paginas"]))
+    return r
+
+
 @app.post("/v13/apresentacao")
 async def v13_apresentacao(
     request: Request,
@@ -471,10 +532,14 @@ async def v13_apresentacao(
     if len(roteiro["slides"]) > AP_MAX_SLIDES:
         raise _ap_422(f"O roteiro tem {len(roteiro['slides'])} slides; o máximo é {AP_MAX_SLIDES}.")
     fotos = _ap_lista(payload, "fotos", AP_MAX_FOTOS, "fotos")
+    # Modo atualizar: como cada foto antiga foi mostrada (inteira ou recortada).
+    graficos = {it["id"].strip()[:80]: it["grafico"] for it in (payload.get("fotos") or [])
+                if isinstance(it, dict) and isinstance(it.get("id"), str) and isinstance(it.get("grafico"), bool)}
     documentos = _ap_lista(payload, "documentos", AP_MAX_DOCS, "documentos")
     for did, dado in documentos.items():
         if dado[:4] != b"%PDF":
             raise _ap_422(f'O documento "{did}" não é PDF.')
+    paginas = _ap_paginas(payload)
     logo = None
     if payload.get("logo_cliente_b64"):
         logo = _ap_b64(payload.get("logo_cliente_b64"), "logo do cliente")
@@ -483,7 +548,7 @@ async def v13_apresentacao(
     try:
         try:
             pptx_b, pdf_b, avisos, n = await run_in_threadpool(
-                apresentacao.montar, roteiro, fotos, documentos, tmpdir, logo)
+                apresentacao.montar, roteiro, fotos, documentos, tmpdir, logo, paginas, graficos)
         except v13.ErroPrestacao as e:
             _log("v13_apresentacao_recusou", motivo=str(e)[:200])
             raise _ap_422(str(e))
