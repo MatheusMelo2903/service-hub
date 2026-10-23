@@ -426,7 +426,8 @@
       // Menções de bloco ("bloco D", "torre 2"); o número do bloco não conta como unidade.
       var blocos = [];
       s = s.replace(PALAVRA_BLOCO, function (m, _p, v, pos) {
-        if (!NAO_BLOCO.test(v)) blocos.push({ ini: pos, fim: pos + m.length, chave: semZero(v.toLowerCase()) });
+        // Letra sozinha depois de bloco ou torre é o bloco ("bloco A"), mesmo sendo artigo em outras frases.
+        if (v.length === 1 || !NAO_BLOCO.test(v)) blocos.push({ ini: pos, fim: pos + m.length, chave: semZero(v.toLowerCase()) });
         return branco(m);
       });
       var fortes = [], fracas = [];

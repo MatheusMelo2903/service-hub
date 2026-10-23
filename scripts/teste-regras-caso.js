@@ -54,6 +54,8 @@ const casosUnidade = [
   ['duas unidades citadas', 'o 302 e o 402 do bloco D brigaram', PREDIO, [1, 3]],
   ['nenhuma unidade', 'barulho na garagem perto da portaria', PREDIO, []],
   ['unidade 101 A', 'unidade 101 A com vazamento', PREDIO, [4]],
+  ['bloco A por extenso (A também é artigo)', 'o morador do 302 bloco A deixou o cachorro solto na área da piscina ontem', PREDIO, [2]],
+  ['bloco a minúsculo', 'apto 302 bloco a com vazamento', PREDIO, [2]],
   ['torre e zero à esquerda', 'apto 0102 torre 2', PREDIO, [5]],
   ['torre sem zero', '102 torre 2 com obra fora do horário', PREDIO, [5]],
   ['1302 não vira 302', 'apto 1302 bloco D', PREDIO, [6]],
