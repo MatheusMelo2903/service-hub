@@ -383,6 +383,17 @@ function validarRoteiro(roteiro, { fotos, documentos, pauta }) {
       if (boas.length < lista.length) avisos.push('O slide ' + nome + ' citava foto que não existe; ela foi tirada.');
       if (!boas.length) { avisos.push('O slide ' + nome + ' ficou sem nenhuma foto e saiu da apresentação.'); continue; }
       s.fotos = boas;
+    } else if (s.tipo === 'capa' && s.foto != null && !fotosOk.has(s.foto)) {
+      avisos.push('A capa citava foto que não existe; saiu sem foto.');
+      delete s.foto; delete s.foto_legenda;
+    } else if (s.tipo === 'foto_etapas') {
+      // Imagem com rótulos embutidos e etapas embaixo; sem imagem válida, as etapas viram passos.
+      const lista = (Array.isArray(s.fotos) ? s.fotos : [s.foto]).map((f) => (f && typeof f === 'object' ? f.id : f));
+      const boas = lista.filter((id) => fotosOk.has(id));
+      if (boas.length < lista.length) avisos.push('O slide ' + nome + ' citava foto que não existe; ela foi tirada.');
+      if (boas.length) s.fotos = boas.slice(0, 2);
+      else if (Array.isArray(s.etapas) && s.etapas.length) s = { tipo: 'passos', numero: s.numero, titulo: s.titulo, passos: s.etapas };
+      else continue;
     } else if (s.tipo === 'foto_texto' && !fotosOk.has(s.foto)) {
       avisos.push('O slide ' + nome + ' citava foto que não existe; ficou só com o texto.');
       s = virarTopicos(s, (Array.isArray(s.topicos) ? s.topicos : []).concat(s.valor ? ['Valor: ' + s.valor] : []));

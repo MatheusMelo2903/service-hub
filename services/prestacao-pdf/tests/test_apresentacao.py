@@ -165,7 +165,7 @@ def test_paginacao_tabela_e_texto(gerado):
     pptx, _, _, _ = gerado
     _, textos = _textos(pptx)
     tab = [t for t in textos if 'Tabela longa' in t]
-    assert len(tab) >= 3                       # 25 linhas, até 12 por slide
+    assert len(tab) == 2                       # 25 linhas, até 15 por slide: 13 e 12
     assert all('(continuação)' in t for t in tab[1:])
     assert 'Serviço 25' in tab[-1] and 'TOTAL' in tab[-1]
     txt = [t for t in textos if 'Texto longo' in t]
@@ -324,3 +324,198 @@ def test_rota_http():
     r = cli.post('/v13/apresentacao', json={**corpo, 'documentos': [{'id': 'd1', 'b64': base64.b64encode(b'oi').decode()}]}, headers=h)
     assert r.status_code == 422 and r.json()['detail']['erro'] == 'entrada_invalida'
     assert cli.post('/v13/apresentacao', json=corpo).status_code in (401, 503)
+
+
+# ── componentes da AGE de referência: pauta 4x3, tabela de 15 com chips, galeria 8, capa com
+#    foto, gráfico de colunas, painel, fases e foto com etapas ──
+
+def _rotulada():
+    im = Image.new('RGB', (1600, 600), 'white')
+    d = ImageDraw.Draw(im)
+    for i in range(5):
+        d.rectangle([40 + i * 310, 60, 320 + i * 310, 480], fill=(160, 40 + i * 30, 60))
+        d.text((60 + i * 310, 515), f'{i + 1}. ETAPA', fill='black')
+    buf = io.BytesIO()
+    im.save(buf, 'PNG')
+    return buf.getvalue()
+
+
+EXPLICA = ('O saldo ficou negativo porque a parcela da obra da portaria foi paga em setembro antes da entrada '
+           'da taxa extra, que só cai em outubro, conforme o sistema.')
+NC = [('Ausência de projeto de segurança contra incêndio e pânico', 'Crítica'), ('Ausência de AVCB', 'CRÍTICA'),
+      ('Trincas nas soldas das coberturas', 'critica'), ('Ausência de ARTs e laudos', 'Alta'), ('Quadro subdimensionado', 'Alta'),
+      ('Bombas sem redundância', 'Alta'), ('SPA sem bypass', 'Alta'), ('Espaço confinado sem NR 33', 'Alta'),
+      ('Ausência de projeto elétrico', 'Alta'), ('Pontos de oxidação', 'Alta'), ('Circuitos sem identificação', 'Média'),
+      ('Quadros sem reserva técnica', 'media'), ('Quadros sem travamento', 'MÉDIA'), ('Oxidação nos portões', 'Média'),
+      ('Falta de paisagismo na entrada de energia', 'Baixa')]
+PAUTA9 = [{'titulo': t, 'subtitulo': 'Resumo do item', 'etiqueta': e} for t, e in
+          [('Prestação de contas', 'APRESENTAÇÃO'), ('Agronegócio e segurança', 'APRESENTAÇÃO'), ('Planejamento', 'APRESENTAÇÃO'),
+           ('Áreas de eventos', 'DEFINIÇÃO'), ('Comissão de Vistoria', 'APRESENTAÇÃO'), ('Divergência estatutária', 'VOTAÇÃO'),
+           ('Inadimplência', 'VOTAÇÃO'), ('Entrega', 'DELIBERAÇÃO'), ('Assuntos gerais', 'ABERTO')]]
+NOVOS = {'slides': [
+    {'tipo': 'capa', 'assembleia': 'Assembleia Geral Extraordinária', 'condominio': 'Associação de Moradores Fazenda Barão do Império',
+     'data': '24 de outubro de 2026', 'chamadas': ['1ª chamada às 8h30', '2ª chamada às 9h00'], 'foto': 'f1',
+     'foto_legenda': 'Portaria da Fazenda Barão do Império, Santa Leopoldina/ES'},
+    {'tipo': 'pauta', 'itens': PAUTA9},
+    {'tipo': 'pauta', 'itens': PAUTA9 + [{'titulo': 'Eleição do conselho', 'etiqueta': 'ELEIÇÃO'}, {'titulo': 'Reforma do salão', 'etiqueta': 'VOTAÇÃO'},
+                                         {'titulo': 'Fundo de obras', 'etiqueta': 'VOTAÇÃO'}]},
+    {'tipo': 'tabela', 'numero': 5, 'titulo': 'Todas as não conformidades', 'colunas': ['Nº', 'Não conformidade', 'Criticidade'],
+     'linhas': [[str(i + 1), n, c] for i, (n, c) in enumerate(NC)], 'chips': {'coluna': 2}},
+    {'tipo': 'tabela', 'numero': 5, 'titulo': 'Pendências', 'colunas': ['Pendência', 'Situação'],
+     'linhas': [['AVCB', 'Atrasado'], ['Laudo', 'Concluído']], 'chips': {'coluna': 1, 'cores': {'Atrasado': 'vermelho', 'Concluído': 'verde'}}},
+    {'tipo': 'tabela', 'numero': 5, 'titulo': 'Dezesseis linhas', 'colunas': ['Item', 'Valor'],
+     'linhas': [[f'Serviço {i}', f'R$ {i}.000,00'] for i in range(1, 17)]},
+    {'tipo': 'topicos', 'numero': 2, 'titulo': 'Seis tópicos longos', 'subtitulo': 'Situação levantada',
+     'topicos': ['Cercamento entre as Fases B e C ainda aberto, com acesso livre pela estrada vicinal ao norte da fazenda'] * 6},
+    {'tipo': 'topicos', 'numero': 2, 'titulo': 'Nove tópicos', 'topicos': [f'Tópico {i}' for i in range(1, 10)]},
+    {'tipo': 'fotos', 'numero': 2, 'titulo': 'Oito fotos', 'fotos': [{'id': f'f{i}', 'legenda': f'Foto {i}'} for i in range(1, 9)]},
+    {'tipo': 'grafico_colunas', 'numero': 1, 'titulo': 'Receitas e despesas de cada mês', 'categorias': ['jul/26', 'ago/26', 'set/26'],
+     'series': [{'nome': 'Receitas', 'valores': [405384.08, 422385.80, 237445.82]}, {'nome': 'Despesas', 'valores': [662.05, 184512.88, -2276.0]}],
+     'cards': [{'rotulo': '31/07/2026', 'valor': 'R$ 423.013,13'}, {'rotulo': 'Resultado de set/26', 'valor': '(R$ 1.234,56)', 'sub': 'saldo'}],
+     'nota': 'A receita de setembro foi menor porque não houve entrada da Taxa VAZ.'},
+    {'tipo': 'grafico_colunas', 'numero': 1, 'titulo': 'Treze meses', 'categorias': [f'm{i:02d}/26' for i in range(1, 14)],
+     'series': [{'nome': n, 'valores': [1000.0 * (i + k) for i in range(13)]} for k, n in enumerate(['A', 'B', 'C'])],
+     'cards': [{'rotulo': f'Resultado de m0{i}/26', 'valor': '(R$ 9.000,00)', 'sub': EXPLICA} for i in range(1, 4)]
+     + [{'rotulo': 'Saldo no fim do período', 'valor': 'R$ 100,00'}]},
+    {'tipo': 'painel', 'numero': 1, 'titulo': 'Resultado do trimestre', 'subtitulo': 'Demonstrativo de julho a setembro de 2026',
+     'cards': [{'rotulo': 'Saldo inicial', 'valor': 'R$ 18.291,10', 'sub': 'em 01/07/2026'},
+               {'rotulo': 'Receitas', 'valor': 1065215.70, 'cor': 'verde'}, {'rotulo': 'Despesas', 'valor': 'R$ 412.793,52'},
+               {'rotulo': 'Resultado', 'valor': '(R$ 12.450,33)', 'sub': EXPLICA},
+               {'rotulo': 'Saldo final', 'valor': 'R$ 670.713,28', 'sub': EXPLICA, 'destaque': True},
+               {'rotulo': 'Fundo de reserva', 'valor': 'R$ 1.000,00', 'sub': EXPLICA}],
+     'faixa': [{'rotulo': 'A receita cobriu', 'valor': '258,1%'}, {'rotulo': 'O caixa cresceu', 'valor': '+R$ 652.422'},
+               {'rotulo': 'Meses positivos', 'valor': '3 de 3'}]},
+    {'tipo': 'fases', 'numero': 8, 'titulo': 'Implantação em três fases',
+     'fases': [{'nome': f'Fase {x}', 'rotulo': '2 anos', 'blocos': [{'titulo': 'Início', 'texto': 'Começa no lançamento'},
+                                                                   {'titulo': 'Cercamento', 'texto': 'Cercamento do perímetro externo da área'}]}
+               for x in 'ABC'],
+     'faixas': [{'destaque': '6 anos', 'texto': 'de prazo total compromissado com o município'},
+                {'rotulo': 'Ponto de atenção', 'texto': 'Garantir a segurança durante as obras da Fase C'}]},
+    {'tipo': 'foto_etapas', 'numero': 5, 'titulo': 'Estrutura metálica', 'fotos': ['f20', 'f20'],
+     'etapas': [{'titulo': t, 'texto': 'descrição da etapa'} for t in ('Condição inicial', 'Penetrante', 'Limpeza', 'Revelador', 'Resultado final')]},
+    {'tipo': 'foto_etapas', 'numero': 5, 'titulo': 'Sem imagem', 'fotos': ['f99'], 'etapas': [{'titulo': 'Início', 'texto': 'a'}]},
+]}
+FOTOS_NOVOS = dict({f'f{i}': _foto(((40 * i) % 220, 120, 90)) for i in range(1, 9)}, f20=_rotulada())
+
+
+@pytest.fixture(scope='module')
+def novos():
+    with tempfile.TemporaryDirectory() as tmp:
+        prs, avisos = A.desenhar(NOVOS, FOTOS_NOVOS, {}, tmp)
+        caminho = os.path.join(tmp, 'novos.pptx')
+        prs.save(caminho)
+        problemas = A.auditar(caminho, tmp)
+    return prs, avisos, problemas
+
+
+def _slides_com(prs, trecho):
+    out = []
+    for s in prs.slides:
+        txt = ' '.join(sh.text_frame.text for sh in s.shapes if sh.has_text_frame).replace('\u00a0', ' ')
+        if trecho in txt:
+            out.append(s)
+    return out
+
+
+def test_novos_sem_sobreposicao_nem_saida(novos):
+    prs, avisos, problemas = novos
+    assert problemas == [], problemas
+    assert not any('texto demais' in a or 'resuma' in a or 'longo' in a for a in avisos), avisos
+    for s in prs.slides:
+        for sh in s.shapes:
+            assert sh.left >= 0 and sh.top >= 0
+            assert sh.left + sh.width <= A.Inches(A.SW) + 10 and sh.top + sh.height <= A.Inches(A.SH) + 10
+
+
+def test_pauta_em_grade_num_slide(novos):
+    prs, _, _ = novos
+    pautas = _slides_com(prs, 'Pauta da')
+    assert len(pautas) == 2                     # 9 itens em 3x3 e 12 em 4x3, cada uma num slide só
+    assert not any('(continuação)' in sh.text_frame.text for s in pautas for sh in s.shapes if sh.has_text_frame)
+    txt = ' '.join(sh.text_frame.text for sh in pautas[1].shapes if sh.has_text_frame)
+    assert '12' in txt and 'Fundo de obras' in txt and '12 ITENS' in txt
+    with tempfile.TemporaryDirectory() as tmp:
+        prs13, _ = A.desenhar({'slides': [{'tipo': 'pauta', 'itens': [f'Item {i}' for i in range(1, 14)]}]}, {}, {}, tmp)
+    assert len(prs13.slides) == 2               # acima de 12 parte em 7 e 6
+
+
+def test_tabela_15_linhas_com_chips(novos):
+    prs, _, _ = novos
+    tab = _slides_com(prs, 'Todas as não conformidades')
+    assert len(tab) == 1                        # 15 linhas num slide só
+    s = tab[0]
+    tamanhos = {r.font.size.pt for sh in s.shapes if sh.has_text_frame for p in sh.text_frame.paragraphs for r in p.runs
+                if r.text.startswith('Ausência')}
+    assert tamanhos and min(tamanhos) >= 12
+    cores = {}
+    formas = [sh for sh in s.shapes]
+    for i, sh in enumerate(formas):
+        if sh.has_text_frame and sh.text_frame.text in ('CRÍTICA', 'ALTA', 'MÉDIA', 'BAIXA', 'CRITICA', 'MEDIA'):
+            fundo = formas[i - 1]                  # o chip desenha a pílula e logo depois o texto
+            cores.setdefault(_sem(sh.text_frame.text), set()).add(str(fundo.fill.fore_color.rgb))
+    assert cores == {'critica': {'FF7A7A'}, 'alta': {'F2B84B'}, 'media': {'63ABCF'}, 'baixa': {'3EE08F'}}
+    pend = _slides_com(prs, 'Pendências')[0]
+    f = [sh for sh in pend.shapes]
+    atras = [f[i - 1] for i, sh in enumerate(f) if sh.has_text_frame and sh.text_frame.text == 'ATRASADO'][0]
+    assert str(atras.fill.fore_color.rgb) == 'FF7A7A'
+    dez = _slides_com(prs, 'Dezesseis linhas')
+    assert len(dez) == 2 and '(continuação)' in ' '.join(sh.text_frame.text for sh in dez[1].shapes if sh.has_text_frame)
+
+
+def _sem(t):
+    return A._sem_acento(t)
+
+
+def test_topicos_ate_6_num_slide(novos):
+    prs, _, _ = novos
+    assert len(_slides_com(prs, 'Seis tópicos longos')) == 1
+    nove = _slides_com(prs, 'Nove tópicos')
+    assert len(nove) == 2                       # 9 viram 5 e 4
+
+
+def test_galeria_8_e_capa_com_foto_rastreaveis(novos):
+    prs, _, _ = novos
+    capa = prs.slides[0]
+    nomes_capa = [sh.name for sh in capa.shapes if sh.shape_type == 13]
+    assert 'foto:f1' in nomes_capa
+    assert 'Portaria da Fazenda' in ' '.join(sh.text_frame.text for sh in capa.shapes if sh.has_text_frame)
+    gal = _slides_com(prs, 'Oito fotos')
+    assert len(gal) == 1
+    fotos = [sh for sh in gal[0].shapes if sh.shape_type == 13 and sh.name.startswith('foto:')]
+    assert sorted(sh.name for sh in fotos) == sorted(f'foto:f{i}' for i in range(1, 9))
+    assert any(sh.crop_left > 0 or sh.crop_top > 0 or sh.crop_right > 0 or sh.crop_bottom > 0 for sh in fotos)
+
+
+def test_grafico_colunas_com_formas(novos):
+    prs, avisos, _ = novos
+    g = _slides_com(prs, 'Receitas e despesas de cada mês')[0]
+    assert not any(getattr(sh, 'has_chart', False) and sh.has_chart for sh in g.shapes)
+    txt = ' '.join(sh.text_frame.text for sh in g.shapes if sh.has_text_frame).replace('\u00a0', ' ')
+    for trecho in ('R$ 100k', 'Receitas', 'Despesas', '405k', 'jul/26', 'R$ 423.013,13', 'NOTA'):
+        assert trecho in txt, trecho
+    vermelhos = [sh for sh in g.shapes if sh.shape_type == 1 and sh.fill.type == 1 and str(sh.fill.fore_color.rgb) == 'FF7A7A']
+    assert vermelhos                            # despesa negativa abaixo do zero e cartão negativo
+    # 13 meses com 3 explicações longas: o gráfico fica inteiro e os cartões vão para um painel em seguida.
+    treze = _slides_com(prs, 'Treze meses')
+    assert len(treze) == 2 and EXPLICA[:40] in ' '.join(sh.text_frame.text for sh in treze[1].shapes if sh.has_text_frame)
+
+
+def test_painel_fases_e_foto_etapas(novos):
+    prs, avisos, _ = novos
+    assert len(EXPLICA) <= 160
+    p = _slides_com(prs, 'Resultado do trimestre')
+    assert len(p) == 1
+    txt = ' '.join(sh.text_frame.text for sh in p[0].shapes if sh.has_text_frame).replace('\u00a0', ' ')
+    assert txt.count(EXPLICA[:30]) == 3 and '258,1%' in txt and 'R$ 1.065.215,70' in txt
+    neg = [sh for sh in p[0].shapes if sh.has_text_frame and sh.text_frame.text.replace('\u00a0', ' ') == '(R$ 12.450,33)'][0]
+    assert str(neg.text_frame.paragraphs[0].runs[0].font.color.rgb) == 'FF7A7A'
+    f = _slides_com(prs, 'Implantação em três fases')[0]
+    txt = ' '.join(sh.text_frame.text for sh in f.shapes if sh.has_text_frame)
+    assert all(t in txt for t in ('FASE A', 'FASE C', '2 anos', '6 anos', 'PONTO DE ATENÇÃO', 'CERCAMENTO'))
+    fe = _slides_com(prs, 'Estrutura metálica')[0]
+    imgs = [sh for sh in fe.shapes if sh.shape_type == 13 and sh.name.startswith('foto:')]
+    assert len(imgs) == 2 and all(sh.name == 'foto:f20' for sh in imgs)
+    assert all(sh.crop_left == 0 and sh.crop_top == 0 and sh.crop_right == 0 and sh.crop_bottom == 0 for sh in imgs)
+    txt = ' '.join(sh.text_frame.text for sh in fe.shapes if sh.has_text_frame)
+    assert 'ETAPAS' in txt and 'Resultado final' in txt and '5' in txt
+    assert any('as etapas saíram como passos' in a for a in avisos)

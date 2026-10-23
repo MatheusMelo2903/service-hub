@@ -2587,16 +2587,1112 @@ def _tempo_vertical(s, grupo, y):
         yy += h + 0.12
 
 
+# ───────────────────────── componentes da AGE de referência (pauta 4x3, tabela densa com chips, galeria 4x2, capa com foto, gráfico de colunas, painel, fases, foto com etapas) ─────────────────────────
+# Funções novas, ligadas no despacho de tipos (TIPOS). As antigas ficam como estão para
+# facilitar a junção com outras frentes; as novas reaproveitam as antigas quando o caso
+# é o mesmo de antes (capa sem foto, pauta curta, galeria até 6).
+
+LINHAS_TABELA_SLIDE = 15     # tabela: até 15 linhas num slide antes de continuar
+MIN_PT_TABELA = 12           # tabela densa (mais de 10 linhas no slide) desce até 12pt
+CORES_NOMEADAS = {'vermelho': G.RED, 'vermelha': G.RED, 'ambar': AMBAR, 'amarelo': AMBAR, 'amarela': AMBAR,
+                  'laranja': AMBAR, 'azul': G.GS_AZUL_CLA, 'verde': G.GREEN, 'celeste': G.AMBER,
+                  'violeta': VIOLETA, 'roxo': VIOLETA, 'cinza': G.TXT3}
+CHIPS_PADRAO = {'critica': 'vermelho', 'alta': 'ambar', 'media': 'azul', 'baixa': 'verde'}
+FILAS_GALERIA = {1: [1], 2: [2], 3: [3], 4: [2, 2], 5: [3, 2], 6: [3, 3], 7: [4, 3], 8: [4, 4]}
+CORES_SERIES = [G.GREEN, G.GS_AZUL_CLA, AMBAR]
+CORES_FASES = [G.GS_AZUL_CLA, G.AMBER, G.GREEN, AMBAR]
+CORES_PAINEL = [G.GS_AZUL_CLA, G.GREEN, G.AMBER, VIOLETA, AMBAR, G.rgb('2DD4BF')]
+
+
+def _y_conteudo(titulo, sub=None, cont=False, w=W) -> float:
+    """Onde o conteúdo começa, com a mesma conta do cabecalho, para decidir a paginação
+    antes de criar o slide."""
+    titulo = _nb(_limpa(titulo) or 'Sem título')
+    full = titulo + (' (continuação)' if cont else '')
+    size = 34
+    while size > 24 and not cabe_linha(full, size, w):
+        size -= 1
+    if cabe_linha(full, size, w):
+        nl = 1
+    else:
+        size = 28
+        while size > 18 and linhas(full, size, w, True) > 2:
+            size -= 1
+        nl = min(2, linhas(full, size, w, True))
+    y_traco = max(1.35, 0.6 + nl * lh(size, True) + 0.1)
+    sub = _nb(_limpa(sub)) if sub else ''
+    if sub:
+        ts = 17 if linhas(sub, 17, w) <= 2 else 15
+        return y_traco + 0.1 + min(alt(sub, ts, w), 2 * lh(ts)) + 0.3
+    return y_traco + 0.4
+
+
+def _cor_nomeada(v):
+    """Cor pelo nome em português (vermelho, ambar, azul, verde...) ou hexadecimal."""
+    t = _sem_acento(_limpa(v)).strip()
+    if t in CORES_NOMEADAS:
+        return CORES_NOMEADAS[t]
+    m = re.fullmatch(r'#?([0-9a-f]{6})', t)
+    return G.rgb(m.group(1)) if m else None
+
+
+def _negativo(v) -> bool:
+    """Valor negativo, venha como número, "-R$ 10,00" ou entre parênteses "(R$ 10,00)",
+    que é como a prestação de contas escreve o negativo."""
+    n = _num(v)
+    if n is not None:
+        return n < 0
+    t = _limpa(v)
+    return bool(re.fullmatch(r'\(\s*(R\$)?\s*[\d.,]*\d[\d.,]*\s*\)', t) or re.match(r'^-\s*(R\$)?\s*\d', t))
+
+
+def _paginas_equilibradas(itens, maximo):
+    """Divide em páginas de no máximo `maximo`, com tamanhos parecidos (13 viram 7 e 6)."""
+    npags = max(1, math.ceil(len(itens) / maximo))
+    base_n, extra = divmod(len(itens), npags)
+    out, k = [], 0
+    for pi in range(npags):
+        q = base_n + (1 if pi < extra else 0)
+        out.append(itens[k:k + q])
+        k += q
+    return out
+
+
+# ── capa com foto ──
+
+def s_capa_v2(ctx, sl):
+    """Capa: com "foto", a foto entra à direita com legenda opcional (slide 1 da AGE de
+    referência); sem foto, ou com foto que não chegou, é a capa de sempre."""
+    fid = _limpa(sl.get('foto'))
+    img = ctx.foto(fid) if fid else None
+    if not img:
+        s_capa(ctx, sl)
+        return
+    _capa_com_foto(ctx, sl, img)
+
+
+def _capa_com_foto(ctx, sl, img):
+    """Bloco de texto à esquerda (encadeado e medido), foto à direita com traço azul e
+    faixa de legenda, logo do cliente e a marca no pé da coluna da esquerda."""
+    s = ctx.novo(rodape=False)
+    sigla = _limpa(sl.get('sigla')).upper()
+    nome = _limpa(sl.get('assembleia')) or SIGLAS.get(sigla, '')
+    cond = _nb(_limpa(sl.get('condominio'))) or '[conferir]'
+    data = _limpa(sl.get('data'))
+    if not _limpa(sl.get('condominio')):
+        ctx.aviso('a capa veio sem o nome do condomínio.')
+    if not data:
+        ctx.aviso('a capa veio sem a data da assembleia.')
+    chamadas = _lista(sl.get('chamadas'))
+    hora, local = _limpa(sl.get('hora')), _limpa(sl.get('local'))
+    xl, wl = 0.8, 6.3
+    detalhes = []
+    if chamadas:
+        junto = '    •    '.join(chamadas)
+        detalhes += [junto] if len(chamadas) == 2 and cabe_linha(junto, 17, wl, False) else chamadas
+    elif hora:
+        detalhes.append(hora)
+    if local:
+        detalhes.append(local)
+    leg = _nb(_limpa(sl.get('foto_legenda')))
+
+    G.rect(s, 0, 0, SW, 0.083, G.GS_AZUL)
+    s.shapes.add_picture(G.LOGO_GS, Inches(xl), Inches(0.62), height=Inches(0.62))
+    kick = (nome or 'Apresentação em assembleia').upper()
+    tk = _maior_que_cabe(range(18, 12, -1), lambda t: linhas(kick, t, wl, True) <= 1) or 13
+    hk = alt(kick, tk, wl, True)
+    pal = cond.split(' ')
+    topo, fim = 1.75, 5.85
+    # Nome em duas linhas inteiras, como na referência ("Associação de Moradores" em branco e
+    # "Fazenda Barão do Império" em azul): o corte mais equilibrado em que as duas partes cabem
+    # numa linha cada. Sem corte possível, o nome corre em até 3 linhas com a cauda em azul.
+    def cortes(t):
+        ok = [k for k in range(1, len(pal)) if cabe_linha(' '.join(pal[:k]), t, wl) and cabe_linha(' '.join(pal[k:]), t, wl)]
+        return min(ok, key=lambda k: abs(larg(' '.join(pal[:k]), t, True) - larg(' '.join(pal[k:]), t, True))) if ok else None
+
+    def altura(tn, hn):
+        h = hk + 0.15 + hn + 0.22 + 0.25
+        if data:
+            h += lh(26, True) + 0.12
+        return h + sum(alt(d, 17, wl) + 0.04 for d in detalhes)
+    tn = _maior_que_cabe(range(40, 25, -2), lambda t: cortes(t) is not None and altura(t, 2 * lh(t, True)) <= fim - topo)
+    if tn is not None and len(pal) >= 2 and not cabe_linha(cond, tn, wl):
+        k = cortes(tn)
+        partes = [[(' '.join(pal[:k]), tn, True, G.TXT)], [(' '.join(pal[k:]), tn, True, G.GS_AZUL_CLA)]]
+        hn = 2 * lh(tn, True)
+    else:
+        tn = _maior_que_cabe(range(40, 21, -2), lambda t: linhas(cond, t, wl, True) <= 3 and altura(t, alt(cond, t, wl, True)) <= fim - topo) or 22
+        t1, t2 = (pal[0] + ' ', ' '.join(pal[1:])) if len(pal) >= 2 else ('', cond)
+        partes = [[(t1, tn, True, G.TXT), (t2, tn, True, G.GS_AZUL_CLA)]]
+        hn = alt(cond, tn, wl, True)
+    y = topo + max(0, (fim - topo - altura(tn, hn)) * 0.25)
+    caixa(s, xl, y, wl, hk, kick, tk, G.GS_AZUL_CLA, True)
+    y += hk + 0.15
+    caixa(s, xl, y, wl, hn, partes, tn, bold=True)
+    y += hn + 0.22
+    G.hline(s, xl, y, xl + 0.95, G.GS_AZUL, 4)
+    y += 0.25
+    if data:
+        G.text(s, xl, y, wl, lh(26, True), data, ajusta(data, wl, 26, True, 18), G.TXT, True)
+        y += lh(26, True) + 0.12
+    for d in detalhes:
+        hd = alt(d, 17, wl)
+        caixa(s, xl, y, wl, hd, d, 17, G.TXT2)
+        y += hd + 0.04
+
+    # Pé da coluna: linha, logo do cliente (quando houver) e a marca do grupo ao lado.
+    G.rect(s, xl, 6.0, 6.0, 0.012, G.LINE)
+    xm = xl
+    marca2 = 'Contábil Service  •  Condomínio Service\nRH Service'
+    if ctx.logo:
+        # A logo nunca toma o espaço da marca: a marca em duas linhas precisa caber ao lado.
+        lmax = max(1.0, wl - 0.3 - larg('Contábil Service  •  Condomínio Service', 12) / 0.9)
+        _, _, lw_, _ = ctx.logo.desenhar(s, xl, 6.12, min(2.3, lmax), 1.0)
+        xm = xl + lw_ + 0.3
+    wm = xl + wl - xm
+    marca = MARCA if cabe_linha(MARCA, 13, wm, False) else marca2
+    tm = _maior_que_cabe(range(15, 11, -1), lambda t: linhas(marca, t, wm) <= marca.count('\n') + 1) or 12
+    hm = alt(marca, tm, wm)
+    caixa(s, xm, 6.12 + max(0, (1.0 - hm) / 2), wm, hm, marca, tm, G.TXT3)
+
+    # Foto à direita com a legenda numa faixa embaixo (até 3 linhas, medida).
+    fx, fy, fw, fh = 7.35, 0.6, 5.48, 5.1
+    hl = 0.0
+    if leg:
+        tl = _maior_que_cabe([14, 13, 12], lambda t: linhas(leg, t, fw - 0.5) <= 2) or 12
+        hl = max(0.5, alt(leg, tl, fw - 0.5) + 0.24)
+    por_imagem(s, img, fx, fy, fw, fh - hl)
+    if leg:
+        G.rect(s, fx, fy + fh - hl, fw, hl, G.CARD)
+        caixa(s, fx + 0.3, fy + fh - hl, fw - 0.5, hl, leg, tl, G.TXT2, anchor=MSO_ANCHOR.MIDDLE)
+    G.rect(s, fx, fy, 0.1, fh, G.GS_AZUL)
+
+
+# ── pauta em grade de até 12 ──
+
+def s_pauta_v2(ctx, sl):
+    """Pauta em grade num slide só: até 9 itens em 3x3 e de 10 a 12 em 4x3. Só parte
+    acima de 12, em páginas equilibradas. Item longo demais para a grade (redação inteira
+    do edital) vai para a lista numerada, que mede e pagina."""
+    itens = _itens_pauta(sl)
+    if not itens:
+        ctx.aviso('pauta sem itens; slide ignorado.')
+        return
+    if len(itens) < 4:
+        _pauta_lista(ctx, sl, itens)
+        return
+    grupos = _paginas_equilibradas(itens, 12)
+    planos = []
+    # Com 10 a 12 itens o subtítulo sai e a contagem vai para o kicker: a grade 4x3 precisa da altura.
+    kick = 'ORDEM DO DIA' if len(itens) <= 9 else f'ORDEM DO DIA  •  {len(itens)} ITENS NA ORDEM DO EDITAL'
+    for pi, g in enumerate(grupos):
+        sub = f'{len(itens)} itens, apresentados na ordem do edital' if (pi == 0 and len(itens) <= 9) else None
+        plano = _plano_pauta(g, _y_conteudo('Pauta da assembleia', sub, pi > 0))
+        if plano is None:
+            _pauta_lista(ctx, sl, itens)
+            return
+        planos.append((sub, plano))
+    base_num = 0
+    for pi, (g, (sub, p)) in enumerate(zip(grupos, planos)):
+        s = ctx.novo()
+        y = cabecalho(ctx, s, None, 'Pauta da assembleia', sub, cont=pi > 0, kicker=kick)
+        _desenhar_pauta(s, g, y, p, base_num)
+        base_num += len(g)
+
+
+def _plano_pauta(grupo, y):
+    """Medidas da grade: colunas, altura do cartão e o maior corpo que cabe. Tenta o número
+    ao lado do texto; se não couber, o número sobe para a linha do chip e o texto ganha a
+    largura toda. Devolve None quando nem assim cabe em 14pt."""
+    n = len(grupo)
+    ncol = 2 if n <= 4 else (3 if n <= 9 else 4)
+    nlin = math.ceil(n / ncol)
+    cw = (W - 0.2 * (ncol - 1)) / ncol
+    gv = 0.18 if ncol <= 3 else 0.14
+    hc = min(1.75, (BASE - y - gv * (nlin - 1)) / nlin)
+    numsz, numw = 36, 0.72
+    # Quatro colunas não comportam o número ao lado: vai direto para o número em cima, e o
+    # subtítulo (informação de apoio) pode descer a 12pt, como na AGE de referência.
+    smin = MIN_PT if ncol <= 3 else 12
+    for modo in (('lado', 'topo') if ncol <= 3 else ('topo',)):
+        tx = 0.25 + numw if modo == 'lado' else 0.2
+        tw = cw - tx - 0.2
+
+        def sub_t(t):
+            return max(smin, min(15, t - 3))
+
+        def h_txt(t, tt, e, sb, tw=tw, modo=modo):
+            h = alt(tt, t, tw, True) + (0.06 + alt(sb, sub_t(t), tw) if sb else 0)
+            return h + (0.4 if e else 0) if modo == 'lado' else h + lh(22, True) + 0.06
+        ts = _maior_que_cabe(range(20, MIN_PT - 1, -1),
+                             lambda t: all(h_txt(t, tt, e, sb) + 0.22 <= hc for tt, e, sb in grupo))
+        if ts:
+            return {'ncol': ncol, 'cw': cw, 'hc': hc, 'gv': gv, 'modo': modo, 'tx': tx, 'tw': tw, 'ts': ts,
+                    'ss': sub_t(ts), 'numsz': numsz, 'numw': numw, 'h_txt': h_txt}
+    return None
+
+
+def _desenhar_pauta(s, grupo, y, p, base_num):
+    ncol, cw, hc, tx, tw, ts, ss = p['ncol'], p['cw'], p['hc'], p['tx'], p['tw'], p['ts'], p['ss']
+    for i, (tt, e, sb) in enumerate(grupo):
+        x = X0 + (i % ncol) * (cw + 0.2)
+        yy = y + (i // ncol) * (hc + p['gv'])
+        cor = ETIQUETAS.get(e, G.GS_AZUL_CLA)
+        cartao(s, x, yy, cw, hc)
+        num = f'{base_num + i + 1:02d}'
+        ty = yy + (hc - p['h_txt'](ts, tt, e, sb)) / 2
+        if p['modo'] == 'lado':
+            # Chip sempre no pé do cartão e texto centrado no espaço de cima: a grade fica alinhada.
+            G.text(s, x + 0.25, yy, p['numw'] - 0.05, hc, num, p['numsz'], cor, True, anchor=MSO_ANCHOR.MIDDLE)
+            fim_txt = yy + hc - (0.4 + 0.11 if e else 0.11)
+            htx = p['h_txt'](ts, tt, '', sb)
+            tit_desc(s, x + tx, yy + 0.11 + max(0, (fim_txt - yy - 0.11 - htx) / 2), tw, tt, ts, sb, ss, gap=0.06)
+            if e:
+                chip(s, x + tx, yy + hc - 0.14 - 0.28, e, cor, 11, 0.28)
+        else:
+            G.text(s, x + tx, ty, 0.9, lh(22, True), num, 22, cor, True)
+            if e:
+                chip(s, x + cw - 0.2 - largura_chip(e, 11), ty + (lh(22, True) - 0.28) / 2, e, cor, 11, 0.28)
+            tit_desc(s, x + tx, ty + lh(22, True) + 0.06, tw, tt, ts, sb, ss, gap=0.06)
+
+
+# ── tópicos: até 6 num slide ──
+
+def _alt_topico_compacto(t, size, w):
+    return max(0.56, alt(t, size, w - 0.85) + 0.3)
+
+
+def _alt_topicos_compactos(topicos, w, size, gap=0.12):
+    return sum(_alt_topico_compacto(t, size, w) for t in topicos) + gap * max(0, len(topicos) - 1)
+
+
+def _cartoes_compactos(s, topicos, x, y, w, size, cor=G.GS_AZUL_CLA, gap=0.12):
+    """Cartões de tópico mais baixos, para 5 ou 6 tópicos longos caberem num slide."""
+    tw = w - 0.85
+    for t in topicos:
+        h = _alt_topico_compacto(t, size, w)
+        cartao(s, x, y, w, h)
+        G.rect(s, x, y, 0.1, h, cor)
+        ht = alt(t, size, tw)
+        ty = y + (h - ht) / 2
+        marcador(s, x + 0.35, ty, size, cor)
+        caixa(s, x + 0.62, ty, tw, ht, t, size, G.TXT)
+        y += h + gap
+    return y
+
+
+def s_topicos_v2(ctx, sl):
+    """Tópicos: até 6 sempre num slide (cartões compactos quando os normais não cabem);
+    acima disso, páginas equilibradas de até 6. Sete tópicos curtos que cabem ficam juntos."""
+    tops = [_nb(t) for t in _lista(sl.get('topicos') or sl.get('itens'))]
+    if not tops:
+        ctx.aviso('slide de tópicos sem tópicos; slide ignorado.')
+        return
+    sub, tit = sl.get('subtitulo'), sl.get('titulo')
+    disp1 = BASE - _y_conteudo(tit, sub)
+    if len(tops) <= 6 or (len(tops) == 7 and _alt_topicos(tops, W, MIN_PT) <= disp1):
+        pags = [tops]
+    else:
+        pags = _paginas_equilibradas(tops, 6)
+        dispn = BASE - _y_conteudo(tit, None, True)
+        if any(_alt_topicos_compactos(pg, W, MIN_PT) > (disp1 if i == 0 else dispn) for i, pg in enumerate(pags)):
+            hs = [_alt_topico_compacto(t, MIN_PT, W) for t in tops]
+            pags = [[tops[i] for i in g] for g in _agrupar(hs, dispn, 0.12, 6)]
+    for pi, pg in enumerate(pags):
+        s = ctx.novo()
+        y = cabecalho(ctx, s, sl, tit, sub if pi == 0 else None, cont=pi > 0)
+        disp = BASE - y
+        size = _maior_que_cabe(range(26, MIN_PT - 1, -1), lambda t: _alt_topicos(pg, W, t) <= disp)
+        if size is not None:
+            # Poucos tópicos: cartões mais altos e mais espaçados, sem deixar meio slide vazio.
+            sobra = disp * 0.82 - _alt_topicos(pg, W, size)
+            extra = max(0.0, min(0.45, sobra / len(pg)))
+            _cartoes_topicos(s, pg, X0, y, W, size, gap=0.16 + extra * 0.4, extra=extra)
+            continue
+        size = _maior_que_cabe(range(22, MIN_PT - 1, -1), lambda t: _alt_topicos_compactos(pg, W, t) <= disp)
+        if size is None:
+            size = MIN_PT
+            ctx.aviso('tópicos longos demais para o slide; resuma o texto.')
+        _cartoes_compactos(s, pg, X0, y, W, size)
+
+
+# ── tabela até 15 linhas, com chips ──
+
+def _chips_tabela(ctx, sl, nc):
+    """Lê o campo chips: (coluna, mapa texto sem acento para cor). Sem "cores", usa o mapa
+    padrão de criticidade (crítica, alta, média, baixa)."""
+    ch = sl.get('chips')
+    if ch in (None, '', False, {}):
+        return None, {}
+    if not isinstance(ch, dict):
+        ctx.aviso('o campo chips da tabela não está no formato {"coluna":N}; a tabela saiu sem chips.')
+        return None, {}
+    col = _num(ch.get('coluna'))
+    if col is None or not float(col).is_integer() or not 0 <= int(col) < nc:
+        ctx.aviso('chips da tabela com coluna inexistente; a tabela saiu sem chips.')
+        return None, {}
+    cores = ch.get('cores') if isinstance(ch.get('cores'), dict) and ch.get('cores') else CHIPS_PADRAO
+    mapa = {}
+    for k, v in cores.items():
+        cor = _cor_nomeada(v)
+        if cor is None:
+            ctx.aviso(f'a cor "{_limpa(v)}" dos chips não existe; usei azul.')
+            cor = G.GS_AZUL_CLA
+        mapa[_sem_acento(_limpa(k)).strip()] = cor
+    return int(col), mapa
+
+
+def _cor_chip(txt, mapa):
+    k = _sem_acento(txt).strip()
+    if k in mapa:
+        return mapa[k]
+    if k in CHIPS_PADRAO:
+        return CORES_NOMEADAS[CHIPS_PADRAO[k]]
+    return _cor_status(txt)
+
+
+def s_tabela_v2(ctx, sl):
+    """Tabela que só continua em outro slide quando não cabe: até 15 linhas por slide.
+    Acima de 10 linhas no slide a letra desce até 12pt e as linhas ficam baixas, como a
+    lista de não conformidades da AGE de referência. O campo chips pinta uma coluna como
+    etiqueta colorida (criticidade, situação)."""
+    def cel(c):
+        return _nb(_valor_txt(c))
+    cols = _lista(sl.get('colunas'))
+    linhas_ = []
+    for ln in (sl.get('linhas') or []) if isinstance(sl.get('linhas'), list) else []:
+        if isinstance(ln, (list, tuple)):
+            linhas_.append([cel(c) for c in ln])
+        elif isinstance(ln, dict):
+            linhas_.append([cel(v) for v in ln.values()])
+    if not linhas_:
+        ctx.aviso('tabela sem linhas; slide ignorado.')
+        return
+    tot = sl.get('total')
+    total = [cel(c) for c in tot] if isinstance(tot, (list, tuple)) and tot else None
+    nc = max([len(cols)] + [len(r) for r in linhas_] + ([len(total)] if total else []))
+    if nc > 8:
+        ctx.aviso('tabela com mais de 8 colunas; só as 8 primeiras entraram.')
+        nc = 8
+    cols = (cols + [''] * nc)[:nc]
+    linhas_ = [(r + [''] * nc)[:nc] for r in linhas_]
+    if total:
+        total = (total + [''] * nc)[:nc]
+    chip_col, mapa = _chips_tabela(ctx, sl, nc)
+    if chip_col is not None:
+        for r in linhas_:
+            r[chip_col] = r[chip_col].upper()
+    obs = _limpa(sl.get('observacao'))
+    sub = sl.get('subtitulo')
+    titulo = sl.get('titulo') or 'Tabela'
+    todas = linhas_ + ([total] if total else [])
+    numcol = [all(_eh_numero(r[c]) or not r[c] for r in todas) and any(r[c] for r in linhas_) for c in range(nc)]
+    if nc > 1:
+        numcol[0] = False
+    if chip_col is not None:
+        numcol[chip_col] = False
+    # Coluna de texto curto (Nº, sigla) também fica na largura natural; a sobra vai para as de texto.
+    fixo = [numcol[c] or c == chip_col or all(len(r[c]) <= 6 for r in todas) for c in range(nc)]
+    if all(fixo):
+        fixo = [numcol[c] or c == chip_col for c in range(nc)]
+    ho = _alt_obs(obs)
+    topo1, topon = _y_conteudo(titulo, sub), _y_conteudo(titulo, None, True)
+
+    def csz(t):
+        return max(10, min(12, t - 2))
+
+    def chh(t):
+        return lh(csz(t), True) + 0.05
+
+    def cabsz(dens):
+        return 13 if dens else 14
+
+    def larguras(t, dens):
+        cs = cabsz(dens)
+        nat = []
+        for c in range(nc):
+            wcab = larg(cols[c].upper(), cs, True) / 0.9 + 0.55
+            if c == chip_col:
+                wcel = max([largura_chip(r[c], csz(t)) for r in linhas_ if r[c]] or [0]) + 0.5
+                wtot = larg(total[c], t, True) / 0.9 + 0.55 if total else 0
+                nat.append(max(wcab, wcel, wtot))
+            else:
+                nat.append(max([wcab] + [larg(r[c], t, numcol[c] or r is total) / 0.9 + 0.55 for r in todas]))
+        if sum(nat) <= W:
+            livres = [c for c in range(nc) if not fixo[c]] or list(range(nc))
+            extra = W - sum(nat)
+            for c in livres:
+                nat[c] += extra / len(livres)
+            return nat
+        fixos = sum(nat[c] for c in range(nc) if fixo[c])
+        livres = [c for c in range(nc) if not fixo[c]]
+        if not livres or fixos > W * 0.75:
+            return [W / nc] * nc
+        soma_l = sum(nat[c] for c in livres)
+        ws = [nat[c] if fixo[c] else max(1.3, (W - fixos) * nat[c] / soma_l) for c in range(nc)]
+        # O mínimo de 1,3 pol pode passar da largura útil: a diferença sai da coluna livre mais larga.
+        excesso = sum(ws) - W
+        if excesso > 0.001:
+            maior = max(livres, key=lambda c: ws[c])
+            ws[maior] = max(1.0, ws[maior] - excesso)
+        return ws
+
+    def alturas(t, ws, dens, por):
+        pad = 0.08 if dens else 0.26
+        hmin = 0.0 if dens else max(0.46, min(0.92, (BASE - topo1) * 0.55 / max(1, por)))
+        out = []
+        for r in linhas_:
+            h = max([alt(r[c], t, ws[c] - 0.5, numcol[c]) for c in range(nc) if c != chip_col] or [lh(t)]) + pad
+            if chip_col is not None and r[chip_col]:
+                h = max(h, chh(t) + (0.05 if dens else 0.2))
+            out.append(max(hmin, h))
+        return out
+
+    def h_total(t, ws, dens):
+        if not total:
+            return 0
+        return max(0.5 if dens else 0.66, max(alt(total[c], t, ws[c] - 0.5, True) for c in range(nc)) + (0.16 if dens else 0.28))
+
+    def h_cab(ws, dens):
+        return max(0.4 if dens else 0.52, max(alt(cols[c].upper(), cabsz(dens), ws[c] - 0.5, True) for c in range(nc)) + 0.16)
+
+    n = len(linhas_)
+    plano = None
+    npags = math.ceil(n / LINHAS_TABELA_SLIDE)
+    while plano is None and npags <= n:
+        por = math.ceil(n / npags)
+        blocos = [list(range(i, min(i + por, n))) for i in range(0, n, por)]
+        # Até 10 linhas: primeiro o desenho folgado (22 a 14pt), depois o compacto sem descer de
+        # 14pt. Acima de 10: só o compacto, de 16 a 12pt. Só então abre mais um slide.
+        for dens, faixa_t in ([(True, range(16, MIN_PT_TABELA - 1, -1))] if por > 10 else
+                              [(False, range(22, MIN_PT - 1, -1)), (True, range(16, MIN_PT - 1, -1))]):
+
+            def cabe(t, por=por, dens=dens, blocos=blocos):
+                ws = larguras(t, dens)
+                hs_ = alturas(t, ws, dens, por)
+                fim = (h_total(t, ws, dens) + 0.1 if total else 0) + (ho + 0.25 if ho else 0)
+                for pi, b in enumerate(blocos):
+                    topo = topo1 if pi == 0 else topon
+                    resto = fim if pi == len(blocos) - 1 else 0.45
+                    if h_cab(ws, dens) + sum(hs_[i] for i in b) + resto > BASE - topo:
+                        return False
+                return True
+            t = _maior_que_cabe(faixa_t, cabe)
+            if t:
+                plano = (t, dens, blocos, por)
+                break
+        if plano is None:
+            npags += 1
+    if plano is None:
+        ctx.aviso('tabela com texto longo demais nas células; resuma para caber.')
+        plano = (MIN_PT_TABELA, True, [[i] for i in range(n)], 1)
+    size, dens, pags, por = plano
+    ws = larguras(size, dens)
+    hs = alturas(size, ws, dens, por)
+    hc = h_cab(ws, dens)
+    cs = cabsz(dens)
+    for pi, idxs in enumerate(pags):
+        s = ctx.novo()
+        y = cabecalho(ctx, s, sl, titulo, sub if pi == 0 else None, cont=pi > 0)
+        x = X0
+        cartao(s, X0, y, W, hc, G.GS_AZUL, 0.12)
+        for c in range(nc):
+            al = PP_ALIGN.CENTER if c == chip_col else (PP_ALIGN.RIGHT if numcol[c] else PP_ALIGN.LEFT)
+            caixa(s, x + 0.25, y, ws[c] - 0.5, hc, cols[c].upper(), cs, G.TXT, True, al, MSO_ANCHOR.MIDDLE)
+            x += ws[c]
+        yy = y + hc
+        for k, i in enumerate(idxs):
+            r = linhas_[i]
+            if k % 2 == 1:
+                G.rect(s, X0, yy, W, hs[i], G.CARD)
+            x = X0
+            for c in range(nc):
+                if c == chip_col:
+                    if r[c]:
+                        wc = largura_chip(r[c], csz(size))
+                        chip(s, x + (ws[c] - wc) / 2, yy + (hs[i] - chh(size)) / 2, r[c], _cor_chip(r[c], mapa),
+                             csz(size), chh(size))
+                else:
+                    caixa(s, x + 0.25, yy, ws[c] - 0.5, hs[i], r[c], size, G.TXT if c == 0 or numcol[c] else G.TXT2,
+                          numcol[c], PP_ALIGN.RIGHT if numcol[c] else PP_ALIGN.LEFT, MSO_ANCHOR.MIDDLE)
+                x += ws[c]
+            yy += hs[i]
+        G.rect(s, X0, yy, W, 0.02, G.LINE)
+        if pi == len(pags) - 1:
+            if total:
+                ht = h_total(size, ws, dens)
+                yy += 0.1
+                cartao(s, X0, yy, W, ht, G.AMBER, 0.12)
+                x = X0
+                for c in range(nc):
+                    caixa(s, x + 0.25, yy, ws[c] - 0.5, ht, total[c].upper() if c == 0 else total[c], size, G.DARKTXT,
+                          True, PP_ALIGN.RIGHT if numcol[c] else PP_ALIGN.LEFT, MSO_ANCHOR.MIDDLE)
+                    x += ws[c]
+                yy += ht
+            if obs:
+                _faixa_obs(s, yy + 0.25, obs)
+        else:
+            G.text(s, X0 + 0.25, yy + 0.12, W, 0.35, 'continua no próximo slide  ›', 16, G.TXT3)
+
+
+# ── galeria até 8 ──
+
+def _galeria_ampla(s, fotos, x0, y0, w, h):
+    """Grade de 1 a 8 fotos: até 6 como antes; 7 e 8 em 4 colunas e 2 linhas, recorte
+    central. Legenda embaixo de cada foto, medida."""
+    filas = FILAS_GALERIA[len(fotos)]
+    maxc = max(filas)
+    gap = 0.18 if maxc <= 3 else 0.14
+    hl = (h - gap * (len(filas) - 1)) / len(filas)
+    cw = (w - gap * (maxc - 1)) / maxc
+    k = 0
+    for li, nf in enumerate(filas):
+        xs = x0 + (w - (cw * nf + gap * (nf - 1))) / 2
+        yl = y0 + li * (hl + gap)
+        tl = 16 if len(filas) == 1 and nf <= 2 else (15 if maxc <= 3 else 14)
+        hleg = max([min(alt(lg, tl, cw - 0.3), 2 * lh(tl)) for _, lg in fotos[k:k + nf] if lg] or [0])
+        for j in range(nf):
+            img, leg = fotos[k + j]
+            x = xs + j * (cw + gap)
+            ha = hl - (hleg + 0.2 if hleg else 0)
+            por_imagem(s, img, x, yl, cw, ha)
+            if hleg:
+                G.rect(s, x, yl + ha, cw, hleg + 0.2, G.CARD)
+            if leg:
+                caixa(s, x + 0.15, yl + ha + 0.1, cw - 0.3, hleg, leg, tl, G.TXT2, align=PP_ALIGN.CENTER)
+        k += nf
+
+
+def s_fotos_v2(ctx, sl):
+    """Galeria de até 8 fotos por slide (7 e 8 em 4x2); acima disso, páginas equilibradas."""
+    itens = []
+    for f in (sl.get('fotos') or []) if isinstance(sl.get('fotos'), list) else []:
+        fid, leg = (f.get('id'), f.get('legenda')) if isinstance(f, dict) else (f, None)
+        if not _limpa(fid):
+            continue
+        img = ctx.foto(fid)
+        if img:
+            itens.append((img, _nb(_limpa(leg))))
+    if not itens:
+        ctx.aviso('slide de fotos sem nenhuma foto disponível; slide ignorado.')
+        return
+    sub = sl.get('subtitulo')
+    for pi, grupo in enumerate(_paginas_equilibradas(itens, 8)):
+        s = ctx.novo()
+        y = cabecalho(ctx, s, sl, sl.get('titulo') or 'Fotos', sub if pi == 0 else None, cont=pi > 0)
+        _galeria_ampla(s, grupo, X0, y, W, BASE - y)
+
+
+# ── gráfico de colunas agrupadas ──
+
+def _compacto(v) -> str:
+    """405000 vira 405k; 1500 vira 1,5k; 1200000 vira 1,2 mi."""
+    a = abs(v)
+    sinal = '-' if v < 0 else ''
+    if a >= 1e6:
+        t, suf = a / 1e6, ' mi'
+    elif a >= 1e3:
+        t, suf = a / 1e3, 'k'
+    else:
+        t, suf = a, ''
+    txt = f'{t:.0f}' if (t >= 100 or abs(t - round(t)) < 0.05) else f'{t:.1f}'.replace('.', ',')
+    return sinal + txt + suf
+
+
+def _passo_eixo(vmin, vmax, alvo=5):
+    bruto = (vmax - vmin) / alvo or 1
+    mag = 10 ** math.floor(math.log10(bruto))
+    for m in (1, 2, 2.5, 5, 10):
+        if m * mag >= bruto - 1e-9:
+            return m * mag
+    return 10 * mag
+
+
+def s_grafico_colunas(ctx, sl):
+    """Colunas agrupadas desenhadas com formas (sem gráfico nativo, para o PDF sair igual
+    no LibreOffice): eixo em reais compacto, linhas de grade, legenda, rótulo de valor em
+    cima da coluna quando cabe, negativo abaixo do zero em vermelho, cartões à direita e
+    faixa de nota embaixo. Como o slide 6 da AGE de referência."""
+    cats = [_nb(c) for c in _lista(sl.get('categorias'))]
+    series = []
+    for sr in (sl.get('series') or []) if isinstance(sl.get('series'), list) else []:
+        if isinstance(sr, dict):
+            vals = sr.get('valores') if isinstance(sr.get('valores'), list) else []
+            series.append((_nb(_limpa(sr.get('nome'))) or f'Série {len(series) + 1}', [_num(v) for v in vals]))
+    if not cats or not series:
+        ctx.aviso('gráfico de colunas sem categorias ou sem séries; slide ignorado.')
+        return
+    if len(cats) > 13:
+        ctx.aviso('gráfico de colunas com mais de 13 categorias; só as 13 primeiras entraram.')
+        cats = cats[:13]
+    if len(series) > 3:
+        ctx.aviso('gráfico de colunas com mais de 3 séries; só as 3 primeiras entraram.')
+        series = series[:3]
+    nc_, ns = len(cats), len(series)
+    for nm, vals in series:
+        if len(vals) != nc_:
+            ctx.aviso(f'a série "{nm}" tem {len(vals)} valores para {nc_} categorias; confira.')
+    series = [(nm, (vals + [None] * nc_)[:nc_]) for nm, vals in series]
+    todos = [v for _, vals in series for v in vals if v is not None]
+    if not todos:
+        ctx.aviso('gráfico de colunas sem nenhum valor numérico; slide ignorado.')
+        return
+    brutos = [c for c in ((sl.get('cards') or []) if isinstance(sl.get('cards'), list) else [])
+              if isinstance(c, dict) and (_limpa(c.get('rotulo')) or _valor_txt(c.get('valor')))]
+    if len(brutos) > 4:
+        ctx.aviso('gráfico de colunas com mais de 4 cartões; só os 4 primeiros entraram.')
+        brutos = brutos[:4]
+    cards = [(_limpa(c.get('rotulo')).upper(), _nb(_valor_txt(c.get('valor'))) or '[conferir]', _nb(_limpa(c.get('sub'))),
+              _negativo(c.get('valor'))) for c in brutos]
+    nota = _nb(_limpa(sl.get('nota')))
+
+    s = ctx.novo()
+    y = cabecalho(ctx, s, sl, sl.get('titulo'), sl.get('subtitulo'))
+    ho = _alt_obs(nota, rotulo='NOTA')
+    fim = BASE - (ho + 0.22 if ho else 0)
+    gx0 = X0
+    # Cartões com explicação longa (negativo do mês) ganham coluna mais larga; se nem assim
+    # cabem em 14pt ao lado do gráfico, o gráfico usa a largura toda e os cartões vão para um
+    # painel no slide seguinte, sem cortar texto.
+    wc = 5.2 if any(len(sb) > 40 for _, _, sb, _ in cards) else 4.13
+    vs = _vs_cartoes_grafico(cards, wc, fim - y) if cards else None
+    depois = bool(cards) and vs is None
+    gx1 = X0 + W - wc - 0.35 if (cards and not depois) else X0 + W
+    if cards and not depois:
+        _cartoes_grafico(s, cards, X0 + W - wc, y, wc, fim, vs)
+
+    # Legenda.
+    xl = gx0
+    for k, (nm, _) in enumerate(series):
+        G.rect(s, xl, y + 0.06, 0.2, 0.2, CORES_SERIES[k], True, 0.2)
+        wn = larg(nm, 16, True) / 0.92 + 0.05
+        G.text(s, xl + 0.3, y, wn, lh(16, True), nm, 16, G.TXT, True)
+        xl += 0.3 + wn + 0.35
+
+    vmin, vmax = min(0.0, min(todos)), max(0.0, max(todos))
+    passo = _passo_eixo(vmin, vmax)
+    topo_v = math.ceil(vmax / passo - 1e-9) * passo
+    base_v = math.floor(vmin / passo + 1e-9) * passo
+    if topo_v == base_v:
+        topo_v = base_v + passo
+    ticks = []
+    v = base_v
+    while v <= topo_v + passo * 0.01:
+        ticks.append(round(v, 6))
+        v += passo
+    # Negativo pequeno (menos de meio passo) não puxa o eixo um passo inteiro para baixo:
+    # o gráfico termina um pouco abaixo do menor valor e a marca de baixo sai.
+    if vmin < 0 and vmin - base_v > passo * 0.5:
+        base_v = vmin - passo * 0.2
+        ticks = [t for t in ticks if t >= base_v - 1e-9]
+    rot_eixo = ['R$ 0' if abs(t) < 1e-9 else 'R$ ' + _compacto(t) for t in ticks]
+    aw = max(larg(r, 14) for r in rot_eixo) / 0.92 + 0.05
+    px0, px1 = gx0 + aw + 0.15, gx1
+    pw = px1 - px0
+    gw = pw / nc_
+    inner = gw * 0.76
+    bgap = 0.04 if ns > 1 else 0
+    bw = (inner - bgap * (ns - 1)) / ns
+
+    # Rótulo de categoria: o maior que cabe na largura do grupo; se nem 11pt cabe, em duas filas alternadas.
+    cs = _maior_que_cabe(range(14, 10, -1), lambda t: all(larg(c, t) / 0.92 <= gw * 0.96 for c in cats))
+    duas = cs is None
+    if duas:
+        cs = _maior_que_cabe(range(14, 10, -1), lambda t: all(larg(c, t) / 0.92 <= gw * 1.92 for c in cats)) or 11
+    hcat = lh(cs) * (2 if duas else 1) + 0.04
+    # Rótulo de valor: só quando cabe na largura da coluna.
+    lbs = [[_compacto(v) if v is not None else '' for v in vals] for _, vals in series]
+    ls = _maior_que_cabe(range(14, 10, -1), lambda t: all(larg(x, t, True) / 0.92 <= bw + bgap for r in lbs for x in r if x))
+    hls = lh(ls, True) + 0.04 if ls else 0
+    ptop = y + lh(16, True) + 0.25 + hls
+    pbot = fim - hcat - 0.12 - (hls if vmin < 0 else 0)
+    ph = pbot - ptop
+
+    def yv(v):
+        return ptop + (topo_v - v) / (topo_v - base_v) * ph
+
+    for t, r in zip(ticks, rot_eixo):
+        zero = abs(t) < 1e-9
+        G.rect(s, px0, yv(t) - (0.01 if zero else 0.006), pw, 0.02 if zero else 0.012, G.LINE if zero else G.CARD2)
+        G.text(s, gx0, yv(t) - lh(14) / 2, aw, lh(14), r, 14, G.TXT3, align=PP_ALIGN.RIGHT, anchor=MSO_ANCHOR.MIDDLE)
+    y0 = yv(0)
+    for i in range(nc_):
+        xg = px0 + i * gw + (gw - inner) / 2
+        for k, (_, vals) in enumerate(series):
+            v = vals[i]
+            if v is None:
+                continue
+            xb = xg + k * (bw + bgap)
+            hb = max(0.02, abs(yv(v) - y0))
+            neg = v < 0
+            G.rect(s, xb, y0 if neg else y0 - hb, bw, hb, G.RED if neg else CORES_SERIES[k])
+            if ls:
+                lx, lw_ = xb - bgap / 2, bw + bgap
+                ly = y0 + hb + 0.03 if neg else y0 - hb - lh(ls, True) - 0.03
+                G.text(s, lx, ly, lw_, lh(ls, True), lbs[k][i], ls, G.RED if neg else G.TXT, True, PP_ALIGN.CENTER)
+        if duas:
+            fila = i % 2
+            G.text(s, px0 + i * gw - gw / 2, pbot + (hls if vmin < 0 else 0) + 0.08 + fila * lh(cs), 2 * gw, lh(cs),
+                   cats[i], cs, G.TXT2, align=PP_ALIGN.CENTER)
+        else:
+            G.text(s, px0 + i * gw, pbot + (hls if vmin < 0 else 0) + 0.08, gw, lh(cs), cats[i], cs, G.TXT2,
+                   align=PP_ALIGN.CENTER)
+    if ho:
+        _faixa_obs(s, BASE - ho, nota, cor=G.AMBER, rotulo='NOTA')
+    if depois:
+        s_painel(ctx, {'tipo': 'painel', 'numero': sl.get('numero'), 'titulo': sl.get('titulo'), '_continuacao': True,
+                       'cards': [dict(c, cor=c.get('cor') or ('vermelho' if _negativo(c.get('valor')) else None)) for c in brutos]})
+
+
+def _h_cartao_grafico(vs, c, tw):
+    rot, v, sb, _ = c
+    return 0.14 + (lh(13, True) + 0.06 if rot else 0) + lh(vs, True) + (0.04 + alt(sb, 14, tw) if sb else 0) + 0.14
+
+
+def _vs_cartoes_grafico(cards, w, disp):
+    """Maior valor (24 a 16pt) com que os cartões cabem ao lado do gráfico; None se não cabem."""
+    n = len(cards)
+    return _maior_que_cabe(range(24, 15, -1),
+                           lambda t: sum(_h_cartao_grafico(t, c, w - 0.45) for c in cards) + 0.15 * (n - 1) <= disp)
+
+
+def _cartoes_grafico(s, cards, x, y, w, fim, vs):
+    """Cartões de valor ao lado do gráfico (saldo no fim de cada mês). O último é o atual,
+    em celeste; valor negativo em vermelho."""
+    n = len(cards)
+    tw = w - 0.45
+
+    def h_card(vs, c):
+        return _h_cartao_grafico(vs, c, tw)
+    hmax = (fim - y - 0.15 * (n - 1)) / n
+    yy = y
+    for k, c in enumerate(cards):
+        rot, v, sb, neg = c
+        h = min(hmax, max(h_card(vs, c), 0.92))
+        cor = G.RED if neg else (G.AMBER if k == n - 1 else G.GS_AZUL_CLA)
+        cartao(s, x, yy, w, h, corner=0.08)
+        G.rect(s, x, yy, 0.1, h, cor)
+        ty = yy + (h - h_card(vs, c)) / 2 + 0.14
+        if rot:
+            G.text(s, x + 0.3, ty, tw, lh(13, True), rot, ajusta(rot, tw, 13, True, 11), G.TXT3, True)
+            ty += lh(13, True) + 0.06
+        G.text(s, x + 0.3, ty, tw, lh(vs, True), v, ajusta(v, tw, vs, True, 14), cor, True)
+        ty += lh(vs, True)
+        if sb:
+            caixa(s, x + 0.3, ty + 0.04, tw, alt(sb, 14, tw), sb, 14, G.TXT2)
+        yy += h + 0.15
+
+
+# ── painel de indicadores ──
+
+def s_painel(ctx, sl):
+    """Painel de resultado: 2 a 6 cartões (até 3 por linha) com rótulo, valor grande e
+    explicação de até 160 caracteres, e faixa celeste com até 3 pilares embaixo. Como o
+    slide 5 da AGE de referência. Tudo medido: a letra desce até caber."""
+    cards = []
+    for c in (sl.get('cards') or []) if isinstance(sl.get('cards'), list) else []:
+        if isinstance(c, dict):
+            r, v = _limpa(c.get('rotulo')).upper(), _nb(_valor_txt(c.get('valor')))
+            if r or v:
+                cor = _cor_nomeada(c.get('cor')) if _limpa(c.get('cor')) else None
+                if cor is None and _negativo(c.get('valor')):
+                    cor = G.RED
+                cards.append({'rot': r, 'val': v or '[conferir]', 'sub': _nb(_limpa(c.get('sub'))), 'cor': cor,
+                              'dest': bool(c.get('destaque'))})
+    if not cards:
+        ctx.aviso('painel sem cartões; slide ignorado.')
+        return
+    if len(cards) > 6:
+        ctx.aviso('painel com mais de 6 cartões; só os 6 primeiros entraram.')
+        cards = cards[:6]
+    for k, c in enumerate(cards):
+        c['cor'] = c['cor'] or (G.AMBER if c['dest'] else CORES_PAINEL[k % len(CORES_PAINEL)])
+    faixa = []
+    for f in (sl.get('faixa') or []) if isinstance(sl.get('faixa'), list) else []:
+        if isinstance(f, dict) and (_limpa(f.get('rotulo')) or _valor_txt(f.get('valor'))):
+            faixa.append((_limpa(f.get('rotulo')).upper(), _nb(_valor_txt(f.get('valor')))))
+    if len(faixa) > 3:
+        ctx.aviso('faixa do painel com mais de 3 pilares; só os 3 primeiros entraram.')
+        faixa = faixa[:3]
+    filas = {1: [1], 2: [2], 3: [3], 4: [2, 2], 5: [3, 2], 6: [3, 3]}[len(cards)]
+    s = ctx.novo()
+    y = cabecalho(ctx, s, sl, sl.get('titulo'), sl.get('subtitulo'), cont=bool(sl.get('_continuacao')))
+    pw = W / max(1, len(faixa))
+    vf0 = min([ajusta(v, pw - 0.4, 34, True, 20) for _, v in faixa if v] or [34])
+
+    def h_faixa(vf):
+        return (0.14 + lh(14, True) + 0.04 + lh(vf, True) + 0.12) if faixa else 0
+    linhas_c, k = [], 0
+    for nf in filas:
+        linhas_c.append(cards[k:k + nf])
+        k += nf
+
+    def tw_(nf):
+        return (W - 0.2 * (nf - 1)) / nf - 0.55
+
+    def h_card(c, nf, vs, ss):
+        tw = tw_(nf)
+        hr = alt(c['rot'], 14, tw, True) if c['rot'] else 0
+        return 0.16 + hr + (0.04 if hr else 0) + lh(vs, True) + (0.04 + alt(c['sub'], ss, tw) if c['sub'] else 0) + 0.16
+
+    def h_linhas(vs, ss):
+        return [max(h_card(c, len(ln), vs, ss) for c in ln) for ln in linhas_c]
+    # Valor dos cartões, corpo da explicação e valor da faixa descem juntos até tudo caber.
+    combos = [(a, b, min(vf0, c)) for a, b, c in [(34, 16, 34), (32, 16, 34), (30, 15, 32), (28, 15, 30), (26, 14, 28),
+                                                  (24, 14, 26), (22, 14, 24), (20, 14, 22), (18, 14, 20)]]
+
+    def cabe(cb):
+        return sum(h_linhas(cb[0], cb[1])) + 0.2 * (len(filas) - 1) <= BASE - y - (h_faixa(cb[2]) + 0.2 if faixa else 0)
+    vs, ss, vf = next((cb for cb in combos if cabe(cb)), combos[-1])
+    hfx = h_faixa(vf)
+    disp = BASE - y - (hfx + 0.2 if faixa else 0)
+    hs = h_linhas(vs, ss)
+    if sum(hs) + 0.2 * (len(filas) - 1) > disp + 0.01:
+        ctx.aviso('painel com texto demais nos cartões; resuma a explicação.')
+    # Sobra de altura vai para os cartões, até 1,6 pol cada, para não ficar meio slide vazio.
+    sobra = disp - sum(hs) - 0.2 * (len(filas) - 1)
+    if sobra > 0:
+        hs = [min(max(h, 1.6), h + sobra / len(hs)) for h in hs]
+    yy = y
+    for ln, h in zip(linhas_c, hs):
+        nf = len(ln)
+        cw = (W - 0.2 * (nf - 1)) / nf
+        tw = tw_(nf)
+        # Valor no mesmo tamanho em toda a linha (o menor que faz todos caberem numa linha só).
+        vl = min(ajusta(c['val'], tw, vs, True, 16) for c in ln)
+        for j, c in enumerate(ln):
+            x = X0 + j * (cw + 0.2)
+            cartao(s, x, yy, cw, h, G.CARD2 if c['dest'] else G.CARD)
+            if c['dest']:
+                contorno(s, x, yy, cw, h, c['cor'], 2.5, min(0.06, 0.12 / h))
+            G.rect(s, x, yy, 0.12, h, c['cor'])
+            ty = yy + 0.16 + max(0, (h - h_card(c, nf, vs, ss)) * 0.35)
+            if c['rot']:
+                hr = alt(c['rot'], 14, tw, True)
+                caixa(s, x + 0.35, ty, tw, hr, c['rot'], 14, G.TXT3, True)
+                ty += hr + 0.04
+            G.text(s, x + 0.35, ty, tw, lh(vs, True), c['val'], vl, c['cor'], True, anchor=MSO_ANCHOR.MIDDLE)
+            ty += lh(vs, True)
+            if c['sub']:
+                caixa(s, x + 0.35, ty + 0.04, tw, alt(c['sub'], ss, tw), c['sub'], ss, G.TXT2)
+        yy += h + 0.2
+    if faixa:
+        yf = BASE - hfx
+        cartao(s, X0, yf, W, hfx, G.AMBER, 0.08)
+        for i, (r, v) in enumerate(faixa):
+            x = X0 + i * pw
+            ty = yf + 0.14
+            if r:
+                G.text(s, x + 0.15, ty, pw - 0.3, lh(14, True), r, ajusta(r, pw - 0.3, 14, True, 11), G.DARKTXT, True,
+                       PP_ALIGN.CENTER)
+            if v:
+                G.text(s, x + 0.15, ty + lh(14, True) + 0.04, pw - 0.3, lh(vf, True), v, ajusta(v, pw - 0.3, vf, True, 16),
+                       G.DARKTXT, True, PP_ALIGN.CENTER)
+            if i < len(faixa) - 1:
+                G.rect(s, x + pw - 0.01, yf + 0.2, 0.02, hfx - 0.4, G.DARKTXT)
+
+
+# ── fases ──
+
+def s_fases(ctx, sl):
+    """Fases lado a lado (2 a 4 colunas): cabeçalho colorido com nome e prazo, blocos com
+    rótulo e texto, e faixas embaixo com número em destaque ou ponto de atenção. Como o
+    slide 35 da AGE de referência."""
+    fases = []
+    for f in (sl.get('fases') or []) if isinstance(sl.get('fases'), list) else []:
+        if isinstance(f, dict):
+            blocos = []
+            for b in (f.get('blocos') or []) if isinstance(f.get('blocos'), list) else []:
+                if isinstance(b, dict):
+                    t, x = _limpa(b.get('titulo')).upper(), _nb(_limpa(b.get('texto')))
+                    if t or x:
+                        blocos.append((t, x))
+                elif _limpa(b):
+                    blocos.append(('', _nb(_limpa(b))))
+            nome = _nb(_limpa(f.get('nome'))).upper()
+            if nome or blocos:
+                fases.append((nome or f'FASE {len(fases) + 1}', _nb(_limpa(f.get('rotulo'))), blocos))
+    if not fases:
+        ctx.aviso('slide de fases sem fases; slide ignorado.')
+        return
+    if len(fases) > 4:
+        ctx.aviso('mais de 4 fases; só as 4 primeiras entraram.')
+        fases = fases[:4]
+    faixas = []
+    for f in (sl.get('faixas') or []) if isinstance(sl.get('faixas'), list) else []:
+        if isinstance(f, dict) and _limpa(f.get('texto')):
+            faixas.append((_nb(_limpa(f.get('destaque'))), _limpa(f.get('rotulo')).upper(), _nb(_limpa(f.get('texto')))))
+        elif isinstance(f, str) and _limpa(f):
+            faixas.append(('', '', _nb(_limpa(f))))
+    if len(faixas) > 3:
+        ctx.aviso('mais de 3 faixas no slide de fases; só as 3 primeiras entraram.')
+        faixas = faixas[:3]
+    s = ctx.novo()
+    y = cabecalho(ctx, s, sl, sl.get('titulo'), sl.get('subtitulo'))
+    n = len(fases)
+    cw = (W - 0.2 * (n - 1)) / n
+    tw = cw - 0.6
+    nf = len(faixas)
+    fw = (W - 0.2 * (nf - 1)) / nf if nf else W
+    cores_fx = [G.AMBER, AMBAR, G.GREEN]
+
+    def geo_faixa(fx, t):
+        """(altura, largura do destaque, tamanho do destaque) de uma faixa no corpo t."""
+        dest, rot, tx = fx
+        if dest:
+            td = ajusta(dest, fw * 0.4, 26, True, 18)
+            dw = larg(dest, td, True) / 0.92 + 0.1
+            return max(lh(td, True), alt(tx, t, fw - 0.55 - dw - 0.25)) + 0.4, dw, td
+        h = (lh(13, True) + 0.06 if rot else 0) + alt(tx, t + 1, fw - 0.55)
+        return h + 0.4, 0, 0
+
+    def h_faixas(t):
+        return max([geo_faixa(f, t)[0] for f in faixas] or [0])
+
+    hh = 0.75
+
+    def h_corpo(t):
+        hs = []
+        for _, _, blocos in fases:
+            h = 0.22
+            for i, (bt, bx) in enumerate(blocos):
+                h += (lh(13, True) + 0.05 if bt else 0) + alt(bx, t + (1 if i == 0 else 0), tw, i == 0) + 0.2
+            hs.append(h)
+        return max(hs) + 0.02
+
+    def cabe(t):
+        return hh + 0.15 + h_corpo(t) + (0.25 + h_faixas(t) if faixas else 0) <= BASE - y
+    ts = _maior_que_cabe(range(17, MIN_PT - 1, -1), cabe)
+    if ts is None:
+        ts = MIN_PT
+        ctx.aviso('texto demais no slide de fases; resuma os blocos.')
+    hfx = h_faixas(ts) if faixas else 0
+    livre = BASE - y - hh - 0.15 - (hfx + 0.25 if faixas else 0)
+    hb = min(livre, max(h_corpo(ts), 2.4))
+    for i, (nome, rot, blocos) in enumerate(fases):
+        x = X0 + i * (cw + 0.2)
+        cor = CORES_FASES[i % len(CORES_FASES)]
+        cartao(s, x, y, cw, hh, cor, 0.12)
+        wr = larg(rot, 20, True) / 0.92 + 0.1 if rot else 0
+        tr = ajusta(rot, min(wr, cw * 0.45), 20, True, 14) if rot else 0
+        wr = min(wr, cw * 0.45)
+        wn = cw - 0.6 - (wr + 0.15 if rot else 0)
+        G.text(s, x + 0.3, y, wn, hh, nome, ajusta(nome, wn, 22, True, 14), G.DARKTXT, True, anchor=MSO_ANCHOR.MIDDLE)
+        if rot:
+            G.text(s, x + cw - 0.3 - wr, y, wr, hh, rot, tr, G.DARKTXT, True, PP_ALIGN.RIGHT, MSO_ANCHOR.MIDDLE)
+        yb = y + hh + 0.15
+        cartao(s, x, yb, cw, hb, corner=0.05)
+        yy = yb + 0.22
+        for k, (bt, bx) in enumerate(blocos):
+            if bt:
+                G.text(s, x + 0.3, yy, tw, lh(13, True), bt, ajusta(bt, tw, 13, True, 11), G.TXT3, True)
+                yy += lh(13, True) + 0.05
+            sz = ts + (1 if k == 0 else 0)
+            hx = alt(bx, sz, tw, k == 0)
+            if bx:
+                caixa(s, x + 0.3, yy, tw, hx, bx, sz, G.TXT if k == 0 else G.TXT2, k == 0)
+            yy += hx + 0.2
+    if faixas:
+        yf = BASE - hfx
+        for i, fx in enumerate(faixas):
+            dest, rot, tx = fx
+            x = X0 + i * (fw + 0.2)
+            cor = cores_fx[i % 3]
+            cartao(s, x, yf, fw, hfx, G.CARD2 if rot else G.CARD, 0.08)
+            G.rect(s, x, yf, 0.12, hfx, cor)
+            _, dw, td = geo_faixa(fx, ts)
+            if dest:
+                G.text(s, x + 0.35, yf, dw, hfx, dest, td, cor, True, anchor=MSO_ANCHOR.MIDDLE)
+                twx = fw - 0.55 - dw - 0.25
+                caixa(s, x + 0.35 + dw + 0.25, yf, twx, hfx, tx, ts, G.TXT2, anchor=MSO_ANCHOR.MIDDLE)
+            else:
+                partes = ([[(rot, 13, True, cor)]] if rot else []) + [[(tx, ts + 1, False, G.TXT)]]
+                caixa(s, x + 0.35, yf, fw - 0.55, hfx, partes, ts, anchor=MSO_ANCHOR.MIDDLE, espaco=0.06)
+
+
+# ── foto com etapas ──
+
+def s_foto_etapas(ctx, sl):
+    """Uma ou duas imagens com rótulos embutidos, inteiras sobre painel claro (sem recorte),
+    e de 3 a 6 etapas numeradas em cartões embaixo. Como o slide 31 da AGE de referência."""
+    ids = []
+    for f in (sl.get('fotos') or []) if isinstance(sl.get('fotos'), list) else []:
+        fid = f.get('id') if isinstance(f, dict) else f
+        if _limpa(fid):
+            ids.append(fid)
+    if not ids and _limpa(sl.get('foto')):
+        ids = [sl.get('foto')]
+    if len(ids) > 2:
+        ctx.aviso('foto com etapas aceita até 2 imagens; só as 2 primeiras entraram.')
+        ids = ids[:2]
+    imgs = [im for im in (ctx.foto(f) for f in ids) if im]
+    etapas = []
+    for e in (sl.get('etapas') or []) if isinstance(sl.get('etapas'), list) else []:
+        if isinstance(e, dict):
+            t, d = _nb(_limpa(e.get('titulo'))), _nb(_limpa(e.get('texto')))
+            if t or d:
+                etapas.append((t, d))
+        elif _limpa(e):
+            etapas.append((_nb(_limpa(e)), ''))
+    if not imgs and not etapas:
+        ctx.aviso('foto com etapas sem imagem e sem etapas; slide ignorado.')
+        return
+    if not imgs:
+        ctx.aviso('foto com etapas sem imagem disponível; as etapas saíram como passos.')
+        s_passos(ctx, {**sl, 'passos': [{'titulo': t, 'texto': d} for t, d in etapas]})
+        return
+    if len(etapas) > 6:
+        ctx.aviso('foto com etapas aceita até 6 etapas; só as 6 primeiras entraram.')
+        etapas = etapas[:6]
+    s = ctx.novo()
+    y = cabecalho(ctx, s, sl, sl.get('titulo'), sl.get('subtitulo'))
+    hcard, hrot = 0.0, 0.0
+    if etapas:
+        n = len(etapas)
+        gap = 0.15
+        cw = (W - gap * (n - 1)) / n
+        lado = n <= 5
+        tx = 0.72 if lado else 0.25
+        tw = cw - tx - 0.18
+
+        def h_et(t, e):
+            return 0.2 + (0 if lado else lh(22, True) + 0.04) + alt_tit_desc(e[0], t + 2, e[1], t, tw, 0.06) + 0.2
+        ts = _maior_que_cabe([15, 14], lambda t: max(h_et(t, e) for e in etapas) <= 2.0) or MIN_PT
+        hcard = max(max(h_et(ts, e) for e in etapas), 1.2 if lado else 1.4)
+        hrot = 0.38
+        ye = BASE - hcard
+        G.text(s, X0, ye - hrot, 6, 0.3, 'ETAPAS', 13, G.TXT3, True)
+        for i, (t, d) in enumerate(etapas):
+            x = X0 + i * (cw + gap)
+            cartao(s, x, ye, cw, hcard)
+            G.rect(s, x, ye, cw, 0.07, G.GS_AZUL_CLA)
+            if lado:
+                G.text(s, x + 0.22, ye + 0.17, 0.45, lh(24, True), str(i + 1), 24, G.GS_AZUL_CLA, True)
+                tit_desc(s, x + tx, ye + 0.22, tw, t, ts + 2, d, ts, gap=0.06)
+            else:
+                G.text(s, x + 0.25, ye + 0.17, 0.6, lh(22, True), str(i + 1), 22, G.GS_AZUL_CLA, True)
+                tit_desc(s, x + tx, ye + 0.2 + lh(22, True) + 0.04, tw, t, ts + 2, d, ts, gap=0.06)
+    hf = BASE - y - (hcard + hrot + 0.15 if etapas else 0)
+    if hf < 1.6:
+        ctx.aviso('as etapas ocuparam muito espaço e a imagem ficou pequena; resuma os textos.')
+    nimg = len(imgs)
+    fw = (W - 0.25 * (nimg - 1)) / nimg
+    for i, im in enumerate(imgs):
+        por_imagem(s, im, X0 + i * (fw + 0.25), y, fw, max(0.8, hf), inteira=True)
+
+
 TIPOS = {
-    'capa': s_capa, 'orientacoes': s_orientacoes, 'pauta': s_pauta, 'item': s_item, 'texto': s_texto,
-    'topicos': s_topicos, 'colunas': s_colunas, 'orcamento': s_orcamento, 'comparativo': s_comparativo,
-    'tabela': s_tabela, 'numeros': s_numeros, 'barras': s_barras, 'cards': s_cards, 'passos': s_passos,
-    'pontos': s_pontos, 'fotos': s_fotos, 'foto_texto': s_foto_texto, 'antes_depois': s_antes_depois,
+    'capa': s_capa_v2, 'orientacoes': s_orientacoes, 'pauta': s_pauta_v2, 'item': s_item, 'texto': s_texto,
+    'topicos': s_topicos_v2, 'colunas': s_colunas, 'orcamento': s_orcamento, 'comparativo': s_comparativo,
+    'tabela': s_tabela_v2, 'numeros': s_numeros, 'barras': s_barras, 'cards': s_cards, 'passos': s_passos,
+    'pontos': s_pontos, 'fotos': s_fotos_v2, 'foto_texto': s_foto_texto, 'antes_depois': s_antes_depois,
     'documento': s_documento, 'regimento': s_regimento, 'custeio': s_custeio, 'votacao': s_votacao,
     'eleicao': s_eleicao, 'linha_do_tempo': s_linha_do_tempo, 'encerramento': s_encerramento,
+    'grafico_colunas': s_grafico_colunas, 'painel': s_painel, 'fases': s_fases, 'foto_etapas': s_foto_etapas,
 }
 SINONIMOS = {'cartoes': 'cards', 'galeria': 'fotos', 'linha_tempo': 'linha_do_tempo', 'cronograma': 'linha_do_tempo',
-             'etapas': 'passos', 'orientacao': 'orientacoes', 'divisor': 'item'}
+             'etapas': 'passos', 'orientacao': 'orientacoes', 'divisor': 'item', 'grafico': 'grafico_colunas',
+             'colunas_agrupadas': 'grafico_colunas', 'fotos_etapas': 'foto_etapas', 'foto_com_etapas': 'foto_etapas'}
 
 
 def _tipo(v) -> str:

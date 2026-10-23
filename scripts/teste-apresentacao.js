@@ -82,6 +82,22 @@ t('roteiro: item 3 sem conteúdo vira aviso', v.avisos.some((a) => /item 3 da pa
   t('roteiro: assuntos gerais sem slide de votação', r2.roteiro.slides.filter((s) => s.tipo === 'votacao').length === 1 && r2.roteiro.slides.some((s) => s.tipo === 'votacao' && s.numero === 1));
   t('roteiro: assuntos gerais sem material não vira aviso', !r2.avisos.some((a) => /item 2 da pauta/.test(a)));
 }
+{
+  // Tipos novos do motor: capa com foto, foto com etapas, fases, tabela com chips e galeria de 8 passam.
+  const r3 = A.validarRoteiro({ slides: [
+    { tipo: 'capa', condominio: 'X', data: 'hoje', foto: 'f9', foto_legenda: 'Portaria' },
+    { tipo: 'foto_etapas', numero: 1, titulo: 'Ensaio', fotos: ['f1', 'f9'], etapas: [{ titulo: 'Início', texto: 'a' }] },
+    { tipo: 'foto_etapas', numero: 1, titulo: 'Sem imagem', fotos: ['f9'], etapas: [{ titulo: 'Início', texto: 'a' }] },
+    { tipo: 'fases', numero: 1, titulo: 'Fases', fases: [{ nome: 'Fase A', blocos: [{ titulo: 'Início', texto: 'a' }] }] },
+    { tipo: 'tabela', numero: 1, titulo: 'NC', colunas: ['Item', 'Criticidade'], linhas: [['a', 'Crítica']], chips: { coluna: 1 } },
+    { tipo: 'fotos', numero: 1, titulo: 'Oito', fotos: ['f1', 'f2', 'f1', 'f2', 'f1', 'f2', 'f1', 'f2'] },
+  ] }, { fotos: ['f1', 'f2'], documentos: [], pauta: [] });
+  const R3 = r3.roteiro.slides;
+  t('roteiro: capa com foto inexistente sai sem foto', R3[0].tipo === 'capa' && !('foto' in R3[0]) && r3.avisos.some((a) => /capa citava foto/.test(a)));
+  t('roteiro: foto_etapas fica só com a foto que existe', R3[1].tipo === 'foto_etapas' && R3[1].fotos.join() === 'f1');
+  t('roteiro: foto_etapas sem imagem vira passos', R3[2].tipo === 'passos' && R3[2].passos.length === 1);
+  t('roteiro: fases, chips e galeria de 8 passam', R3[3].tipo === 'fases' && R3[4].chips.coluna === 1 && R3[5].fotos.length === 8);
+}
 t('roteiro: itens 1 e 2 com conteúdo não viram aviso', !v.avisos.some((a) => /item [12] da pauta/.test(a)));
 t('roteiro: pauta do edital diferente vira aviso', v.avisos.some((a) => /4 itens na pauta/.test(a)));
 t('roteiro: avisos sem travessão', v.avisos.every((a) => !/[–—]/.test(a)));
