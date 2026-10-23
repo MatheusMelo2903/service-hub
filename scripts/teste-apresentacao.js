@@ -43,7 +43,7 @@ const rot = {
   titulo_arquivo: 'AGE 16.10.2024 Buritis', avisos: ['algo'],
   slides: [
     { tipo: 'capa', assembleia: 'Assembleia Geral Extraordinária', condominio: 'Buritis', data: '16 de outubro de 2024' },
-    { tipo: 'pauta', itens: [{ titulo: 'Reforma do playground' }, { titulo: 'Taxa extra' }, 'Assuntos gerais'] },
+    { tipo: 'pauta', itens: [{ titulo: 'Reforma do playground' }, { titulo: 'Taxa extra' }, 'Pintura da fachada'] },
     { tipo: 'item', numero: 1, titulo: 'Reforma do playground' },
     { tipo: 'fotos', numero: 1, titulo: 'Situação atual — playground', fotos: [{ id: 'f1' }, { id: 'f9' }] },
     { tipo: 'fotos', numero: 1, titulo: 'Fantasma', fotos: [{ id: 'f8' }] },
@@ -54,7 +54,7 @@ const rot = {
     { tipo: 'foto_texto', numero: 1, titulo: 'Brinquedo', foto: 'f7', topicos: ['Gira gira'], valor: 'R$ 4.615,60' },
     { tipo: 'item', numero: 2, titulo: 'Taxa extra' },
     { tipo: 'custeio', numero: 2, titulo: 'Forma de custeio', valor_total: 'R$ 30.000,00', unidades: '120', opcoes: [{ nome: 'Opção 1', parcelas: 3 }, { nome: 'Ruim', parcelas: 0 }] },
-    { tipo: 'item', numero: 3, titulo: 'Assuntos gerais' },
+    { tipo: 'item', numero: 3, titulo: 'Pintura da fachada' },
     { tipo: 'encerramento' },
   ],
 };
@@ -73,6 +73,15 @@ t('roteiro: custeio com número e parcela inválida tirada', cus && cus.valor_to
 t('roteiro: travessão trocado por vírgula', S[3].titulo === 'Situação atual, playground');
 t('roteiro: avisos tirados do roteiro enviado ao motor', !('avisos' in v.roteiro));
 t('roteiro: item 3 sem conteúdo vira aviso', v.avisos.some((a) => /item 3 da pauta/.test(a)));
+{
+  const r2 = A.validarRoteiro({ slides: [
+    { tipo: 'pauta', itens: [{ titulo: 'Obra', etiqueta: 'VOTAÇÃO' }, { titulo: 'Assuntos gerais', etiqueta: 'ABERTO' }] },
+    { tipo: 'item', numero: 1, titulo: 'Obra' }, { tipo: 'votacao', numero: 1, titulo: 'Obra', pergunta: 'Aprova a obra?' },
+    { tipo: 'item', numero: 2, titulo: 'Assuntos gerais' }, { tipo: 'votacao', numero: 2, titulo: 'Assuntos gerais', pergunta: 'Assuntos gerais' },
+  ] }, { fotos: [], documentos: [], pauta: ['Obra', 'Assuntos gerais'] });
+  t('roteiro: assuntos gerais sem slide de votação', r2.roteiro.slides.filter((s) => s.tipo === 'votacao').length === 1 && r2.roteiro.slides.some((s) => s.tipo === 'votacao' && s.numero === 1));
+  t('roteiro: assuntos gerais sem material não vira aviso', !r2.avisos.some((a) => /item 2 da pauta/.test(a)));
+}
 t('roteiro: itens 1 e 2 com conteúdo não viram aviso', !v.avisos.some((a) => /item [12] da pauta/.test(a)));
 t('roteiro: pauta do edital diferente vira aviso', v.avisos.some((a) => /4 itens na pauta/.test(a)));
 t('roteiro: avisos sem travessão', v.avisos.every((a) => !/[–—]/.test(a)));
@@ -178,13 +187,13 @@ motor.listen(0, () => {
       titulo_arquivo: 'AGE 16.10.2024 Buritis', avisos: ['Valor do item 2 confere com o edital?'],
       slides: [
         { tipo: 'capa', assembleia: 'Assembleia Geral Extraordinária', condominio: 'Buritis', data: '16 de outubro de 2024' },
-        { tipo: 'pauta', itens: ['Reforma do playground', 'Taxa extra', 'Assuntos gerais'] },
+        { tipo: 'pauta', itens: ['Reforma do playground', 'Taxa extra', 'Pintura da fachada'] },
         { tipo: 'item', numero: 1, titulo: 'Reforma do playground' },
         { tipo: 'fotos', numero: 1, titulo: 'Situação atual', fotos: [{ id: 'f1' }, { id: 'f3' }, { id: 'f40' }] },
         { tipo: 'documento', numero: 1, titulo: 'Orçamento', documento: 'd1', paginas: [1] },
         { tipo: 'item', numero: 2, titulo: 'Taxa extra' },
         { tipo: 'votacao', numero: 2, titulo: 'Votação', pergunta: 'Aprova?', opcoes: ['Sim', 'Não'] },
-        { tipo: 'item', numero: 3, titulo: 'Assuntos gerais' },
+        { tipo: 'item', numero: 3, titulo: 'Pintura da fachada' },
         { tipo: 'encerramento' },
       ],
     });

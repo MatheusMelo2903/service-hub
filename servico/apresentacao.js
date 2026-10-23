@@ -420,11 +420,21 @@ function validarRoteiro(roteiro, { fotos, documentos, pauta }) {
     }
     slides.push(s);
   }
-  // Cada item da pauta precisa de pelo menos um slide de conteúdo (além do divisor).
+  // Item aberto (assuntos gerais, informes) não tem votação: o slide de votos sairia vazio de sentido.
   const sPauta = slides.find((s) => s.tipo === 'pauta');
   const itens = sPauta && Array.isArray(sPauta.itens) ? sPauta.itens : [];
+  const txtItem = (it) => (typeof it === 'string' ? it : (it && it.titulo) || '');
+  const aberto = (it) => (it && typeof it === 'object' && /^(ABERTO|APRESENTA)/i.test(String(it.etiqueta || ''))) || /assuntos? gerais|informes?\b/i.test(txtItem(it));
+  for (let k = slides.length - 1; k >= 0; k--) {
+    const s = slides[k];
+    if (s.tipo !== 'votacao') continue;
+    const it = itens[Number(s.numero) - 1];
+    if ((it && aberto(it)) || /assuntos? gerais/i.test(String(s.titulo || '') + ' ' + String(s.pergunta || ''))) slides.splice(k, 1);
+  }
+  // Cada item da pauta precisa de pelo menos um slide de conteúdo (além do divisor), menos os abertos.
   itens.forEach((it, i) => {
     const n = i + 1;
+    if (aberto(it)) return;
     if (!slides.some((s) => s.tipo !== 'item' && s.tipo !== 'pauta' && Number(s.numero) === n)) {
       const txt = typeof it === 'string' ? it : (it && it.titulo) || '';
       avisos.push('O item ' + n + ' da pauta' + (txt ? ' (' + String(txt).slice(0, 80) + ')' : '') + ' ficou sem slide de conteúdo.');

@@ -20,6 +20,8 @@ Conteúdo típico de cada tipo de item:
 - Processo judicial e esclarecimentos fiscais: o caso em poucas linhas (fato, ação, pedido), linha do tempo com datas (audiência, sentença, recurso, acordo), resultado e valores, e o que se delibera. Débitos fiscais: tabela com documento (CDA, auto), origem, valor original e valor atualizado.
 - Locação x compra de equipamentos: tabela com empresa, mensalidade ou valor total, investimento inicial, prazo, manutenção e destaques.
 - Certidões negativas em assuntos gerais: slide documento com as páginas.
+- Assuntos gerais e informes (etiqueta ABERTO): nunca slide de votação. Sem material, fica só o divisor do item.
+- Saldos de contas: quando houver total, ele precisa ser a soma das contas mostradas; se o material só trouxer algumas contas, mostre todas ou escreva "demais contas" com a diferença, e registre em avisos.
 
 # Premissas (aprendidas montando a AGE da Fazenda Barão do Império)
 - A pauta do edital é a espinha dorsal: ordem do edital, um divisor por item e todo material encaixado em algum item.
