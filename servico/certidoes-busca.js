@@ -14,7 +14,8 @@
 //     é o imprimir do navegador); o Hub monta o PDF a partir dela             => automático
 //   fgts (Caixa): o primeiro acesso abre, mas o "Consultar" feito por programa é
 //     desviado para o ShieldSquare (validate.perfdrive.com) com hCaptcha     => manual
-//   estadual (SEFAZ ES): página nova em s1-internet com Cloudflare Turnstile => manual
+//   estadual (SEFAZ ES): débitos de impostos estaduais em s2-internet/certidao/cnd, com
+//     Cloudflare Turnstile => manual (o s1-internet/certidaonegativa é a de convênios, que não vale)
 //   municipal Serra: sistema tbserra com imagem de verificação (getCaptcha)  => manual
 //   federal (hCaptcha), trabalhista (imagem), Vila Velha (imagem) e Cariacica
 //     (reCAPTCHA): verificação confirmada no navegador                      => manual
@@ -38,8 +39,9 @@ const CIDADES_AUTOMATICAS = new Set(['vitoria']);
 
 const LINKS = {
   federal: 'https://servicos.receitafederal.gov.br/servico/certidoes/#/home/cnpj',
-  // O link antigo (s2-internet.../certidao/cnd) não responde mais; o portal da SEFAZ aponta para este.
-  estadual: 'https://s1-internet.sefaz.es.gov.br/certidaonegativa/Gerar',
+  // Débitos de impostos estaduais (a que vale na prestação, confirmado com a gerência em 23/10/2026).
+  // O s1-internet/certidaonegativa é a de inadimplência de convênios (SIGEFES): não usar.
+  estadual: 'https://s2-internet.sefaz.es.gov.br/certidao/cnd',
   trabalhista: 'https://cndt-certidao.tst.jus.br/gerarCertidao',
   fgts: 'https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf',
   falencia: 'https://sistemas.tjes.jus.br/certidao-negativa/emitir',

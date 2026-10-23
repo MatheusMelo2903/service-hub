@@ -23,7 +23,7 @@ const URL_MINUTOS = 10;
 // Ordem da tela. Municipal ganha nome e link pela cidade do condomínio (ver municipalDe).
 const TIPOS = [
   { tipo: 'federal', nome: 'Federal (Receita e PGFN)', link: 'https://servicos.receitafederal.gov.br/servico/certidoes/#/home/cnpj' },
-  { tipo: 'estadual', nome: 'Estadual (SEFAZ ES)', link: 'https://s1-internet.sefaz.es.gov.br/certidaonegativa/Gerar' },
+  { tipo: 'estadual', nome: 'Estadual (SEFAZ ES)', link: 'https://s2-internet.sefaz.es.gov.br/certidao/cnd' },
   { tipo: 'municipal', nome: 'Municipal', link: null },
   { tipo: 'trabalhista', nome: 'Trabalhista (TST)', link: 'https://cndt-certidao.tst.jus.br/gerarCertidao' },
   { tipo: 'fgts', nome: 'FGTS (Caixa)', link: 'https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf' },
@@ -156,6 +156,11 @@ function analisarTexto(texto, { tipoPedido, cnpj, hojeIso, cnpjsDoTexto }) {
   const palavras = (norm.match(/[a-z]{3,}/g) || []).length;
   if (palavras < 15) {
     return { erro: 'sem_texto', detalhe: 'Não consegui ler o texto deste PDF (parece escaneado ou foto). Baixe o PDF original direto no site da certidão e envie de novo.' };
+  }
+  // A certidão de inadimplência de convênios (SIGEFES) também é da SEFAZ ES, mas não é a de débitos de
+  // impostos estaduais, que é a que vale na prestação: recusa para não entrar no lugar da certa.
+  if (/inadimplencia/.test(norm) && /convenios/.test(norm) && /sigefes/.test(norm)) {
+    return { erro: 'estadual_convenios', detalhe: 'Esta é a certidão de inadimplência de convênios (SIGEFES). Na prestação vale a de débitos de impostos estaduais: use Emitir na linha Estadual (SEFAZ ES).' };
   }
   const achado = identificarTipo(norm);
   let tipo;

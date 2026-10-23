@@ -133,7 +133,7 @@ async function esperaErro(promessa) { try { await promessa; return null; } catch
 (async () => {
   // ── Links ──
   t('link federal', busca.linkPreenchido('federal', CNPJ, 'Serra') === 'https://servicos.receitafederal.gov.br/servico/certidoes/#/home/cnpj');
-  t('link estadual (endereço novo)', busca.linkPreenchido('estadual', CNPJ, 'Serra') === 'https://s1-internet.sefaz.es.gov.br/certidaonegativa/Gerar');
+  t('link estadual (débitos de impostos)', busca.linkPreenchido('estadual', CNPJ, 'Serra') === 'https://s2-internet.sefaz.es.gov.br/certidao/cnd');
   t('link trabalhista', busca.linkPreenchido('trabalhista', CNPJ) === 'https://cndt-certidao.tst.jus.br/gerarCertidao');
   t('link fgts', busca.linkPreenchido('fgts', CNPJ).includes('consultaEmpregador.jsf'));
   t('link falencia', busca.linkPreenchido('falencia', CNPJ) === 'https://sistemas.tjes.jus.br/certidao-negativa/emitir');
