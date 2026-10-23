@@ -1,9 +1,10 @@
 FROM python:3.12-slim
 
-# LibreOffice (impress pra PPTX->PDF) + Carlito (substitute libre da Calibri,
+# LibreOffice (impress pra PPTX->PDF, draw pra abrir EMF e WMF) + Carlito (substitute libre da Calibri,
 # fonte do template da skill powerpoint-prestacao-contas)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-impress \
+    libreoffice-draw \
     fonts-crosextra-carlito \
     poppler-utils \
     fontconfig \
