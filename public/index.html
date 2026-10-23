@@ -1079,6 +1079,10 @@
     <div class="nav-item" onclick="showPanel('atas')">
       <span class="nav-icon">✎</span> Atas Condominiais
     </div>
+    <!-- Apresentação de assembleia: começa escondido e aparece depois de conferir a permissão (podeAbrirPainel). -->
+    <div class="nav-item" id="nav-apresentacao" style="display:none" onclick="showPanel('apresentacao')">
+      <span class="nav-icon">▣</span> Apresentação de assembleia
+    </div>
     <div class="nav-item" onclick="showPanel('consumo')">
       <span class="nav-icon">◎</span> Leitura de Consumo
     </div>
@@ -1991,6 +1995,76 @@
       <div class="card" id="fin-detalhe" style="display:none"></div>
     </div>
 
+    <!-- APRESENTAÇÃO DE ASSEMBLEIA: JS em public/apresentacao.js, rotas em servico/apresentacao.js -->
+    <div class="panel" id="panel-apresentacao">
+      <div class="card">
+        <div class="card-header"><span class="card-title">Apresentação de assembleia</span></div>
+        <p class="hint" style="margin:0 0 12px">Junte o edital, os documentos (orçamentos, projetos, laudos) e as fotos. O sistema lê tudo, monta os slides na ordem da pauta e entrega o PowerPoint e o PDF para conferir antes da assembleia.</p>
+        <div id="apr-cond" style="font-size:13px;margin-bottom:4px"></div>
+        <div class="hint" id="apr-cond-aviso" style="margin:0 0 6px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title" id="apr-titulo-edital">Edital</span></div>
+        <div class="dropzone" id="apr-drop-edital" style="padding:22px 16px"
+             ondragover="handleDrag(event, this)" ondragleave="handleDragLeave(this)" ondrop="aprSoltar(event, 'edital')">
+          <input type="file" id="apr-edital-arquivo" accept="application/pdf,.pdf" onchange="aprEscolher(event, 'edital')">
+          <div class="drop-title">Arraste o PDF do edital</div>
+          <div class="drop-sub">ou clique para escolher</div>
+        </div>
+        <div id="apr-edital-status" class="hint"></div>
+        <details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Ou cole o texto do edital</summary>
+          <textarea id="apr-edital-texto" rows="5" style="margin-top:6px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:13px;width:100%;box-sizing:border-box" oninput="aprEditalDigitado()"></textarea>
+        </details>
+        <div id="apr-pauta" style="margin-top:8px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title" id="apr-titulo-docs">Documentos</span><span class="hint" style="margin:0">até 30, 25 MB cada, 150 MB no total</span></div>
+        <div class="dropzone" id="apr-drop-docs" style="padding:22px 16px"
+             ondragover="handleDrag(event, this)" ondragleave="handleDragLeave(this)" ondrop="aprSoltar(event, 'docs')">
+          <input type="file" id="apr-docs-arquivo" multiple accept="application/pdf,.pdf,.pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation" onchange="aprEscolher(event, 'docs')">
+          <div class="drop-title">Arraste orçamentos, projetos e laudos</div>
+          <div class="drop-sub">PDF ou PowerPoint (.pptx), vários de uma vez</div>
+        </div>
+        <div id="apr-docs-lista" style="margin-top:10px;display:flex;flex-direction:column;gap:6px"></div>
+        <div id="apr-docs-imagens" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title" id="apr-titulo-fotos">Fotos</span><span class="hint" style="margin:0">até 40</span></div>
+        <div class="dropzone" id="apr-drop-fotos" style="padding:22px 16px"
+             ondragover="handleDrag(event, this)" ondragleave="handleDragLeave(this)" ondrop="aprSoltar(event, 'fotos')">
+          <input type="file" id="apr-fotos-arquivo" multiple accept="image/*,.heic,.heif" onchange="aprEscolher(event, 'fotos')">
+          <div class="drop-title">Arraste as fotos</div>
+          <div class="drop-sub">JPG, PNG ou HEIC. Escreva em cada uma a que ela se refere (ex.: situação atual do playground)</div>
+        </div>
+        <div id="apr-fotos-lista" style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title" id="apr-titulo-pedido">O que você precisa</span></div>
+        <textarea id="apr-pedido" rows="4" maxlength="4000" placeholder="Ex.: Monte a AGE do dia 16/10 com os 3 orçamentos do parquinho, destaque o menor valor e a taxa extra em 3 vezes" style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);font-size:13px;width:100%;box-sizing:border-box" oninput="aprResumo()"></textarea>
+        <div style="margin-top:12px">
+          <label class="hint" style="display:block;margin-bottom:4px" id="apr-titulo-logo">Logo do cliente (opcional)</label>
+          <input type="file" id="apr-logo-arquivo" accept="image/png,image/jpeg,image/webp" onchange="aprEscolher(event, 'logo')">
+          <span id="apr-logo-status" class="hint"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header"><span class="card-title">Resumo antes de gerar</span></div>
+        <div id="apr-resumo" class="hint" style="margin:0"></div>
+        <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button class="btn btn-primary" id="apr-gerar" onclick="aprGerar()">Gerar apresentação</button>
+          <button class="btn btn-ghost" onclick="aprLimpar()">Limpar tudo</button>
+        </div>
+        <div id="apr-etapas" style="margin-top:12px"></div>
+      </div>
+
+      <div class="card" id="apr-resultado" style="display:none"></div>
+    </div>
+
     <!-- ENTRADA DE DOCUMENTOS (T33): JS em public/entrada-documentos.js -->
     <div class="panel" id="panel-entrada">
       <div class="card">
@@ -2675,6 +2749,7 @@ const PAGE_META = {
   prestacao:     { title: 'Prestação de Contas', sub: 'gerar apresentação financeira anual' },
   previsao:      { title: 'Previsão Orçamentária', sub: 'PDFs W011A e W045A geram planilha editável' },
   atas:          { title: 'Atas Condominiais', sub: 'geração automática' },
+  apresentacao:  { title: 'Apresentação de assembleia', sub: 'edital, documentos e fotos viram PowerPoint e PDF' },
   consumo:       { title: 'Leitura de Consumo', sub: 'fotos de medidores → Superlógica' },
   condominio:    { title: 'Ficha do Condomínio', sub: 'consulta ao Superlógica, só leitura' },
   regras:        { title: 'Comunicados e Multas', sub: 'comunicados, advertências, multas e regras do condomínio' },
@@ -2690,7 +2765,8 @@ var PAINEL_MODULOS = {
   boletos:     ['boletos', 'financeiro'],
   conciliacao: ['conciliacao', 'financeiro'],
   entrada:     ['entrada_documentos'],
-  regras:      ['regras']
+  regras:      ['regras'],
+  apresentacao: ['apresentacao']
 };
 // Nomes antigos de tela (guardados no navegador) que mudaram de lugar. 'comunicados' virou aba
 // interna do painel Comunicados e Multas (id regras); regras.js abre direto nessa aba.
@@ -4236,6 +4312,7 @@ async function deletarUsuario(userId, email) {
 <script src="/conciliacao-casar.js"></script>
 <script src="/financeiro-conciliacao.js"></script>
 <script src="/entrada-documentos.js"></script>
+<script src="/apresentacao.js"></script>
 <script src="/consumo.js"></script>
 <script src="/avisos.js"></script>
 

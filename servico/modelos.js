@@ -17,6 +17,8 @@ const PADRAO = {
   regras: 'claude-sonnet-5-5',             // consulta, notificação e conferência com base no regimento e na convenção
   regras_leitura: 'claude-sonnet-5-5',     // leitura de PDF escaneado de convenção, regimento ou ata enviado ao acervo
   regras_extracao: 'claude-haiku-5-5',     // mandatos e resumo de ata (campos simples)
+  apresentacao: 'claude-sonnet-5-5',       // roteiro da apresentação de assembleia (só texto)
+  apresentacao_imagens: 'claude-haiku-5-5', // conferência barata das imagens dos documentos da apresentação
 };
 
 // Nomes de variável que já existiam antes da T42 (continuam valendo).
@@ -44,7 +46,7 @@ function modelo(funcao) {
 // Esforço (nos modelos que pensam antes de responder): ESFORCO_<FUNCAO> = low, medium ou high;
 // 'nenhum' não manda o campo (modelo que não aceita esforço); vazio ou outro valor = padrão abaixo.
 // Só as funções listadas aqui leem a variável.
-const ESFORCO_PADRAO = { unidades: 'low', prestacao: 'low' };
+const ESFORCO_PADRAO = { unidades: 'low', prestacao: 'low', apresentacao: 'low' };
 function esforco(funcao) {
   if (!Object.prototype.hasOwnProperty.call(ESFORCO_PADRAO, funcao)) return undefined;
   const v = String(process.env['ESFORCO_' + funcao.toUpperCase()] || '').trim();

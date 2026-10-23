@@ -8,7 +8,7 @@
 // tabela sem acesso direto do navegador). Condomínio fora da carteira é recusado ao salvar.
 // ─────────────────────────────────────────────────────────────────────────
 
-const TIPOS = new Set(['ata', 'prestacao', 'previsao', 'unidades']);
+const TIPOS = new Set(['ata', 'prestacao', 'previsao', 'unidades', 'apresentacao']);
 const MAX_POR_PESSOA = 20;
 const MAX_DADOS = 3 * 1024 * 1024; // texto da ata, transcrição, campos e prévia
 const MAX_ARQUIVO = 40 * 1024 * 1024;

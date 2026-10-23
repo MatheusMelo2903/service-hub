@@ -4,7 +4,7 @@
 // audita (assim ninguém que o dono liberar enxerga o que o dono faz).
 
 const FUSO = 'America/Sao_Paulo';
-const IGNORAR = [/^\/api\/config$/, /^\/api\/audio\/status\//, /^\/api\/atas\/gerar\/status\//, /^\/api\/carteiras\/minha$/];
+const IGNORAR = [/^\/api\/config$/, /^\/api\/audio\/status\//, /^\/api\/atas\/gerar\/status\//, /^\/api\/apresentacao\/status\//, /^\/api\/carteiras\/minha$/];
 const JANELA_GET_MS = 2 * 60 * 1000;
 
 function horaSP(d) {

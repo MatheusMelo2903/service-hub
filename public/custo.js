@@ -7,7 +7,8 @@
 const CUSTO_NOMES = {
   atas: 'Atas', comunicados: 'Comunicados e multas', edital: 'Leitura do edital',
   medidores: 'Leitura de medidores', unidades: 'Normalização de unidades',
-  prestacao: 'Prestação de contas', entrada_documentos: 'Entrada de documentos', regras: 'Regras do condomínio', outros: 'Outros',
+  prestacao: 'Prestação de contas', entrada_documentos: 'Entrada de documentos', regras: 'Regras do condomínio',
+  apresentacao: 'Apresentação de assembleia', apresentacao_imagens: 'Apresentação de assembleia', outros: 'Outros',
 };
 // Junta as linhas que caem no mesmo nome de tela (função sem nome próprio vira Outros numa linha só).
 function _custoJuntarPorNome(fs) {

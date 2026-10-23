@@ -104,6 +104,32 @@
       texto: 'Lança a despesa no Superlógica com o PDF anexado, depois que você confere os dados. Os itens em amarelo precisam ser resolvidos antes.'
     },
 
+    // Apresentação de assembleia
+    aprTitulo: {
+      alvo: '#panel-apresentacao .card-title', assunto: 'Apresentação de assembleia',
+      texto: 'Monta os slides da assembleia na ordem da pauta do edital, com os orçamentos, comparativos, forma de custeio e fotos. Anexe o edital, os documentos e as fotos, escreva o que você precisa e clique em Gerar. No fim saem o PowerPoint e o PDF, com a lista do que conferir antes de apresentar.'
+    },
+    aprEdital: {
+      alvo: '#apr-titulo-edital', assunto: 'Edital',
+      texto: 'O PDF do edital de convocação (ou o texto colado). Dele saem os itens da pauta, na mesma ordem e com a mesma redação. Os itens encontrados aparecem logo abaixo para você conferir.'
+    },
+    aprDocs: {
+      alvo: '#apr-titulo-docs', assunto: 'Documentos',
+      texto: 'Orçamentos, projetos, laudos e outras apresentações em PDF ou PowerPoint. O texto e as imagens de cada página são lidos aqui na tela. As imagens úteis viram fotos que podem entrar nos slides; logos e ícones repetidos ficam de fora. Até 30 documentos, 25 MB cada.'
+    },
+    aprFotos: {
+      alvo: '#apr-titulo-fotos', assunto: 'Fotos',
+      texto: 'Fotos da situação atual, do que se propõe, de produtos ou de obras. Escreva embaixo de cada foto a que ela se refere (ex.: situação atual do playground): é isso que diz em qual item da pauta ela entra.'
+    },
+    aprPedido: {
+      alvo: '#apr-titulo-pedido', assunto: 'O que você precisa',
+      texto: 'Diga com suas palavras o que a apresentação precisa ter: a data, o que destacar, a forma de pagamento, o que tirar. Quanto mais claro, menos ajuste depois.'
+    },
+    aprGerar: {
+      alvo: '#apr-gerar', onde: 'depois', assunto: 'Gerar apresentação',
+      texto: 'Confere as imagens dos documentos, monta o roteiro e desenha os slides. Leva alguns minutos. No fim baixa o PowerPoint e o PDF e guarda os dois na pasta Em andamento.'
+    },
+
     // Cobrança
     cobTitulo: {
       alvo: '#panel-cobranca .card-title', assunto: 'Inadimplência por carteira',

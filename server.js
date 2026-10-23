@@ -5721,6 +5721,16 @@ _centralAlertas = centralMod.criarRotasCentral(app, {
   alertasUso: (req, n) => _rotasSeguranca.alertasUso(req, n),
 });
 
+// Apresentação de assembleia (módulo apresentacao): roteiro pelo guia e slides pelo motor do
+// prestacao-pdf (POST /v13/apresentacao). Detalhes em servico/apresentacao.js.
+require('./servico/apresentacao').criarRotasApresentacao(app, {
+  requireAuth, express, perfilDe, podeModulo, auditoria, dentroDoLimite, modelos,
+  chamarModelo: require('./servico/modelo').chamarModelo, extrairJson: require('./servico/modelo').extrairJson,
+  condominioDaBase: SUPABASE_SERVICE_ROLE_KEY ? condominioDaBase : null,
+  exigirCarteira: (req, res, id) => carteiraT18.exigir(req, res, id),
+  prestacaoPdf: { url: PRESTACAO_PDF_API_URL, segredo: INTERNAL_API_SECRET },
+});
+
 // T49: trabalhos em andamento (pastinha). Detalhes em servico/trabalhos.js.
 require('./servico/trabalhos').criarRotasTrabalhos(app, {
   requireAuth, express, banco: supabaseAdminRequest,
