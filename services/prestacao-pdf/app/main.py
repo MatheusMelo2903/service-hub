@@ -20,6 +20,7 @@ Timeout sugerido no proxy: 240s (LibreOffice frio chega a 60-90s).
 from __future__ import annotations
 
 import base64
+import json
 import os
 import shutil
 import sys
@@ -27,7 +28,7 @@ import tempfile
 import time
 import traceback
 
-from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
 from .auth import verificar_secret
@@ -37,6 +38,7 @@ from .prosa import ProsaDeterministica
 from . import v13
 from . import v13_superlogica
 from . import certidoes_deck
+from . import apresentacao
 
 _VERSAO = "1.0.0"
 
@@ -399,5 +401,104 @@ async def v13_certidoes(
     except Exception:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail={"erro": "certidoes_falhou", "acao": "revisao_humana"})
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Apresentação de assembleia: o Hub manda o ROTEIRO (JSON montado pela IA a partir
+# do edital e dos documentos), as fotos e os PDFs citados nele e, opcionalmente,
+# a logo do cliente. O motor de layouts (app/apresentacao.py) desenha cada slide na
+# identidade do Grupo Service e devolve PPTX, PDF e a lista de avisos.
+# ─────────────────────────────────────────────────────────────────────────
+
+AP_MAX_FOTOS = 80
+AP_MAX_DOCS = 30
+AP_MAX_SLIDES = 80
+AP_MAX_CORPO = 160 * 1024 * 1024
+
+
+def _ap_422(detalhe: str):
+    return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                         detail={"erro": "entrada_invalida", "detalhe": detalhe})
+
+
+def _ap_b64(v, nome: str) -> bytes:
+    if not isinstance(v, str) or not v:
+        raise _ap_422(f"O arquivo {nome} veio vazio.")
+    try:
+        return base64.b64decode(v, validate=True)
+    except Exception:
+        raise _ap_422(f"O arquivo {nome} não está em base64 válido.")
+
+
+def _ap_lista(payload: dict, campo: str, limite: int, rotulo: str) -> dict:
+    itens = payload.get(campo) or []
+    if not isinstance(itens, list):
+        raise _ap_422(f"O campo {campo} precisa ser uma lista.")
+    if len(itens) > limite:
+        raise _ap_422(f"No máximo {limite} {rotulo} por apresentação; vieram {len(itens)}.")
+    saida = {}
+    for i, it in enumerate(itens):
+        if not isinstance(it, dict) or not isinstance(it.get("id"), str) or not it["id"].strip():
+            raise _ap_422(f"O item {i + 1} de {campo} precisa de id e b64.")
+        fid = it["id"].strip()[:80]
+        saida[fid] = _ap_b64(it.get("b64"), f'{rotulo[:-1] if rotulo.endswith("s") else rotulo} "{fid}"')
+    return saida
+
+
+@app.post("/v13/apresentacao")
+async def v13_apresentacao(
+    request: Request,
+    _: None = Depends(verificar_secret),
+):
+    inicio_t = time.perf_counter()
+    tam = request.headers.get("content-length")
+    if tam and tam.isdigit() and int(tam) > AP_MAX_CORPO:
+        raise _ap_422("O pedido passou de 160 MB. Envie menos fotos ou documentos menores.")
+    corpo = await request.body()
+    if len(corpo) > AP_MAX_CORPO:
+        raise _ap_422("O pedido passou de 160 MB. Envie menos fotos ou documentos menores.")
+    try:
+        payload = json.loads(corpo)
+    except Exception:
+        raise _ap_422("O corpo do pedido não é um JSON válido.")
+    if not isinstance(payload, dict):
+        raise _ap_422("O corpo do pedido precisa ser um objeto JSON.")
+    roteiro = payload.get("roteiro")
+    if not isinstance(roteiro, dict) or not isinstance(roteiro.get("slides"), list) or not roteiro["slides"]:
+        raise _ap_422("O roteiro precisa ter a lista de slides.")
+    if len(roteiro["slides"]) > AP_MAX_SLIDES:
+        raise _ap_422(f"O roteiro tem {len(roteiro['slides'])} slides; o máximo é {AP_MAX_SLIDES}.")
+    fotos = _ap_lista(payload, "fotos", AP_MAX_FOTOS, "fotos")
+    documentos = _ap_lista(payload, "documentos", AP_MAX_DOCS, "documentos")
+    for did, dado in documentos.items():
+        if dado[:4] != b"%PDF":
+            raise _ap_422(f'O documento "{did}" não é PDF.')
+    logo = None
+    if payload.get("logo_cliente_b64"):
+        logo = _ap_b64(payload.get("logo_cliente_b64"), "logo do cliente")
+    corpo = None  # libera a memória do corpo cru antes de montar
+    tmpdir = tempfile.mkdtemp(prefix="apresent_")
+    try:
+        try:
+            pptx_b, pdf_b, avisos, n = await run_in_threadpool(
+                apresentacao.montar, roteiro, fotos, documentos, tmpdir, logo)
+        except v13.ErroPrestacao as e:
+            _log("v13_apresentacao_recusou", motivo=str(e)[:200])
+            raise _ap_422(str(e))
+        _log("v13_apresentacao_ok", slides=n, fotos=len(fotos),
+             duracao_ms=int((time.perf_counter() - inicio_t) * 1000))
+        return {
+            "pptx_b64": base64.b64encode(pptx_b).decode("ascii"),
+            "pdf_b64": base64.b64encode(pdf_b).decode("ascii"),
+            "slides": n,
+            "avisos": avisos,
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail={"erro": "apresentacao_falhou", "acao": "revisao_humana"})
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
