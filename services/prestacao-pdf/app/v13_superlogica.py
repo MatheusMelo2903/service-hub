@@ -175,6 +175,8 @@ def de_superlogica(bruto: dict) -> dict:
         dados["sinais"] = {"ha_alerta": False}
     import json
     rascunho = json.loads(json.dumps(mod.rascunho(dados), ensure_ascii=False))
+    # Sem nome de funcionário nem "Ref." no que vai para a curadoria.
+    rascunho = v13.limpar_rascunho(rascunho)
     return {"dados": dados, "rascunho": rascunho}
 
 

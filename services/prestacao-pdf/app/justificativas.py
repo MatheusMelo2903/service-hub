@@ -61,9 +61,18 @@ def _nome(s: str) -> str:
 
 # Rótulo de item que fala de pessoa (férias, salário, rescisão): o nome do funcionário
 # nunca vai para o slide. Fica só o tipo da despesa e as datas, quando houver.
-PESSOAL_ITEM = re.compile(r"FERIAS|SALARI|13[ºO°]?\s*SAL|DECIMO|RESCIS|DEMISS|ADIANTAMENTO|AVISO PREVIO|HORA EXTRA|PRO\s*LABORE", re.I)
-_PREFIXO_REF = re.compile(r"^\s*(?:ref(?:erente)?\.?(?:\s+(?:a|ao|à|aos|às|as))?\s+|ref\.\s*)", re.I)
-_DATAS = re.compile(r"\d{2}/\d{2}(?:/\d{2,4})?(?:\s*(?:a|até)\s*\d{2}/\d{2}(?:/\d{2,4})?)?")
+PESSOAL_ITEM = re.compile(r"FERIAS|SALARI|13[ºO°]?\s*SAL|DECIMO|RESCIS|DEMISS|ADIANTAMENTO|AVISO PREVIO|HORA EXTRA|"
+                          r"PRO\s*LABORE|BONIFICA|GRATIFICA", re.I)
+# Tipo da despesa que fica no lugar do nome (a ordem decide: "adiantamento salarial" é adiantamento).
+_TIPO_PESSOAL = [
+    (r"FERIAS", "férias"), (r"13[ºO°]?\s*SAL|DECIMO", "13º salário"), (r"RESCIS|DEMISS", "rescisão"),
+    (r"AVISO PREVIO", "aviso prévio"), (r"ADIANTAMENTO", "adiantamento salarial"), (r"HORA EXTRA", "horas extras"),
+    (r"PRO\s*LABORE", "pró labore"), (r"BONIFICA", "bonificação"), (r"GRATIFICA", "gratificação"), (r"SALARI", "salário"),
+]
+_PREFIXO_REF = re.compile(r"^\s*(?:ref(?:erente)?\.?\s*[-:\u2010-\u2015]\s*(?:(?:a|ao|à|aos|às|as)\s+)?|"
+                          r"ref(?:erente)?\.?(?:\s+(?:a|ao|à|aos|às|as))?\s+|ref\.\s*)", re.I)
+_DATA = r"\d{1,2}/\d{2}(?:/\d{2,4})?"
+_DATAS = re.compile(rf"\d{{1,2}}(?:/\d{{2}}(?:/\d{{2,4}})?)?\s*(?:a|à|até)\s*{_DATA}|{_DATA}")
 
 
 def sem_hifen(t: str) -> str:
@@ -77,20 +86,74 @@ def sem_hifen(t: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+def _tipo_pessoal(texto: str) -> str:
+    t = _sem_acento(texto)
+    for rx, nome in _TIPO_PESSOAL:
+        if re.search(rx, t):
+            return nome
+    return "despesa com pessoal"
+
+
+# Palavras comuns com inicial maiúscula em rótulo de despesa de pessoal. Qualquer outra
+# palavra assim (Vando, Karlla, Gonçalves) é tratada como nome de pessoa.
+_COMUNS = set("""FERIAS SALARIO SALARIOS DECIMO TERCEIRO RESCISAO DEMISSAO ADIANTAMENTO AVISO PREVIO HORA HORAS
+EXTRA EXTRAS PRO LABORE BONIFICACAO GRATIFICACAO PARCELA PARCELAS REFERENTE REF PAGAMENTO COMPETENCIA MES MESES
+SERVICO SERVICOS ADMINISTRATIVO ADMINISTRATIVA ADMINISTRACAO APOIO COBERTURA PLANO SAUDE AJUDA CUSTO VALE
+FUNCIONARIO FUNCIONARIOS FUNCIONARIA EQUIPE PORTEIRO PORTEIROS PORTARIA ZELADOR ZELADORA ZELADORIA LIMPEZA
+JARDINEIRO JARDINAGEM AUXILIAR SINDICO SUBSINDICO MANUTENCAO FOLGUISTA FOLGA FOLGAS PERIODO PROPORCIONAL ABONO
+CONSTITUCIONAL TERCO INSS FGTS IRRF DARF JANEIRO FEVEREIRO MARCO ABRIL MAIO JUNHO JULHO AGOSTO SETEMBRO OUTUBRO
+NOVEMBRO DEZEMBRO JAN FEV MAR ABR MAI JUN JUL AGO SET OUT NOV DEZ PRIMEIRA SEGUNDA TERCEIRA QUARTA ULTIMA
+REFORMA OBRA CONDOMINIO COMBINADOS CONTRATADOS CONTRATADO ACORDO MULTA SALDO DIFERENCA RETROATIVO DISSIDIO
+NOTURNO ADICIONAL INSALUBRIDADE PERICULOSIDADE BENEFICIO BENEFICIOS ALIMENTACAO TRANSPORTE CESTA NATAL DOS DAS
+COM PARA SOBRE PELO PELA MENSAL ANUAL QUINZENA DIAS RECIBO NOTA FISCAL PAGTO PGTO TOTAL VALOR""".split())
+
+
+def _tem_nome(s: str) -> bool:
+    return any(_sem_acento(w) not in _COMUNS for w in re.findall(r"\b[A-ZÀ-Ý][a-zà-ÿ]{2,}\b", s))
+
+
 def limpa_rotulo(rot: str, rubrica: str = "") -> str:
     """Rótulo do lançamento pronto para a frase: sem 'Ref.', 'Ref. a', 'Referente a',
-    sem nome de funcionário em férias ou salário e sem hífen."""
+    sem nome de funcionário em férias, salário e afins ('férias da equipe (datas)') e sem hífen."""
     s = re.sub(r"\s+", " ", str(rot or "")).strip()
     for _ in range(2):
         s = _PREFIXO_REF.sub("", s).strip()
-    if s and PESSOAL_ITEM.search(_sem_acento(rubrica + " " + s)):
-        base = _nome(rubrica or "despesa com pessoal").lower()
+    if s and PESSOAL_ITEM.search(_sem_acento(rubrica + " " + s)) and _tem_nome(s):
         datas = _DATAS.findall(s)
-        s = f"{base} da equipe" + (f" ({datas[0]})" if datas else "")
+        base = _tipo_pessoal(s) if PESSOAL_ITEM.search(_sem_acento(s)) else _tipo_pessoal(rubrica)
+        s = f"{base} da equipe" + (f" ({re.sub(r'\s*(?:à|até)\s*', ' a ', datas[0])})" if datas else "")
     s = sem_hifen(s).strip(" .,;:")
     if s.count("(") > s.count(")"):
         s += ")"
     return s
+
+
+_ITEM_VALOR = re.compile(r"^(.*?)(\s\(\d+ (?:lançamentos?|competências?)[^)]*\))? (R\$ [\d.]+,\d{2})$")
+_VALORES = re.compile(r"R\$ [\d.]+,\d{2}")
+
+
+def limpa_composicao(texto: str, rubrica: str = "") -> str:
+    """Texto de composição da rubrica ('rótulo R$ x · rótulo R$ y') com cada rótulo limpo
+    como em limpa_rotulo. Os valores não mudam: se a sequência de 'R$' sair diferente
+    (texto fora do padrão), devolve o original, para a conferência de soma ('fecha')
+    continuar valendo exatamente como antes."""
+    if not isinstance(texto, str) or not texto.strip():
+        return texto
+    partes = []
+    for it in texto.split(" · "):
+        m = _ITEM_VALOR.match(it.strip())
+        if m:
+            rot = m.group(1).strip()
+            limpo = rot if rot.lower().startswith("lançamentos sem descrição") else (limpa_rotulo(rot, rubrica) or rot)
+            partes.append(f"{limpo}{m.group(2) or ''} {m.group(3)}")
+        else:
+            # Frase sem valor no fim ('Lançamentos do período ({n} meses)', 'Também: ...'): só
+            # prefixo e hífen; o nome só sai em rótulo de item, onde se sabe o que é.
+            partes.append(sem_hifen(_PREFIXO_REF.sub("", it.strip())))
+    novo = " · ".join(partes)
+    if _VALORES.findall(novo) != _VALORES.findall(texto):
+        return texto
+    return novo
 
 
 def cortar(t: str, limite: int) -> str:

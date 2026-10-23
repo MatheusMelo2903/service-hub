@@ -79,7 +79,22 @@ def extrair(pdfs: list[str], inicio: str, fim: str, pasta: str) -> dict:
         rascunho = json.load(f)
     if _desambiguar(dados):
         rascunho = _rascunho_da_skill(dados)
-    return {"dados": dados, "rascunho": rascunho, "log": (proc.stdout or "")[-2000:]}
+    return {"dados": dados, "rascunho": limpar_rascunho(rascunho), "log": (proc.stdout or "")[-2000:]}
+
+
+def limpar_rascunho(rascunho: dict) -> dict:
+    """Rótulos do rascunho sem 'Ref.', sem nome de funcionário (férias, salário) e sem
+    hífen, antes de ir para a curadoria e para a composição automática. Os valores ficam
+    iguais, então o 'fecha' (soma dos itens = total da rubrica) continua valendo."""
+    from . import justificativas as J
+    if not isinstance(rascunho, dict):
+        return rascunho
+    out = {}
+    for nome, v in rascunho.items():
+        if isinstance(v, dict) and isinstance(v.get("texto"), str) and v["texto"].strip():
+            v = dict(v, texto=J.limpa_composicao(v["texto"], nome))
+        out[nome] = v
+    return out
 
 
 def _rotulo_vazio(nome: str) -> bool:
@@ -158,22 +173,23 @@ def _brl(v: float) -> str:
     return "R$ " + f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _limpa_rotulo(rot: str) -> str:
-    s = _PREFIXO_ITEM.sub("", (rot or "").strip()).strip(" .,;:")
+def _limpa_rotulo(rot: str, rubrica: str = "") -> str:
+    from . import justificativas as J
+    s = _PREFIXO_ITEM.sub("", J.limpa_rotulo(rot, rubrica)).strip(" .,;:")
     return s[:1].lower() + s[1:] if s else ""
 
 
-def _resumo_itens(itens: list) -> str:
+def _resumo_itens(itens: list, rubrica: str = "") -> str:
     """'N lançamentos no período. Maiores: A R$ x · B R$ y. Também: c, d, e'.
     Curto o bastante pra caber em 4 linhas; sem prometer a soma (fecha=False)."""
     n = sum(int(i.get("qtd") or 1) for i in itens)
     maiores = [i for i in itens if i.get("rotulo")][:2]
     partes = [f"{n} lançamentos no período"]
     if maiores:
-        partes.append("maiores: " + " · ".join(f"{_limpa_rotulo(i['rotulo'])} {_brl(i['valor'])}" for i in maiores))
-    vistos, outros = {(_limpa_rotulo(i["rotulo"])) for i in maiores}, []
+        partes.append("maiores: " + " · ".join(f"{_limpa_rotulo(i['rotulo'], rubrica)} {_brl(i['valor'])}" for i in maiores))
+    vistos, outros = {(_limpa_rotulo(i["rotulo"], rubrica)) for i in maiores}, []
     for i in itens[2:]:
-        lab = _limpa_rotulo(i.get("rotulo") or "")
+        lab = _limpa_rotulo(i.get("rotulo") or "", rubrica)
         if lab and lab not in vistos and len(", ".join(outros + [lab])) < 110:
             vistos.add(lab)
             outros.append(lab)
@@ -193,6 +209,7 @@ def composicao_automatica(dados: dict, rascunho: dict, nome_hub: str | None = No
     comp = {"cliente": cliente_de(dados.get("condominio", ""), nome_hub), "rubricas": {}}
     if dados.get("modo") != "detalhado":
         return comp
+    rascunho = limpar_rascunho(rascunho or {})
     for cat in dados.get("categorias", []):
         for r in cat.get("rubricas", []):
             rasc = rascunho.get(r["nome"], {}) or {}
@@ -202,7 +219,7 @@ def composicao_automatica(dados: dict, rascunho: dict, nome_hub: str | None = No
             conciliada = r.get("status") in ("exato", "resolvido")
             if texto and (len(texto) > _LIMITE_TEXTO or len(r.get("itens") or []) > _LIMITE_ITENS):
                 # Muitos itens: resume como a skill faz no tipo 3 (compras repetidas).
-                comp["rubricas"][r["nome"]] = {"texto": _resumo_itens(r.get("itens") or []), "fecha": False}
+                comp["rubricas"][r["nome"]] = {"texto": _resumo_itens(r.get("itens") or [], r["nome"]), "fecha": False}
             elif texto:
                 comp["rubricas"][r["nome"]] = {"texto": texto, "fecha": bool(rasc.get("fecha")) and conciliada}
             else:
@@ -215,6 +232,7 @@ def composicao_automatica(dados: dict, rascunho: dict, nome_hub: str | None = No
 def completar_composicao(comp_ia: dict, dados: dict, rascunho: dict, nome_hub: str | None = None) -> dict:
     """Junta a curadoria da IA com a automatica: cliente sempre pelas regras e
     qualquer rubrica que a IA nao escreveu cai no texto automatico."""
+    from . import justificativas as J
     auto = composicao_automatica(dados, rascunho, nome_hub)
     comp = {"cliente": auto["cliente"], "rubricas": dict(auto["rubricas"])}
     if not isinstance(comp_ia, dict):
@@ -223,7 +241,8 @@ def completar_composicao(comp_ia: dict, dados: dict, rascunho: dict, nome_hub: s
     for nome, v in (comp_ia.get("rubricas") or {}).items():
         if nome in comp["rubricas"] and isinstance(v, dict) and str(v.get("texto", "")).strip():
             conciliada = status.get(nome) in ("exato", "resolvido")
-            item = {"texto": str(v["texto"]).strip(), "fecha": bool(v.get("fecha")) and conciliada}
+            # Mesma limpeza de rótulos no texto da IA (nome de funcionário nunca vai ao slide).
+            item = {"texto": J.limpa_composicao(str(v["texto"]).strip(), nome), "fecha": bool(v.get("fecha")) and conciliada}
             if isinstance(v.get("nome"), str) and v["nome"].strip():
                 item["nome"] = v["nome"].strip()
             elif comp["rubricas"][nome].get("nome"):

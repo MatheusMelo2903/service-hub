@@ -243,3 +243,36 @@ def test_dados_reais_com_deficit(tmp_path):
     e = cfg["explicacoes"]
     frases = [(0, e["caixa"])] if e.get("caixa") else []
     _confere_deck(dados, comp, tmp_path, frases + [(1, e["resumo"][:30])])
+
+
+# ---------------- rótulos da composição (rascunho, automática e IA) ----------------
+
+RASC_FERIAS = ("Ref. a Fulano (15/06/2026 a 04/07/2026 (2 lançamentos) R$ 5.000,00 · Ref. Férias Beltrana 08/09 a 07/10 R$ 2.000,00"
+               " · Ref. à Ciclana Souza (16 à 30/12/2025 R$ 1.000,00")
+
+
+def test_limpa_composicao_tira_nome_e_mantem_valores():
+    t = J.limpa_composicao(RASC_FERIAS, "Férias")
+    assert t == ("férias da equipe (15/06/2026 a 04/07/2026) (2 lançamentos) R$ 5.000,00 · férias da equipe (08/09 a 07/10) "
+                 "R$ 2.000,00 · férias da equipe (16 a 30/12/2025) R$ 1.000,00")
+    assert J.limpa_composicao("Ref. a quinta medição - reforma R$ 10,00 · lançamentos sem descrição (3 lançamentos) R$ 5,00", "Obra") \
+        == "quinta medição, reforma R$ 10,00 · lançamentos sem descrição (3 lançamentos) R$ 5,00"
+    # Sem nome de pessoa, o rótulo de pessoal fica (só sem o "Ref.").
+    assert J.limpa_composicao("Ref. a 2ª parcela R$ 300,00", "13 Salário") == "2ª parcela R$ 300,00"
+    assert J.limpa_composicao("Lançamentos do período ({n} meses)") == "Lançamentos do período ({n} meses)"
+
+
+def test_composicao_automatica_e_ia_sem_nome_de_funcionario(tmp_path):
+    dados = _dados_ficticios()
+    ferias = [r for c in dados["categorias"] for r in c["rubricas"] if r["nome"] == "Férias"][0]
+    ferias["status"] = "exato"
+    rasc = {"Férias": {"texto": "Ref. a Fulano de Tal (01/05/2026 a 30/05/2026 R$ 8.000,00", "fecha": True, "status": "exato"}}
+    auto = v13.composicao_automatica(dados, rasc)
+    assert auto["rubricas"]["Férias"] == {"texto": "férias da equipe (01/05/2026 a 30/05/2026) R$ 8.000,00", "fecha": True}
+    assert v13.limpar_rascunho(rasc)["Férias"]["texto"] == auto["rubricas"]["Férias"]["texto"]
+    comp = v13.completar_composicao({"rubricas": {"Férias": {"texto": "Férias de Fulano de Tal R$ 8.000,00", "fecha": True}}}, dados, rasc)
+    assert comp["rubricas"]["Férias"] == {"texto": "férias da equipe R$ 8.000,00", "fecha": True}
+    # A conferência de soma ("fecha") continua passando no gerador.
+    cfg = _cfg(dados, comp)
+    p = _pptx(cfg, tmp_path)
+    assert "Fulano" not in " ".join(_textos(p))
