@@ -1,5 +1,6 @@
 // ============================================================
-// BALANCETE DIGITAL (T41): cartão dentro da aba Financeiro, só para GESTOR. Lista os 900A do mês
+// BALANCETE DIGITAL (T41): cartão dentro da aba Financeiro. Desde 23/10/2026 é o módulo
+// balancete (ver = conferir, gerar = pedir o 900A), liberável por pessoa; o GESTOR vê sempre. Lista os 900A do mês
 // do condomínio ativo no topo, confere o PDF (mês em todas as capas e relatórios, itens da seleção,
 // comprovantes contra as despesas pagas no mês, páginas em branco ou repetidas) e, onde a geração
 // estiver liberada, pede o 900A ao Superlógica SEM publicar. Publicar para os condôminos continua
@@ -7,12 +8,22 @@
 // O servidor confere tudo de novo: aqui é só o que aparece na tela.
 // ============================================================
 (function () {
+  // Módulo no catálogo de permissões, para aparecer na tela de editar permissões.
+  if (typeof MODULOS_CATALOGO !== 'undefined' && !MODULOS_CATALOGO.balancete) {
+    MODULOS_CATALOGO.balancete = { label: 'Balancete digital (precisa também do Financeiro)', acoes: ['ver', 'gerar'] };
+  }
   var est = { seq: 0, cond: null, mes: '', lista: [] };
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
   function mesISO(delta) { var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + delta); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
   function brl(v) { return Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
+  // Mesma regra do servidor: Financeiro aberto e o módulo balancete (o GESTOR passa sozinho).
+  function temBal(acao) {
+    if (window.USER_ROLE === 'GESTOR' && window.USER_PERMS) return true;
+    var p = window.USER_PERMS && window.USER_PERMS.balancete;
+    return !!(p && p.visivel === true && Array.isArray(p.acoes) && p.acoes.indexOf(acao) >= 0);
+  }
   function pode() {
-    return window.USER_ROLE === 'GESTOR' && typeof window.podeAbrirPainel === 'function' && window.podeAbrirPainel('fincontrole');
+    return typeof window.podeAbrirPainel === 'function' && window.podeAbrirPainel('fincontrole') && temBal('ver');
   }
   function condAtivo() {
     var c = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
@@ -61,7 +72,7 @@
       if (seq !== est.seq) return;
       if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
       est.lista = j.impressoes || [];
-      document.getElementById('bal-gerar').style.display = j.geracao_liberada ? '' : 'none';
+      document.getElementById('bal-gerar').style.display = (j.geracao_liberada && temBal('gerar')) ? '' : 'none';
       desenharLista();
       info(est.lista.length ? '' : 'Nenhum 900A gerado para este mês ainda.');
     } catch (e) { if (seq === est.seq) info(e.message, true); }

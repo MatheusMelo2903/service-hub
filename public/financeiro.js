@@ -523,6 +523,7 @@
     est.seqB++;
     var l = document.getElementById('fin-bol-lista');
     if (l) l.innerHTML = '';
+    est.bolLista = []; est.bolTipo = null;
     msg('fin-bol-info', '');
     var b = document.getElementById('fin-bol-conferir');
     if (b) b.disabled = false;
@@ -548,19 +549,59 @@
       if (seq === est.seqB && e.message !== 'cancelado') { document.getElementById('fin-bol-lista').innerHTML = ''; msg('fin-bol-info', e.message, true); }
     } finally { if (seq === est.seqB && document.getElementById('fin-bol-conferir')) document.getElementById('fin-bol-conferir').disabled = false; }
   };
+  // 23/10/2026 (pedido do Matheus): em vez de uma lista longa, um botão por tipo de apontamento
+  // com a contagem. A tabela só aparece ao clicar num tipo (ou em "Ver todos"), um tipo por vez.
+  var ORDEM_GRAV = { alta: 0, media: 1, baixa: 2 };
+  function pesoGrav(g) { return Object.prototype.hasOwnProperty.call(ORDEM_GRAV, g) ? ORDEM_GRAV[g] : 9; }
   function renderBoletos(j) {
     var r = j.resumo || {};
     msg('fin-bol-info', (r.boletos || 0) + ' boleto(s) em ' + (r.unidades_com_boleto || 0) + ' unidade(s), total ' + brl(r.valor_total) + '; comparado com ' + (j.meses_comparados || []).join(', ') + '. '
       + (r.alertas || 0) + ' ponto(s) para conferir.' + ((j.avisos || []).length ? ' ' + j.avisos.join(' ') : ''));
     var lista = j.alertas || [];
+    est.bolLista = lista;
     var el = document.getElementById('fin-bol-lista');
     if (!lista.length) { el.innerHTML = '<div class="hint">Nada fora do padrão neste mês.</div>'; return; }
-    var html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Gravidade</th><th ' + TH + '>Tipo</th><th ' + TH + '>Unidade</th><th ' + TH + '>O que houve</th></tr></thead><tbody>';
+    // Agrupa por tipo, guardando a pior gravidade de cada grupo para ordenar e colorir.
+    var grupos = {};
     lista.forEach(function (a) {
-      html += '<tr><td ' + TD + '>' + selo(a.gravidade) + '</td><td ' + TD + '>' + esc(NOME_BOLETO[a.tipo] || a.tipo) + '</td><td ' + TD + '>' + esc(a.unidade || '') + '</td>'
+      var g = grupos[a.tipo] || (grupos[a.tipo] = { tipo: a.tipo, qtd: 0, pior: a.gravidade });
+      g.qtd++;
+      if (pesoGrav(a.gravidade) < pesoGrav(g.pior)) g.pior = a.gravidade;
+    });
+    var ordem = Object.keys(grupos).map(function (k) { return grupos[k]; })
+      .sort(function (a, b) { return (pesoGrav(a.pior) - pesoGrav(b.pior)) || (b.qtd - a.qtd); });
+    var botoes = ordem.map(function (g) {
+      return '<button type="button" class="btn btn-ghost fin-bol-tipo" data-tipo="' + esc(g.tipo) + '" style="font-size:12px;padding:6px 12px;display:inline-flex;align-items:center;gap:6px">'
+        + '<span style="width:8px;height:8px;border-radius:50%;background:' + (COR[g.pior] || 'var(--muted)') + '"></span>'
+        + esc(NOME_BOLETO[g.tipo] || g.tipo) + ' <b>' + g.qtd + '</b></button>';
+    }).join('');
+    el.innerHTML = '<div class="hint" style="margin-bottom:6px">Clique num tipo para ver as unidades. A bolinha mostra a gravidade mais alta do tipo.</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">' + botoes
+      + '<button type="button" class="btn btn-ghost fin-bol-tipo" data-tipo="*" style="font-size:12px;padding:6px 12px">Ver todos <b>' + lista.length + '</b></button></div>'
+      + '<div id="fin-bol-tabela"></div>';
+    Array.prototype.forEach.call(el.querySelectorAll('.fin-bol-tipo'), function (b) {
+      b.addEventListener('click', function () { boletosMostrarTipo(b.getAttribute('data-tipo')); });
+    });
+  }
+  // Mostra só os apontamentos do tipo clicado; clicar de novo no mesmo tipo fecha a tabela.
+  function boletosMostrarTipo(tipo) {
+    var alvo = document.getElementById('fin-bol-tabela');
+    if (!alvo) return;
+    var fechar = est.bolTipo === tipo && alvo.innerHTML;
+    est.bolTipo = fechar ? null : tipo;
+    Array.prototype.forEach.call(document.querySelectorAll('#fin-bol-lista .fin-bol-tipo'), function (b) {
+      var ativo = !fechar && b.getAttribute('data-tipo') === tipo;
+      b.className = 'btn ' + (ativo ? 'btn-primary' : 'btn-ghost') + ' fin-bol-tipo';
+      b.setAttribute('aria-pressed', ativo ? 'true' : 'false');
+    });
+    if (fechar) { alvo.innerHTML = ''; return; }
+    var itens = (est.bolLista || []).filter(function (a) { return tipo === '*' || a.tipo === tipo; });
+    var html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr><th ' + TH + '>Gravidade</th>' + (tipo === '*' ? '<th ' + TH + '>Tipo</th>' : '') + '<th ' + TH + '>Unidade</th><th ' + TH + '>O que houve</th></tr></thead><tbody>';
+    itens.forEach(function (a) {
+      html += '<tr><td ' + TD + '>' + selo(a.gravidade) + '</td>' + (tipo === '*' ? '<td ' + TD + '>' + esc(NOME_BOLETO[a.tipo] || a.tipo) + '</td>' : '') + '<td ' + TD + '>' + esc(a.unidade || '') + '</td>'
         + '<td ' + TD + ' class="td-livre" title="' + esc((a.titulo || '') + '\n' + (a.detalhe || '')) + '"><div class="td-2l"><b>' + esc(a.titulo || '') + '</b></div><div class="td-2l">' + esc(a.detalhe || '') + '</div></td></tr>';
     });
-    el.innerHTML = html + '</tbody></table></div>';
+    alvo.innerHTML = html + '</tbody></table></div>';
   }
 
   // 6c. Pré balancete: o que impede fechar o mês.

@@ -4336,7 +4336,7 @@ async function _exigirFinanceiro(req, res, acao) {
 }
 // T37: Boletos e Conciliação ganharam item próprio no menu. Além do módulo financeiro, a rota
 // exige o módulo do item (boletos ou conciliacao, ação ver). Falha fechada: perfil ilegível recusa.
-async function _exigirModuloItem(req, res, modulo) {
+async function _exigirModuloItem(req, res, modulo, acao) {
   if (req.authMode === 'internal') return true;
   if (!SUPABASE_SERVICE_ROLE_KEY) { res.status(503).json({ erro: 'service_role_nao_configurada' }); return false; }
   let perfil = null;
@@ -4344,8 +4344,8 @@ async function _exigirModuloItem(req, res, modulo) {
     res.status(503).json({ erro: 'permissao_indisponivel', detalhe: 'Não foi possível conferir suas permissões agora.' });
     return false;
   }
-  if (podeModulo(perfil, modulo, 'ver')) return true;
-  res.status(403).json({ erro: 'modulo_sem_acesso', detalhe: 'Seu usuário não tem acesso a esta tela.' });
+  if (podeModulo(perfil, modulo, acao || 'ver')) return true;
+  res.status(403).json({ erro: 'modulo_sem_acesso', detalhe: acao && acao !== 'ver' ? 'Seu usuário não pode fazer isso nesta tela.' : 'Seu usuário não tem acesso a esta tela.' });
   return false;
 }
 // Condomínios que quem chama pode ver: null = todos (GESTOR, acesso interno, sem carteira).
@@ -4460,7 +4460,8 @@ app.get('/api/financeiro/condominio/:idSuperlogica/pre-balancete', requireAuth, 
 // T41 Balancete digital: lista dos 900A do mês, conferência automática do PDF (só leitura) e
 // geração sem publicar para condomínio liberado (BALANCETE_GERACAO_LIBERADA). Rotas em financeiro/balancete-rotas.js.
 require('./financeiro/balancete-rotas').criarRotasBalancete(app, {
-  requireAuth, requireGestor, express, exigirFinanceiro: _exigirFinanceiro, exigirLeituraSuperlogica, exigirEscritaSuperlogica, idValido: slModulo.idValido,
+  requireAuth, express, exigirFinanceiro: _exigirFinanceiro, exigirModuloItem: _exigirModuloItem,
+  exigirCarteira: (req, res, id) => _exigirCarteira(req, res, id), exigirEscopo: (req, res, id) => _exigirEscopoFinanceiro(req, res, id), exigirLeituraSuperlogica, exigirEscritaSuperlogica, idValido: slModulo.idValido,
   cred: () => ({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }),
   cliente: () => clienteSL(), auditar: (req, acao, det, susp) => auditoria.evento(req, acao, det, susp),
 });

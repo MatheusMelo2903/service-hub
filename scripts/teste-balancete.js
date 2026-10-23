@@ -137,7 +137,14 @@ const { criarRotasBalancete } = require('../financeiro/balancete-rotas');
 const app = express();
 let papel = 'GESTOR', financeiro = true, escrita = true, chamadasGerar = 0, iniciou = 0;
 const requireAuth = (req, res, next) => { req.user = { sub: 'u1', app_metadata: { role: papel } }; next(); };
-const requireGestor = (req, res, next) => (papel === 'GESTOR' ? next() : res.status(403).json({ erro: 'acesso_negado' }));
+// Módulo balancete (23/10/2026): GESTOR passa sozinho; os outros precisam do módulo e da ação.
+let modBal = [];
+const exigirModuloItem = async (req, res, modulo, acao) => {
+  if (modulo === 'balancete' && (papel === 'GESTOR' || modBal.includes(acao || 'ver'))) return true;
+  res.status(403).json({ erro: 'modulo_sem_acesso' }); return false;
+};
+let foraCarteira = false;
+const exigirCarteira = async (req, res) => { if (!foraCarteira) return true; res.status(403).json({ erro: 'fora_da_carteira' }); return false; };
 const eventos = [];
 B.listarImpressoes = async () => [{ id: '647731', titulo: '900A', da_competencia: true }];
 B.pedirGeracao = async () => { chamadasGerar++; return { pedido: true, http: 504, id_impressao: '', aguardar: true }; };
@@ -145,7 +152,7 @@ const estados = new Map();
 B.situacaoConferencia = (c, m, id) => estados.get(c + '|' + m + '|' + id) || null;
 B.iniciarConferencia = (o) => { iniciou++; const s = { estado: 'rodando', inicio: Date.now() }; estados.set(o.idCondominio + '|' + o.competencia + '|' + o.idImpressao, s); return s; };
 criarRotasBalancete(app, {
-  requireAuth, requireGestor, express, idValido: (v) => /^[1-9][0-9]{0,8}$/.test(String(v || '')),
+  requireAuth, express, exigirModuloItem, exigirCarteira, exigirEscopo: async () => ({ escopo: null }), idValido: (v) => /^[1-9][0-9]{0,8}$/.test(String(v || '')),
   exigirFinanceiro: async (req, res) => { if (financeiro) return true; res.status(403).json({ erro: 'modulo_sem_acesso' }); return false; },
   exigirLeituraSuperlogica: async () => true, exigirEscritaSuperlogica: async (req, res) => { if (escrita) return true; res.status(403).json({ erro: 'acesso_negado' }); return false; }, cred: () => ({}), cliente: () => ({}), auditar: (req, acao) => eventos.push(acao),
 });
@@ -167,6 +174,16 @@ const srv = app.listen(0, async () => {
     papel = 'OPERACIONAL';
     t('não GESTOR 403 lista', (await pedir('GET', '/api/financeiro/balancete/94/impressoes?competencia=2026-09')).st === 403);
     t('não GESTOR 403 gerar', (await pedir('POST', '/api/financeiro/balancete/94/gerar', { competencia: '2026-09' })).st === 403);
+    modBal = ['ver'];
+    t('módulo balancete ver: lista 200', (await pedir('GET', '/api/financeiro/balancete/94/impressoes?competencia=2026-09')).st === 200);
+    t('módulo balancete sem gerar: 403 e não chama', (await pedir('POST', '/api/financeiro/balancete/167/gerar', { competencia: '2026-09' })).st === 403 && chamadasGerar === 0);
+    foraCarteira = true;
+    t('fora da carteira 403', (await pedir('GET', '/api/financeiro/balancete/94/impressoes?competencia=2026-09')).st === 403);
+    foraCarteira = false;
+    modBal = ['ver', 'gerar'];
+    const gOp = await pedir('POST', '/api/financeiro/balancete/167/gerar', { competencia: '2026-09' });
+    t('módulo balancete com gerar: 202', gOp.st === 202 && chamadasGerar === 1);
+    chamadasGerar = 0; modBal = [];
     papel = 'GESTOR'; financeiro = false;
     t('sem módulo financeiro 403', (await pedir('GET', '/api/financeiro/balancete/94/conferencia?competencia=2026-09&impressao=647731')).st === 403);
     financeiro = true;

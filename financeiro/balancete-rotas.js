@@ -1,5 +1,6 @@
 'use strict';
-// T41 Balancete digital: rotas do Hub. Só GESTOR com o módulo financeiro e acesso ao Superlógica.
+// T41 Balancete digital: rotas do Hub. Módulo balancete (ver = conferir, gerar = pedir o 900A) junto
+// com o módulo financeiro, acesso ao Superlógica, carteira e escopo. O GESTOR passa pelo módulo sozinho.
 //   GET  /api/financeiro/balancete/:id/impressoes?competencia=AAAA-MM   900A do mês (só leitura)
 //   GET  /api/financeiro/balancete/:id/conferencia?competencia=AAAA-MM&impressao=<id>
 //        dispara (ou devolve) a conferência do PDF: 202 enquanto roda, 200 com o resultado
@@ -9,7 +10,7 @@
 const B = require('./balancete');
 
 function criarRotasBalancete(app, h) {
-  const { requireAuth, requireGestor, express, exigirFinanceiro, exigirLeituraSuperlogica, exigirEscritaSuperlogica, idValido, cred, cliente, auditar } = h;
+  const { requireAuth, express, exigirFinanceiro, exigirModuloItem, exigirCarteira, exigirEscopo, exigirLeituraSuperlogica, exigirEscritaSuperlogica, idValido, cred, cliente, auditar } = h;
 
   // Travas comuns. Devolve { id, comp } ou null (já respondeu).
   async function travas(req, res, competenciaBruta) {
@@ -21,7 +22,10 @@ function criarRotasBalancete(app, h) {
     if (!c) { res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Informe o mês no formato AAAA-MM.' }); return null; }
     if (c.chave > B.mesAtualBrasilia()) { res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Escolha um mês que já começou.' }); return null; }
     if (!(await exigirFinanceiro(req, res, 'ver'))) return null;
+    if (!(await exigirModuloItem(req, res, 'balancete', 'ver'))) return null;
     if (!(await exigirLeituraSuperlogica(req, res))) return null;
+    if (!(await exigirCarteira(req, res, id))) return null;
+    if (!(await exigirEscopo(req, res, id))) return null;
     return { id, comp: c.chave };
   }
   const falhaSL = (res, e, rotulo) => {
@@ -29,7 +33,7 @@ function criarRotasBalancete(app, h) {
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível ler o Superlógica agora. Tente de novo em alguns minutos.' });
   };
 
-  app.get('/api/financeiro/balancete/:idSuperlogica/impressoes', requireAuth, requireGestor, async (req, res) => {
+  app.get('/api/financeiro/balancete/:idSuperlogica/impressoes', requireAuth, async (req, res) => {
     const t = await travas(req, res, req.query.competencia);
     if (!t) return;
     try {
@@ -39,7 +43,7 @@ function criarRotasBalancete(app, h) {
     } catch (e) { falhaSL(res, e, 'impressoes ' + t.id); }
   });
 
-  app.get('/api/financeiro/balancete/:idSuperlogica/conferencia', requireAuth, requireGestor, async (req, res) => {
+  app.get('/api/financeiro/balancete/:idSuperlogica/conferencia', requireAuth, async (req, res) => {
     const imp = String(req.query.impressao || '');
     if (!/^[1-9][0-9]{0,11}$/.test(imp)) { res.set('Cache-Control', 'no-store'); return res.status(400).json({ erro: 'impressao_invalida', detalhe: 'Escolha uma impressão da lista.' }); }
     const t = await travas(req, res, req.query.competencia);
@@ -60,11 +64,12 @@ function criarRotasBalancete(app, h) {
     res.json({ estado: 'pronto', concluido_em: new Date(s.fim).toISOString(), resultado: s.resultado });
   });
 
-  app.post('/api/financeiro/balancete/:idSuperlogica/gerar', requireAuth, requireGestor, express.json({ limit: '2kb' }), async (req, res) => {
+  app.post('/api/financeiro/balancete/:idSuperlogica/gerar', requireAuth, express.json({ limit: '2kb' }), async (req, res) => {
     const t = await travas(req, res, req.body && req.body.competencia);
     if (!t) return;
     if (!B.liberadosGeracao().has(t.id)) return res.status(403).json({ erro: 'geracao_nao_liberada', detalhe: 'A geração pelo Hub ainda não está liberada para este condomínio.' });
-    // Gerar cria uma impressão no Superlógica: além do GESTOR, exige o pré balancete e a trava de escrita.
+    // Gerar cria uma impressão no Superlógica: exige a ação gerar do módulo, o pré balancete e a trava de escrita.
+    if (!(await exigirModuloItem(req, res, 'balancete', 'gerar'))) return;
     if (!(await exigirFinanceiro(req, res, 'pre_balancete'))) return;
     if (!(await exigirEscritaSuperlogica(req, res))) return;
     try {
