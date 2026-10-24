@@ -168,14 +168,16 @@
       + (m ? (m.confirmado ? '<span class="hint">conferido por ' + esc(m.confirmado_por) + '</span>' : '<span class="hint" style="color:var(--warning)">aprendido pelo sistema, ainda não conferido</span>') : '<span class="hint">não encontrado</span>')
       + (gravar ? ' <button class="btn btn-ghost" id="bd-aprender" style="font-size:11px;padding:3px 10px">Aprender de novo dos últimos meses</button>' : '') + '</div>';
     if (m && m.itens && m.itens.length) {
-      var docs = {}; (s.documentos || []).forEach(function (d) { docs[d.chave] = d; });
+      var docs = {}; (s.documentos || []).forEach(function (d) { (docs[d.chave] = docs[d.chave] || []).push(d); });
       html += '<table class="tbl" style="width:100%;font-size:12px;margin-top:4px"><thead><tr><th>#</th><th>Comentário</th><th>Onde</th><th>Etiqueta</th><th>Documento</th><th>No Superlógica</th></tr></thead><tbody>'
         + m.itens.map(function (i) {
           var mo = (s.montagem || {})[i.chave] || {};
           var est2 = mo.estado || 'pendente';
           var doc = '';
           if (i.fonte && i.fonte.tipo === 'recebido') {
-            doc = docs[i.chave] ? 'Recebido: ' + esc(docs[i.chave].nome) + ' (' + esc(Math.max(1, Math.round(docs[i.chave].bytes / 1024))) + ' KB)' : '<span style="color:var(--danger)">Não chegou</span>';
+            var ds = docs[i.chave] || [];
+            doc = (i.fonte.movimentacao === '018B' ? '<div class="hint" style="margin:0">Movimentação de cada poupança: o Hub gera.</div>' : '')
+              + (ds.length ? 'Recebido' + (ds.length > 1 ? 's ' + esc(ds.length) + ' PDFs' : '') + ': ' + ds.map(function (d) { return esc(d.nome); }).join(', ') : '<span style="color:var(--danger)">Não chegou</span>');
             if (gravar && est2 !== 'gravado' && est2 !== 'ja_existia') doc += ' <label class="btn btn-ghost" style="font-size:11px;padding:2px 8px;cursor:pointer">Enviar PDF<input type="file" accept="application/pdf" data-bd-doc="' + esc(i.chave) + '" style="display:none"></label>';
           } else doc = esc(nomeFonte(i.fonte));
           return '<tr><td>' + esc(i.ordem) + '</td><td class="td-livre">' + esc(i.titulo) + '</td><td>' + esc(i.conta === 'DIAGNOSTICO' ? 'Balão do R&D' : i.conta) + '</td><td>' + esc(i.etiqueta_nome || i.etiqueta_id || 'sem etiqueta') + '</td>'
@@ -188,18 +190,20 @@
     if (gravar) {
       html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
         + '<button class="btn btn-ghost" id="bd-montar">Montar agora</button>'
+        + (s.montagem_completa && s.comentarios_privados ? '<button class="btn btn-primary" id="bd-publicos">Tornar públicos os comentários do balancete</button>' : '')
         + '<button class="btn btn-primary" id="bd-fechar"' + (s.fechado ? ' disabled title="' + esc('Mês já fechado em ' + dataBR(s.fechado_ate)) + '"' : '') + '>Confirmar o fechamento do mês</button>'
         + (s.fechado && (window.USER_ROLE === 'GESTOR' || window.USER_ROLE === 'GERENTE') ? '<button class="btn btn-ghost" id="bd-reabrir">Reabrir o mês</button>' : '')
         + '<button class="btn btn-ghost" id="bd-historico">Quem fechou e reabriu</button></div>'
         + '<div id="bd-reabrir-box"></div><div id="bd-acao-info" style="margin-top:6px"></div><div id="bd-hist"></div>';
     }
-    html += '<div class="hint" style="margin-top:8px">Publicar para os condôminos continua sendo confirmado por uma pessoa, depois que o sistema marcar "Pronto para publicar".</div>';
+    html += '<div class="hint" style="margin-top:8px">Ordem: o sistema monta os comentários privados; você confirma o fechamento; depois confirma "Tornar públicos os comentários do balancete" (o 900A só leva os anexos dos comentários públicos, e eles passam a aparecer para os condôminos no Demonstrativo R&D); o sistema gera e confere o 900A; por fim você publica.</div>';
     el('bd-cond').innerHTML = html;
     el('bd-recalc').addEventListener('click', function (ev) { ev.preventDefault(); carregarCond(true); });
     if (el('bd-aprender')) el('bd-aprender').addEventListener('click', aprender);
     if (el('bd-confirmar-modelo')) el('bd-confirmar-modelo').addEventListener('click', function () { confirmarModelo(m.itens); });
     document.querySelectorAll('[data-bd-doc]').forEach(function (inp) { inp.addEventListener('change', function () { enviarDoc(inp.getAttribute('data-bd-doc'), inp.files && inp.files[0]); }); });
     if (el('bd-montar')) el('bd-montar').addEventListener('click', montarAgora);
+    if (el('bd-publicos')) el('bd-publicos').addEventListener('click', tornarPublicos);
     if (el('bd-fechar')) el('bd-fechar').addEventListener('click', fecharMes);
     if (el('bd-reabrir')) el('bd-reabrir').addEventListener('click', abrirReabertura);
     if (el('bd-historico')) el('bd-historico').addEventListener('click', historico);
@@ -278,6 +282,11 @@
     if (!r.ok && r.status !== 202) throw new Error(j.detalhe || ('Falha ' + r.status));
     info('bd-acao-info', j.detalhe || 'Feito.');
     if (aoTerminar) aoTerminar(j);
+  }
+  async function tornarPublicos() {
+    var b = el('bd-publicos'); b.disabled = true;
+    try { await gravar('/tornar-publicos', { competencia: est.mes }, function () { carregarCond(false); }); }
+    catch (e) { info('bd-acao-info', e.message, true); b.disabled = false; }
   }
   async function montarAgora() {
     var b = el('bd-montar'); b.disabled = true;

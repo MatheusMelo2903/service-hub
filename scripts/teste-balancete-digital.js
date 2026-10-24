@@ -45,6 +45,7 @@ function responder(metodo, url, f) {
     if (SL.engolirComentario) SL.comentarios.pop();
     return ok({ id_comentarioconteudo_comc: String(id) });
   }
+  if (p === 'comentarios/post') { const c = SL.comentarios.find((x) => x.id_comentarioconteudo_comc === String(q.ID_COMENTARIOCONTEUDO_COMC)); if (!c) return { status: 206, json: [{ status: '500', msg: 'Comentário não encontrado' }] }; if (f.VISIBILIDADE != null) c.fl_visibilidade_comc = f.VISIBILIDADE; return { status: 200, json: [{ status: '200', msg: 'Alterações salvas.' }] }; }
   if (p === 'condominios/fecharmes') { SL.fechamento = f.DT_FECHAMENTO; return ok({ idcondominio: f.ID_CONDOMINIO_COND }, 'Sucesso'); }
   if (p === 'impressoes/delete') { SL.impressoesApagadas = (SL.impressoesApagadas || 0) + 1; return ok({}); }
   if (/^relatorios\/id\//.test(p)) return { status: 200, json: [{ status: '200', id_impressao: String(700000 + SL.chamadas.length) }] };
@@ -88,6 +89,9 @@ const cliente = {
     if (rota === 'condominios/get') return [{ id_condominio_cond: String(q.id), st_fantasia_cond: 'Residencial Teste', dt_fechamento_cond: SL.fechamento }];
     if (rota === 'arquivos/etiquetas') return [{ id_etiqueta_eti: '8', st_nomeetiqueta_eti: 'Extrato' }, { id_etiqueta_eti: '4', st_nomeetiqueta_eti: 'Orçamento' }, { id_etiqueta_eti: '9', st_nomeetiqueta_eti: 'Consumo' }];
     if (rota === 'impressoes/index') return [];
+    if (rota === 'contabancos/index') return [{ id_contabanco_cb: '823', st_descricao_cb: 'Conta Principal', fl_principal_cb: '1', id_tipocontabanco_tcb: '1' }, { id_contabanco_cb: '901', st_descricao_cb: 'Poupança Fundo de Reserva', id_tipocontabanco_tcb: '2' },
+      { id_contabanco_cb: '902', st_descricao_cb: 'Conta Caixa', id_tipocontabanco_tcb: '3' }, { id_contabanco_cb: '903', st_descricao_cb: 'Poupança Zerada', id_tipocontabanco_tcb: '2' }, { id_contabanco_cb: '904', st_descricao_cb: 'Encerrada', id_tipocontabanco_tcb: '2', dt_datafechamento_cb: '01/01/2026' }];
+    if (rota === 'caixa/index' && q.idContaBancaria) return [{ saldoinicialconta: q.idContaBancaria === '901' ? '500.00' : '0' }];
     if (rota === 'caixa/index') return [{ saldoinicialconta: q.dtInicio === '09/01/2026' ? '1000.00' : '1100.00' }];
     if (rota === 'balancetes/index') return [{ itens: [[{ conta: '1', descricao: 'Receitas', valor: '500.00' }, { conta: '1.1', descricao: 'Taxa', valor: '500.00' }, { conta: '1.2', descricao: 'Outras', valor: '0' }, { conta: '1.3', descricao: 'Fundo', valor: '0' }, { conta: '2', descricao: 'Despesas', valor: '-400.00' }]] }];
     return [];
@@ -264,6 +268,29 @@ function comentarioAntigo(mes, conta, titulo, etq, plano) {
     pre: { pendencias: 2, grupos: [{ chave: 'vencida', itens: [{ gravidade: 'alta', fornecedor: 'ATLAS', valor: 4563, dt_vencimento: '2025-03-28' }, { gravidade: 'alta', fornecedor: 'EDP', valor: 100, dt_vencimento: '2026-09-10' }] }] },
     modelo: { plano: '17', itens: [] }, fechadoAte: '2026-09-30', impressoes: [] });
   t('vencida de mês anterior vira aviso; a do mês trava', s5.avisos.length === 1 && /28\/03\/2025/.test(s5.avisos[0]) && s5.travas.filter((x) => /vencida sem baixa/.test(x.causa)).length === 1 && !s5.travas.some((x) => /Mais \d+ pendência/.test(x.causa)), { avisos: s5.avisos, travas: s5.travas.map((x) => x.causa) });
+  // privado até publicar: comentarios/post com VISIBILIDADE=1, relido
+  SL.chamadas = [];
+  const novoPriv = await D.gravarComentario(ctxR, { chave: 'garantidora', titulo: 'Garantidora', conta: 'DIAGNOSTICO', etiqueta_id: 4 }, { buffer: pdf('g') });
+  t('privado: grava com VISIBILIDADE=0', novoPriv.estado === 'gravado' && novoPriv.visibilidade === 0);
+  const tp = await D.tornarPublico(ctxR, { titulo: 'Garantidora', conta: 'DIAGNOSTICO' }, novoPriv.id_comentario);
+  const post = SL.chamadas.find((c) => c.rota === 'comentarios/post');
+  t('tornar público: comentarios/post com VISIBILIDADE=1 e relê', tp.estado === 'publico' && post && post.f.VISIBILIDADE === '1' && post.q.ID_COMENTARIOCONTEUDO_COMC === novoPriv.id_comentario, tp);
+  t('tornar público de novo não grava', (SL.chamadas = [], (await D.tornarPublico(ctxR, { titulo: 'Garantidora', conta: 'DIAGNOSTICO' }, novoPriv.id_comentario)).estado === 'publico' && escritas().length === 0));
+  t('tornar público de comentário que sumiu não grava', (SL.chamadas = [], (await D.tornarPublico(ctxR, { titulo: 'Garantidora', conta: 'DIAGNOSTICO' }, '1')).estado === 'falhou' && escritas().length === 0));
+  // movimentação das poupanças: uma por conta com saldo, sem a principal, o caixa, a zerada e a encerrada
+  const contasMv = await D.contasDaMovimentacao(cliente, '167', '2026-09');
+  t('poupanças: só as contas com saldo, sem principal e caixa', contasMv.length === 1 && contasMv[0].id === '901', contasMv);
+  SL.chamadas = [];
+  const mv = await D.gerarMovimentacoes(cred, cliente, '167', '2026-09', { baixar: async () => pdf('mov') });
+  const r018 = SL.chamadas.find((c) => c.rota === 'relatorios/id/018B');
+  t('poupanças: 018B por conta, mês certo, e a impressão é apagada', mv.documentos.length === 1 && mv.documentos[0].nome === 'Movimentações bancárias em Poupança Fundo de Reserva' && r018.q.CONTA_BANCARIA === '901' && r018.q.PERIODO_INICIO === '09/01/2026' && r018.q.PERIODO_FIM === '09/30/2026' && SL.chamadas.some((c) => c.rota === 'impressoes/delete'), r018 && r018.q);
+  // situação: comentários privados seguram o 900A
+  const montPriv = {}; mreal.itens.forEach((i) => { montPriv[i.chave] = { estado: 'gravado', visibilidade: 0 }; });
+  const s6 = D.montarSituacao({ comp: '2026-09', hoje: '2026-10-01', fechamento: tudoOk, soma: { ok: true }, modelo: { plano: '17', itens: mreal.itens }, documentos: new Set(), montagem: montPriv, fechadoAte: '2026-09-30', impressoes: [] });
+  t('privados seguram o 900A e dizem quem confirma', s6.comentarios_privados === 6 && s6.montagem_completa && s6.travas.some((x) => /ainda privado/.test(x.causa) && /Tornar públicos/.test(x.quem)) && s6.travas.some((x) => /depois de tornar públicos/.test(x.quem)), s6.travas);
+  Object.values(montPriv).forEach((l) => { l.visibilidade = 1; });
+  const s7 = D.montarSituacao({ comp: '2026-09', hoje: '2026-10-01', fechamento: tudoOk, soma: { ok: true }, modelo: { plano: '17', itens: mreal.itens }, documentos: new Set(), montagem: montPriv, fechadoAte: '2026-09-30', impressoes: [] });
+  t('públicos: só falta o 900A', s7.comentarios_privados === 0 && !s7.travas.some((x) => /ainda privado/.test(x.causa)));
   SL.comentarios = SL.comentarios.filter((c) => !/_DIAGNOSTICO\//.test(c.st_identificadororigem_como));
 
   // ── rotas e agendamento (express de verdade, banco em memória) ──
@@ -376,6 +403,21 @@ function comentarioAntigo(mes, conta, titulo, etq, plano) {
   const rnd = await R.montar('167', D.competencia('2026-09'), null, 'teste');
   t('não duplicar: tudo ja_existia', rnd.ja_existiam === 3 && rnd.gravados === 0 && rnd.falhas === 0, rnd);
   t('não duplicar: nenhuma gravação e nenhum relatório gerado', escritas().length === 0 && !SL.chamadas.some((c) => /^relatorios\//.test(c.rota)), SL.chamadas.filter((c) => !c.leitura).map((c) => c.rota));
+  // vários PDFs no mesmo item; o mesmo PDF não entra duas vezes
+  const d2 = await chamar('POST', '/api/financeiro/balancete-digital/167/documento', { competencia: '2026-09', chave: chaveExtrato, nome: 'extrato poupanca.pdf', pdf_base64: pdf('outro extrato').toString('base64') });
+  const d3 = await chamar('POST', '/api/financeiro/balancete-digital/167/documento', { competencia: '2026-09', chave: chaveExtrato, nome: 'repetido.pdf', pdf_base64: pdf('outro extrato').toString('base64') });
+  t('segundo PDF no mesmo item entra como outro documento', d2.status === 200 && (tabelas.fin_balancete_documento || []).some((x) => x.chave_item === chaveExtrato + '__2'), (tabelas.fin_balancete_documento || []).map((x) => x.chave_item));
+  t('o mesmo PDF não entra duas vezes', d3.status === 200 && d3.j.repetido === true && (tabelas.fin_balancete_documento || []).length === 2);
+  // tornar públicos: montagem completa, pela política (167 livre), relido
+  SL.chamadas = [];
+  const tp1 = await chamar('POST', '/api/financeiro/balancete-digital/167/tornar-publicos', { competencia: '2026-09' });
+  t('tornar públicos os comentários do balancete', tp1.status === 200 && tp1.j.publicos === 3 && (tabelas.fin_balancete_montagem || []).every((x) => Number(x.visibilidade) === 1) && SL.chamadas.filter((c) => c.rota === 'comentarios/post').length === 3, tp1);
+  t('tornar públicos na auditoria da política', auditorias.some((a) => a.acao === 'gravacao_superlogica' && a.det.operacao === 'balancete_tornar_publico'));
+  const tp2 = await chamar('POST', '/api/financeiro/balancete-digital/167/tornar-publicos', { competencia: '2026-09' });
+  t('de novo: nada a fazer', tp2.status === 409 && tp2.j.erro === 'nada_a_fazer');
+  const tp3 = await chamar('POST', '/api/financeiro/balancete-digital/136/tornar-publicos', { competencia: '2026-09' });
+  t('fora do teste: bloqueado no modo teste', tp3.status === 423);
+
   // painel: quem precisa agir conta TODAS as travas; a lista vai cortada em 15
   tabelas.fin_balancete_situacao.push({ id_superlogica: 94, competencia: '2026-09', nome: 'Victoria Bay', etapa: 'comprovantes', travas: Array.from({ length: 40 }, (_, i) => ({ etapa: 'comprovantes', causa: 'x' + i, quem: i < 30 ? 'Quem lançou a despesa: anexar' : 'Síndico: autorizar' })), calculado_em: new Date().toISOString() });
   const pq = await chamar('GET', '/api/financeiro/balancete-digital/painel?competencia=2026-09');
