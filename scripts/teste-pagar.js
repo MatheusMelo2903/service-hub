@@ -229,6 +229,16 @@ const sl = (iso) => E.isoParaSL(iso) + ' 00:00:00';
   S = superlogica({ remessaNaoFica: true });
   rA = await P.lancarCompleto(S.cred, S.cliente, dA, pdf, 'a.pdf', 'application/pdf', HOJE);
   t('remessa que não ficou é avisada', rA.ok && rA.parcelas.every((p) => p.remessa && !p.remessa.ok && /não ficou marcada/.test(p.remessa.msg)));
+  // Remessa relê antes de gravar: parcela baixada (ou já marcada) por outra pessoa depois da leitura não grava.
+  S = superlogica();
+  await P.lancarCompleto(S.cred, S.cliente, Object.assign({}, dA, { remessa: false }), pdf, 'a.pdf', 'application/pdf', HOJE);
+  const velha = JSON.parse(JSON.stringify(S.est.parcelas[0]));
+  S.est.parcelas[0].fl_liquidado_pdes = '1'; S.est.parcelas[0].dt_liquidacao_pdes = '10/22/2026 00:00:00';
+  let rr = await P.marcarRemessa(S.cred, S.cliente, velha, HOJE);
+  t('remessa: parcela baixada depois da leitura não grava', !rr.ok && !rr.incerto && /baixada/.test(rr.msg) && !S.est.chamadas.some((c) => c.cam === 'despesas/post'));
+  S.est.parcelas[1].fl_remessastatus_pdes = '1';
+  rr = await P.marcarRemessa(S.cred, S.cliente, JSON.parse(JSON.stringify(Object.assign({}, S.est.parcelas[1], { fl_remessastatus_pdes: '' }))), HOJE);
+  t('remessa: já marcada por outra pessoa não grava', !rr.ok && /já está marcada/.test(rr.msg) && !S.est.chamadas.some((c) => c.cam === 'despesas/post'));
   S = superlogica({ falhar: { 'despesas/': { status: 504, json: null } } });
   rA = await P.lancarCompleto(S.cred, S.cliente, dA, pdf, 'a.pdf', 'application/pdf', HOJE);
   t('sem resposta fica incerto, sem marcar remessa', !rA.ok && rA.incerto && !S.est.chamadas.some((c) => c.cam === 'despesas/post'));

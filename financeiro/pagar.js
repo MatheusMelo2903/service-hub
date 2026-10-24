@@ -399,9 +399,16 @@ function motivoSemRemessa(p, hojeIso) {
 // Não gera nem envia o arquivo: isso continua sendo feito por uma pessoa no Superlógica e no banco.
 // Medido no 167: Pix só vai para a remessa com a chave cadastrada nos dados de pagamento do fornecedor
 // (sem ela o Superlógica recusa com "Dados de pagamento do favorecido não foi informado").
-async function marcarRemessa(cred, cliente, parc, hojeIso) {
+async function marcarRemessa(cred, cliente, parcAntes, hojeIso) {
+  if (!parcAntes) return { ok: false, incerto: false, msg: motivoSemRemessa(null, hojeIso) };
+  // Relê a parcela logo antes de gravar (como a baixa): entre a leitura da tela e a confirmação ela
+  // pode ter sido baixada ou marcada por outra pessoa. Sem conseguir reler, não grava.
+  let parc = null;
+  try { parc = await parcelaAtual(cliente, parcAntes.id_condominio_cond, parcAntes.id_parcela_pdes, E.slParaIso(parcAntes.dt_vencimento_pdes)); } catch (e) {
+    return { ok: false, incerto: false, msg: 'Não deu para ler a parcela no Superlógica agora. Nada foi gravado.' };
+  }
   const motivo = motivoSemRemessa(parc, hojeIso);
-  if (motivo) return { ok: false, incerto: false, msg: motivo };
+  if (motivo) return { ok: false, incerto: false, msg: motivo + ' Nada foi gravado.' };
   const r = resultado(await pedir(cred, 'PUT', 'despesas/post', null, form({ ID_PARCELA_PDES: parc.id_parcela_pdes, FL_REMESSASTATUS_PDES: 1, ID_CONDOMINIO_COND: parc.id_condominio_cond, ID_DESPESA_DES: parc.id_despesa_des })));
   let lida = null;
   try { lida = await parcelaAtual(cliente, parc.id_condominio_cond, parc.id_parcela_pdes, E.slParaIso(parc.dt_vencimento_pdes)); } catch (e) { lida = null; }

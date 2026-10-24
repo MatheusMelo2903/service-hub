@@ -18,6 +18,7 @@
   var SIT = { pronta: ['Pronta para baixar', 'var(--accent)'], conferir: ['Para conferir', 'var(--warning)'], incerto: ['Sem confirmação', 'var(--danger)'], gravando: ['Gravando', 'var(--muted)'],
     baixada: ['Baixada', 'var(--success, #3a8f5c)'], recusada: ['Recusada', 'var(--danger)'] };
   var FORMAS = [[0, 'Boleto'], [12, 'Pix'], [14, 'Pix Copia e Cola'], [7, 'Débito automático'], [8, 'Transferência'], [9, 'Doc/Ted'], [13, 'DCTFWeb']];
+  var SIT_FORN = { pendente: 'Aguardando aprovação', gravando: 'Cadastrando', gravado: 'Cadastrado', incerto: 'Sem confirmação', recusado: 'Recusado', cancelado: 'Cancelado' };
   var NOME_FORMA = { 0: 'Boleto', 7: 'Débito automático', 8: 'Transferência', 9: 'Doc/Ted', 12: 'Pix', 13: 'DCTFWeb', 14: 'Pix Copia e Cola' };
   function selo(t, cor) { return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;color:#fff;background:' + cor + '">' + esc(t) + '</span>'; }
   function msg(el, t, erro) { if (el) el.innerHTML = t ? '<div style="font-size:12px;font-family:var(--mono);color:' + (erro ? 'var(--danger)' : 'var(--muted)') + '">' + esc(t) + '</div>' : ''; }
@@ -411,7 +412,7 @@
       msg(info, 'Pedidos de cadastro de fornecedor. O cadastro vale para todos os condomínios do Superlógica.');
       el.innerHTML = (j.itens || []).length ? tabela(['Fornecedor', 'CNPJ', 'Pix', 'Situação', 'Pedido', ''], j.itens.map(function (x) {
         var acoes = x.situacao === 'pendente' ? ((j.pode_aprovar && !x.eu_pedi ? '<button class="btn btn-primary" data-cpf="aprovar" data-id="' + esc(x.id) + '" data-pix="' + (x.pix || x.banco ? '1' : '') + '">Aprovar e cadastrar</button> ' : '') + '<button class="btn btn-ghost" data-cpf="cancelar" data-id="' + esc(x.id) + '">Cancelar</button>') : esc(x.motivo || '');
-        return '<tr><td ' + TD + '>' + esc(x.nome) + '</td><td ' + TD + '>' + esc(x.cnpj) + '</td><td ' + TD + '>' + (x.pix ? esc(x.pix.tipo + (x.pix.chave ? ' ' + x.pix.chave : '')) : '') + '</td><td ' + TD + '>' + esc(x.situacao) + (x.id_contato ? ' (código ' + esc(x.id_contato) + ')' : '') + '</td>'
+        return '<tr><td ' + TD + '>' + esc(x.nome) + '</td><td ' + TD + '>' + esc(x.cnpj) + '</td><td ' + TD + '>' + (x.pix ? esc(x.pix.tipo + (x.pix.chave ? ' ' + x.pix.chave : '')) : '') + '</td><td ' + TD + '>' + esc(SIT_FORN[x.situacao] || x.situacao) + (x.id_contato ? ' (código ' + esc(x.id_contato) + ')' : '') + '</td>'
           + '<td ' + TD + '>' + esc(x.pedido_por || '') + ' ' + esc(horaBR(x.pedido_em)) + '</td><td ' + TD + '>' + acoes + '</td></tr>';
       })) : '<div class="hint">Nenhum pedido.</div>';
       el.querySelectorAll('[data-cpf]').forEach(function (b) {

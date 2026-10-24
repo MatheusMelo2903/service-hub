@@ -20,7 +20,7 @@ const PG = require('../financeiro/pagar'); // lançamento completo (parcelas, ra
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CAMPOS_LISTA = 'id,criado_em,atualizado_em,criado_por,criado_por_email,status,nome_arquivo,tamanho,leitura,tipo,id_superlogica,cond_documento,dados,alertas,id_despesa,id_parcela,id_arquivo,lancado_em,resultado,origem,arquivo_mime';
 const MIMES = ['application/pdf', 'application/xml', 'image/jpeg', 'image/png'];
-const hojeBR = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+const hojeBR = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 
 function criarRotasEntrada(app, d) {
   const { requireAuth, express, banco, perfilDe, podeModulo, carteiraT18, exigirLeituraSuperlogica, superlogicaNativa,
