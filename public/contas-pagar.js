@@ -117,7 +117,7 @@
       document.getElementById('cp-quadro').innerHTML = tabela(['Condomínio', 'Analista', 'Urgentes', 'Contas que não chegaram', 'Sem envio para assinatura', 'Vencidas em aberto', 'Baixas prontas', 'Para conferir'],
         l.map(function (c) {
           return '<tr data-cp-ir="' + esc(c.id_condominio) + '" style="cursor:pointer"><td ' + TD + '><b>' + esc(c.condominio || c.id_condominio) + '</b></td><td ' + TD + '>' + esc(c.analista) + '</td>'
-            + (c.calculando ? '<td ' + TD + ' colspan="4"><span class="hint">lendo...</span></td>' : '<td ' + TD + '>' + (c.urgentes ? selo(c.urgentes, 'var(--danger)') : '0') + '</td><td ' + TD + '>' + c.contas_nao_chegaram + '</td><td ' + TD + '>' + c.sem_envio + '</td><td ' + TD + '>' + c.vencidas + '</td>')
+            + (c.calculando ? '<td ' + TD + '><span class="hint" style="margin:0">lendo</span></td><td ' + TD + '></td><td ' + TD + '></td><td ' + TD + '></td>' : '<td ' + TD + '>' + (c.urgentes ? selo(c.urgentes, 'var(--danger)') : '0') + '</td><td ' + TD + '>' + c.contas_nao_chegaram + '</td><td ' + TD + '>' + c.sem_envio + '</td><td ' + TD + '>' + c.vencidas + '</td>')
             + '<td ' + TD + '>' + c.baixas_prontas + '</td><td ' + TD + '>' + c.baixas_conferir + '</td></tr>';
         }));
       document.querySelectorAll('#cp-quadro [data-cp-ir]').forEach(function (tr) { tr.addEventListener('click', function () { abrirCondominio(tr.getAttribute('data-cp-ir')); }); });
@@ -137,6 +137,10 @@
       det.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) { if (e.message !== 'cancelado') det.innerHTML = '<div style="color:var(--danger);font-size:13px">' + esc(e.message) + '</div>'; }
   }
+  function guardarAviso(texto, erro) {
+    est.ultimoAviso = { cond: est.cond, texto: texto, erro: !!erro };
+    msg(document.getElementById('cp-bx-msg'), texto, erro);
+  }
   function textoGravacao(g) {
     if (g === 'livre') return 'Condomínio de teste: o Hub grava no Superlógica sem pedir confirmação e dá a baixa sozinho.';
     if (g === 'confirmacao' || g === 'reforcada') return 'Gravação no Superlógica com confirmação: as baixas ficam prontas e alguém confirma com um clique.';
@@ -149,7 +153,7 @@
     var sem = (j.prazos || []).filter(function (a) { return a.codigo === 'sem_envio_assinatura'; });
     var vencidas = (j.prazos || []).filter(function (a) { return a.codigo === 'vencida_em_aberto'; });
     var h = '<div class="card-header"><span class="card-title">' + esc(j.nome) + '</span><button class="btn btn-ghost" data-cp="atualizar">Atualizar</button></div>'
-      + '<div class="ficha-sub">Lido do Superlógica em ' + esc(horaBR(j.lido_em)) + '. ' + esc(textoGravacao(j.gravacao)) + '</div>';
+      + '<div class="ficha-sub">Lido do Superlógica em ' + esc(horaBR(j.lido_em)) + '. ' + esc(textoGravacao(j.gravacao)) + '</div><div id="cp-aviso"></div>';
     h += secao('Contas que ainda não chegaram', 'Quem cobra todo mês neste condomínio (aprendido dos últimos 6 meses) e ainda não tem a conta lançada. Lance com pelo menos 2 dias úteis antes do vencimento.',
       faltam.length ? tabela(['', 'Conta', 'Tipo', 'Vencimento esperado', 'Costuma ser', 'Lançar até', ''], faltam.map(function (a) {
         return '<tr><td ' + TD + '>' + selo(a.nivel === 'vencida' ? 'Venceu' : a.nivel === 'urgente' ? 'Urgente' : 'Atenção', COR[a.nivel]) + '</td><td ' + TD + '>' + esc(a.texto) + '</td><td ' + TD + '>' + esc(a.tipo) + '</td><td ' + TD + '>' + esc(dataBR(a.vencimento)) + '</td><td ' + TD + '>' + (a.valor_mediano ? brlC(a.valor_mediano) : '') + '</td><td ' + TD + '>' + esc(dataBR(a.limite_lancar)) + '</td>'
@@ -192,6 +196,9 @@
     h += secao('Lançamento completo de um documento', 'Escolha um rascunho da entrada de documentos deste condomínio para lançar com parcelas, rateio por categoria, chave Pix e marcação para a remessa.',
       '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-ghost" data-cp="rascunhos">Ver rascunhos</button></div><div id="cp-rasc"></div>');
     det.innerHTML = h;
+    // O resultado da última busca ou baixa continua visível depois que a ficha recarrega.
+    var u = est.ultimoAviso;
+    if (u && u.cond === est.cond) msg(document.getElementById('cp-bx-msg'), u.texto, u.erro);
   }
 
   async function cliqueDetalhe(ev) {
@@ -219,9 +226,9 @@
         return abrirCondominio(id, true);
       }
       if (acao === 'procurar') {
-        b.disabled = true; msg(aviso, 'Procurando no retorno do banco e no extrato...');
+        b.disabled = true; msg(aviso, 'Procurando no retorno do banco e no extrato.');
         var r = await enviar('POST', '/api/pagar/condominio/' + id + '/procurar', {});
-        msg(aviso, r.novas + ' pagamento(s) novo(s): ' + r.prontas + ' pronto(s) para baixar, ' + r.conferir + ' para conferir.');
+        guardarAviso('Busca de ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) + ': ' + r.novas + ' pagamento(s) novo(s), ' + r.prontas + ' pronto(s) para baixar, ' + r.conferir + ' para conferir.');
         return setTimeout(function () { abrirCondominio(id); }, 800);
       }
       if (acao === 'baixar') {
@@ -230,7 +237,7 @@
         b.disabled = true; msg(aviso, 'Gravando as baixas...');
         var rb = await enviar('POST', '/api/pagar/condominio/' + id + '/baixar', { ids: ids }, true);
         var ok = (rb.resultados || []).filter(function (x) { return x.ok; }).length;
-        msg(aviso, ok + ' de ' + (rb.resultados || []).length + ' baixada(s).' + ((rb.puladas_por_ter_lancado || []).length ? ' ' + rb.puladas_por_ter_lancado.length + ' pulada(s): você lançou a despesa.' : ''));
+        guardarAviso(ok + ' de ' + (rb.resultados || []).length + ' baixada(s).' + ((rb.puladas_por_ter_lancado || []).length ? ' ' + rb.puladas_por_ter_lancado.length + ' pulada(s): você lançou a despesa.' : ''));
         return setTimeout(function () { abrirCondominio(id); }, 1200);
       }
       if (acao === 'conferir') {
@@ -257,10 +264,11 @@
       if (acao === 'pedir-forn') return pedirFornecedor(b);
     } catch (e) {
       b.disabled = false;
-      var alvo = aviso || document.getElementById('cp-rasc-msg');
+      // Erro de quem não tem um lugar próprio na tela vai para o aviso do topo da ficha.
+      var alvo = (acao === 'procurar' || acao === 'baixar' || acao === 'conferir' || acao === 'descartar') ? aviso : (document.getElementById('cp-rasc-msg') || document.getElementById('cp-aviso'));
       if (e.status === 499) return msg(alvo, 'Cancelado. Nada foi gravado.');
-      msg(alvo || document.getElementById('cp-detalhe'), e.message, true);
-      if (!alvo) window.alert(e.message);
+      if (aviso && alvo === aviso) guardarAviso(e.message, true);
+      msg(alvo || document.getElementById('cp-aviso'), e.message, true);
     }
   }
 
@@ -424,7 +432,7 @@
             b.disabled = true;
             await enviar('POST', '/api/pagar/fornecedores/' + b.getAttribute('data-id') + '/aprovar', { confirmado_como: como }, true);
             carregarFornecedores();
-          } catch (e) { b.disabled = false; if (e.status !== 499) window.alert(e.message); }
+          } catch (e) { b.disabled = false; msg(document.getElementById('cp-info'), e.status === 499 ? 'Cancelado. Nada foi gravado.' : e.message, e.status !== 499); }
         });
       });
     } catch (e) { msg(info, e.message, true); }

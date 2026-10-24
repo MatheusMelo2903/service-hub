@@ -157,8 +157,23 @@ function registrar(d) {
     const emCima = Z.lancadasEmCimaDoPrazo(lido.parcelas, lido.hoje);
     return { esperadas: esperadas.map((e) => Object.assign({}, e, { ignorada: ignoradas.has(e.chave) })), faltam, prazos, lancadas_em_cima_do_prazo: emCima };
   }
+  // Analista de cada condomínio: o gerente da carteira no Superlógica (a mesma fonte da conciliação);
+  // sem carteira, o analista calculado pela base do Financeiro.
   async function analistasPorCondominio() {
-    try { const b = d.obterBase ? await d.obterBase() : null; return (b && b.analistas) || new Map(); } catch (e) { return new Map(); }
+    const m = new Map();
+    try {
+      ((d.gruposCarteiras ? await d.gruposCarteiras() : []) || []).forEach((g) => (g.condominios || []).forEach((c) => {
+        const k = String(c), nome = String(g.gerente || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+        if (!nome) return;
+        const ja = m.get(k);
+        if (!ja) m.set(k, nome); else if (!ja.split(', ').includes(nome)) m.set(k, ja + ', ' + nome);
+      }));
+    } catch (e) { /* segue com a base */ }
+    try {
+      const b = d.obterBase ? await d.obterBase() : null;
+      if (b && b.analistas) b.analistas.forEach((v, k) => { if (!m.has(String(k)) && v) m.set(String(k), v); });
+    } catch (e) { /* sem analista */ }
+    return m;
   }
 
   // ── baixas: procurar pagamentos e gravar ──

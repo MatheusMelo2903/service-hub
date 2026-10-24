@@ -15,9 +15,9 @@ const ANTECEDENCIA_UTEIS = 2;
 const MESES_HISTORICO = 6;
 const MIN_MESES = 4;          // presente em pelo menos 4 dos 6 meses
 const MIN_MESES_RECENTES = 2; // e em pelo menos 2 dos 3 últimos
-const JANELA_DIAS = 12;       // a conta do mês casa com a esperada até 12 dias antes ou depois
+const JANELA_DIAS = 8;        // a conta do mês casa com a esperada até 8 dias antes ou depois
 const AVISO_DIAS = 10;        // avisa a partir de 10 dias antes do vencimento esperado
-const VARIACAO = 0.15;        // valor fora da faixa: 15% acima ou abaixo da mediana
+const VARIACAO = 0.2;         // valor fora da faixa: 20% acima ou abaixo da mediana
 
 const slIso = (v) => E.slParaIso(v);
 const cent = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 100) : null);
@@ -79,41 +79,70 @@ function tipoDaConta(p) {
 const nomeDe = (p) => String(p.st_nome_con || p.st_fantasia_con || '').replace(/\s+/g, ' ').trim();
 // Aprende o que cada fornecedor cobra todo mês. parcelas: despesas/index (comStatus=todas) do
 // condomínio, com vencimento dos 6 meses fechados anteriores até o mês seguinte ao de hoje.
-// Devolve a lista de contas esperadas: { chave, id_fornecedor, fornecedor, tipo, quantidade, dias[],
-// valor_mediano, valor_min, valor_max, meses, conta, forma }.
+// Só vira conta esperada o que aparece de forma estável (testado no Victoria Bay em 24/10/2026):
+//  * presente em pelo menos 4 dos 6 meses e em 2 dos 3 últimos;
+//  * quantidade de contas por mês = a que se repete em pelo menos 4 meses (uma conta avulsa num mês
+//    não faz o Hub esperar duas todo mês);
+//  * cada conta com dia de vencimento estável (desvio mediano de até 3 dias): fornecedor de material,
+//    que cobra em dia qualquer, não gera expectativa;
+//  * contrato com valor estável (diferença entre o maior e o menor até o valor mediano): compra de
+//    material com valor que muda muito não é conta fixa (concessionária, guia e folha variam e ficam);
+//  * despesa parcelada (mais de uma parcela com o mesmo id de despesa) fica de fora: as parcelas dela
+//    já estão lançadas com antecedência, e o fim do parcelamento não é conta faltando.
+// Cada parcela conta como uma conta (contrato parcelado de outro fornecedor e a mensalidade são contas
+// diferentes no mesmo mês). Devolve: { chave, id_fornecedor, fornecedor, tipo, quantidade, dias[],
+// valor_mediano, valor_min, valor_max, variacao, meses, conta, forma }.
+const DESVIO_DIA_MAX = 3;
+const VARIACAO_CONTRATO = 1;
 function aprender(parcelas, hoje) {
   const mesHoje = mesDe(hoje);
   const meses = Array.from({ length: MESES_HISTORICO }, (_, i) => mesesAntes(mesHoje, MESES_HISTORICO - i));
   const recentes = new Set(meses.slice(-3));
   const porForn = new Map();
+  const vistas = new Set();
+  const parcelasDaDespesa = new Map();
+  for (const p of parcelas || []) { const k = String(p.id_despesa_des || ''); if (k) parcelasDaDespesa.set(k, (parcelasDaDespesa.get(k) || new Set()).add(String(p.id_parcela_pdes || ''))); }
   for (const p of parcelas || []) {
+    if ((parcelasDaDespesa.get(String(p.id_despesa_des || '')) || new Set()).size > 1) continue; // parcelada
     const v = slIso(p.dt_vencimento_pdes);
     const id = String(p.id_contato_con || '');
-    if (!v || !id || !meses.includes(mesDe(v))) continue;
+    const idp = String(p.id_parcela_pdes || '');
+    if (!v || !id || !meses.includes(mesDe(v)) || (idp && vistas.has(idp))) continue;
+    if (idp) vistas.add(idp);
     if (!porForn.has(id)) porForn.set(id, { amostra: p, porMes: new Map() });
     const g = porForn.get(id);
     if (!g.porMes.has(mesDe(v))) g.porMes.set(mesDe(v), []);
-    g.porMes.get(mesDe(v)).push({ dia: Number(v.slice(8, 10)), valor: cent(p.vl_valor_pdes), conta: ((p.apropriacao || [])[0] || {}).st_conta_cont || null, forma: String(p.id_forma_pag || ''), id_despesa: String(p.id_despesa_des) });
+    g.porMes.get(mesDe(v)).push({ dia: Number(v.slice(8, 10)), valor: cent(p.vl_valor_pdes), conta: ((p.apropriacao || [])[0] || {}).st_conta_cont || null, forma: String(p.id_forma_pag || '') });
   }
   const out = [];
   for (const [id, g] of porForn) {
-    // Uma despesa conta uma vez por mês (parcelas da mesma despesa no mesmo mês não viram duas contas).
     const mesesCom = [...g.porMes.keys()];
     if (mesesCom.length < MIN_MESES || mesesCom.filter((m) => recentes.has(m)).length < MIN_MESES_RECENTES) continue;
-    const contagens = mesesCom.map((m) => new Set(g.porMes.get(m).map((x) => x.id_despesa)).size);
-    const quantidade = Math.max(1, mediana(contagens));
-    const dias = [];
-    for (let k = 0; k < quantidade; k++) {
-      const ds = mesesCom.map((m) => g.porMes.get(m).map((x) => x.dia).sort((a, b) => a - b)[k]).filter((x) => x != null);
-      if (ds.length) dias.push(mediana(ds));
+    const contagens = mesesCom.map((m) => g.porMes.get(m).length).sort((a, b) => b - a);
+    const qtd = contagens[MIN_MESES - 1] || 1; // a quantidade que aparece em pelo menos 4 meses
+    const dias = []; const valoresEstaveis = [];
+    for (let k = 0; k < qtd; k++) {
+      const porMes = mesesCom.map((m) => g.porMes.get(m).slice().sort((a, b) => a.dia - b.dia)[k]).filter(Boolean);
+      if (porMes.length < MIN_MESES) continue;
+      const ds = porMes.map((x) => x.dia);
+      const med = mediana(ds);
+      const desvio = mediana(ds.map((d) => Math.abs(d - med)));
+      if (desvio > DESVIO_DIA_MAX) continue; // dia que muda todo mês: não é conta fixa
+      dias.push(med);
+      porMes.forEach((x) => { if (x.valor > 0) valoresEstaveis.push(x.valor); });
     }
-    const valores = [].concat(...mesesCom.map((m) => g.porMes.get(m).map((x) => x.valor))).filter((x) => x != null && x > 0);
+    if (!dias.length) continue;
+    const vmEst = mediana(valoresEstaveis);
+    const tipo = tipoDaConta(g.amostra);
+    if (tipo === 'contrato' && vmEst && (Math.max(...valoresEstaveis) - Math.min(...valoresEstaveis)) > vmEst * VARIACAO_CONTRATO) continue; // compra, não contrato
     const contas = [].concat(...mesesCom.map((m) => g.porMes.get(m).map((x) => x.conta))).filter(Boolean);
     const formas = [].concat(...mesesCom.map((m) => g.porMes.get(m).map((x) => x.forma)));
     const maisComum = (l) => { const c = new Map(); l.forEach((x) => c.set(x, (c.get(x) || 0) + 1)); return [...c].sort((a, b) => b[1] - a[1])[0]; };
+    const vm = mediana(valoresEstaveis);
+    const vmin = valoresEstaveis.length ? Math.min(...valoresEstaveis) : null, vmax = valoresEstaveis.length ? Math.max(...valoresEstaveis) : null;
     out.push({
-      chave: 'f' + id, id_fornecedor: id, fornecedor: nomeDe(g.amostra), tipo: tipoDaConta(g.amostra), quantidade, dias: dias.sort((a, b) => a - b),
-      valor_mediano: mediana(valores), valor_min: valores.length ? Math.min(...valores) : null, valor_max: valores.length ? Math.max(...valores) : null,
+      chave: 'f' + id, id_fornecedor: id, fornecedor: nomeDe(g.amostra), tipo, quantidade: dias.length, dias: dias.sort((a, b) => a - b),
+      valor_mediano: vm, valor_min: vmin, valor_max: vmax, variacao: vm ? Math.round(((vmax - vmin) / vm) * 100) / 100 : null,
       meses: mesesCom.length, conta: contas.length ? maisComum(contas)[0] : null, forma: formas.length ? Number(maisComum(formas)[0]) : null,
     });
   }
@@ -131,37 +160,60 @@ function textoPrazo(dias) {
   return dias === -1 ? 'venceu ontem' : 'venceu há ' + (-dias) + ' dias';
 }
 // Confere as contas esperadas contra o que já foi lançado. Devolve os avisos das que não chegaram
-// (vencimento esperado de 10 dias à frente até 5 dias atrás) e das que chegaram com valor fora do normal
-// (vencimento do último mês).
-// ignoradas: Set de chaves que a pessoa mandou ignorar.
+// (vencimento esperado de 10 dias à frente até 5 dias atrás) e das que chegaram com valor fora do normal.
+// Cada conta lançada (pelo id da parcela: a despesa recorrente repete o id da despesa todo mês) casa
+// com uma esperada só, a de vencimento mais perto, até JANELA_DIAS de diferença.
+// Valor fora do normal só para conta única no mês de fornecedor com valor estável (até 15% de variação
+// no histórico), quando a diferença passa de 20% e de R$ 50,00. Contas iguais que faltam no mesmo dia
+// viram um aviso só, com a quantidade. ignoradas: Set de chaves que a pessoa mandou ignorar.
+const VALOR_ESTAVEL = 0.15;
+const DIFERENCA_MIN = 5000;
 function contasQueFaltam(esperadas, parcelas, hoje, nomeCond, ignoradas) {
   const avisos = [];
-  const lancadas = (parcelas || []).map((p) => ({ p, v: slIso(p.dt_vencimento_pdes), id: String(p.id_contato_con || ''), valor: cent(p.vl_valor_pdes), desp: String(p.id_despesa_des) })).filter((x) => x.v);
+  const lancadas = (parcelas || []).map((p) => ({ v: slIso(p.dt_vencimento_pdes), id: String(p.id_contato_con || ''), valor: cent(p.vl_valor_pdes), parc: String(p.id_parcela_pdes || ''), desp: String(p.id_despesa_des || '') })).filter((x) => x.v);
+  const doMes = (nome) => (nomeCond ? ' do ' + nomeCond : '');
   for (const e of esperadas) {
     if (ignoradas && ignoradas.has(e.chave)) continue;
+    const minhas = lancadas.filter((x) => x.id === e.id_fornecedor);
     const usadas = new Set();
+    const ocorrencias = [];
     for (const mes of [mesesAntes(mesDe(hoje), 1), mesDe(hoje), mesesAntes(mesDe(hoje), -1)]) {
       for (const dia of e.dias) {
         const venc = dataNoMes(mes, dia);
         const dist = diasEntre(hoje, venc);
         // Até 31 dias atrás confere o valor da conta que chegou; "não chegou" só até 5 dias depois do vencimento.
-        if (dist > AVISO_DIAS || dist < -31) continue;
-        const achou = lancadas.find((x) => x.id === e.id_fornecedor && !usadas.has(x.desp) && Math.abs(diasEntre(venc, x.v)) <= JANELA_DIAS);
-        if (achou) {
-          usadas.add(achou.desp);
-          if (e.valor_mediano && achou.valor && Math.abs(achou.valor - e.valor_mediano) > e.valor_mediano * VARIACAO && e.tipo !== 'folha, tarifa ou repasse') {
-            avisos.push({ codigo: 'valor_fora_do_normal', nivel: 'atencao', chave: e.chave, fornecedor: e.fornecedor, vencimento: achou.v, id_despesa: achou.desp, valor: achou.valor, valor_mediano: e.valor_mediano,
-              texto: 'Conta de ' + e.fornecedor + (nomeCond ? ' do ' + nomeCond : '') + ' chegou com ' + U.moeda(achou.valor / 100) + ', fora do normal (costuma ser ' + U.moeda(e.valor_mediano / 100) + ').' });
-          }
-          continue;
-        }
-        if (dist < -5) continue;
-        const uteis = diasUteisAte(hoje, venc);
-        const nivel = dist < 0 ? 'vencida' : uteis <= ANTECEDENCIA_UTEIS ? 'urgente' : 'atencao';
-        avisos.push({ codigo: 'conta_nao_chegou', nivel, chave: e.chave, id_fornecedor: e.id_fornecedor, fornecedor: e.fornecedor, tipo: e.tipo, vencimento: venc, dias: dist, dias_uteis: uteis,
-          valor_mediano: e.valor_mediano, conta: e.conta, limite_lancar: limiteParaLancar(venc),
-          texto: 'Conta de ' + e.fornecedor + (nomeCond ? ' do ' + nomeCond : '') + ' ainda não chegou e ' + textoPrazo(dist) + ' (dia ' + venc.split('-').reverse().join('/') + ').' });
+        if (dist <= AVISO_DIAS && dist >= -31) ocorrencias.push({ venc, dist });
       }
+    }
+    ocorrencias.sort((a, b) => a.venc.localeCompare(b.venc));
+    const faltam = new Map(); // vencimento -> aviso (contas iguais no mesmo dia viram um aviso)
+    for (const o of ocorrencias) {
+      let achou = null, perto = Infinity;
+      for (const x of minhas) {
+        if (usadas.has(x.parc)) continue;
+        const d = Math.abs(diasEntre(o.venc, x.v));
+        if (d <= JANELA_DIAS && d < perto) { achou = x; perto = d; }
+      }
+      if (achou) {
+        usadas.add(achou.parc);
+        const estavel = e.quantidade === 1 && e.variacao != null && e.variacao <= VALOR_ESTAVEL && e.tipo !== 'folha, tarifa ou repasse';
+        const dif = achou.valor && e.valor_mediano ? Math.abs(achou.valor - e.valor_mediano) : 0;
+        if (estavel && dif > e.valor_mediano * VARIACAO && dif >= DIFERENCA_MIN) {
+          avisos.push({ codigo: 'valor_fora_do_normal', nivel: 'atencao', chave: e.chave, fornecedor: e.fornecedor, vencimento: achou.v, id_parcela: achou.parc, id_despesa: achou.desp, valor: achou.valor, valor_mediano: e.valor_mediano,
+            texto: 'Conta de ' + e.fornecedor + doMes() + ' chegou com ' + U.moeda(achou.valor / 100) + ', fora do normal (costuma ser ' + U.moeda(e.valor_mediano / 100) + ').' });
+        }
+        continue;
+      }
+      if (o.dist < -5) continue;
+      if (faltam.has(o.venc)) { faltam.get(o.venc).quantidade++; continue; }
+      const uteis = diasUteisAte(hoje, o.venc);
+      faltam.set(o.venc, { codigo: 'conta_nao_chegou', nivel: o.dist < 0 ? 'vencida' : uteis <= ANTECEDENCIA_UTEIS ? 'urgente' : 'atencao', chave: e.chave, id_fornecedor: e.id_fornecedor,
+        fornecedor: e.fornecedor, tipo: e.tipo, vencimento: o.venc, dias: o.dist, dias_uteis: uteis, quantidade: 1, valor_mediano: e.valor_mediano, conta: e.conta, limite_lancar: limiteParaLancar(o.venc) });
+    }
+    for (const a of faltam.values()) {
+      a.texto = (a.quantidade > 1 ? a.quantidade + ' contas de ' + e.fornecedor + doMes() + ' ainda não chegaram e ' : 'Conta de ' + e.fornecedor + doMes() + ' ainda não chegou e ')
+        + textoPrazo(a.dias).replace(/^vence/, a.quantidade > 1 ? 'vencem' : 'vence').replace(/^venceu/, a.quantidade > 1 ? 'venceram' : 'venceu') + ' (dia ' + a.vencimento.split('-').reverse().join('/') + ').';
+      avisos.push(a);
     }
   }
   return avisos;

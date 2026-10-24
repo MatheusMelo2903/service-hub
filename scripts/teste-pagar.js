@@ -129,6 +129,40 @@ const sl = (iso) => E.isoParaSL(iso) + ' 00:00:00';
   t('valor fora do normal', falt.some((a) => a.codigo === 'valor_fora_do_normal' && a.fornecedor === 'FORTE ELEVADORES'));
   t('chegou: não avisa', !Z.contasQueFaltam(esp, hist.concat([out, parc({ id_despesa_des: '3000', id_parcela_pdes: '3000', dt_vencimento_pdes: sl('2026-10-27'), vl_valor_pdes: '880.00' })]), HOJE, 'Buritis').some((a) => a.codigo === 'conta_nao_chegou'));
   t('atenção a mais de 2 dias úteis', Z.contasQueFaltam(esp, hist, '2026-10-20', 'B').find((a) => a.codigo === 'conta_nao_chegou').nivel === 'atencao');
+  // Casos do Victoria Bay (24/10/2026): despesa que repete o id entre os meses, conta que chega uns dias
+  // depois, conta avulsa que inflava a quantidade, compra de material e parcelamento que terminou.
+  const esN = { chave: 'f15387', id_fornecedor: '15387', fornecedor: 'N&N SEGURANÇA', tipo: 'contrato', quantidade: 1, dias: [24], valor_mediano: 125854, variacao: 0 };
+  const lnN = [parc({ id_contato_con: '15387', id_despesa_des: '275433', id_parcela_pdes: '301184', dt_vencimento_pdes: sl('2026-09-24'), vl_valor_pdes: '1258.54' }),
+    parc({ id_contato_con: '15387', id_despesa_des: '275433', id_parcela_pdes: '301185', dt_vencimento_pdes: sl('2026-10-24'), vl_valor_pdes: '1258.54', fl_liquidado_pdes: '0' })];
+  t('1: mesma despesa em dois meses casa pela parcela', !Z.contasQueFaltam([esN], lnN, HOJE, 'Victoria Bay').some((a) => a.codigo === 'conta_nao_chegou'));
+  const esA = { chave: 'f6266', id_fornecedor: '6266', fornecedor: 'ATLAS', tipo: 'contrato', quantidade: 2, dias: [25, 28], valor_mediano: 50000, variacao: 2 };
+  const lnA = [25, 30].map((dia, i) => parc({ id_contato_con: '6266', id_despesa_des: '9' + i, id_parcela_pdes: '9' + i, dt_vencimento_pdes: sl('2026-10-' + dia), vl_valor_pdes: '500.00' }))
+    .concat([25, 28].map((dia, i) => parc({ id_contato_con: '6266', id_despesa_des: '8' + i, id_parcela_pdes: '8' + i, dt_vencimento_pdes: sl('2026-09-' + dia), vl_valor_pdes: '500.00' })));
+  t('1: conta do dia 28 que chegou para o dia 30 casa', !Z.contasQueFaltam([esA], lnA, HOJE, 'Victoria Bay').some((a) => a.codigo === 'conta_nao_chegou'));
+  const hist2 = [];
+  let k2 = 5000;
+  for (const [im, m] of ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'].entries()) {
+    hist2.push(parc({ id_contato_con: '43266', st_nome_con: 'GARANTIA SERVICOS', id_forma_pag: '0', id_despesa_des: String(k2), id_parcela_pdes: String(k2++), dt_vencimento_pdes: sl(m + '-20'), vl_valor_pdes: '1366.66' }));
+    hist2.push(parc({ id_contato_con: '900', st_nome_con: 'POLITINTAS', id_forma_pag: '0', apropriacao: [{ st_conta_cont: '2.4.1', st_descricao_cont: 'Material de Construção' }], id_despesa_des: String(k2), id_parcela_pdes: String(k2++), dt_vencimento_pdes: sl(m + '-' + String([3, 14, 25, 9, 28, 18][im]).padStart(2, '0')), vl_valor_pdes: String([120, 900, 340, 655, 80, 410][im]) + '.00' }));
+    hist2.push(parc({ id_contato_con: '901', st_nome_con: 'MATERIAL DIA CERTO', id_forma_pag: '0', apropriacao: [{ st_conta_cont: '2.4.1', st_descricao_cont: 'Material de Construção' }], id_despesa_des: String(k2), id_parcela_pdes: String(k2++), dt_vencimento_pdes: sl(m + '-15'), vl_valor_pdes: String([100, 1900, 300, 2500, 90, 700][im]) + '.00' }));
+  }
+  // Garantia: uma conta avulsa em dois meses (não pode virar duas contas por mês).
+  hist2.push(parc({ id_contato_con: '43266', st_nome_con: 'GARANTIA SERVICOS', id_forma_pag: '0', id_despesa_des: '7001', id_parcela_pdes: '7001', dt_vencimento_pdes: sl('2026-06-05'), vl_valor_pdes: '300.00' }));
+  hist2.push(parc({ id_contato_con: '43266', st_nome_con: 'GARANTIA SERVICOS', id_forma_pag: '0', id_despesa_des: '7002', id_parcela_pdes: '7002', dt_vencimento_pdes: sl('2026-08-05'), vl_valor_pdes: '300.00' }));
+  // Extintores: parcelamento de 6 vezes que terminou em setembro.
+  ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08', '2026-09'].forEach((m, i) => hist2.push(parc({ id_contato_con: '17346', st_nome_con: 'EXTINGRIPPA', id_forma_pag: '0', id_despesa_des: '274971', id_parcela_pdes: '30063' + i, dt_vencimento_pdes: sl(m + '-19'), vl_valor_pdes: '3877.00' })));
+  const esp2 = Z.aprender(hist2, HOJE);
+  const gar = esp2.find((e) => e.id_fornecedor === '43266');
+  t('2: conta avulsa não infla a quantidade', gar && gar.quantidade === 1 && gar.dias.join() === '20');
+  t('2: compra de material com dia solto não vira conta esperada', !esp2.some((e) => e.id_fornecedor === '900'));
+  t('2: compra com dia certo e valor que muda muito não vira conta esperada', !esp2.some((e) => e.id_fornecedor === '901'));
+  t('2: parcelamento que terminou não gera conta faltando', !esp2.some((e) => e.id_fornecedor === '17346') && !Z.contasQueFaltam(esp2, hist2, HOJE, 'Victoria Bay').some((a) => a.fornecedor === 'EXTINGRIPPA'));
+  const esM = { chave: 'f28689', id_fornecedor: '28689', fornecedor: 'MUNDIAL', tipo: 'contrato', quantidade: 3, dias: [15, 30, 30], valor_mediano: 90000, variacao: 0.1 };
+  const fM = Z.contasQueFaltam([esM], [], '2026-10-23', 'Victoria Bay').filter((a) => a.codigo === 'conta_nao_chegou');
+  t('3: contas iguais no mesmo dia viram um aviso', fM.length === 1 && fM[0].vencimento === '2026-10-30' && fM[0].quantidade === 2 && /^2 contas de MUNDIAL do Victoria Bay ainda não chegaram e vencem em 7 dias/.test(fM[0].texto));
+  t('4: valor fora do normal só com valor estável', !Z.contasQueFaltam([Object.assign({}, esN, { variacao: 0.5 })], [lnN[0], parc({ id_contato_con: '15387', id_despesa_des: '1', id_parcela_pdes: '1', dt_vencimento_pdes: sl('2026-10-24'), vl_valor_pdes: '2000.00' })], HOJE, 'V').some((a) => a.codigo === 'valor_fora_do_normal')
+    && Z.contasQueFaltam([esN], [lnN[0], parc({ id_contato_con: '15387', id_despesa_des: '1', id_parcela_pdes: '1', dt_vencimento_pdes: sl('2026-10-24'), vl_valor_pdes: '2000.00' })], HOJE, 'V').some((a) => a.codigo === 'valor_fora_do_normal')
+    && !Z.contasQueFaltam([esN], [lnN[0], parc({ id_contato_con: '15387', id_despesa_des: '1', id_parcela_pdes: '1', dt_vencimento_pdes: sl('2026-10-24'), vl_valor_pdes: '1290.00' })], HOJE, 'V').some((a) => a.codigo === 'valor_fora_do_normal'));
   // ---------- 10. prazo das lançadas ----------
   const ab = (o) => Object.assign({ id_condominio_cond: '167', id_contato_con: '600', st_nome_con: 'FORN', id_forma_pag: '0', fl_liquidado_pdes: '0', dt_liquidacao_pdes: '', fl_remessastatus_pdes: '', vl_valor_pdes: '100.00', st_codigobarras_pdes: '' }, o);
   const pz = Z.prazos([
