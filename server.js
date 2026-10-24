@@ -5470,6 +5470,15 @@ require('./servico/rotas-fechamento').criarRotasFechamento(app, {
   supabase: { url: SUPABASE_URL, chave: SUPABASE_SERVICE_ROLE_KEY },
 });
 
+// Contas a pagar (contas esperadas, prazos, baixa com comprovante do banco, fornecedor novo): rotas em
+// servico/rotas-pagar.js, gravação pela política única. PAGAR_ROTINA=0 desliga a rotina de 30 em 30 minutos.
+const _pagar = require('./servico/rotas-pagar').registrar({
+  app, express, requireAuth, banco: supabaseAdminRequest, exigirFinanceiro: _exigirFinanceiro, exigirLeituraSuperlogica, exigirCarteira: _exigirCarteira,
+  exigirEscopo: _exigirEscopoFinanceiro, escopoFinanceiro: _escopoFinanceiro, lerPerfil, podeModulo, gruposCarteiras, clienteSL, credSL: _credSL, politica: politicaEscrita,
+  auditoria, conciliacao: _conciliacao, obterBase: () => _painelFin.obterBase(false), dentroDoLimite,
+});
+if (require.main === module && superlogicaNativa() && SUPABASE_SERVICE_ROLE_KEY && process.env.PAGAR_ROTINA !== '0') _pagar.agendar();
+
 // ─────────────────────────────────────────────────────────────────────────
 // Relatório mensal do síndico (T13). GET /api/condominio/:id/relatorio-mensal?mes=AAAA-MM
 // (padrão: mês anterior, o último fechado). Só leitura no Superlógica; o PDF é montado no
