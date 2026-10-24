@@ -7,12 +7,17 @@
 // T40: valor e vencimento só passam com confiança alta (linha digitável conferida) ou confirmados
 // na tela; mês fechado no Superlógica recusa; fora da lista o botão gera o rascunho conferido
 // (POST /api/entrada/:id/pronto) para lançar no Superlógica.
+// Documentos que chegam por email (financeiro/email-financeiro.js) entram pelo mesmo caminho
+// (criarRascunho, devolvido por criarRotasEntrada) com a origem guardada: caixa, remetente,
+// assunto, data e corpo resumido. Mesmo arquivo ou mesma nota chegando de novo vira repetição.
 // Textos de tela sem citar leitura automática por fornecedor externo.
 
 const E = require('../financeiro/entrada');
+const EF = require('../financeiro/email-financeiro');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CAMPOS_LISTA = 'id,criado_em,atualizado_em,criado_por,criado_por_email,status,nome_arquivo,tamanho,leitura,tipo,id_superlogica,cond_documento,dados,alertas,id_despesa,id_parcela,id_arquivo,lancado_em,resultado';
+const CAMPOS_LISTA = 'id,criado_em,atualizado_em,criado_por,criado_por_email,status,nome_arquivo,tamanho,leitura,tipo,id_superlogica,cond_documento,dados,alertas,id_despesa,id_parcela,id_arquivo,lancado_em,resultado,origem,arquivo_mime';
+const MIMES = ['application/pdf', 'application/xml', 'image/jpeg', 'image/png'];
 const hojeBR = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
 
 function criarRotasEntrada(app, d) {
@@ -32,16 +37,23 @@ function criarRotasEntrada(app, d) {
     return exigirLeituraSuperlogica(req, res);
   }
   // null = vê todos; Set de códigos (texto) = só esses. Erro ao ler a carteira recusa.
+  // carteiras: códigos das carteiras de quem vê (documento de email ainda sem condomínio).
   async function escopo(req, res) {
     try {
       const e = await carteiraT18.escopo(req);
-      return { escopo: e.todas ? null : new Set([...(e.ids || [])].map(String)) };
+      return { escopo: e.todas ? null : new Set([...(e.ids || [])].map(String)), carteiras: new Set((e.carteiras || []).map((c) => String(c && c.id != null ? c.id : c))) };
     } catch (e) {
       res.status(503).json({ erro: 'carteira_indisponivel', detalhe: 'Não foi possível conferir sua carteira agora.' });
       return null;
     }
   }
-  const visivel = (req, esc, linha) => !esc || (req.user && linha.criado_por === req.user.sub) || (linha.id_superlogica != null && esc.has(String(linha.id_superlogica)));
+  // Documento de email ainda sem condomínio: vê quem é o analista da caixa ou tem a carteira dela.
+  const daMinhaCaixa = (req, linha, cart) => {
+    const o = linha.origem;
+    if (!o || o.tipo !== 'email' || linha.id_superlogica != null) return false;
+    return !!((o.analista && req.user && o.analista === req.user.sub) || (o.carteira != null && cart && cart.has(String(o.carteira))));
+  };
+  const visivel = (req, esc, linha, cart) => !esc || (req.user && linha.criado_por === req.user.sub) || (linha.id_superlogica != null && esc.has(String(linha.id_superlogica))) || daMinhaCaixa(req, linha, cart);
   // Alertas gravados trazem dados de outros condomínios e de outros rascunhos. Para quem tem
   // carteira: boleto em outro condomínio de fora da carteira vira só "outro condomínio" (sem
   // fornecedor, documento, valor, despesa); na fila, só a quantidade.
@@ -99,6 +111,8 @@ function criarRotasEntrada(app, d) {
   async function conferirDados(dados, esc, idAtual, semCache) {
     const fila = await naFila(dados, idAtual).catch(() => []);
     const c = await E.conferir(clienteSL(), dados, { escopo: esc, naFila: fila, hojeIso: hojeBR(), semCache: !!semCache });
+    const rep = Array.isArray(dados.repeticoes) ? dados.repeticoes.length : 0;
+    if (rep) c.alertas.push(alertaRepeticao(rep));
     if (!dados.conta && c.sugestao_conta) {
       dados.conta = c.sugestao_conta.conta; dados.nome_conta = c.sugestao_conta.nome; dados.conta_sugerida = true;
       dados.conta_sugerida_vezes = c.sugestao_conta.vezes ? c.sugestao_conta.vezes + ' de ' + c.sugestao_conta.de : null;
@@ -106,6 +120,121 @@ function criarRotasEntrada(app, d) {
     if (c.conta_banco) { dados.id_contabanco = c.conta_banco.id; dados.nome_contabanco = c.conta_banco.nome; dados.bloqueio_contas = c.conta_banco.bloqueio || null; }
     return c.alertas.filter((a) => !(a.codigo === 'sem_conta' && dados.conta));
   }
+  function alertaRepeticao(n) {
+    return { codigo: 'recebido_de_novo', nivel: 'aviso', texto: 'Este mesmo documento chegou de novo por email (' + n + (n === 1 ? ' vez' : ' vezes') + '). Ficou um item só.' };
+  }
+  // Documento de email que já está na fila (mesmo arquivo ou mesma nota): fica um item só, com a
+  // repetição anotada. O mesmo email lido de novo (nova tentativa) não conta como repetição.
+  async function registrarRepeticao(linha, origem, motivo) {
+    for (let tentativa = 0; tentativa < 3; tentativa++) {
+      const atual = tentativa === 0 && linha.dados && linha.atualizado_em ? linha : await lerLinha(linha.id);
+      if (!atual) return false;
+      const o0 = atual.origem || {};
+      const mesmo = (o) => o && o.caixa_id === origem.caixa_id && String(o.uid) === String(origem.uid) && String(o.uid_validity) === String(origem.uid_validity);
+      const dados = Object.assign({}, atual.dados || {});
+      const reps = Array.isArray(dados.repeticoes) ? dados.repeticoes.slice() : [];
+      if (mesmo(o0) || reps.some(mesmo)) return false;
+      reps.push({ motivo, caixa_id: origem.caixa_id, caixa: origem.caixa, uid: origem.uid, uid_validity: origem.uid_validity, remetente: origem.remetente, assunto: origem.assunto, data: origem.data, em: new Date().toISOString() });
+      dados.repeticoes = reps.slice(-20);
+      const alertas = (Array.isArray(atual.alertas) ? atual.alertas : []).filter((a) => !(a && a.codigo === 'recebido_de_novo')).concat([alertaRepeticao(dados.repeticoes.length)]);
+      const up = await banco('PATCH', '/rest/v1/fin_entrada?id=eq.' + atual.id + '&atualizado_em=eq.' + encodeURIComponent(atual.atualizado_em) + '&select=id', { dados, alertas, atualizado_em: new Date().toISOString() });
+      if (up.status === 200 && Array.isArray(up.body) && up.body[0]) return true;
+      linha = { id: atual.id }; // mudou no meio: relê e tenta de novo
+    }
+    throw new Error('repeticao_concorrente');
+  }
+  // Item que não foi descartado com o mesmo arquivo (hash) ou a mesma nota (chave de acesso).
+  async function acharRepetido({ hash, chave }) {
+    const filtro = hash ? '&hash_sha256=eq.' + encodeURIComponent(hash) : chave && /^\d{44}$/.test(chave) ? '&dados->>chave_nfe=eq.' + chave : null;
+    if (!filtro) return null;
+    const r = await banco('GET', '/rest/v1/fin_entrada?select=id,status,dados,alertas,atualizado_em,origem,id_superlogica' + filtro + '&status=neq.descartado&order=criado_em.asc&limit=1');
+    if (r.status !== 200) throw new Error('banco_' + r.status);
+    return Array.isArray(r.body) && r.body[0] ? r.body[0] : null;
+  }
+
+  // Lê o documento e grava o rascunho. Usado pelo envio na tela e pela leitura dos emails.
+  // o: { buf, nome, mime, esc, usuario: { sub, email } ou null, req (limites e auditoria),
+  //      origem (email) ou null, xmls (XMLs do mesmo email para juntar ao PDF), parUnico,
+  //      xml (o próprio documento é o XML: { info }), sugerir() (condomínio pelo email),
+  //      deduplicarChave (a mesma nota já na fila vira repetição) }.
+  // Devolve { linha, xmlUsado } ou { repetidoDe, xmlUsado } ou { conflito: true }.
+  async function criarRascunho(o) {
+    const req = o.req;
+    const mime = MIMES.includes(o.mime) ? o.mime : 'application/pdf';
+    const cli = clienteSL();
+    const mapa = await E.mapaCondominios(cli);
+    let campos = null, leitura = 'nenhuma', textoPdf = '', xmlUsado = null;
+    const interna = async (b64Mime) => {
+      if (o.buf.length > 7.5 * 1024 * 1024) return null;
+      if (!dentroDoLimite(req, 'entrada_interna', 120)) { auditoria.evento(req, 'limite_processamento', { tipo: 'entrada_interna' }, true, 'volume_alto'); return null; }
+      const r = await processar.processarDocumentoFinanceiro({ arquivo: { mime: b64Mime, base64: o.buf.toString('base64') } }, o.usuario ? o.usuario.sub : null);
+      return r.status === 200 ? E.camposDaLeitura(r.corpo, hojeBR()) : null;
+    };
+    if (mime === 'application/pdf') {
+      const x = await E.extrairTexto(o.buf);
+      const util = !!(x && E.textoUtil(x.texto));
+      textoPdf = x ? x.texto : '';
+      campos = util ? E.lerCampos(x.texto, hojeBR()) : null;
+      leitura = util ? 'texto' : 'nenhuma';
+      xmlUsado = o.xmls ? EF.xmlDoPdf(o.xmls, textoPdf, o.parUnico) : null;
+      // Com o XML da nota junto, a leitura interna só entra se ainda faltar o essencial.
+      const comXml = xmlUsado ? EF.juntarComXml(campos, EF.camposDoXml(xmlUsado.info)) : campos;
+      if (E.faltaEssencial(comXml, mapa)) {
+        const ci = await interna('application/pdf');
+        if (ci) { campos = E.juntarLeituras(campos, ci, !campos || !campos.cnpjs.some((c) => mapa.has(c.cnpj))); leitura = util ? 'texto+interna' : 'interna'; }
+      }
+      if (xmlUsado) { campos = EF.juntarComXml(campos, EF.camposDoXml(xmlUsado.info)); leitura += '+xml'; }
+    } else if (mime === 'application/xml') {
+      if (o.xml && o.xml.info) { campos = EF.camposDoXml(o.xml.info); leitura = 'xml'; xmlUsado = o.xml; }
+    } else {
+      const ci = await interna(mime);
+      if (ci) { campos = ci; leitura = 'interna'; }
+    }
+    campos = campos || { tipo: 'outro', valor: null, vencimento: null, emissao: null, documento: null, linha: null, barras: null, especie_linha: null, cnpjs: [] };
+    const chave = (xmlUsado && xmlUsado.info.chave) || E.chaveNfeDoTexto(textoPdf) || null;
+    if (o.deduplicarChave && chave) {
+      const ja = await acharRepetido({ chave });
+      if (ja) return { repetidoDe: ja, xmlUsado };
+    }
+    const id = await E.identificar(cli, campos, o.esc);
+    const condDoc = campos.cnpjs.map((c) => mapa.get(c.cnpj)).filter(Boolean)[0];
+    const dados = {
+      tipo: campos.tipo, valor: campos.valor, origem_valor: campos.origem_valor,
+      vencimento: campos.vencimento, origem_vencimento: campos.origem_vencimento || null, emissao: campos.emissao, documento: campos.documento, linha: campos.linha, barras: campos.barras, especie_linha: campos.especie_linha,
+      cnpjs: campos.cnpjs.map((c) => ({ cnpj: E.formatarCnpj(c.cnpj), papel: c.papel, condominio: mapa.has(c.cnpj) })),
+      id_superlogica: id.condominio ? id.condominio.id : null, nome_condominio: id.condominio ? id.condominio.nome : null, motivo_condominio: id.motivo_condominio,
+      cond_documento: condDoc ? condDoc.id : null,
+      id_fornecedor: id.fornecedor ? id.fornecedor.id : null, nome_fornecedor: id.fornecedor ? id.fornecedor.nome : null,
+      cnpj_fornecedor: id.cnpj_fornecedor ? E.formatarCnpj(id.cnpj_fornecedor) : null,
+      conta: null, nome_conta: null, forma_pag: campos.especie_linha ? 0 : null,
+      complemento: [id.fornecedor ? id.fornecedor.nome : null, campos.documento ? 'doc ' + campos.documento : null].filter(Boolean).join(' ').slice(0, 200) || null,
+    };
+    if (chave) dados.chave_nfe = chave;
+    if (dados.forma_pag == null) dados.forma_pag = 0;
+    // Email sem CNPJ de condomínio: nome citado, remetente conhecido ou caixa (alerta grave na tela).
+    if (!dados.id_superlogica && typeof o.sugerir === 'function') {
+      let s = null;
+      try { s = await o.sugerir(); } catch (e) { s = null; }
+      const cond = s ? await E.condominioPorId(cli, s.id) : null;
+      if (cond && !(o.esc && !o.esc.has(String(cond.id)))) {
+        Object.assign(dados, { id_superlogica: cond.id, nome_condominio: cond.nome, condominio_por: s.por, condominio_sugerido: cond.id });
+      }
+    }
+    valoresDaLinha(dados);
+    const alertas = await conferirDados(dados, o.esc, null);
+    const linha = {
+      criado_por: o.usuario ? o.usuario.sub : null, criado_por_email: o.usuario ? o.usuario.email || null : null, status: 'rascunho',
+      nome_arquivo: String(o.nome || 'documento').replace(/[\r\n\t]/g, ' ').slice(0, 150), hash_sha256: E.hashDe(o.buf), tamanho: o.buf.length, arquivo_base64: o.buf.toString('base64'), leitura, tipo: dados.tipo,
+      id_superlogica: dados.id_superlogica ? Number(dados.id_superlogica) : null, cond_documento: condDoc ? Number(condDoc.id) : null, dados, alertas,
+      arquivo_mime: mime, origem: o.origem || null,
+    };
+    const ins = await banco('POST', '/rest/v1/fin_entrada?select=' + CAMPOS_LISTA, linha);
+    if (ins.status === 409) return { conflito: true, xmlUsado };
+    if (ins.status !== 201 || !Array.isArray(ins.body) || !ins.body[0]) throw new Error('banco_' + ins.status);
+    auditoria.evento(req, 'entrada_lida', { id_superlogica: dados.id_superlogica, entrada: ins.body[0].id, leitura, tipo: dados.tipo, origem: o.origem ? 'email' : 'tela', caixa: o.origem ? o.origem.caixa_id : undefined });
+    return { linha: ins.body[0], xmlUsado };
+  }
+
   function erroInterno(res, onde, e) {
     console.warn('[entrada ' + onde + '] ' + (e && e.message));
     if (!res.headersSent) res.status(502).json({ erro: 'falha', detalhe: 'Não foi possível concluir agora. Tente de novo em instantes.' });
@@ -122,7 +251,7 @@ function criarRotasEntrada(app, d) {
       const r = await banco('GET', '/rest/v1/fin_entrada?select=' + CAMPOS_LISTA + filtro + '&order=criado_em.desc&limit=300');
       if (r.status !== 200) throw new Error('banco_' + r.status);
       const lib = E.liberados();
-      res.json({ itens: (r.body || []).filter((l) => visivel(req, E2.escopo, l)).map((l) => paraTela(l, E2.escopo)), so_teste: lib.length === 1 && lib[0] === '167' });
+      res.json({ itens: (r.body || []).filter((l) => visivel(req, E2.escopo, l, E2.carteiras)).map((l) => paraTela(l, E2.escopo)), so_teste: lib.length === 1 && lib[0] === '167' });
     } catch (e) { erroInterno(res, 'fila', e); }
   });
 
@@ -146,49 +275,12 @@ function criarRotasEntrada(app, d) {
     try {
       const ja = await banco('GET', '/rest/v1/fin_entrada?select=' + CAMPOS_LISTA + '&hash_sha256=eq.' + hash + '&status=neq.descartado&limit=1');
       if (ja.status === 200 && ja.body && ja.body[0]) {
-        if (!visivel(req, E2.escopo, ja.body[0])) return res.status(409).json({ erro: 'ja_enviado', detalhe: 'Este mesmo arquivo já foi enviado por outra pessoa.' });
+        if (!visivel(req, E2.escopo, ja.body[0], E2.carteiras)) return res.status(409).json({ erro: 'ja_enviado', detalhe: 'Este mesmo arquivo já foi enviado por outra pessoa.' });
         return res.json({ item: paraTela(ja.body[0], E2.escopo), repetido: true });
       }
-      const cli = clienteSL();
-      const mapa = await E.mapaCondominios(cli);
-      const x = await E.extrairTexto(buf);
-      const util = !!(x && E.textoUtil(x.texto));
-      let campos = util ? E.lerCampos(x.texto, hojeBR()) : null;
-      let leitura = util ? 'texto' : 'nenhuma';
-      if (E.faltaEssencial(campos, mapa) && buf.length <= 7.5 * 1024 * 1024) {
-        if (dentroDoLimite(req, 'entrada_interna', 120)) {
-          const r = await processar.processarDocumentoFinanceiro({ arquivo: { mime: 'application/pdf', base64: buf.toString('base64') } }, req.user && req.user.sub);
-          const ci = r.status === 200 ? E.camposDaLeitura(r.corpo, hojeBR()) : null;
-          if (ci) { campos = E.juntarLeituras(campos, ci, !campos || !campos.cnpjs.some((c) => mapa.has(c.cnpj))); leitura = util ? 'texto+interna' : 'interna'; }
-        } else auditoria.evento(req, 'limite_processamento', { tipo: 'entrada_interna' }, true, 'volume_alto');
-      }
-      campos = campos || { tipo: 'outro', valor: null, vencimento: null, emissao: null, documento: null, linha: null, barras: null, especie_linha: null, cnpjs: [] };
-      const id = await E.identificar(cli, campos, E2.escopo);
-      const condDoc = campos.cnpjs.map((c) => mapa.get(c.cnpj)).filter(Boolean)[0];
-      const dados = {
-        tipo: campos.tipo, valor: campos.valor, origem_valor: campos.origem_valor,
-        vencimento: campos.vencimento, origem_vencimento: campos.origem_vencimento || null, emissao: campos.emissao, documento: campos.documento, linha: campos.linha, barras: campos.barras, especie_linha: campos.especie_linha,
-        cnpjs: campos.cnpjs.map((c) => ({ cnpj: E.formatarCnpj(c.cnpj), papel: c.papel, condominio: mapa.has(c.cnpj) })),
-        id_superlogica: id.condominio ? id.condominio.id : null, nome_condominio: id.condominio ? id.condominio.nome : null, motivo_condominio: id.motivo_condominio,
-        cond_documento: condDoc ? condDoc.id : null,
-        id_fornecedor: id.fornecedor ? id.fornecedor.id : null, nome_fornecedor: id.fornecedor ? id.fornecedor.nome : null,
-        cnpj_fornecedor: id.cnpj_fornecedor ? E.formatarCnpj(id.cnpj_fornecedor) : null,
-        conta: null, nome_conta: null, forma_pag: campos.especie_linha ? 0 : null,
-        complemento: [id.fornecedor ? id.fornecedor.nome : null, campos.documento ? 'doc ' + campos.documento : null].filter(Boolean).join(' ').slice(0, 200) || null,
-      };
-      if (dados.forma_pag == null) dados.forma_pag = 0;
-      valoresDaLinha(dados);
-      const alertas = await conferirDados(dados, E2.escopo, null);
-      const linha = {
-        criado_por: req.user ? req.user.sub : null, criado_por_email: req.user ? req.user.email || null : null, status: 'rascunho',
-        nome_arquivo: nome, hash_sha256: hash, tamanho: buf.length, arquivo_base64: buf.toString('base64'), leitura, tipo: dados.tipo,
-        id_superlogica: dados.id_superlogica ? Number(dados.id_superlogica) : null, cond_documento: condDoc ? Number(condDoc.id) : null, dados, alertas,
-      };
-      const ins = await banco('POST', '/rest/v1/fin_entrada?select=' + CAMPOS_LISTA, linha);
-      if (ins.status === 409) return res.status(409).json({ erro: 'ja_enviado', detalhe: 'Este mesmo arquivo acabou de ser enviado.' });
-      if (ins.status !== 201 || !Array.isArray(ins.body) || !ins.body[0]) throw new Error('banco_' + ins.status);
-      auditoria.evento(req, 'entrada_lida', { id_superlogica: dados.id_superlogica, entrada: ins.body[0].id, leitura, tipo: dados.tipo });
-      res.json({ item: paraTela(ins.body[0], E2.escopo) });
+      const r = await criarRascunho({ buf, nome, mime: 'application/pdf', esc: E2.escopo, usuario: req.user ? { sub: req.user.sub, email: req.user.email || null } : null, req, origem: null });
+      if (r.conflito) return res.status(409).json({ erro: 'ja_enviado', detalhe: 'Este mesmo arquivo acabou de ser enviado.' });
+      res.json({ item: paraTela(r.linha, E2.escopo) });
     } catch (e) { erroInterno(res, 'ler', e); }
   });
 
@@ -199,7 +291,7 @@ function criarRotasEntrada(app, d) {
     const E2 = await escopo(req, res); if (!E2) return null;
     let linha;
     try { linha = await lerLinha(req.params.id); } catch (e) { erroInterno(res, 'carregar', e); return null; }
-    if (!linha || !visivel(req, E2.escopo, linha)) { res.status(404).json({ erro: 'nao_encontrado', detalhe: 'Documento não encontrado.' }); return null; }
+    if (!linha || !visivel(req, E2.escopo, linha, E2.carteiras)) { res.status(404).json({ erro: 'nao_encontrado', detalhe: 'Documento não encontrado.' }); return null; }
     return { linha, esc: E2.escopo };
   }
 
@@ -209,12 +301,14 @@ function criarRotasEntrada(app, d) {
     res.json({ item: paraTela(c.linha, c.esc) });
   });
 
-  // PDF para conferir na tela (só para quem vê o rascunho).
+  // PDF para conferir na tela (só para quem vê o rascunho). XML da nota vai como texto puro (nunca
+  // interpretado pelo navegador); foto vai como imagem.
   app.get('/api/entrada/:id/pdf', requireAuth, async (req, res) => {
     const c = await carregar(req, res, 'ver'); if (!c) return;
+    const mime = MIMES.includes(c.linha.arquivo_mime) ? c.linha.arquivo_mime : 'application/pdf';
     res.set('Cache-Control', 'no-store');
-    res.set('Content-Type', 'application/pdf');
-    res.set('Content-Disposition', 'inline; filename="documento.pdf"');
+    res.set('Content-Type', mime === 'application/xml' ? 'text/plain; charset=utf-8' : mime);
+    res.set('Content-Disposition', 'inline; filename="documento' + (E.EXTENSAO[mime] || '.pdf') + '"');
     res.set('X-Content-Type-Options', 'nosniff');
     res.send(Buffer.from(c.linha.arquivo_base64, 'base64'));
   });
@@ -245,6 +339,8 @@ function criarRotasEntrada(app, d) {
     try {
       const cli = clienteSL();
       if (b.id_superlogica !== undefined) {
+        // Escolhido na tela: deixa de ser sugestão do email.
+        if (String(b.id_superlogica || '') !== String(dados.id_superlogica || '') || b.confirmar_condominio === true) { delete dados.condominio_por; delete dados.condominio_sugerido; }
         const id = String(b.id_superlogica || '');
         if (!id) { dados.id_superlogica = null; dados.nome_condominio = null; }
         else {
@@ -378,7 +474,7 @@ function criarRotasEntrada(app, d) {
       if (trava.status !== 200 || !Array.isArray(trava.body) || !trava.body[0]) return { st: 409, j: { erro: 'nao_editavel', detalhe: 'Este documento mudou de situação. Abra de novo.' } };
       travado = true;
       const r = await E.lancar(credSL(), cli, Object.assign({}, dados, { id_superlogica: idSL, id_fornecedor: f.id, nome_fornecedor: f.nome, id_contabanco: dados.id_contabanco || null }),
-        Buffer.from(L.arquivo_base64, 'base64'), L.nome_arquivo);
+        Buffer.from(L.arquivo_base64, 'base64'), L.nome_arquivo, L.arquivo_mime || 'application/pdf');
       const registro = Object.assign({}, r, { lancado_por_email: quem(req), origem, conta_bancaria: dados.nome_contabanco || null, confianca: E.confianca(dados), aceitos: origem === 'lote' ? [] : aceitos });
       const fim = { atualizado_em: new Date().toISOString(), resultado: registro };
       if (r.ok) Object.assign(fim, { status: 'lancado', id_despesa: r.id_despesa, id_parcela: r.id_parcela, id_arquivo: r.id_arquivo, lancado_em: new Date().toISOString(),
@@ -473,6 +569,8 @@ function criarRotasEntrada(app, d) {
       res.json({ item: paraTela(up.body[0], c.esc) });
     } catch (e) { erroInterno(res, 'pronto', e); }
   });
+
+  return { criarRascunho, acharRepetido, registrarRepeticao };
 }
 
 module.exports = { criarRotasEntrada };

@@ -47,6 +47,13 @@
   var NOME_TIPO = { boleto: 'Boleto', nota: 'Nota fiscal', guia: 'Guia', fatura: 'Fatura', comprovante: 'Comprovante', outro: 'Outro' };
   var FORMAS = [[0, 'Boleto'], [12, 'Pix'], [14, 'Pix Copia e Cola'], [7, 'Débito automático'], [8, 'Transferência'], [9, 'Doc/Ted'], [13, 'DCTFWeb'], [1, 'Cheque'], [2, 'Dinheiro'], [10, 'Outros']];
   var COR = { grave: 'var(--danger)', impede: 'var(--warning)', aviso: 'var(--muted)' };
+  // Documento vindo por email: de quem, para qual caixa.
+  function origemCurta(it) {
+    var o = it.origem;
+    if (!o || o.tipo !== 'email') return '';
+    return 'email de ' + (o.remetente_nome || o.remetente || 'remetente desconhecido');
+  }
+  function dataHoraBR(iso) { var d = iso ? new Date(iso) : null; return d && !isNaN(d) ? d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''; }
 
   // 3. Abertura, envio dos PDFs e fila.
   async function entAbrir() {
@@ -143,7 +150,8 @@
           // Arquivo, condominio, fornecedor e categoria sao textos livres: quebram em ate 2 linhas
           // (td-livre no index.html) com o texto inteiro no title, para nao empurrar Valor e Vencimento
           var tdL = function (t) { return '<td class="td-livre" title="' + esc(t) + '"><div class="td-2l">' + esc(t) + '</div></td>'; };
-          return '<tr style="cursor:pointer" onclick="entAbrirItem(\'' + esc(it.id) + '\')">' + marca + tdL(it.nome_arquivo) + '<td>' + esc(NOME_TIPO[d.tipo] || '') + '</td>' + tdL(d.nome_condominio || 'a definir') +
+          var oc = origemCurta(it);
+          return '<tr style="cursor:pointer" onclick="entAbrirItem(\'' + esc(it.id) + '\')">' + marca + tdL(it.nome_arquivo + (oc ? ' (' + oc + ')' : '')) + '<td>' + esc(NOME_TIPO[d.tipo] || '') + '</td>' + tdL(d.nome_condominio || 'a definir') +
             tdL(d.nome_fornecedor || 'a definir') + tdL(d.conta ? d.conta + (d.nome_conta ? ' ' + d.nome_conta : '') : 'a definir') + '<td>' + esc(brl(d.valor)) + '</td><td>' + esc(dataBR(d.vencimento)) + '</td><td class="td-livre" style="color:' + (graves ? 'var(--danger)' : 'var(--muted)') + '">' + (al.length ? al.length + (graves ? ' (' + graves + ' para resolver)' : '') : '') +
             '</td><td class="td-livre">' + esc(situacao(it)) + '</td></tr>';
         }).join('') + '</tbody></table>' : '';
@@ -249,6 +257,13 @@
       linhaRes('Vencimento', esc(dataBR(d.vencimento) || 'a definir') + (d.vencimento ? '<br>' + selo(cf.vencimento) : '')) +
       linhaRes('Conta bancária', esc(d.nome_contabanco || 'principal do condomínio')) +
       linhaRes('Anexo', esc(it.nome_arquivo) + (it.status === 'lancado' ? (res.anexado === false ? ' (não anexou: anexe no Superlógica)' : ' (anexado)') : ' (vai anexado)')) +
+      (it.origem && it.origem.tipo === 'email' ? linhaRes('Origem', esc('Email de ' + (it.origem.remetente_nome ? it.origem.remetente_nome + ' <' + (it.origem.remetente || '') + '>' : it.origem.remetente || 'remetente desconhecido')) +
+        '<br><span style="font-size:11px;color:var(--muted)">' + esc('Caixa ' + (it.origem.caixa || '') + (it.origem.data ? ', recebido em ' + dataHoraBR(it.origem.data) : '')) + '</span>' +
+        (it.origem.assunto ? '<br><span style="font-size:11px">' + esc('Assunto: ' + it.origem.assunto) + '</span>' : '') +
+        (it.origem.corpo ? '<br><span style="font-size:11px;color:var(--muted)">' + esc(it.origem.corpo) + '</span>' : '') +
+        ((it.origem.anexos || []).length > 1 ? '<br><span style="font-size:11px;color:var(--muted)">' + esc('Anexos do email: ' + it.origem.anexos.map(function (a) { return a.nome + (a.usado ? '' : ' (' + (a.motivo || 'ignorado') + ')'); }).join(', ')) + '</span>' : '') +
+        ((d.repeticoes || []).length ? '<br><span style="font-size:11px;color:var(--warning)">' + esc('Chegou de novo ' + d.repeticoes.length + (d.repeticoes.length === 1 ? ' vez' : ' vezes') + ': ' + d.repeticoes.slice(-3).map(function (r) { return (r.remetente || 'sem remetente') + (r.data ? ' em ' + dataHoraBR(r.data) : ''); }).join('; ')) + '</span>' : '')) : '') +
+      (d.condominio_por ? linhaRes('Condomínio sugerido', '<span style="color:var(--warning)">' + esc({ nome_no_email: 'pelo nome citado no email', remetente: 'pelo remetente', caixa: 'pela caixa de email' }[d.condominio_por] || 'pelo email') + '</span>') : '') +
       (d.pronto ? linhaRes('Rascunho conferido', esc((d.pronto.por || '') + ' ' + dataBR(d.pronto.em))) : '') +
       (it.status === 'lancado' ? linhaRes('Lançado', esc('despesa ' + (it.id_despesa || '') + (res.lancado_por_email ? ' por ' + res.lancado_por_email : '') + ' ' + dataBR(it.lancado_em)) + (res.conferido === false ? '<br><span style="color:var(--warning)">a releitura não bateu: confira no Superlógica</span>' : '')) : '') +
       '</div>';
@@ -262,7 +277,7 @@
     card.innerHTML = '<div class="card-header"><span class="card-title">' + esc(it.nome_arquivo) + '</span>' +
       '<span style="font-size:11px;color:var(--muted);font-family:var(--mono)">' + esc(situacao(it)) + '</span></div>' +
       '<div style="display:grid;grid-template-columns:minmax(280px,1fr) minmax(300px,1fr);gap:16px">' +
-      '<div>' + (est.pdfUrl ? '<iframe src="' + esc(est.pdfUrl) + '" style="width:100%;height:640px;border:1px solid var(--border);border-radius:6px" title="Documento"></iframe>' : '<div style="font-size:12px;color:var(--muted)">Não deu para mostrar o PDF.</div>') + '</div>' +
+      '<div>' + (est.pdfUrl ? '<iframe src="' + esc(est.pdfUrl) + '" style="width:100%;height:640px;border:1px solid var(--border);border-radius:6px" title="Documento"></iframe>' : '<div style="font-size:12px;color:var(--muted)">Não deu para mostrar o documento.</div>') + '</div>' +
       '<div style="display:flex;flex-direction:column;gap:10px">' + resumo +
       (alertas ? '<div style="border:1px solid var(--border);border-radius:6px;padding:8px 10px">' + alertas + '</div>' : '') +
       (botao ? '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">' + botao + '</div>' : '') +
