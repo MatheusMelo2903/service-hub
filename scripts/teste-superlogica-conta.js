@@ -5,7 +5,9 @@
 const http = require('http');
 const crypto = require('crypto');
 const express = require('express');
+process.env.NODE_ENV = 'test';
 const SC = require('../servico/superlogica-conta');
+SC.decifrar = SC.decifrarParaTeste;
 
 let ok = 0, falhou = 0;
 function t(nome, cond) { if (cond) ok++; else { falhou++; console.log('FALHOU: ' + nome); } }
@@ -22,6 +24,11 @@ const orig = { log: console.log, warn: console.warn, error: console.error };
 ['log', 'warn', 'error'].forEach((k) => { console[k] = function () { saida.push([].slice.call(arguments).join(' ')); return orig[k].apply(console, arguments); }; });
 
 // ── 1. Cifra ──
+{
+  const fora = require('child_process').execFileSync(process.execPath, ['-e', "const m=require('./servico/superlogica-conta');process.stdout.write(typeof m.decifrar+','+typeof m.decifrarParaTeste)"],
+    { cwd: require('path').join(__dirname, '..'), env: Object.assign({}, process.env, { NODE_ENV: 'production' }) }).toString();
+  t('decifrar não sai do módulo fora dos testes', fora === 'undefined,undefined');
+}
 const c1 = SC.cifrar(SENHA, A, ENV);
 t('cifrado não contém a senha', !c1.includes(SENHA) && c1.startsWith('v1:'));
 t('decifra com o mesmo usuário', SC.decifrar(c1, A, ENV) === SENHA);

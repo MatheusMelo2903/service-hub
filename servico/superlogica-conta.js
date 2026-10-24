@@ -56,6 +56,9 @@ function cifrar(texto, idUsuario, env) {
   return 'v1:' + iv.toString('base64') + ':' + c.getAuthTag().toString('base64') + ':' + ct.toString('base64');
 }
 // Devolve a senha aberta ou null (chave errada, outro usuário ou valor estragado).
+// USO RESTRITO: só o login direto (caminho A, ainda não construído) pode chamar esta função, e nunca
+// numa rota que devolva a senha para a tela, log ou auditoria. Por isso ela não sai do arquivo
+// (só nos testes, com NODE_ENV=test).
 function decifrar(valor, idUsuario, env) {
   const k = chaveDe(env);
   const p = String(valor || '').split(':');
@@ -260,6 +263,8 @@ function criarRotasContaSuperlogica(app, d) {
 }
 
 module.exports = {
-  chaveDe, cifrar, decifrar, validar, contaParaTela, telaBase, montarDestino, criarLinks, paginaAviso,
+  chaveDe, cifrar, validar, contaParaTela, telaBase, montarDestino, criarLinks, paginaAviso,
   criarRotasContaSuperlogica, DESTINOS, MODO, LINK_VALIDADE_MS,
 };
+// Só os testes abrem a senha cifrada para conferir a cifra.
+if (process.env.NODE_ENV === 'test') Object.defineProperty(module.exports, 'decifrarParaTeste', { value: decifrar, enumerable: false });

@@ -72,9 +72,10 @@
         + (j.publicado === true ? 'Atenção: o Superlógica marcou como publicado; confira lá.' : 'Não foi publicado para os condôminos (publique no Superlógica depois de conferir).'), 'var(--success)');
       if (btn) btn.style.display = 'none';
       if (typeof toast === 'function') toast('Arquivado no Superlógica', 'ok');
-      // Prestação pronta lá: o botão leva à tela de publicar, onde a pessoa resolve a verificação.
-      if (o.tipo === 'prestacao' && j.publicado !== true && window.AbrirSuperlogica) {
-        AbrirSuperlogica.botao(host.querySelector('.arq-publicar'), { destino: 'documentos', idSuperlogica: o.idSuperlogica, nomeCond: o.nomeCond, passos: AbrirSuperlogica.PASSOS_PUBLICAR });
+      // Prestação pronta lá: publicar pelo Hub (com ou sem aviso) ou, como segunda opção, abrir no Superlógica.
+      if (o.tipo === 'prestacao' && j.publicado !== true && window.PublicarSL) {
+        PublicarSL.painel(host.querySelector('.arq-publicar'), { url: '/api/condominio/' + encodeURIComponent(o.idSuperlogica) + '/documentos/publicar',
+          corpo: { id_documento: j.id_documento || null, titulo: j.titulo }, publicado: false, idSuperlogica: o.idSuperlogica, nomeCond: o.nomeCond });
       }
     } catch (e) {
       status(host, '✕ ' + esc(e.message || e), 'var(--danger)');

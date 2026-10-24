@@ -37,7 +37,7 @@
       + '</div>'
       + '<div id="sl-conta-msg" style="min-height:16px;font-size:12px"></div>'
       + '</form>'
-      + '<div style="margin-top:10px;font-size:11px;color:var(--muted,#8892a4)">Hoje o botão Abrir no Superlógica leva você direto à tela certa. Se o Superlógica pedir login, entre uma vez com esta conta; o navegador guarda a sessão.</div>'
+      + '<div style="margin-top:10px;font-size:11px;color:var(--muted,#8892a4)">A senha fica guardada cifrada e por enquanto só será usada quando o login direto estiver pronto. Hoje o botão Abrir no Superlógica leva você direto à tela certa; se o Superlógica pedir login, entre uma vez com esta conta e o navegador guarda a sessão.</div>'
       + '</div></div>';
     document.body.insertAdjacentHTML('beforeend', html);
     var caixa = document.getElementById('sl-conta');
@@ -128,7 +128,7 @@
       var cond = o.nomeCond ? esc(o.nomeCond) + (o.idSuperlogica ? ' (código ' + esc(o.idSuperlogica) + ')' : '') : '';
       falar('Abrimos a tela ' + esc(j.tela || 'do Superlógica') + ' em outra aba. Se pedir login, entre com a sua conta do Superlógica'
         + (j.email ? ' (' + esc(j.email) + ')' : '') + '.'
-        + (o.passos ? '<ol style="margin:6px 0 0 18px;padding:0">' + o.passos.map(function (p) { return '<li>' + p.replace(/\{cond\}/g, cond || 'o condomínio certo') + '</li>'; }).join('') + '</ol>' : ''));
+        + (o.passos ? '<ol style="margin:6px 0 0 18px;padding:0">' + o.passos.map(function (p) { return '<li>' + esc(p).replace(/\{cond\}/g, cond || 'o condomínio certo') + '</li>'; }).join('') + '</ol>' : ''));
     } catch (e) {
       try { aba.close(); } catch (e2) { /* aba já fechada */ }
       falar(esc(e.message), 'var(--danger)');
