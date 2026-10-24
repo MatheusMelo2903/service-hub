@@ -38,7 +38,8 @@
       + '<button class="btn btn-primary" id="cdia-carregar">Carregar</button>'
       + '<label class="btn btn-ghost" style="cursor:pointer">Escolher extratos OFX<input type="file" id="cdia-arquivos" accept=".ofx,.OFX" multiple style="display:none"></label>'
       + '<button class="btn btn-ghost" id="cdia-enviar">Enviar extratos</button>'
-      + '<button class="btn btn-ghost" id="cdia-banco" style="display:none">Puxar do banco</button></div>'
+      + '<button class="btn btn-ghost" id="cdia-banco" style="display:none">Puxar do banco</button>'
+      + '<button class="btn btn-ghost" id="cdia-ativo" title="Abre o condomínio escolhido no topo">Condomínio ativo</button></div>'
       + '<div class="hint" style="margin:10px 0 8px">Mande os OFX de várias contas de uma vez: o Hub reconhece a conta pelo banco, agência e conta do arquivo e prepara só os dias que ainda não estão no Superlógica (nunca o dia de hoje, que ainda muda). Depois concilia por regras e deixa aqui só o que precisa de conferência. Usa a carteira escolhida logo abaixo, em Conciliação da carteira.</div>'
       + '<div id="cdia-info" class="ficha-sub" style="margin-bottom:8px"></div><div id="cdia-arq-res"></div>'
       + '<div id="cdia-analistas"></div><div id="cdia-lista"></div>';
@@ -51,6 +52,12 @@
     document.getElementById('cdia-carregar').addEventListener('click', function () { carregar(); });
     document.getElementById('cdia-enviar').addEventListener('click', enviarArquivos);
     document.getElementById('cdia-banco').addEventListener('click', puxarBanco);
+    document.getElementById('cdia-ativo').addEventListener('click', function () {
+      var c = typeof getCondominioAtivo === 'function' ? getCondominioAtivo() : null;
+      var id = c ? String(c.id_superlogica || '') : '';
+      if (!/^\d+$/.test(id)) { msg('cdia-info', 'Escolha o condomínio no topo primeiro.', true); return; }
+      abrir(id);
+    });
     document.getElementById('cdia-arquivos').addEventListener('change', function (ev) { var n = ev.target.files.length; msg('cdia-info', n ? n + ' arquivo(s) escolhido(s). Clique em Enviar extratos.' : ''); });
   }
 
@@ -64,7 +71,8 @@
     if (!r.ok) { msg('cdia-info', j.detalhe || 'Falha ' + r.status, true); return; }
     est.resumo = j;
     document.getElementById('cdia-banco').style.display = j.banco && j.banco.ligado && j.pode_gravar ? '' : 'none';
-    msg('cdia-info', (j.condominios || []).length + ' condomínio(s).' + (j.dia_avisos ? ' Avisos de ' + dataBR(j.dia_avisos) + '.' : '') + (j.politica === 'teste' ? ' Por enquanto a gravação no Superlógica só vale nos condomínios de teste.' : ''));
+    var conc = (j.condominios || []).filter(function (c) { return c.conciliado; }).length;
+    msg('cdia-info', (j.condominios || []).length + ' condomínio(s), ' + conc + ' já conciliado(s).' + (j.dia_avisos ? ' Avisos de ' + dataBR(j.dia_avisos) + '.' : '') + (j.politica === 'teste' ? ' Por enquanto a gravação no Superlógica só vale nos condomínios de teste.' : ''));
     renderAnalistas(j.por_analista || []);
     renderLista(j);
   }
@@ -86,12 +94,12 @@
     var l = j.condominios || [];
     var avisos = {};
     (j.avisos || []).forEach(function (a) { (avisos[a.id_condominio] = avisos[a.id_condominio] || []).push(a); });
-    if (!l.length) { el.innerHTML = '<div class="hint">Nenhum condomínio conciliado ainda nesta carteira. Envie os extratos ou abra um condomínio e clique em Conciliar agora.</div>'; return; }
+    if (!l.length) { el.innerHTML = '<div class="hint">Nenhum condomínio nesta carteira. Escolha outra carteira ou use Condomínio ativo.</div>'; return; }
     el.innerHTML = '<div class="card-title" style="font-size:14px;margin:10px 0 6px">Por condomínio</div>' + tabela(['Condomínio', 'Extrato importado', 'Pronto para gravar', 'Para conferir', 'Última conciliação', ''], l.map(function (c) {
       var pronto = (c.extratos_prontos ? n(c.extratos_prontos) + ' extrato(s), ' + n(c.linhas_prontas) + ' linha(s)' : '') + (c.lancamentos_prontos ? (c.extratos_prontos ? '<br>' : '') + n(c.lancamentos_prontos) + ' lançamento(s), ' + brlC(n(c.valor_prontos)) : '');
       var conf = (c.fila ? '<b style="color:var(--warning)">' + n(c.fila) + '</b>' : '0') + (c.incertos ? '<br><span style="color:var(--danger)">' + n(c.incertos) + ' sem confirmação</span>' : '');
       return '<tr>' + td('<b>' + esc(c.condominio || 'Condomínio ' + c.id_condominio) + '</b><br><span style="font-size:11px;color:var(--muted)">' + esc([c.id_condominio, c.analista].filter(Boolean).join(' · ')) + '</span>')
-        + td(textoExtrato(c)) + td(pronto || '<span style="color:var(--muted)">nada</span>') + td(conf) + td(esc(horaBR(c.ultima_conciliacao)))
+        + td(textoExtrato(c)) + td(pronto || '<span style="color:var(--muted)">nada</span>') + td(conf) + td(c.ultima_conciliacao ? esc(horaBR(c.ultima_conciliacao)) : '<span style="color:var(--muted)">ainda não conciliado</span>')
         + td('<button class="btn btn-ghost" style="font-size:12px;padding:4px 10px" data-abrir="' + esc(c.id_condominio) + '">Abrir</button>') + '</tr>';
     }));
     el.querySelectorAll('[data-abrir]').forEach(function (b) { b.addEventListener('click', function () { abrir(b.getAttribute('data-abrir')); }); });
@@ -210,12 +218,12 @@
       var bts = (s.pode_aceitar && j.pode_gravar ? '<button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" data-aceitar="' + esc(f.chave) + '">' + (s.acao === 'conferir' ? 'Conferido' : 'Aceitar') + '</button> ' : '')
         + (s.corrigir && j.pode_gravar ? '<button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" data-corrigir="' + esc(f.chave) + '">Corrigir</button> ' : '')
         + (j.pode_gravar ? '<button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" data-ignorar="' + esc(f.chave) + '">Ignorar</button>' : '');
-      return '<tr>' + td(dataBR(f.data)) + td(esc(f.conta || '')) + td('<span style="color:' + (f.valor_centavos < 0 ? 'var(--danger)' : 'var(--success)') + '">' + brlC(f.valor_centavos) + '</span>') + td(esc(f.descricao || ''))
-        + td(esc(f.motivo || '') + (s.texto ? '<br><span style="font-size:11px;color:var(--muted)">' + esc(s.texto) + '</span>' : '')) + td('<div style="white-space:nowrap">' + bts + '</div><div id="cdia-f-' + esc(f.chave) + '"></div>') + '</tr>';
+      return '<tr>' + td(dataBR(f.data)) + td(esc(f.conta || '')) + td('<span style="color:' + (f.valor_centavos < 0 ? 'var(--danger)' : 'var(--success)') + '">' + brlC(f.valor_centavos) + '</span>') + td(noBanco(f))
+        + td(esc(f.motivo || '') + lancamentoDoSistema(f) + (s.texto ? '<br><span style="font-size:11px;color:var(--muted)">' + esc(s.texto) + '</span>' : '')) + td('<div style="white-space:nowrap">' + bts + '</div><div id="cdia-f-' + esc(f.chave) + '"></div>') + '</tr>';
     })) : '<div class="hint">Nada para conferir.</div>';
     var decididos = j.fila.filter(function (x) { return x.status !== 'pendente'; });
     if (decididos.length) h += '<details style="margin-top:8px"><summary class="hint" style="cursor:pointer">Decididos nos últimos 7 dias (' + decididos.length + ')</summary>' + tabela(['Data', 'Valor', 'No banco', 'Decisão', 'Quem'], decididos.map(function (f) {
-      return '<tr>' + td(dataBR(f.data)) + td(brlC(f.valor_centavos)) + td(esc(f.descricao || '')) + td(esc({ conferido: 'conferido', corrigido: 'corrigido', ignorado: 'ignorado', resolvido: 'resolvido no Superlógica', aceito: 'aceito' }[f.status] || f.status)) + td(esc(f.decidido_por_email || '')) + '</tr>';
+      return '<tr>' + td(dataBR(f.data)) + td(brlC(f.valor_centavos)) + td(noBanco(f)) + td(esc({ conferido: 'conferido', corrigido: 'corrigido', ignorado: 'ignorado', resolvido: 'resolvido no Superlógica', aceito: 'aceito' }[f.status] || f.status)) + td(esc(f.decidido_por_email || '')) + '</tr>';
     })) + '</details>';
     h += '<div id="cdia-trab" style="margin-top:10px"></div>';
     el.innerHTML = h;
@@ -225,6 +233,11 @@
     el.querySelectorAll('[data-ignorar]').forEach(function (b) { b.addEventListener('click', function () { formIgnorar(b.getAttribute('data-ignorar')); }); });
     el.querySelectorAll('[data-corrigir]').forEach(function (b) { b.addEventListener('click', function () { formCorrigir(b.getAttribute('data-corrigir')); }); });
   }
+  // Item que é só do sistema (lançado e fora do extrato): a coluna No banco não pode mostrar a
+  // descrição do lançamento; ela vai para o motivo.
+  var SO_SISTEMA = { lancamento_sem_banco: true };
+  function noBanco(f) { return SO_SISTEMA[f.tipo] ? '<span style="color:var(--muted)">não está no extrato</span>' : esc(f.descricao || ''); }
+  function lancamentoDoSistema(f) { return SO_SISTEMA[f.tipo] && f.descricao ? '<br><span style="font-size:11px">Lançamento: ' + esc(f.descricao) + '</span>' : ''; }
   function item(chave) { return (est.detalhe.fila || []).filter(function (x) { return x.chave === chave; })[0]; }
   function formIgnorar(chave) {
     var box = document.getElementById('cdia-f-' + chave);
