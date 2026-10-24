@@ -15,11 +15,12 @@
 
 const E = require('../financeiro/entrada');
 const EF = require('../financeiro/email-financeiro');
+const PG = require('../financeiro/pagar'); // lançamento completo (parcelas, rateio, Pix, remessa) em dados.pagar
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CAMPOS_LISTA = 'id,criado_em,atualizado_em,criado_por,criado_por_email,status,nome_arquivo,tamanho,leitura,tipo,id_superlogica,cond_documento,dados,alertas,id_despesa,id_parcela,id_arquivo,lancado_em,resultado,origem,arquivo_mime';
 const MIMES = ['application/pdf', 'application/xml', 'image/jpeg', 'image/png'];
-const hojeBR = () => new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+const hojeBR = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 
 function criarRotasEntrada(app, d) {
   const { requireAuth, express, banco, perfilDe, podeModulo, carteiraT18, exigirLeituraSuperlogica, superlogicaNativa,
@@ -486,9 +487,10 @@ function criarRotasEntrada(app, d) {
         const ra = resFalso();
         aut = await politica.autorizar(req, ra, { operacao: 'entrada_lancar', id_condominio: idSL,
           conteudo: { entrada: L.id, fornecedor: String(f.id), valor: dados.valor, vencimento: dados.vencimento || null, conta: dados.conta, documento: dados.documento || null,
-            forma_pag: dados.forma_pag, linha: dados.linha || null, tipo: dados.tipo || null, aceitos: [...(aceitos || [])].sort() },
+            forma_pag: dados.forma_pag, linha: dados.linha || null, tipo: dados.tipo || null, aceitos: [...(aceitos || [])].sort(), pagar: dados.pagar || null },
           resumo: { linhas: [{ rotulo: 'Fornecedor', valor: f.nome }, { rotulo: 'Valor', valor: brlTela(dados.valor) }, { rotulo: 'Vencimento', valor: dataTela(dados.vencimento) },
-            { rotulo: 'Categoria', valor: [dados.conta, dados.nome_conta].filter(Boolean).join(' ') }, { rotulo: 'Documento', valor: dados.documento || '' }, { rotulo: 'Arquivo anexado', valor: L.nome_arquivo || '' }] } });
+            { rotulo: 'Categoria', valor: [dados.conta, dados.nome_conta].filter(Boolean).join(' ') }, { rotulo: 'Documento', valor: dados.documento || '' }, { rotulo: 'Arquivo anexado', valor: L.nome_arquivo || '' }]
+            .concat(PG.linhasDoPacote(dados.pagar)) } });
         if (!aut) return { st: ra.st, j: ra.j };
       }
       // Marca "incerto" antes de gravar: se algo cair no meio, ninguém lança de novo sem conferir.
@@ -498,8 +500,10 @@ function criarRotasEntrada(app, d) {
         return { st: 409, j: { erro: 'nao_editavel', detalhe: 'Este documento mudou de situação. Abra de novo.' } };
       }
       travado = true;
-      const r = await E.lancar(credSL(), cli, Object.assign({}, dados, { id_superlogica: idSL, id_fornecedor: f.id, nome_fornecedor: f.nome, id_contabanco: dados.id_contabanco || null }),
-        Buffer.from(L.arquivo_base64, 'base64'), L.nome_arquivo, L.arquivo_mime || 'application/pdf');
+      const dl = Object.assign({}, dados, { id_superlogica: idSL, id_fornecedor: f.id, nome_fornecedor: f.nome, id_contabanco: dados.id_contabanco || null });
+      const r = dados.pagar
+        ? await PG.lancarDaEntrada(credSL(), cli, dl, contas, Buffer.from(L.arquivo_base64, 'base64'), L.nome_arquivo, L.arquivo_mime || 'application/pdf', hojeBR())
+        : await E.lancar(credSL(), cli, dl, Buffer.from(L.arquivo_base64, 'base64'), L.nome_arquivo, L.arquivo_mime || 'application/pdf');
       if (aut) aut.concluir({ ok: !!r.ok, incerto: !!r.incerto, entrada: L.id, id_despesa: r.id_despesa || null, valor: dados.valor, origem });
       aut = null;
       const registro = Object.assign({}, r, { lancado_por_email: quem(req), origem, conta_bancaria: dados.nome_contabanco || null, confianca: E.confianca(dados), aceitos: origem === 'lote' ? [] : aceitos });

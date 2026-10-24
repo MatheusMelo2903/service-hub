@@ -842,4 +842,6 @@ module.exports = {
   lerDinheiro, brParaIso, isoParaSL, slParaIso, lerCampos, chaveNfeDoTexto, chaveNfeValida, EXTENSAO, camposDaLeitura, chaveNota, faltaEssencial, juntarLeituras, classificar, acharDocumento, textoUtil, ehPdf, hashDe, extrairTexto,
   mapaCondominios, cadastroCondominios, cnpjsRepetidos, condominioPorId, fornecedorPorCnpj, fornecedorPorId, contasDoPlano, contaPrincipal, contasBanco, resumoContas, dataSL, identificar,
   acharDuplicidades, contaSugerida, despesasHistorico, confianca, conferir, podeLancar, liberados, lancamentoLiberado, corpoDespesa, lancar, limparCache, nomeArquivoSeguro,
+  // Contas a pagar (financeiro/pagar.js) usa o mesmo transporte e as mesmas conferências de resposta.
+  pedir, corpoOk, enviarArquivo, paginas, slParaIsoDe: slParaIso,
 };
