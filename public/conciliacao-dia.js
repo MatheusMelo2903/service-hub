@@ -23,6 +23,8 @@
   function tabela(cab, linhas) { return '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>' + cab.map(function (c) { return '<th ' + TH + '>' + esc(c) + '</th>'; }).join('') + '</tr></thead><tbody>' + linhas.join('') + '</tbody></table></div>'; }
   function msg(id, texto, erro) { var el = document.getElementById(id); if (el) el.innerHTML = texto ? '<div style="font-size:12px;font-family:var(--mono);color:' + (erro ? 'var(--danger)' : 'var(--muted)') + '">' + esc(texto) + '</div>' : ''; }
   async function json(r) { return r.json().catch(function () { return {}; }); }
+  // Número vindo do servidor sempre passa por Number antes de entrar no HTML.
+  function n(v) { var x = Number(v); return isFinite(x) ? x : 0; }
   function carteira() { var s = document.getElementById('conc-carteira'); return s ? s.value : ''; }
 
   function montar() {
@@ -70,7 +72,7 @@
     var el = document.getElementById('cdia-analistas');
     if (!l.length) { el.innerHTML = ''; return; }
     el.innerHTML = '<div class="card-title" style="font-size:14px;margin:6px 0">Por analista</div>' + tabela(['Analista', 'Carteira', 'Condomínios com aviso', 'Contas sem extrato', 'Linhas sem conciliar', 'Sem confirmação'], l.map(function (a) {
-      return '<tr>' + td('<b>' + esc(a.analista) + '</b>') + td(esc(a.carteira)) + td(a.condominios) + td(a.sem_extrato ? '<b style="color:var(--warning)">' + a.sem_extrato + '</b>' : '0') + td(a.linhas ? '<b style="color:var(--warning)">' + a.linhas + '</b>' : '0') + td(a.incertos ? '<b style="color:var(--danger)">' + a.incertos + '</b>' : '0') + '</tr>';
+      return '<tr>' + td('<b>' + esc(a.analista) + '</b>') + td(esc(a.carteira)) + td(n(a.condominios)) + td(a.sem_extrato ? '<b style="color:var(--warning)">' + n(a.sem_extrato) + '</b>' : '0') + td(a.linhas ? '<b style="color:var(--warning)">' + n(a.linhas) + '</b>' : '0') + td(a.incertos ? '<b style="color:var(--danger)">' + n(a.incertos) + '</b>' : '0') + '</tr>';
     }));
   }
   function textoExtrato(c) {
@@ -86,8 +88,8 @@
     (j.avisos || []).forEach(function (a) { (avisos[a.id_condominio] = avisos[a.id_condominio] || []).push(a); });
     if (!l.length) { el.innerHTML = '<div class="hint">Nenhum condomínio conciliado ainda nesta carteira. Envie os extratos ou abra um condomínio e clique em Conciliar agora.</div>'; return; }
     el.innerHTML = '<div class="card-title" style="font-size:14px;margin:10px 0 6px">Por condomínio</div>' + tabela(['Condomínio', 'Extrato importado', 'Pronto para gravar', 'Para conferir', 'Última conciliação', ''], l.map(function (c) {
-      var pronto = (c.extratos_prontos ? c.extratos_prontos + ' extrato(s), ' + c.linhas_prontas + ' linha(s)' : '') + (c.lancamentos_prontos ? (c.extratos_prontos ? '<br>' : '') + c.lancamentos_prontos + ' lançamento(s), ' + brlC(c.valor_prontos) : '');
-      var conf = (c.fila ? '<b style="color:var(--warning)">' + c.fila + '</b>' : '0') + (c.incertos ? '<br><span style="color:var(--danger)">' + c.incertos + ' sem confirmação</span>' : '');
+      var pronto = (c.extratos_prontos ? n(c.extratos_prontos) + ' extrato(s), ' + n(c.linhas_prontas) + ' linha(s)' : '') + (c.lancamentos_prontos ? (c.extratos_prontos ? '<br>' : '') + n(c.lancamentos_prontos) + ' lançamento(s), ' + brlC(n(c.valor_prontos)) : '');
+      var conf = (c.fila ? '<b style="color:var(--warning)">' + n(c.fila) + '</b>' : '0') + (c.incertos ? '<br><span style="color:var(--danger)">' + n(c.incertos) + ' sem confirmação</span>' : '');
       return '<tr>' + td('<b>' + esc(c.condominio || 'Condomínio ' + c.id_condominio) + '</b><br><span style="font-size:11px;color:var(--muted)">' + esc([c.id_condominio, c.analista].filter(Boolean).join(' · ')) + '</span>')
         + td(textoExtrato(c)) + td(pronto || '<span style="color:var(--muted)">nada</span>') + td(conf) + td(esc(horaBR(c.ultima_conciliacao)))
         + td('<button class="btn btn-ghost" style="font-size:12px;padding:4px 10px" data-abrir="' + esc(c.id_condominio) + '">Abrir</button>') + '</tr>';
@@ -135,7 +137,7 @@
       var conta = a.conta ? esc(a.conta.descricao) + (a.conta.final ? ' final ' + esc(a.conta.final) : '') + '<br><span style="font-size:11px;color:var(--muted)">condomínio ' + esc(a.conta.id_condominio) + '</span>' : (a.final_arquivo ? 'final ' + esc(a.final_arquivo) : '');
       var cor = a.situacao === 'planejada' ? 'var(--success)' : (a.situacao === 'nada_novo' ? 'var(--muted)' : 'var(--danger)');
       return '<tr>' + td(esc(a.arquivo)) + td(conta) + td('<b style="color:' + cor + '">' + esc(SITUACAO_ARQ[a.situacao] || a.situacao) + '</b>' + (a.detalhe ? '<br><span style="font-size:11px;color:var(--muted)">' + esc(a.detalhe) + '</span>' : ''))
-        + td(a.a_importar ? a.a_importar + ' linha(s), ' + dataBR(a.inicio) + ' a ' + dataBR(a.fim) : '0') + td(a.ja_importados || 0) + td(a.faltando_no_superlogica ? '<b style="color:var(--warning)">' + a.faltando_no_superlogica + '</b>' : '0') + td(a.dias_abertos || 0) + '</tr>';
+        + td(a.a_importar ? n(a.a_importar) + ' linha(s), ' + dataBR(a.inicio) + ' a ' + dataBR(a.fim) : '0') + td(n(a.ja_importados)) + td(a.faltando_no_superlogica ? '<b style="color:var(--warning)">' + n(a.faltando_no_superlogica) + '</b>' : '0') + td(n(a.dias_abertos)) + '</tr>';
     }));
   }
   async function puxarBanco() {
@@ -175,20 +177,22 @@
     var podeG = j.pode_gravar && pol !== 'bloqueado' && prontos > 0;
     var aviso = pol === 'bloqueado' ? 'Por enquanto o Hub só grava no Superlógica nos condomínios de teste. Neste, faça pelo Superlógica e marque como conferido.' : (pol === 'livre' ? 'Condomínio de teste: grava sem pedir confirmação.' : 'O Hub mostra o resumo e pede sua confirmação antes de gravar.');
     var fila = j.fila.filter(function (x) { return x.status === 'pendente'; });
+    // Motivo do botão desabilitado: o mesmo texto do aviso ao lado (ou o que falta).
+    var motivoG = !j.pode_gravar ? 'Seu usuário não tem a ação Gravar da Conciliação.' : (pol === 'bloqueado' ? aviso : (!prontos ? 'Nada pronto para gravar neste condomínio.' : aviso));
     var h = '<div class="card-header"><span class="card-title">' + esc(j.condominio || 'Condomínio ' + j.id_condominio) + '</span></div>'
       + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">'
       + '<button class="btn btn-ghost" id="cdia-conciliar">Conciliar agora</button>'
-      + '<button class="btn btn-primary" id="cdia-gravar"' + (podeG ? '' : ' disabled') + '>Gravar no Superlógica' + (prontos ? ' (' + prontos + ')' : '') + '</button>'
-      + '<span class="hint">' + esc(aviso) + '</span></div><div id="cdia-det-info" class="ficha-sub" style="margin-bottom:8px">' + (j.estado && j.estado.ultima_conciliacao ? 'Última conciliação ' + esc(horaBR(j.estado.ultima_conciliacao)) + (j.estado.resumo ? ': ' + j.estado.resumo.conciliadas + ' linha(s) casadas com o que já estava lançado' + (j.estado.resumo.aguardando_fim_do_mes ? ', ' + j.estado.resumo.aguardando_fim_do_mes + ' de rendimento aguardando o fim do mês' : '') + '.' : '') : 'Ainda não conciliado. Clique em Conciliar agora.') + '</div>';
+      + '<button class="btn btn-primary" id="cdia-gravar"' + (podeG ? '' : ' disabled title="' + esc(motivoG) + '"') + '>Gravar no Superlógica' + (prontos ? ' (' + n(prontos) + ')' : '') + '</button>'
+      + '<span class="hint">' + esc(aviso) + '</span></div><div id="cdia-det-info" class="ficha-sub" style="margin-bottom:8px">' + (j.estado && j.estado.ultima_conciliacao ? 'Última conciliação ' + esc(horaBR(j.estado.ultima_conciliacao)) + (j.estado.resumo ? ': ' + n(j.estado.resumo.conciliadas) + ' linha(s) casadas com o que já estava lançado' + (j.estado.resumo.aguardando_fim_do_mes ? ', ' + n(j.estado.resumo.aguardando_fim_do_mes) + ' de rendimento aguardando o fim do mês' : '') + '.' : '') : 'Ainda não conciliado. Clique em Conciliar agora.') + '</div>';
     if (j.estado && j.estado.resumo && j.estado.resumo.contas) {
       h += tabela(['Conta', 'Último extrato no Superlógica', 'Dias úteis sem extrato'], j.estado.resumo.contas.map(function (k) {
-        return '<tr>' + td(esc(k.descricao)) + td(k.quadro && k.quadro.ultimo_extrato ? dataBR(k.quadro.ultimo_extrato) : '<span style="color:var(--warning)">sem extrato no período</span>') + td(k.quadro && k.quadro.dias_sem_extrato != null ? k.quadro.dias_sem_extrato : '') + '</tr>';
+        return '<tr>' + td(esc(k.descricao)) + td(k.quadro && k.quadro.ultimo_extrato ? dataBR(k.quadro.ultimo_extrato) : '<span style="color:var(--warning)">sem extrato no período</span>') + td(k.quadro && k.quadro.dias_sem_extrato != null ? n(k.quadro.dias_sem_extrato) : '') + '</tr>';
       }));
     }
     if (j.importacoes.length) {
       h += '<div class="card-title" style="font-size:14px;margin:12px 0 6px">Extratos</div>' + tabela(['Conta', 'Período', 'Linhas', 'Situação', 'Detalhe'], j.importacoes.map(function (x) {
         var r = x.detalhe && x.detalhe.resultado;
-        return '<tr>' + td(esc(x.conta || x.id_conta)) + td(dataBR(x.inicio) + ' a ' + dataBR(x.fim)) + td(x.quantidade) + td('<b style="color:' + corSt(x.status) + '">' + esc(ST[x.status] || x.status) + '</b>') + td(esc((r && r.msg) || (x.detalhe && x.detalhe.arquivo) || '')) + '</tr>';
+        return '<tr>' + td(esc(x.conta || x.id_conta)) + td(dataBR(x.inicio) + ' a ' + dataBR(x.fim)) + td(n(x.quantidade)) + td('<b style="color:' + corSt(x.status) + '">' + esc(ST[x.status] || x.status) + '</b>') + td(esc((r && r.msg) || (x.detalhe && x.detalhe.arquivo) || '')) + '</tr>';
       }));
     }
     if (j.lancamentos.length) {
@@ -280,7 +284,7 @@
       if (est.cond !== id) return;
       var el = document.getElementById('cdia-trab');
       if (!r.ok) { if (el) el.innerHTML = '<div class="hint" style="color:var(--danger)">' + esc(j.detalhe || 'Falha ' + r.status) + '</div>'; return; }
-      if (el) el.innerHTML = '<div class="hint">' + (j.estado === 'rodando' ? 'Gravando no Superlógica: ' + j.feitos + ' de ' + j.total + '...' : 'Gravação terminada: ' + (j.totais ? j.totais.gravados + ' gravado(s), ' + j.totais.incertos + ' sem confirmação, ' + (j.totais.recusados + j.totais.falhas) + ' não gravado(s).' : '')) + '</div>';
+      if (el) el.innerHTML = '<div class="hint">' + (j.estado === 'rodando' ? 'Gravando no Superlógica: ' + n(j.feitos) + ' de ' + n(j.total) + '...' : 'Gravação terminada: ' + (j.totais ? n(j.totais.gravados) + ' gravado(s), ' + n(j.totais.incertos) + ' sem confirmação, ' + (n(j.totais.recusados) + n(j.totais.falhas)) + ' não gravado(s).' : '')) + '</div>';
       if (j.estado !== 'rodando') { setTimeout(function () { if (est.cond === id) abrir(id); }, 1500); return; }
       await new Promise(function (ok) { setTimeout(ok, 3000); });
     }

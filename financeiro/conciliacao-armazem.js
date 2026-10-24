@@ -9,6 +9,15 @@ const enc = encodeURIComponent;
 const agoraISO = () => new Date().toISOString();
 const lista = (v) => [].concat(v).map(String);
 
+// Situações finais de cada tabela (o que a retenção pode apagar depois do prazo). Pendente, planejado,
+// gravando e incerto nunca são apagados: ainda pedem ação de alguém.
+const FINAIS = {
+  importacoes: ['gravada', 'cancelada'],
+  fila: ['conferido', 'ignorado', 'resolvido'],
+  lancamentos: ['gravado', 'cancelado'],
+};
+const FINAIS_SET = { importacoes: new Set(FINAIS.importacoes), fila: new Set(FINAIS.fila), lancamentos: new Set(FINAIS.lancamentos) };
+
 function erroSobreposicao() { const e = new Error('sobreposicao'); e.codigo = 'sobreposicao'; return e; }
 
 // req(method, caminho, corpo) -> { status, body } (supabaseAdminRequest do servidor).
@@ -49,7 +58,7 @@ function criarArmazemSupabase(req) {
   return {
     tipo: 'supabase',
     importacoes: {
-      listar: ({ id_condominio, id_conta, status }) => chamar('GET', 'fin_conc_importacoes?select=*' + (id_condominio ? '&id_condominio=eq.' + enc(id_condominio) : '') + (id_conta ? '&id_conta=eq.' + enc(id_conta) : '') + (status ? '&' + filtroIn('status', status) : '') + '&order=inicio.asc&limit=500'),
+      listar: ({ id_condominio, id_conta, status }) => chamar('GET', 'fin_conc_importacoes?select=*' + (id_condominio ? '&' + filtroIn('id_condominio', id_condominio) : '') + (id_conta ? '&id_conta=eq.' + enc(id_conta) : '') + (status ? '&' + filtroIn('status', status) : '') + '&order=inicio.asc&limit=500'),
       criar: async (l) => { const r = await chamar('POST', 'fin_conc_importacoes', l); return Array.isArray(r) ? r[0] : r; },
       trocar: (id, de, campos) => trocar('fin_conc_importacoes', 'id', id, de, campos),
       cancelarPlanejadas: (idConta) => chamar('PATCH', 'fin_conc_importacoes?id_conta=eq.' + enc(idConta) + '&status=eq.planejada', { status: 'cancelada', atualizado_em: agoraISO() }),
@@ -84,6 +93,17 @@ function criarArmazemSupabase(req) {
       },
       listar: (dia, ids) => chamar('GET', 'fin_conc_avisos?select=*&dia=eq.' + enc(dia) + (ids ? '&' + filtroIn('id_condominio', ids.length ? ids : ['0']) : '') + '&limit=5000'),
       ultimoDia: async () => { const r = await chamar('GET', 'fin_conc_avisos?select=dia&order=dia.desc&limit=1'); return r[0] ? r[0].dia : null; },
+    },
+    // Retenção (LGPD): apaga o que está em situação final há mais de N meses. Devolve quantas linhas por tabela.
+    limparAntigos: async (antesDe) => {
+      const q = enc(antesDe);
+      const apagar = async (caminho) => { const r = await chamar('DELETE', caminho); return Array.isArray(r) ? r.length : 0; };
+      return {
+        importacoes: await apagar('fin_conc_importacoes?' + filtroIn('status', FINAIS.importacoes) + '&atualizado_em=lt.' + q),
+        fila: await apagar('fin_conc_fila?' + filtroIn('status', FINAIS.fila) + '&atualizado_em=lt.' + q),
+        lancamentos: await apagar('fin_conc_lancamentos?' + filtroIn('status', FINAIS.lancamentos) + '&atualizado_em=lt.' + q),
+        avisos: await apagar('fin_conc_avisos?dia=lt.' + enc(String(antesDe).slice(0, 10))),
+      };
     },
     estado: {
       salvar: (l) => chamar('POST', 'fin_conc_estado', l).catch((e) => {
@@ -147,6 +167,14 @@ function criarArmazemMemoria() {
       listar: async (dia, ids) => copia(t.avisos.filter((a) => a.dia === dia && (!ids || lista(ids).includes(String(a.id_condominio))))),
       ultimoDia: async () => t.avisos.reduce((m, a) => (a.dia > m ? a.dia : m), '') || null,
     },
+    limparAntigos: async (antesDe) => {
+      const n = { importacoes: 0, fila: 0, lancamentos: 0, avisos: 0 };
+      t.imp = t.imp.filter((x) => (FINAIS_SET.importacoes.has(x.status) && (x.atualizado_em || x.criado_em || '') < antesDe ? (n.importacoes++, false) : true));
+      for (const [k, x] of t.fila) if (FINAIS_SET.fila.has(x.status) && (x.atualizado_em || x.criado_em || '') < antesDe) { t.fila.delete(k); n.fila++; }
+      for (const [k, x] of t.lanc) if (FINAIS_SET.lancamentos.has(x.status) && (x.atualizado_em || x.criado_em || '') < antesDe) { t.lanc.delete(k); n.lancamentos++; }
+      t.avisos = t.avisos.filter((a) => (a.dia < String(antesDe).slice(0, 10) ? (n.avisos++, false) : true));
+      return n;
+    },
     estado: {
       salvar: async (l) => { t.estado.set(String(l.id_condominio), Object.assign(t.estado.get(String(l.id_condominio)) || {}, copia(l))); },
       listar: async (ids) => copia([...t.estado.values()].filter((e) => !ids || lista(ids).includes(String(e.id_condominio)))),
@@ -154,4 +182,4 @@ function criarArmazemMemoria() {
   };
 }
 
-module.exports = { criarArmazemSupabase, criarArmazemMemoria };
+module.exports = { criarArmazemSupabase, criarArmazemMemoria, FINAIS };

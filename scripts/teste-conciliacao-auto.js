@@ -378,6 +378,25 @@ function ofxTexto({ banco, agencia, conta, itens }) {
   t('rotina: concilia todos e grava sozinha só no 167', rel.conciliados === 2 && rel.gravados > 0 && sl2.chamadas.every((c) => !/635|ID_CONDOMINIO_COND=136|"ID_CONDOMINIO_COND"\r\n\r\n136/.test(c.corpo)));
   t('rotina: 136 fica pronto esperando a pessoa', (await arm2.importacoes.listar({ id_condominio: '136', status: ['planejada'] })).length === 1);
 
+  // ── 9. extrato vazio e retenção ─────────────────────────────────────────
+  const slV = criarSL();
+  const gV = G.criarGravador({ cred: {}, cliente: slV.cliente, pedir: slV.pedir });
+  const rV = await gV.importarExtrato({ id_condominio: '167', id_conta: '823', itens: [] }, A.contaInterna(slV.contas[0]));
+  t('extrato sem linhas: recusado sem enviar nada', rV.status === 'recusado' && slV.chamadas.length === 0);
+  const armR = ARM.criarArmazemMemoria();
+  const velho = '2025-09-01T00:00:00.000Z', novo = '2026-10-01T00:00:00.000Z';
+  armR._t.imp.push({ id: 1, id_conta: 1, status: 'gravada', atualizado_em: velho }, { id: 2, id_conta: 1, status: 'incerta', atualizado_em: velho }, { id: 3, id_conta: 1, status: 'gravada', atualizado_em: novo });
+  [['fa1', 'conferido', velho], ['fa2', 'pendente', velho], ['fa3', 'ignorado', novo], ['fa4', 'resolvido', velho]].forEach(([k, st, em]) => armR._t.fila.set(k, { chave: k, status: st, atualizado_em: em }));
+  [['la1', 'gravado', velho], ['la2', 'incerto', velho], ['la3', 'cancelado', velho]].forEach(([k, st, em]) => armR._t.lanc.set(k, { chave: k, status: st, atualizado_em: em }));
+  armR._t.avisos.push({ dia: '2025-09-01' }, { dia: '2026-10-20' });
+  const SR = D.criarConciliacaoDia({ cliente: () => slV.cliente, armazem: armR, gravador: gV, env: {} });
+  const ret = await SR.limparAntigos(Date.parse('2026-10-23T12:00:00Z'));
+  t('retenção: apaga só o final com mais de 12 meses', ret.meses === 12 && ret.apagados.importacoes === 1 && ret.apagados.fila === 2 && ret.apagados.lancamentos === 2 && ret.apagados.avisos === 1
+    && armR._t.imp.map((x) => x.id).join() === '2,3' && [...armR._t.fila.keys()].sort().join() === 'fa2,fa3' && [...armR._t.lanc.keys()].join() === 'la2');
+  const SR0 = D.criarConciliacaoDia({ cliente: () => slV.cliente, armazem: armR, gravador: gV, env: { CONC_RETENCAO: '0' } });
+  t('retenção desligada pela variável', (await SR0.limparAntigos()).desligada === true);
+  t('rotina do dia roda a retenção', rel.retencao && rel.retencao.meses === 12);
+
   console.log(ok + ' ok, ' + falhou + ' falharam');
   process.exit(falhou ? 1 : 0);
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -496,8 +496,21 @@ function criarConciliacaoDia(o) {
       }
     }
     await gerarAvisos(null).catch((e) => log('[conciliacao-dia] avisos: ' + (e && (e.codigo || e.message))));
+    rel.retencao = await limparAntigos().catch((e) => { log('[conciliacao-dia] retenção: ' + (e && (e.codigo || e.message))); return null; });
     rel.fim = new Date().toISOString();
     return rel;
+  }
+  // Retenção (LGPD): apaga das tabelas fin_conc_* o que está em situação final (gravado, conferido,
+  // ignorado, resolvido, cancelado) há mais de CONC_RETENCAO_MESES (padrão 12). Roda junto da rotina
+  // do dia; CONC_RETENCAO=0 desliga. O que ainda pede ação (pendente, planejado, incerto) nunca sai.
+  async function limparAntigos(agora) {
+    if (env.CONC_RETENCAO === '0' || !arm.limparAntigos) return { desligada: true };
+    const m = Number(env.CONC_RETENCAO_MESES);
+    const meses = Number.isInteger(m) && m >= 1 && m <= 120 ? m : 12;
+    const d = new Date(agora || Date.now());
+    d.setUTCMonth(d.getUTCMonth() - meses);
+    const apagados = await arm.limparAntigos(d.toISOString());
+    return { meses, antes_de: d.toISOString(), apagados };
   }
   // Pedido "de mentira" da rotina agendada: aparece na auditoria do Hub como a conciliação automática.
   function reqAgendador() {
@@ -508,7 +521,7 @@ function criarConciliacaoDia(o) {
     return r;
   }
 
-  return { contasTodas, contasDe, contaTela, nomeDe, receberOfx, puxarBanco, statusBanco, conciliar, decidir, prepararGravacao, executarGravacao, trabalho, gerarAvisos, rodarDia, gruposDe, travas };
+  return { contasTodas, contasDe, contaTela, nomeDe, receberOfx, puxarBanco, statusBanco, conciliar, decidir, prepararGravacao, executarGravacao, trabalho, gerarAvisos, rodarDia, limparAntigos, gruposDe, travas };
 }
 
 // Agendador: dias úteis, 7h40 em Brasília (depois dos avisos das 7h), uma vez por dia.

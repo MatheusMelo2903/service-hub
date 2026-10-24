@@ -98,7 +98,7 @@ function registrar(d) {
     try {
       const lista = ids ? [...ids] : null;
       const [estados, imps, lancs, fila] = await Promise.all([
-        arm.estado.listar(lista), arm.importacoes.listar({ status: ['planejada', 'incerta', 'gravando'] }),
+        arm.estado.listar(lista), arm.importacoes.listar({ id_condominio: lista || undefined, status: ['planejada', 'incerta', 'gravando'] }),
         arm.lancamentos.listar({ id_condominio: lista || undefined, status: ['planejado', 'incerto', 'gravando'] }), arm.fila.listar({ id_condominio: lista || undefined, status: ['pendente'] }),
       ]);
       const dentro = (x) => !ids || ids.has(String(x.id_condominio));

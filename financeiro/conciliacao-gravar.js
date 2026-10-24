@@ -78,6 +78,8 @@ function criarGravador(deps) {
   // imp: { id_condominio, id_conta, itens: [{ data, valor, fitid, descricao, numero }] }, conta: contaInterna.
   async function importarExtrato(imp, conta) {
     exigir(imp.id_condominio, [imp.id_conta]);
+    // Sem linhas não há o que importar (e o período sairia vazio): recusa antes de enviar.
+    if (!Array.isArray(imp.itens) || !imp.itens.length) return { status: 'recusado', conferido: true, msg: 'Extrato sem linhas. Nada foi enviado.' };
     if (String(conta.id) !== String(imp.id_conta) || String(conta.id_condominio) !== String(imp.id_condominio)) { const e = new Error('conta_de_outro_condominio'); e.codigo = 'conta_de_outro_condominio'; throw e; }
     const ofx = A.montarOfx(conta, imp.itens);
     const fronteira = '----hub' + crypto.randomBytes(12).toString('hex');
