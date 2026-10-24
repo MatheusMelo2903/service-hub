@@ -344,6 +344,79 @@ function criarAgendador(deps) {
     return lista.filter((t) => t.aprovacao === 'aprovada' && t.data_execucao <= hoje); // conferência em código também
   }
 
+  // Trava no banco: PATCH condicional (status, aprovação e versão iguais ao que foi lido).
+  // Volta true só quando esta instância pegou a tarefa.
+  async function pegar(t) {
+    const pega = await banco('PATCH', '/rest/v1/agenda_tarefas?id=eq.' + t.id + '&status=eq.' + t.status + '&aprovacao=eq.aprovada&versao=eq.' + (t.versao || 1),
+      { status: 'rodando', trava_ate: iso(agora() + TRAVA_MS), trava_dono: instancia, atualizado_em: iso(agora()) });
+    return !!(pega.status < 300 && Array.isArray(pega.body) && pega.body[0]);
+  }
+
+  // Executa uma tarefa já pega e grava o resultado, o aviso e o registro. Devolve
+  // { id, tipo, status, motivo } ou null quando foi adiada (volta ao status de antes).
+  async function processar(t) {
+    let res;
+    try { res = await executar(t); } catch (e) {
+      console.warn('[agenda] tarefa ' + t.tipo + ' falhou: ' + (e && e.message));
+      res = falha('geracao', 'Erro inesperado ao executar. Use Refazer.');
+    }
+    if (res.adiar) {
+      await banco('PATCH', '/rest/v1/agenda_tarefas?id=eq.' + t.id + '&trava_dono=eq.' + instancia, { status: t.status, trava_ate: null, trava_dono: null });
+      return null;
+    }
+    const campos = {
+      status: res.status, motivo: res.motivo || null, erro: res.erro || null, trava_ate: null, trava_dono: null,
+      resultado: Object.assign({}, t.resultado || {}, res.resultado || {}), executada_em: iso(agora()), atualizado_em: iso(agora()),
+      tentativas: (Number(t.tentativas) || 0) + (res.contou ? 1 : 0),
+    };
+    if (res.status === 'pronta_conferir') campos.pronta_em = iso(agora());
+    if (res.status === 'pronta_conferir' && t.tipo === 'apresentacao' && campos.resultado.material_em == null) campos.resultado.material_em = await ultimaChegadaMaterial(t.item_id);
+    const motivoNovo = res.trava && res.trava !== t.motivo;
+    if (motivoNovo) campos.travas = (Array.isArray(t.travas) ? t.travas : []).concat([{ motivo: res.trava, em: iso(agora()) }]).slice(-20);
+    await banco('PATCH', '/rest/v1/agenda_tarefas?id=eq.' + t.id + '&trava_dono=eq.' + instancia, campos);
+    // Pendência e erro avisam uma vez por motivo; pronta e lembretes avisam sempre.
+    let aviso = res.aviso;
+    if (!aviso && motivoNovo) {
+      const item = t.item_id ? await lerUm('agenda_itens', t.item_id) : null;
+      const nome = (item && item.condominio_nome) || '';
+      const texto = (res.status === 'erro' ? 'Erro em ' : 'Pendente: ') + (agenda.ROTULO_TIPO[t.tipo] || t.tipo).toLowerCase() + ' de ' + nome + '. ' + (agenda.MOTIVOS[res.motivo] || res.erro || '') + '.';
+      const mensagem = res.mensagem && item ? 'Ei, tudo bem? Para a assembleia do ' + nome + ' no dia ' + agenda.dataBr(item.data) + ', preciso que você me mande ' + (res.motivo === 'falta_edital' ? 'o edital' : 'os orçamentos e as fotos') + ' o quanto antes. Pode mandar por aqui mesmo.' : null;
+      aviso = { user_id: responsavel(item, t), tipo: res.status === 'erro' ? 'erro' : 'pendente_material', texto: agenda.semTraco(texto).replace(/\.\./g, '.'), mensagem };
+    }
+    if (aviso) await avisar(Object.assign({ tarefa_id: t.id, item_id: t.item_id || null, id_superlogica: t.id_superlogica || null }, aviso));
+    auditar('agenda_tarefa_executada', { tarefa: t.id, tipo: t.tipo, status: res.status, motivo: res.motivo || null, id_superlogica: t.id_superlogica || null, manual: !!t._manual });
+    return { id: t.id, tipo: t.tipo, status: res.status, motivo: res.motivo || null };
+  }
+
+  // Rodar agora (botão da gestão): a mesma execução da rodada, para uma tarefa só, sem esperar a
+  // data. Vale com AGENDA_EXECUCAO desligado e fora do horário, porque é ação de uma pessoa. As
+  // travas continuam: só tarefa aprovada, pega no banco com o PATCH condicional e o limite de
+  // gerações por hora (e o limite de gasto do mês). Devolve { iniciada, motivo?, fim? }: fim é a
+  // promessa da execução, que segue em segundo plano (a prestação pode levar vários minutos).
+  async function rodarUma(id) {
+    if (!uuidOk(id)) return { iniciada: false, motivo: 'id_invalido' };
+    const agoraMs = agora();
+    await banco('PATCH', '/rest/v1/agenda_tarefas?id=eq.' + id + '&status=eq.rodando&trava_ate=lt.' + enc(iso(agoraMs)), { status: 'agendada', trava_ate: null, trava_dono: null });
+    const t = await lerUm('agenda_tarefas', id);
+    if (!t) return { iniciada: false, motivo: 'nao_encontrada' };
+    if (t.aprovacao !== 'aprovada') return { iniciada: false, motivo: 'nao_aprovada' };
+    if (t.status === 'rodando') return { iniciada: false, motivo: 'rodando' };
+    const podeRodar = t.status === 'agendada' || t.status === 'pendente_material' || (t.status === 'manual' && !(t.resultado && t.resultado.avisado));
+    if (!podeRodar) return { iniciada: false, motivo: 'status' };
+    if (agenda.GERACOES.has(t.tipo)) {
+      let semGeracao = false;
+      if (deps.passouLimiteMensal) { try { semGeracao = !!(await deps.passouLimiteMensal()); } catch (e) { semGeracao = false; } }
+      if (semGeracao) return { iniciada: false, motivo: 'limite_mes' };
+      if (!cabeNaHora()) return { iniciada: false, motivo: 'limite_hora' };
+    }
+    if (!(await pegar(t))) return { iniciada: false, motivo: 'pega_por_outra' };
+    const fim = processar(Object.assign({}, t, { _manual: true })).catch((e) => {
+      console.warn('[agenda] rodar agora falhou: ' + (e && e.message));
+      return null;
+    });
+    return { iniciada: true, fim };
+  }
+
   // Uma rodada. Devolve { rodou, motivo?, executadas: [{ id, tipo, status }] }.
   async function rodar() {
     if (!ligado()) return { rodou: false, motivo: 'desligado', executadas: [] };
@@ -359,40 +432,9 @@ function criarAgendador(deps) {
       if (deps.passouLimiteMensal) { try { semGeracao = !!(await deps.passouLimiteMensal()); } catch (e) { semGeracao = false; } }
       for (const t of await candidatas(hoje)) {
         if (agenda.GERACOES.has(t.tipo) && (semGeracao || !cabeNaHora())) continue;
-        const pega = await banco('PATCH', '/rest/v1/agenda_tarefas?id=eq.' + t.id + '&status=eq.' + t.status + '&aprovacao=eq.aprovada&versao=eq.' + (t.versao || 1),
-          { status: 'rodando', trava_ate: iso(agora() + TRAVA_MS), trava_dono: instancia, atualizado_em: iso(agora()) });
-        if (!(pega.status < 300 && Array.isArray(pega.body) && pega.body[0])) continue; // outra instância pegou
-        let res;
-        try { res = await executar(t); } catch (e) {
-          console.warn('[agenda] tarefa ' + t.tipo + ' falhou: ' + (e && e.message));
-          res = falha('geracao', 'Erro inesperado ao executar. Use Refazer.');
-        }
-        if (res.adiar) {
-          await banco('PATCH', '/rest/v1/agenda_tarefas?id=eq.' + t.id + '&trava_dono=eq.' + instancia, { status: t.status, trava_ate: null, trava_dono: null });
-          continue;
-        }
-        const campos = {
-          status: res.status, motivo: res.motivo || null, erro: res.erro || null, trava_ate: null, trava_dono: null,
-          resultado: Object.assign({}, t.resultado || {}, res.resultado || {}), executada_em: iso(agora()), atualizado_em: iso(agora()),
-          tentativas: (Number(t.tentativas) || 0) + (res.contou ? 1 : 0),
-        };
-        if (res.status === 'pronta_conferir') campos.pronta_em = iso(agora());
-        if (res.status === 'pronta_conferir' && t.tipo === 'apresentacao' && campos.resultado.material_em == null) campos.resultado.material_em = await ultimaChegadaMaterial(t.item_id);
-        const motivoNovo = res.trava && res.trava !== t.motivo;
-        if (motivoNovo) campos.travas = (Array.isArray(t.travas) ? t.travas : []).concat([{ motivo: res.trava, em: iso(agora()) }]).slice(-20);
-        await banco('PATCH', '/rest/v1/agenda_tarefas?id=eq.' + t.id + '&trava_dono=eq.' + instancia, campos);
-        // Pendência e erro avisam uma vez por motivo; pronta e lembretes avisam sempre.
-        let aviso = res.aviso;
-        if (!aviso && motivoNovo) {
-          const item = t.item_id ? await lerUm('agenda_itens', t.item_id) : null;
-          const nome = (item && item.condominio_nome) || '';
-          const texto = (res.status === 'erro' ? 'Erro em ' : 'Pendente: ') + (agenda.ROTULO_TIPO[t.tipo] || t.tipo).toLowerCase() + ' de ' + nome + '. ' + (agenda.MOTIVOS[res.motivo] || res.erro || '') + '.';
-          const mensagem = res.mensagem && item ? 'Ei, tudo bem? Para a assembleia do ' + nome + ' no dia ' + agenda.dataBr(item.data) + ', preciso que você me mande ' + (res.motivo === 'falta_edital' ? 'o edital' : 'os orçamentos e as fotos') + ' o quanto antes. Pode mandar por aqui mesmo.' : null;
-          aviso = { user_id: responsavel(item, t), tipo: res.status === 'erro' ? 'erro' : 'pendente_material', texto: agenda.semTraco(texto).replace(/\.\./g, '.'), mensagem };
-        }
-        if (aviso) await avisar(Object.assign({ tarefa_id: t.id, item_id: t.item_id || null, id_superlogica: t.id_superlogica || null }, aviso));
-        auditar('agenda_tarefa_executada', { tarefa: t.id, tipo: t.tipo, status: res.status, motivo: res.motivo || null, id_superlogica: t.id_superlogica || null });
-        executadas.push({ id: t.id, tipo: t.tipo, status: res.status, motivo: res.motivo || null });
+        if (!(await pegar(t))) continue; // outra instância pegou
+        const feito = await processar(t);
+        if (feito) executadas.push(feito);
       }
       return { rodou: true, executadas };
     } finally {
@@ -412,7 +454,7 @@ function criarAgendador(deps) {
     return true;
   }
   function estado() { return { ligada: ligado(), rodando: emAndamento, ultima_rodada: ultima.em, geracoes_na_hora: usoHora.length, limite_hora: maxHora(), hora_inicio: horaInicio() }; }
-  return { rodar, ligar, estado, instancia };
+  return { rodar, rodarUma, ligar, estado, instancia };
 }
 
 module.exports = { criarAgendador, criarExecutoresInternos, criarSalvarTrabalho, nomeGuardado, ligadoPorAmbiente, numeroAmbiente, INTERVALO_MS };

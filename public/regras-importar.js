@@ -18,7 +18,7 @@
   async function api(url, opt) {
     var r = await apiAuthFetch(url, opt || {});
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) { var e = new Error(j.detalhe || ('Falha ' + r.status)); e.status = r.status; throw e; }
+    if (!r.ok) { var e = new Error(j.detalhe || (textoFalha(r.status))); e.status = r.status; throw e; }
     return j;
   }
   function postJson(url, corpo, metodo) {

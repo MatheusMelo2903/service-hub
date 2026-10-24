@@ -76,7 +76,7 @@
       var r = await apiAuthFetch('/api/financeiro/balancete-digital/painel?competencia=' + encodeURIComponent(mes));
       var j = await r.json().catch(function () { return {}; });
       if (seq !== est.seq) return;
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       info('bd-info', '');
       desenharPainel(j);
     } catch (e) { if (seq === est.seq) info('bd-info', e.message, true); }
@@ -116,7 +116,7 @@
         var j = await r.json().catch(function () { return {}; });
         if (seq !== est.seq) return;
         if (r.status === 202) { info('bd-info', (j.detalhe || 'Calculando...') + ' (' + (t * 6) + ' s)'); await new Promise(function (ok) { setTimeout(ok, 6000); }); continue; }
-        if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+        if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
         info('bd-info', '');
         est.sit = j;
         desenharCond(j);
@@ -185,7 +185,7 @@
     try {
       var r = await apiAuthFetch('/api/financeiro/balancete-digital/' + encodeURIComponent(est.cond.id) + '/modelo/aprender', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ competencia: est.mes }) });
       var j = await r.json().catch(function () { return {}; });
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       info('bd-acao-info', '');
       est.proposta = j.proposta;
       var p = j.proposta || { itens: [] };
@@ -221,7 +221,7 @@
     try {
       var r = await apiAuthFetch('/api/financeiro/balancete-digital/' + encodeURIComponent(est.cond.id) + '/modelo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ itens: itens }) });
       var j = await r.json().catch(function () { return {}; });
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       carregarCond(false);
     } catch (e) { info('bd-acao-info', e.message, true); }
   }
@@ -241,7 +241,7 @@
       var b64 = await lerBase64(arq);
       var r = await apiAuthFetch('/api/financeiro/balancete-digital/' + encodeURIComponent(est.cond.id) + '/documento', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ competencia: est.mes, chave: chave, nome: arq.name, pdf_base64: b64 }) });
       var j = await r.json().catch(function () { return {}; });
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       info('bd-acao-info', j.detalhe || 'Recebido.');
       carregarCond(false);
     } catch (e) { info('bd-acao-info', e.message, true); }
@@ -250,7 +250,7 @@
     var r = await (window.gravarNoSuperlogica || apiAuthFetch)('/api/financeiro/balancete-digital/' + encodeURIComponent(est.cond.id) + caminho, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
     var j = await r.json().catch(function () { return {}; });
     if (r.status === 499) { info('bd-acao-info', j.detalhe || 'Cancelado.'); return; }
-    if (!r.ok && r.status !== 202) throw new Error(j.detalhe || ('Falha ' + r.status));
+    if (!r.ok && r.status !== 202) throw new Error(j.detalhe || (textoFalha(r.status)));
     info('bd-acao-info', j.detalhe || 'Feito.');
     if (aoTerminar) aoTerminar(j);
   }
@@ -281,7 +281,7 @@
     try {
       var r = await apiAuthFetch('/api/financeiro/balancete-digital/' + encodeURIComponent(est.cond.id) + '/fechamentos');
       var j = await r.json().catch(function () { return {}; });
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       var l = j.registros || [];
       el('bd-hist').innerHTML = l.length ? '<table class="tbl" style="width:100%;font-size:12px;margin-top:6px"><thead><tr><th>Quando</th><th>Mês</th><th>O que</th><th>De</th><th>Para</th><th>Quem</th><th>Motivo</th></tr></thead><tbody>'
         + l.map(function (x) {

@@ -175,7 +175,7 @@ async function alertasDashAbrir(forcar) {
     var card = document.getElementById('alertas-card');
     if (r.status === 403) { alertasCacheApagar(cond.id_superlogica); if (card) card.style.display = 'none'; return; } // sem acesso ao Superlógica
     if (card) card.style.display = '';
-    if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+    if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
     alertasEstado.idCarregado = cond.id_superlogica;
     alertasSaldoNoCampo(j);
     alertasEstado.ultimo = j;
@@ -370,7 +370,7 @@ async function alertasMarcar(id, status) {
   try {
     var r = await apiAuthFetch('/api/alertas/' + id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: status }) });
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+    if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
     alertasDashAbrir('estado');
   } catch (e) { toast('Não foi possível atualizar o alerta: ' + e.message, 'err'); }
 }
@@ -387,7 +387,7 @@ async function alertasSalvarSaldo() {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ saldo_minimo: v ? Number(v) : null })
     });
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+    if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
     toast(j.saldo_minimo ? 'Limite de saldo salvo: ' + alertasBRL(j.saldo_minimo) : 'Alerta de saldo desligado', 'ok');
     alertasDashAbrir(true);
   } catch (e) { toast('Não foi possível salvar o limite: ' + e.message, 'err'); }

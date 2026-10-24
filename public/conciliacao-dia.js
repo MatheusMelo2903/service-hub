@@ -68,7 +68,7 @@
     var r = await apiAuthFetch(API + '/resumo' + (carteira() ? '?carteira=' + encodeURIComponent(carteira()) : ''));
     var j = await json(r);
     if (seq !== est.seq) return;
-    if (!r.ok) { msg('cdia-info', j.detalhe || 'Falha ' + r.status, true); return; }
+    if (!r.ok) { msg('cdia-info', j.detalhe || textoFalha(r.status), true); return; }
     est.resumo = j;
     document.getElementById('cdia-banco').style.display = j.banco && j.banco.ligado && j.pode_gravar ? '' : 'none';
     var conc = (j.condominios || []).filter(function (c) { return c.conciliado; }).length;
@@ -134,7 +134,7 @@
     try { arquivos = await Promise.all(l.map(async function (a) { return { nome: a.name, texto: await lerArquivo(a) }; })); } catch (e) { msg('cdia-info', e.message, true); return; }
     var r = await apiAuthFetch(API + '/extratos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ arquivos: arquivos }) });
     var j = await json(r);
-    if (!r.ok) { msg('cdia-info', j.detalhe || 'Falha ' + r.status, true); return; }
+    if (!r.ok) { msg('cdia-info', j.detalhe || textoFalha(r.status), true); return; }
     inp.value = '';
     renderArquivos(j.arquivos || []);
     msg('cdia-info', 'Arquivos lidos. Abra o condomínio, clique em Conciliar agora e confira antes de gravar.');
@@ -153,7 +153,7 @@
     msg('cdia-info', 'Puxando os extratos no banco...');
     var r = await apiAuthFetch(API + '/banco', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carteira: carteira() }) });
     var j = await json(r);
-    if (!r.ok) { msg('cdia-info', j.detalhe || 'Falha ' + r.status, true); return; }
+    if (!r.ok) { msg('cdia-info', j.detalhe || textoFalha(r.status), true); return; }
     if (!j.ligado) { msg('cdia-info', j.detalhe || 'O conector do banco está desligado.', true); return; }
     renderArquivos((j.contas || []).map(function (c) { return Object.assign({ arquivo: 'Banco' }, c); }));
     carregar();
@@ -168,7 +168,7 @@
     var r = await apiAuthFetch(API + '/condominio/' + encodeURIComponent(id));
     var j = await json(r);
     if (est.cond !== id) return;
-    if (!r.ok) { el.innerHTML = '<div class="hint" style="color:var(--danger)">' + esc(j.detalhe || 'Falha ' + r.status) + '</div>'; return; }
+    if (!r.ok) { el.innerHTML = '<div class="hint" style="color:var(--danger)">' + esc(j.detalhe || textoFalha(r.status)) + '</div>'; return; }
     est.detalhe = j;
     renderDetalhe(j);
     if (j.trabalho && j.trabalho.estado === 'rodando') acompanhar(j.trabalho.id);
@@ -261,7 +261,7 @@
     var id = est.cond;
     var r = await apiAuthFetch(API + '/condominio/' + encodeURIComponent(id) + '/fila/' + encodeURIComponent(chave), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
     var j = await json(r);
-    if (!r.ok) { var box = document.getElementById('cdia-f-' + chave); if (box) box.innerHTML = '<div style="font-size:11px;color:var(--danger)">' + esc(j.detalhe || 'Falha ' + r.status) + '</div>'; return; }
+    if (!r.ok) { var box = document.getElementById('cdia-f-' + chave); if (box) box.innerHTML = '<div style="font-size:11px;color:var(--danger)">' + esc(j.detalhe || textoFalha(r.status)) + '</div>'; return; }
     abrir(id);
   }
   async function conciliar() {
@@ -272,7 +272,7 @@
       var j = await json(r);
       if (est.cond !== id) return;
       if (r.status === 202) { await new Promise(function (ok) { setTimeout(ok, 4000); }); continue; }
-      if (!r.ok) { msg('cdia-det-info', j.detalhe || 'Falha ' + r.status, true); return; }
+      if (!r.ok) { msg('cdia-det-info', j.detalhe || textoFalha(r.status), true); return; }
       abrir(id);
       return;
     }
@@ -285,7 +285,7 @@
     var r = await window.gravarNoSuperlogica(API + '/condominio/' + encodeURIComponent(id) + '/gravar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
     var j = await json(r);
     if (r.status === 499) { b.disabled = false; return; }
-    if (!r.ok) { msg('cdia-det-info', j.detalhe || 'Falha ' + r.status, true); b.disabled = false; return; }
+    if (!r.ok) { msg('cdia-det-info', j.detalhe || textoFalha(r.status), true); b.disabled = false; return; }
     if (j.nada) { msg('cdia-det-info', j.detalhe); return; }
     acompanhar(j.trabalho);
   }
@@ -296,7 +296,7 @@
       var j = await json(r);
       if (est.cond !== id) return;
       var el = document.getElementById('cdia-trab');
-      if (!r.ok) { if (el) el.innerHTML = '<div class="hint" style="color:var(--danger)">' + esc(j.detalhe || 'Falha ' + r.status) + '</div>'; return; }
+      if (!r.ok) { if (el) el.innerHTML = '<div class="hint" style="color:var(--danger)">' + esc(j.detalhe || textoFalha(r.status)) + '</div>'; return; }
       if (el) el.innerHTML = '<div class="hint">' + (j.estado === 'rodando' ? 'Gravando no Superlógica: ' + n(j.feitos) + ' de ' + n(j.total) + '...' : 'Gravação terminada: ' + (j.totais ? n(j.totais.gravados) + ' gravado(s), ' + n(j.totais.incertos) + ' sem confirmação, ' + (n(j.totais.recusados) + n(j.totais.falhas)) + ' não gravado(s).' : '')) + '</div>';
       if (j.estado !== 'rodando') { setTimeout(function () { if (est.cond === id) abrir(id); }, 1500); return; }
       await new Promise(function (ok) { setTimeout(ok, 3000); });

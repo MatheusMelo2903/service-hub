@@ -45,7 +45,7 @@
         url = url.replace(/[?&]forcar=1/, '');
         continue;
       }
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       return j;
     }
     throw new Error('A leitura demorou demais. Tente de novo em alguns minutos.');
@@ -53,7 +53,7 @@
   async function enviar(metodo, url, corpo) {
     var r = await apiAuthFetch(url, { method: metodo, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo || {}) });
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+    if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
     return j;
   }
 

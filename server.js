@@ -87,7 +87,7 @@ function rateLimit(req, res, next) {
   res.setHeader('X-RateLimit-Remaining', String(Math.max(0, RATE_LIMIT_MAX - bucket.count)));
   res.setHeader('X-RateLimit-Reset', String(Math.floor(bucket.resetAt / 1000)));
   if (bucket.count > RATE_LIMIT_MAX) {
-    res.status(429).json({ erro: 'rate_limit_exceeded', retryAfterSeconds: Math.ceil((bucket.resetAt - now) / 1000) });
+    res.status(429).json({ erro: 'rate_limit_exceeded', detalhe: 'Muitas consultas seguidas. Espere um minuto e tente de novo.', retryAfterSeconds: Math.ceil((bucket.resetAt - now) / 1000) });
     return;
   }
   next();

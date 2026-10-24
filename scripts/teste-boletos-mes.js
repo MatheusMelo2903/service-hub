@@ -117,6 +117,8 @@ t('mudanças para o padrão', M.diffRegua(REGUA_167, padraoAuto).length === 2);
 t('retorno automático', M.retornoAutomatico(Array.from({ length: 10 }, (x, i) => ({ fl_status_recb: '3', st_arqret_recb: i < 9 ? '' : 'CB01.RET' }))).ativo === true);
 t('retorno à mão', M.retornoAutomatico(Array.from({ length: 10 }, () => ({ fl_status_recb: '3', st_arqret_recb: 'CB.RET' }))).ativo === false);
 t('retorno desconhecido', M.retornoAutomatico([{ fl_status_recb: '3' }]).conhecido === false);
+const txtMao = M.retornoAutomatico(Array.from({ length: 194 }, (x, i) => ({ fl_status_recb: '3', st_arqret_recb: i < 183 ? 'CB.RET' : '' }))).texto;
+t('texto do retorno à mão diz o que significa', /^Baixa por arquivo de retorno: 183 de 194 pagamentos/.test(txtMao) && /não é automático neste condomínio/.test(txtMao) && !/[–—-]/.test(txtMao));
 
 // ── 6. trocas da forma de recebimento ──
 const linhasAud = [

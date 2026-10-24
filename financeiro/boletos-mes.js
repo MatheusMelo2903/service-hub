@@ -546,8 +546,8 @@ function retornoAutomatico(rows) {
   const ativo = pagas.length >= RETORNO_AUTO_MINIMO && parte >= RETORNO_AUTO_PARTE;
   return { ativo, conhecido: pagas.length >= RETORNO_AUTO_MINIMO, pagas: pagas.length, sem_arquivo: semArquivo, por_arquivo: pagas.length - semArquivo,
     texto: pagas.length < RETORNO_AUTO_MINIMO ? 'Poucas cobranças pagas no mês anterior para saber se o retorno é automático: o aviso de atraso fica desligado.'
-      : ativo ? 'Retorno automático ativo: ' + semArquivo + ' de ' + pagas.length + ' pagas baixadas sem arquivo de retorno.'
-        : 'Retorno feito à mão: ' + (pagas.length - semArquivo) + ' de ' + pagas.length + ' pagas baixadas por arquivo de retorno. O aviso de atraso fica desligado para não cobrar quem já pagou.' };
+      : ativo ? 'Retorno automático neste condomínio: ' + semArquivo + ' de ' + pagas.length + ' pagamentos do mês anterior foram baixados sozinhos, sem arquivo de retorno.'
+        : 'Baixa por arquivo de retorno: ' + (pagas.length - semArquivo) + ' de ' + pagas.length + ' pagamentos do mês anterior. O retorno não é automático neste condomínio, então o aviso de atraso fica desligado para não cobrar quem já pagou.' };
 }
 async function lerRetornoAutomatico(cliente, id, hoje) {
   const c = somarMeses(competencia(hoje.slice(0, 7)), -1);

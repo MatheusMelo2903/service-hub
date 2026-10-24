@@ -21,7 +21,7 @@
     var f = gravar && window.gravarNoSuperlogica ? window.gravarNoSuperlogica : apiAuthFetch;
     var r = await f(url, opts);
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) { var e = new Error(j.detalhe || ('Falha ' + r.status)); e.status = r.status; e.corpo = j; throw e; }
+    if (!r.ok) { var e = new Error(j.detalhe || (textoFalha(r.status))); e.status = r.status; e.corpo = j; throw e; }
     return j;
   }
   var post = function (corpo) { return { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) }; };
@@ -358,7 +358,8 @@
         + '<div class="cob-form">' + campo('cx-p-desc', 'Desconto máximo % dos juros e multa', p.desconto_max_pct || 0) + campo('cx-p-teto', 'Acima de R$ pede confirmação reforçada (0 sem teto)', p.teto_automatico || 0) + '</div>'
         + '<div class="cob-form">' + campo('cx-p-prazo', 'Prazo máximo para pagar (dias)', p.prazo_max_dias || 10, ' step="1"') + campo('cx-p-parc', 'Parcelas máximas', p.parcelas_max || 1, ' step="1"') + ' <label><input type="checkbox" id="cx-p-sind"' + (p.aprovada_sindico ? ' checked' : '') + '> aprovada pelo síndico</label></div>'
         + '<textarea id="cx-p-obs" rows="2" maxlength="500" style="width:100%" placeholder="Observação">' + esc(p.observacao || '') + '</textarea>'
-        + (edita ? '<div><button class="btn btn-primary" id="cx-p-salvar" style="font-size:12px;padding:5px 10px;margin-top:6px">Salvar política</button></div>' : caixa('info', 'Só a gestão altera a política.')) + '<div id="cx-p-res"></div>';
+        + (edita ? '<div><button class="btn btn-primary" id="cx-p-salvar" style="font-size:12px;padding:5px 10px;margin-top:6px">Salvar política</button>'
+          + (j.politica && podeRemoverPolitica() ? ' <button class="btn btn-ghost" id="cx-p-remover" style="font-size:12px;padding:5px 10px;margin-top:6px;color:var(--danger)">Remover política</button>' : '') + '</div>' : caixa('info', 'Só a gestão altera a política.')) + '<div id="cx-p-res"></div>';
     } catch (e) { c.innerHTML = caixa('erro', e.message); }
   }
   async function salvarPolitica(btn) {
@@ -372,6 +373,23 @@
     } catch (e) { document.getElementById('cx-p-res').innerHTML = caixa('erro', e.message); btn.disabled = false; }
   }
 
+  // Remover a política é só do gestor e do gerente pelo cargo (o servidor confere de novo).
+  function podeRemoverPolitica() { return window.USER_ROLE === 'GESTOR' || window.USER_ROLE === 'GERENTE'; }
+  // Primeiro clique pede a confirmação na própria tela; o segundo remove.
+  function pedirRemocaoPolitica() {
+    var res = document.getElementById('cx-p-res'); if (!res) return;
+    res.innerHTML = caixa('aviso', 'Remover a política deste condomínio? Sem política o Hub deixa de montar acordo aqui até alguém cadastrar de novo.')
+      + '<div><button class="btn btn-primary" id="cx-p-remover-sim" style="font-size:12px;padding:5px 10px">Remover</button> <button class="btn btn-ghost" id="cx-p-remover-nao" style="font-size:12px;padding:5px 10px">Cancelar</button></div>';
+  }
+  async function removerPolitica(btn) {
+    btn.disabled = true;
+    try {
+      await chamar(base() + '/politica', { method: 'DELETE' });
+      toast('Política removida.', 'ok');
+      telaPolitica(document.getElementById('cx-corpo'));
+    } catch (e) { document.getElementById('cx-p-res').innerHTML = caixa('erro', e.message); }
+  }
+
   // ── eventos ──
   document.addEventListener('click', function (ev) {
     var el = ev.target.closest && ev.target.closest('#cx-cartao button, #cx-cartao .cx-aba');
@@ -380,7 +398,8 @@
     if (el.classList.contains('cx-desfazer')) return desfazer(el);
     var acoes = { 'cx-recarregar': carregarUnidades, 'cx-a-conferir': conferirAcordo, 'cx-a-emitir': function () { emitirAcordo(el); }, 'cx-a-lista': listarAcordos, 'cx-c-gravar': function () { gravarContato(el); },
       'cx-s-analisar': analisarStatus, 'cx-s-gravar': function () { gravarStatus(el); }, 'cx-k-ver': verCadastro, 'cx-k-conferir': conferirCadastro, 'cx-k-gravar': function () { gravarCadastro(el); },
-      'cx-r-gerar': gerarRelatorio, 'cx-r-imprimir': imprimirRelatorio, 'cx-r-csv': baixarCsv, 'cx-p-salvar': function () { salvarPolitica(el); } };
+      'cx-r-gerar': gerarRelatorio, 'cx-r-imprimir': imprimirRelatorio, 'cx-r-csv': baixarCsv, 'cx-p-salvar': function () { salvarPolitica(el); },
+      'cx-p-remover': pedirRemocaoPolitica, 'cx-p-remover-sim': function () { removerPolitica(el); }, 'cx-p-remover-nao': function () { document.getElementById('cx-p-res').innerHTML = ''; } };
     if (acoes[el.id]) acoes[el.id]();
   });
   document.addEventListener('change', function (ev) {

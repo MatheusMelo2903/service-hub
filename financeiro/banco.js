@@ -78,7 +78,16 @@ function criarBanco({ url, chave }) {
     return r.body;
   }
 
-  return { upsert, inserir, ler };
+  // Apaga as linhas do filtro (caminho com tabela e filtro, ex.: tab?id=eq.1). Sem filtro recusa,
+  // para nunca apagar a tabela inteira por engano. Devolve as linhas apagadas.
+  async function apagar(caminho) {
+    if (!/\?.*=/.test(String(caminho))) throw new Error('supabase_apagar_sem_filtro');
+    const r = await req('DELETE', '/rest/v1/' + caminho, undefined, 'return=representation');
+    if (!(r.status >= 200 && r.status < 300)) throw new Error('supabase_apagar_' + r.status);
+    return Array.isArray(r.body) ? r.body : [];
+  }
+
+  return { upsert, inserir, ler, apagar };
 }
 
 module.exports = { criarBanco, REFS_PERMITIDAS };

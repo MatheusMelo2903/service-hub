@@ -3656,6 +3656,10 @@ async function supaFetchRich(path, options = {}) {
 // ============================================================
 // Backend /api/* exige Bearer (JWT do user logado via Supabase Auth) por causa
 // do requireAuth middleware em server.js. Helper centraliza a injeção do header.
+// Texto de erro quando a resposta não trouxe explicação. O 429 (limite de consultas) aparecia
+// como "Falha 429", que ninguém entende; os módulos chamam esta função no lugar do status cru.
+const TEXTO_429 = 'Muitas consultas seguidas. Espere um minuto e tente de novo.';
+function textoFalha(status) { return Number(status) === 429 ? TEXTO_429 : 'Falha ' + status; }
 async function apiAuthFetch(url, options = {}) {
   const token = window.AUTH_TOKEN;
   const headers = { ...(options.headers || {}) };
@@ -3674,7 +3678,13 @@ async function apiAuthFetch(url, options = {}) {
   // o erro com .catch continua recebendo a rejeição do mesmo jeito.
   const jsonOriginal = resp.json.bind(resp);
   resp.json = () => jsonOriginal().catch(() => {
+    // 429 sem corpo legível (limite do servidor ou do gateway): explicação em vez de erro técnico.
+    if (resp.status === 429) return { erro: 'limite', detalhe: TEXTO_429 };
     throw new Error('O servidor respondeu fora do esperado (código ' + resp.status + '). Tente de novo em instantes.');
+  }).then((j) => {
+    // 429 com corpo mas sem detalhe em português: a tela mostra a mesma explicação.
+    if (resp.status === 429 && j && typeof j === 'object' && !j.detalhe) j.detalhe = TEXTO_429;
+    return j;
   });
   // T16: usuário bloqueado sai na hora.
   if (resp.status === 401) {

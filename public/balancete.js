@@ -70,7 +70,7 @@
       var r = await apiAuthFetch('/api/financeiro/balancete/' + encodeURIComponent(c.id) + '/impressoes?competencia=' + encodeURIComponent(mes));
       var j = await r.json().catch(function () { return {}; });
       if (seq !== est.seq) return;
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       est.lista = j.impressoes || [];
       document.getElementById('bal-gerar').style.display = (j.geracao_liberada && temBal('gerar')) ? '' : 'none';
       // null no condomínio de teste (a tela confirma); 'reforcada' fora dele (a janela da política confirma).
@@ -107,7 +107,7 @@
         var j = await r.json().catch(function () { return {}; });
         if (seq !== est.seq) return;
         if (r.status === 202 || r.status === 429) { info((j.detalhe || 'Conferindo...') + ' (' + (t * 5) + ' s)'); await new Promise(function (ok) { setTimeout(ok, 5000); }); continue; }
-        if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+        if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
         info('');
         desenharResultado(idImp, j.resultado || {}, j.concluido_em);
         return;
@@ -175,7 +175,7 @@
       // Fora do condomínio de teste o servidor pede a confirmação reforçada (confirmar-gravacao.js).
       var r = await (window.gravarNoSuperlogica || apiAuthFetch)('/api/financeiro/balancete/' + encodeURIComponent(est.cond.id) + '/gerar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ competencia: est.mes }) });
       var j = await r.json().catch(function () { return {}; });
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       info(j.detalhe || 'Pedido enviado.');
       setTimeout(function () { b.disabled = false; }, 60000); // pedido feito: segura um minuto contra clique repetido
     } catch (e) { info(e.message, true); b.disabled = false; }

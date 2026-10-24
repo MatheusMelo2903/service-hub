@@ -36,8 +36,50 @@
   // ── utilidades ──
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function aviso(m, t) { if (typeof toast === 'function') toast(m, t || 'info'); }
-  // Caixa de pergunta do navegador (correção rápida de um campo).
-  function perguntar(texto, valor) { var resposta = prompt(texto, valor == null ? '' : valor); return resposta; }
+  // Janela da própria tela no lugar das caixas do navegador (que o Hub não usa).
+  // op: { titulo, texto?, campos?: [{ nome, rotulo, valor, tipo: text|date|time|textarea|select, opcoes?: [[valor, rótulo]], somenteLeitura? }],
+  //       sim?: 'Confirmar', nao?: 'Cancelar' (null esconde) }. Resolve null no Cancelar ou Esc;
+  // sem campos resolve true; com campos resolve { nome: valor }.
+  function janela(op) {
+    return new Promise(function (fim) {
+      var fundo = document.createElement('div');
+      fundo.className = 'modal-overlay open'; fundo.style.zIndex = '1000';
+      fundo.setAttribute('role', 'dialog'); fundo.setAttribute('aria-modal', 'true');
+      var campos = op.campos || [];
+      var html = '<div class="modal" style="width:520px;max-width:95vw"><div class="modal-title">' + esc(op.titulo) + '</div>'
+        + (op.texto ? '<p style="font-size:13px;margin:8px 0 0;white-space:pre-wrap">' + esc(op.texto) + '</p>' : '')
+        + campos.map(function (c, i) {
+          var id = 'ag-jan-' + i; var ro = c.somenteLeitura ? ' readonly' : '';
+          var v = c.valor == null ? '' : String(c.valor);
+          var ctrl = c.tipo === 'textarea' ? '<textarea id="' + id + '" rows="' + (c.linhas || 6) + '"' + ro + ' style="width:100%;box-sizing:border-box">' + esc(v) + '</textarea>'
+            : c.tipo === 'select' ? '<select id="' + id + '" style="width:100%">' + (c.opcoes || []).map(function (o) { return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === v ? ' selected' : '') + '>' + esc(o[1]) + '</option>'; }).join('') + '</select>'
+              : '<input id="' + id + '" type="' + (c.tipo || 'text') + '" value="' + esc(v) + '"' + ro + ' autocomplete="off" style="width:100%;box-sizing:border-box;padding:6px 8px">';
+          return '<label style="display:block;font-size:12px;margin-top:10px">' + esc(c.rotulo || '') + ctrl + '</label>';
+        }).join('')
+        + '<div class="modal-actions">' + (op.nao === null ? '' : '<button type="button" class="btn btn-ghost" data-jan="nao">' + esc(op.nao || 'Cancelar') + '</button>')
+        + '<button type="button" class="btn btn-primary" data-jan="sim">' + esc(op.sim || 'Confirmar') + '</button></div></div>';
+      fundo.innerHTML = html;
+      document.body.appendChild(fundo);
+      function fechar(ok) {
+        if (!fundo.parentNode) return;
+        var r = null;
+        if (ok) {
+          if (!campos.length) r = true;
+          else { r = {}; campos.forEach(function (c, i) { r[c.nome] = fundo.querySelector('#ag-jan-' + i).value; }); }
+        }
+        fundo.remove(); document.removeEventListener('keydown', tecla, true); fim(r);
+      }
+      function tecla(ev) {
+        if (ev.key === 'Escape') { ev.preventDefault(); fechar(op.nao === null); }
+        else if (ev.key === 'Enter' && ev.target && ev.target.tagName !== 'TEXTAREA' && fundo.contains(ev.target)) { ev.preventDefault(); fechar(true); }
+      }
+      document.addEventListener('keydown', tecla, true);
+      fundo.querySelector('[data-jan="sim"]').onclick = function () { fechar(true); };
+      var bn = fundo.querySelector('[data-jan="nao"]'); if (bn) bn.onclick = function () { fechar(false); };
+      setTimeout(function () { var f = fundo.querySelector('input:not([readonly]),textarea:not([readonly]),select') || fundo.querySelector('[data-jan="sim"]'); if (f) f.focus(); }, 0);
+    });
+  }
+  function confirmar(titulo, texto, sim) { return janela({ titulo: titulo, texto: texto, sim: sim || 'Confirmar' }); }
   function mesAtual() { var d = new Date(Date.now() - 3 * 3600000); return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0'); }
   function dataBr(iso) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? m[3] + '/' + m[2] : ''; }
   function dataBrAno(iso) { var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; }
@@ -51,7 +93,7 @@
   async function api(url, op) {
     var r = await window.apiAuthFetch(url, op || {});
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) throw new Error(j.detalhe || j.erro || ('HTTP ' + r.status));
+    if (!r.ok) throw new Error(j.detalhe || j.erro || textoFalha(r.status));
     return j;
   }
   function postJson(url, corpo, metodo) { return api(url, { method: metodo || 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo || {}) }); }
@@ -177,7 +219,12 @@
           + (a.mensagem ? '<button class="btn btn-ghost ag-copiar" data-i="' + i + '" type="button" style="font-size:11px">Copiar mensagem</button>' : '') + '</div>';
       }).join('') + '</div>';
     box.querySelectorAll('.ag-copiar').forEach(function (b) {
-      b.onclick = function () { var a = l[Number(b.dataset.i)]; try { navigator.clipboard.writeText(a.mensagem); aviso('Mensagem copiada.', 'ok'); } catch (e) { perguntar('Copie a mensagem:', a.mensagem); } };
+      b.onclick = function () {
+        var a = l[Number(b.dataset.i)];
+        // Sem acesso à área de transferência: mostra a mensagem para copiar à mão.
+        var mostrar = function () { janela({ titulo: 'Copie a mensagem', campos: [{ nome: 'm', valor: a.mensagem, tipo: 'textarea', somenteLeitura: true }], sim: 'Fechar', nao: null }); };
+        try { navigator.clipboard.writeText(a.mensagem).then(function () { aviso('Mensagem copiada.', 'ok'); }, mostrar); } catch (e) { mostrar(); }
+      };
     });
     document.getElementById('ag-lidos').onclick = async function () {
       try { await postJson('/api/agenda/avisos/lidos', { ids: l.map(function (a) { return a.id; }) }); carregar(); } catch (e) { aviso(e.message, 'err'); }
@@ -301,6 +348,7 @@
     if (pode.aprovar && t.aprovacao === 'pendente' && t.status !== 'cancelada') bot += '<button class="btn btn-ghost ag-acao" data-acao="aprovar" data-id="' + esc(t.id) + '" type="button" style="font-size:11px">Aprovar</button>';
     if (pode.cadastrar && (t.status === 'pronta_conferir' || t.status === 'manual')) bot += '<button class="btn btn-ghost ag-acao" data-acao="conferida" data-id="' + esc(t.id) + '" type="button" style="font-size:11px">Conferida</button>';
     if (r.trabalho_id && window.Trabalhos && typeof Trabalhos.abrir === 'function') bot += '<button class="btn btn-ghost ag-acao" data-acao="abrir" data-id="' + esc(r.trabalho_id) + '" type="button" style="font-size:11px">Abrir</button>';
+    if (pode.aprovar && t.aprovacao === 'aprovada' && (t.status === 'agendada' || t.status === 'pendente_material' || (t.status === 'manual' && !r.avisado))) bot += '<button class="btn btn-ghost ag-acao" data-acao="rodar" data-id="' + esc(t.id) + '" type="button" style="font-size:11px">Rodar agora</button>';
     if (pode.aprovar && ['erro', 'pronta_conferir', 'pendente_material', 'conferida'].indexOf(t.status) >= 0 && ['prestacao_contas', 'apresentacao', 'certidoes', 'pedir_material'].indexOf(t.tipo) >= 0) bot += '<button class="btn btn-ghost ag-acao" data-acao="refazer" data-id="' + esc(t.id) + '" type="button" style="font-size:11px">Refazer</button>';
     return '<div class="ag-linha"><b style="min-width:150px;font-size:12px">' + esc(ROT_TIPO[t.tipo] || t.tipo) + '</b><span class="ag-mut" style="min-width:60px">' + esc(dataBr(t.data_execucao)) + '</span>' + badge(t.status, t.aprovacao)
       + '<span style="flex:1;min-width:200px;font-size:11px">' + extra + '</span>' + bot + '</div>';
@@ -321,7 +369,7 @@
     box.querySelectorAll('[data-vista]').forEach(function (b) { b.onclick = function () { est.vista = b.dataset.vista; desenharPlano(); }; });
     var at = document.getElementById('ag-aprovar-tudo');
     if (at) at.onclick = async function () {
-      if (!confirm('Aprovar o plano inteiro de ' + d.rotulo + '? Aprovar dispara ' + (pa.geracoes || 0) + ' geração(ões) nas datas, cerca de ' + usd(pa.usd) + '.')) return;
+      if (!(await confirmar('Aprovar o plano inteiro de ' + d.rotulo + '?', 'Aprovar dispara ' + (pa.geracoes || 0) + ' geração(ões) nas datas, cerca de ' + usd(pa.usd) + '.', 'Aprovar tudo'))) return;
       try { var r = await postJson('/api/agenda/mes/' + est.mes + '/aprovar', {}); aviso(r.aprovadas + ' tarefa(s) aprovadas.', 'ok'); carregar(); } catch (e) { aviso(e.message, 'err'); }
     };
     ligarAcoes(box);
@@ -334,7 +382,15 @@
           if (a === 'abrir') return Trabalhos.abrir(id);
           if (a === 'aprovar') await postJson('/api/agenda/mes/' + est.mes + '/aprovar', { ids: [id] });
           if (a === 'conferida') await postJson('/api/agenda/tarefas/' + id + '/conferida');
-          if (a === 'refazer') { if (!confirm('Fazer de novo na próxima rodada? Gera de novo e gasta créditos.')) return; await postJson('/api/agenda/tarefas/' + id + '/refazer'); }
+          if (a === 'refazer') { if (!(await confirmar('Fazer de novo?', 'Volta para a próxima rodada. Gera de novo e gasta créditos.', 'Refazer'))) return; await postJson('/api/agenda/tarefas/' + id + '/refazer'); }
+          if (a === 'rodar') {
+            var tr = ((est.dados && est.dados.tarefas) || []).find(function (x) { return x.id === id; }) || {};
+            var gera = tr.tipo === 'prestacao_contas' || tr.tipo === 'apresentacao';
+            if (!(await confirmar('Rodar agora?', (tr.titulo || 'Esta tarefa') + ' roda agora, sem esperar a data.' + (gera ? ' Gera o documento e gasta créditos, dentro do limite de gerações por hora.' : ''), 'Rodar agora'))) return;
+            b.disabled = true;
+            var rr = await postJson('/api/agenda/tarefas/' + id + '/rodar');
+            aviso(rr.detalhe || 'Começou.', 'ok');
+          }
           carregar();
         } catch (e) { aviso(e.message, 'err'); }
       };
@@ -395,7 +451,7 @@
     if (!b) return;
     ev.preventDefault();
     if (b.classList.contains('ag-mat-x')) {
-      if (!confirm('Tirar este arquivo do material da assembleia?')) return;
+      if (!(await confirmar('Tirar este arquivo?', 'O arquivo sai do material da assembleia.', 'Tirar'))) return;
       try { await api('/api/agenda/materiais/' + b.dataset.m, { method: 'DELETE' }); carregar(); } catch (e) { aviso(e.message, 'err'); }
       return;
     }
@@ -403,22 +459,23 @@
     var id = card.dataset.item;
     var it = (est.dados.itens || []).find(function (x) { return x.id === id; }); if (!it) return;
     try {
-      if (b.dataset.a === 'tirar') { if (!confirm('Tirar ' + it.condominio_nome + ' de ' + dataBrAno(it.data) + ' da agenda? As tarefas dele saem do plano.')) return; await api('/api/agenda/itens/' + id, { method: 'DELETE' }); }
+      if (b.dataset.a === 'tirar') { if (!(await confirmar('Tirar da agenda?', 'Tirar ' + it.condominio_nome + ' de ' + dataBrAno(it.data) + ' da agenda? As tarefas dele saem do plano.', 'Tirar'))) return; await api('/api/agenda/itens/' + id, { method: 'DELETE' }); }
       if (b.dataset.a === 'assumir') { await postJson('/api/agenda/itens/' + id + '/assumir'); aviso('Os resultados deste item vão para a sua pasta Em andamento.', 'ok'); }
       if (b.dataset.a === 'edital_texto') {
-        var t = perguntar('Cole o texto do edital (a pauta é lida dele):', it.edital_texto || '');
-        if (t == null) return;
-        await postJson('/api/agenda/itens/' + id, { edital_texto: t, pauta: [] }, 'PUT');
+        var ed = await janela({ titulo: 'Texto do edital', texto: 'Cole o texto do edital. A pauta é lida dele.', campos: [{ nome: 'texto', valor: it.edital_texto || '', tipo: 'textarea', linhas: 12 }], sim: 'Salvar' });
+        if (ed == null) return;
+        await postJson('/api/agenda/itens/' + id, { edital_texto: ed.texto, pauta: [] }, 'PUT');
       }
       if (b.dataset.a === 'pauta') {
-        var data = perguntar('Data da assembleia (AAAA-MM-DD):', it.data || ''); if (data == null) return;
-        var hora = perguntar('Hora (HH:MM):', it.hora || ''); if (hora == null) return;
-        var tipo = it.tipo_item === 'tarefa' ? null : perguntar('Tipo (AGO, AGE ou AGO_AGE):', it.tipo_assembleia || ''); if (it.tipo_item !== 'tarefa' && tipo == null) return;
-        var pauta = it.tipo_item === 'tarefa' ? null : perguntar('Pauta, itens separados por ponto e vírgula:', (it.pauta || []).map(function (p) { return p.texto; }).join('; '));
-        if (it.tipo_item !== 'tarefa' && pauta == null) return;
-        var corpo = { data: data.trim(), hora: hora.trim() || null };
-        if (tipo != null) corpo.tipo_assembleia = String(tipo).trim().toUpperCase();
-        if (pauta != null) corpo.pauta = pauta.split(';').map(function (x) { return x.trim(); }).filter(Boolean);
+        var ehTarefa = it.tipo_item === 'tarefa';
+        var campos = [{ nome: 'data', rotulo: ehTarefa ? 'Data' : 'Data da assembleia', valor: it.data || '', tipo: 'date' }, { nome: 'hora', rotulo: 'Hora', valor: it.hora || '', tipo: 'time' }];
+        if (!ehTarefa) campos.push({ nome: 'tipo', rotulo: 'Tipo', valor: it.tipo_assembleia || '', tipo: 'select', opcoes: [['', 'Não informado'], ['AGO', 'AGO'], ['AGE', 'AGE'], ['AGO_AGE', 'AGO e AGE']] },
+          { nome: 'pauta', rotulo: 'Pauta (um item por linha)', valor: (it.pauta || []).map(function (p) { return p.texto; }).join('\n'), tipo: 'textarea', linhas: 8 });
+        var f = await janela({ titulo: 'Corrigir ' + (it.condominio_nome || 'item'), campos: campos, sim: 'Salvar' });
+        if (f == null) return;
+        var corpo = { data: String(f.data || '').trim(), hora: String(f.hora || '').trim() || null };
+        if (!ehTarefa) corpo.tipo_assembleia = f.tipo || null;
+        if (!ehTarefa) corpo.pauta = String(f.pauta || '').split('\n').map(function (x) { return x.trim(); }).filter(Boolean);
         await postJson('/api/agenda/itens/' + id, corpo, 'PUT');
         aviso('Item corrigido. O que mudou no plano volta para aprovação.', 'ok');
       }
@@ -498,7 +555,7 @@
     document.getElementById('ag-g-tend').innerHTML = '<div class="card-header"><span class="card-title">Tendências dos últimos meses</span></div><div style="overflow-x:auto"><table class="ag-tab"><thead><tr><th>Mês</th><th>Assembleias</th><th>Prestações</th><th>Apresentações</th><th>Pronto no prazo</th><th>O que mais travou</th><th>Material até pronto</th><th>Gerações</th>' + (d.custo_visivel ? '<th>Créditos no mês</th>' : '') + '</tr></thead><tbody>'
       + tend.map(function (x) {
         return '<tr><td>' + esc(x.rotulo) + '</td><td><div style="display:flex;gap:6px;align-items:center"><div class="ag-barra" style="width:' + Math.round(x.assembleias / maxAss * 80) + 'px"></div>' + x.assembleias + '</div></td><td>' + x.prestacoes + '</td><td>' + x.apresentacoes + '</td>'
-          + '<td>' + (x.pct_no_prazo == null ? '<span class="ag-mut">sem dados</span>' : x.no_prazo + ' (' + x.pct_no_prazo + '%)') + '</td>'
+          + '<td>' + (x.nada_venceu ? '<span class="ag-mut">nada venceu ainda</span>' : x.pct_no_prazo == null ? '<span class="ag-mut">sem dados</span>' : x.no_prazo + ' (' + x.pct_no_prazo + '%)') + '</td>'
           + '<td>' + (x.mais_travou.length ? x.mais_travou.map(function (m) { return esc(ROT_MOTIVO[m.motivo] || m.texto) + ' (' + m.vezes + ')'; }).join('<br>') : '<span class="ag-mut">nada</span>') + '</td>'
           + '<td>' + (x.horas_material_ate_pronto == null ? '<span class="ag-mut">sem dados</span>' : (x.horas_material_ate_pronto >= 48 ? Math.round(x.horas_material_ate_pronto / 24 * 10) / 10 + ' dias' : x.horas_material_ate_pronto + ' h')) + '</td>'
           + '<td>' + x.geracoes + '</td>' + (d.custo_visivel ? '<td>' + (x.custo_usd == null ? '<span class="ag-mut">sem dados</span>' : usd(x.custo_usd)) + '</td>' : '') + '</tr>';

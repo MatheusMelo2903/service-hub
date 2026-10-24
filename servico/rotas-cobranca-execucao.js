@@ -10,6 +10,7 @@
 //
 // GET  /api/cobranca/condominio/:id/politica
 // PUT  /api/cobranca/condominio/:id/politica                         (GESTOR, GERENTE ou ação politica_acordo)
+// DELETE /api/cobranca/condominio/:id/politica                       (só GESTOR ou GERENTE)
 // POST /api/cobranca/condominio/:id/acordo/preparar   { id_unidade, vencimento AAAA-MM-DD }
 // POST /api/cobranca/condominio/:id/acordo/emitir     { id_unidade, vencimento, confirmacao_gravacao? }   (ação acordo)
 // GET  /api/cobranca/condominio/:id/acordos?id_unidade=
@@ -170,6 +171,28 @@ function registrar(d) {
       auditar(req, 'cobranca_politica_acordo', { id_superlogica: id });
       res.json({ ok: true, politica: linha });
     } catch (e) { falha(res, e, 'politica gravar ' + id); }
+  });
+  // Remover a política: só GESTOR ou GERENTE pelo cargo (a ação politica_acordo sozinha não
+  // basta). Sem política o Hub deixa de montar acordo no condomínio. Fica no histórico com o
+  // que existia antes e depois null.
+  app.delete('/api/cobranca/condominio/:idSuperlogica/politica', requireAuth, async (req, res) => {
+    const id = await inicio(req, res); if (!id) return;
+    let p = null;
+    try { p = await perfil(req); } catch (e) { return res.status(503).json({ erro: 'permissao_indisponivel', detalhe: 'Não foi possível conferir suas permissões agora.' }); }
+    if (!p || (p.role !== 'GESTOR' && p.role !== 'GERENTE')) {
+      auditar(req, 'cobranca_politica_remover_negado', { id_superlogica: id });
+      return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Só o gestor ou o gerente remove a política de acordo.' });
+    }
+    const b = banco();
+    if (!b || typeof b.apagar !== 'function') return res.status(503).json({ erro: 'banco_indisponivel', detalhe: 'O cadastro da política não está disponível neste ambiente.' });
+    try {
+      const antes = await lerPolitica(id);
+      if (!antes) return res.status(404).json({ erro: 'sem_politica', detalhe: 'Este condomínio não tem política de acordo salva.' });
+      await b.apagar('cob_politica_acordo?id_superlogica=eq.' + Number(id));
+      await historico(req, p, { id_superlogica: Number(id), id_unidade: null, tipo: 'politica', ok: true, antes, depois: null });
+      auditar(req, 'cobranca_politica_removida', { id_superlogica: id });
+      res.json({ ok: true, removida: true });
+    } catch (e) { falha(res, e, 'politica remover ' + id); }
   });
 
   // ── Acordo à vista ─────────────────────────────────────────────────────────────────────

@@ -21,7 +21,7 @@
   async function api(url, op) {
     var r = await (window.apiAuthFetch ? window.apiAuthFetch(url, op || {}) : fetch(url, op || {}));
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) throw new Error(j.detalhe || j.erro || ('HTTP ' + r.status));
+    if (!r.ok) throw new Error(j.detalhe || j.erro || textoFalha(r.status));
     return j;
   }
   function quando(iso) {

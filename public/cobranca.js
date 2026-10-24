@@ -21,7 +21,7 @@ function cobIsoDias(n) {
 async function cobJson(url, opts, gravar) {
   var r = await (gravar && window.gravarNoSuperlogica ? window.gravarNoSuperlogica : apiAuthFetch)(url, opts);
   var j = await r.json().catch(function () { return {}; });
-  if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+  if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
   return j;
 }
 

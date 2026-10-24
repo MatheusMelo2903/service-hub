@@ -21,6 +21,7 @@
 //   GET  /api/agenda/materiais/:id/link            link temporário do arquivo
 //   POST /api/agenda/mes/:mes/aprovar              { ids? } aprova tudo ou só os ids
 //   POST /api/agenda/tarefas/:id/conferida         POST /api/agenda/tarefas/:id/refazer
+//   POST /api/agenda/tarefas/:id/rodar             roda agora uma tarefa aprovada (só GESTOR ou GERENTE)
 //   PUT  /api/agenda/config                        { valores } antecedências
 //   POST /api/agenda/avisos/lidos                  { ids }
 //   GET  /api/agenda/gestao/:mes                   Painel da gestão
@@ -551,6 +552,42 @@ function criarRotasAgenda(app, deps) {
     res.json({ ok: true });
   });
 
+  // Rodar agora: a gestão roda uma tarefa aprovada sem esperar a data (para testar e para
+  // adiantar). Usa o mesmo executor da rodada, com as mesmas travas; funciona mesmo com a
+  // execução automática desligada, porque é ação manual. A execução segue em segundo plano.
+  const TEXTO_RODAR = {
+    nao_aprovada: [409, 'Só roda agora tarefa já aprovada. Aprove antes.'],
+    rodando: [409, 'Essa tarefa já está rodando.'],
+    status: [409, 'Essa tarefa já foi feita ou não pode rodar agora. Para fazer de novo, use Refazer.'],
+    pega_por_outra: [409, 'Essa tarefa acabou de ser pega por outra rodada. Atualize a tela.'],
+    nao_encontrada: [404, 'Essa tarefa não está mais no plano.'],
+    id_invalido: [400, 'Tarefa inválida.'],
+    limite_mes: [429, 'O gasto do mês com prestações e apresentações passou do limite. A geração fica parada até o mês virar ou o limite subir.'],
+  };
+  app.post('/api/agenda/tarefas/:id/rodar', requireAuth, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const lib = await liberar(req, res, 'aprovar'); if (!lib) return;
+    const esc = await escopoDe(req, res); if (!esc) return;
+    const t = await tarefaDe(req, res, esc, req.params.id); if (!t) return;
+    let r;
+    try { r = await agendador.rodarUma(t.id); } catch (e) {
+      console.warn('[agenda] rodar agora: ' + e.message);
+      return res.status(503).json({ erro: 'banco', detalhe: 'Não foi possível rodar agora. Tente de novo em instantes.' });
+    }
+    if (!r.iniciada) {
+      const x = r.motivo === 'limite_hora' ? [429, 'Já foram ' + maxHora() + ' gerações nesta hora, que é o limite. Tente de novo mais tarde.'] : (TEXTO_RODAR[r.motivo] || [409, 'Essa tarefa não pode rodar agora.']);
+      return res.status(x[0]).json({ erro: r.motivo || 'nao_rodou', detalhe: x[1] });
+    }
+    auditar(req, 'agenda_tarefa_rodar_agora', { id_superlogica: t.id_superlogica, tarefa: t.id, tipo: t.tipo });
+    // Pedido de material, previsão, ata e tarefa solta terminam na hora: responde com o resultado.
+    // Prestação, apresentação e dia das certidões levam minutos: responde que começou.
+    if (!agenda.GERACOES.has(t.tipo) && t.tipo !== 'certidoes') {
+      const feito = await r.fim;
+      return res.json({ ok: true, status: feito ? feito.status : null, detalhe: feito ? 'Feito: ' + (agenda.ROTULO_STATUS[feito.status] || feito.status).toLowerCase() + '.' : 'A tarefa voltou para a fila. Tente de novo em instantes.' });
+    }
+    res.status(202).json({ ok: true, detalhe: 'Começou. Leva alguns minutos; atualize a tela para ver o resultado.' });
+  });
+
   app.put('/api/agenda/config', requireAuth, express.json({ limit: '10kb' }), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const lib = await liberar(req, res, 'aprovar'); if (!lib) return;
@@ -603,7 +640,7 @@ function criarRotasAgenda(app, deps) {
         mes, rotulo: agenda.mesRotulo(mes), hoje,
         itens: itens.filter(doMes), tarefas: tarefas.filter(doMes).map((t) => Object.assign({}, t, { resultado: { trabalho_id: (t.resultado || {}).trabalho_id || null, titulo: (t.resultado || {}).titulo || null } })),
         painel: agenda.painelDoMes(tarefas.filter(doMes), itens.filter(doMes), hoje),
-        tendencias: agenda.tendencias(meses, itens, tarefas, esc.todas ? await custoDosMeses(meses) : {}),
+        tendencias: agenda.tendencias(meses, itens, tarefas, esc.todas ? await custoDosMeses(meses) : {}, hoje),
         custo_visivel: !!esc.todas, execucao: agendador.estado(),
       });
     } catch (e) {

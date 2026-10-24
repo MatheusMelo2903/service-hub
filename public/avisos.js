@@ -349,7 +349,7 @@
     try {
       var r = await apiAuthFetch('/api/avisos/gerar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
       var j = await r.json().catch(function () { return {}; });
-      if (!r.ok) { msg(j.detalhe || ('Falha ' + r.status)); return; }
+      if (!r.ok) { msg(j.detalhe || (textoFalha(r.status))); return; }
       msg('Gerando o resumo' + (corpo.carteiras ? ' da carteira escolhida' : ' de todas as carteiras') + '. Pode levar alguns minutos; a tela atualiza sozinha.');
       acompanhar();
     } catch (e) { msg('Não foi possível pedir a geração agora.'); }
@@ -392,7 +392,7 @@
       var j = await r.json().catch(function () { return {}; });
       var corpo = document.getElementById('avisos-vinc-corpo');
       if (!corpo) return;
-      if (!r.ok) { corpo.textContent = j.detalhe || ('Falha ' + r.status); return; }
+      if (!r.ok) { corpo.textContent = j.detalhe || (textoFalha(r.status)); return; }
       corpo.innerHTML = tabelaVinculos(j);
     } catch (e) { var c2 = document.getElementById('avisos-vinc-corpo'); if (c2) c2.textContent = 'Não foi possível carregar agora.'; }
   }
@@ -433,7 +433,7 @@
     try {
       var r = await apiAuthFetch('/api/avisos/vinculos/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
       var j = await r.json().catch(function () { return {}; });
-      if (out) out.textContent = r.ok ? 'Vínculo salvo.' : (j.detalhe || ('Falha ' + r.status));
+      if (out) out.textContent = r.ok ? 'Vínculo salvo.' : (j.detalhe || (textoFalha(r.status)));
       if (r.ok) carregar(true);
     } catch (e) { if (out) out.textContent = 'Não foi possível salvar agora.'; }
   }

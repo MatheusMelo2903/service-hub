@@ -229,9 +229,11 @@ const POL = { juros_pct: 1, multa_pct: 2, honorarios_pct: 10, desconto_max_pct: 
     ler: async (c) => { const [tab, q] = c.split('?'); const m = (q || '').match(/id_superlogica=eq\.(\d+)/); return tabelas[tab].filter((l) => !m || String(l.id_superlogica) === m[1]); },
     upsert: async (tab, linhas) => { linhas.forEach((l) => { tabelas[tab] = tabelas[tab].filter((x) => x.id_superlogica !== l.id_superlogica).concat([l]); }); return linhas.length; },
     inserir: async (tab, l) => { tabelas[tab].push(Object.assign({ em: new Date().toISOString() }, l)); return true; },
+    apagar: async (c) => { const [tab, q] = c.split('?'); const m = (q || '').match(/id_superlogica=eq\.(\d+)/); const fora = tabelas[tab].filter((l) => m && String(l.id_superlogica) === m[1]); tabelas[tab] = tabelas[tab].filter((l) => !fora.includes(l)); return fora; },
   };
   let DUB = dublado();
-  const perfis = { gestor: { role: 'GESTOR', email: 'g@x' }, analista: { role: 'ANALISTA', email: 'a@x', permissoes: { cobranca: { visivel: true, acoes: ['ver'] } } } };
+  const perfis = { gestor: { role: 'GESTOR', email: 'g@x' }, analista: { role: 'ANALISTA', email: 'a@x', permissoes: { cobranca: { visivel: true, acoes: ['ver'] } } },
+    gerente: { role: 'GERENTE', email: 'ge@x' }, analistaPol: { role: 'ANALISTA', email: 'ap@x', permissoes: { cobranca: { visivel: true, acoes: ['ver', 'politica_acordo'] } } } };
   const app = express();
   R.registrar({ app, express, requireAuth: (req, res, next) => { req.authMode = 'supabase'; req.user = { sub: req.headers['x-usuario'] || 'gestor' }; next(); },
     lerPerfil: async (s) => perfis[s] || null, exigirLeituraSuperlogica: async () => true, exigirCarteira: async () => true, politica: pol,
@@ -255,6 +257,23 @@ const POL = { juros_pct: 1, multa_pct: 2, honorarios_pct: 10, desconto_max_pct: 
   t('política inválida recusada', r.st === 400);
   r = await chamar('PUT', '/api/cobranca/condominio/167/politica', POL);
   t('política gravada com histórico', r.st === 200 && tabelas.cob_politica_acordo.length === 1 && tabelas.cob_historico.some((h) => h.tipo === 'politica'));
+  // remover a política: só GESTOR ou GERENTE, com histórico (depois null)
+  r = await chamar('DELETE', '/api/cobranca/condominio/167/politica', null, 'analista');
+  t('analista não remove política', r.st === 403 && tabelas.cob_politica_acordo.length === 1);
+  r = await chamar('DELETE', '/api/cobranca/condominio/167/politica', null, 'analistaPol');
+  t('ação politica_acordo sem cargo de gestão não remove', r.st === 403 && tabelas.cob_politica_acordo.length === 1);
+  r = await chamar('DELETE', '/api/cobranca/condominio/167/politica', null, 'gerente');
+  const hRem = tabelas.cob_historico.filter((h) => h.tipo === 'politica').pop();
+  t('gerente remove política com histórico antes e depois null', r.st === 200 && r.j.removida && tabelas.cob_politica_acordo.length === 0 && hRem.depois === null && hRem.antes && hRem.antes.juros_pct === POL.juros_pct && hRem.por_email === 'ge@x');
+  r = await chamar('DELETE', '/api/cobranca/condominio/167/politica', null, 'gestor');
+  t('remover sem política responde 404', r.st === 404);
+  r = await chamar('POST', '/api/cobranca/condominio/167/acordo/preparar', { id_unidade: '501', vencimento: '2026-10-28' });
+  t('sem política depois de remover: não monta acordo', r.st === 200 && r.j.ok === false && r.j.bloqueios[0].codigo === 'sem_politica');
+  r = await chamar('PUT', '/api/cobranca/condominio/167/politica', POL);
+  r = await chamar('DELETE', '/api/cobranca/condominio/167/politica', null, 'gestor');
+  t('gestor remove política', r.st === 200 && tabelas.cob_politica_acordo.length === 0);
+  r = await chamar('PUT', '/api/cobranca/condominio/167/politica', POL);
+  t('política cadastrada de novo', r.st === 200 && tabelas.cob_politica_acordo.length === 1);
   r = await chamar('POST', '/api/cobranca/condominio/167/acordo/preparar', { id_unidade: '501', vencimento: '2026-10-28' });
   t('rota preparar: plano sem CPF', r.st === 200 && r.j.ok && r.j.plano.total > 1000 && !/529982|@/.test(JSON.stringify(r.j)));
   r = await chamar('POST', '/api/cobranca/condominio/167/acordo/emitir', { id_unidade: '501', vencimento: '2026-10-28' }, 'analista');

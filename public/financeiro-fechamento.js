@@ -55,7 +55,7 @@
         url = url.replace(/[?&]forcar=1/, '');
         continue;
       }
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       return j;
     }
     throw new Error('A conferência está demorando mais que o normal. Tente de novo em alguns minutos.');
@@ -244,7 +244,7 @@
         body: JSON.stringify({ competencia: j.competencia, item: chave, conferido: conferido, observacao: obs }),
       });
       var b = await r.json().catch(function () { return {}; });
-      if (!r.ok) throw new Error(b.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(b.detalhe || (textoFalha(r.status)));
       carregarFechamento(false);
     } catch (e) {
       aviso(document.getElementById('fin-fech-info'), e.message, true);
