@@ -1098,6 +1098,9 @@
     <button class="config-btn" id="btn-trocar-senha" onclick="window.authTrocarSenha && window.authTrocarSenha()" style="margin-top:6px;">
       <span>🔑</span> <span>Trocar senha</span>
     </button>
+    <button class="config-btn" id="btn-conta-superlogica" onclick="window.authContaSuperlogica && window.authContaSuperlogica()" style="margin-top:6px;">
+      <span>⇄</span> <span>Conta do Superlógica</span>
+    </button>
     <button class="config-btn" id="btn-logout" onclick="if(confirm('Sair?')) window.authLogout && window.authLogout()" style="margin-top:6px;">
       <span>⎋</span> <span id="logout-label">Sair</span>
     </button>
@@ -4368,6 +4371,8 @@ async function deletarUsuario(userId, email) {
 </div>
 
 <!-- Prestação de contas: bloco JS extraído (refactor preparatório das ondas 1, 2, 3) -->
+<script src="/superlogica-conta.js"></script>
+<script src="/publicar-documento.js"></script>
 <script src="/arquivar.js"></script>
 <script src="/carteira-modulos.js"></script>
 <script src="/cobranca-execucao.js"></script>

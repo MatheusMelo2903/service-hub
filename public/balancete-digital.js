@@ -207,6 +207,7 @@
     if (el('bd-fechar')) el('bd-fechar').addEventListener('click', fecharMes);
     if (el('bd-reabrir')) el('bd-reabrir').addEventListener('click', abrirReabertura);
     if (el('bd-historico')) el('bd-historico').addEventListener('click', historico);
+    desenharPublicacao(s, gravar);
   }
 
   async function aprender() {
@@ -323,6 +324,22 @@
             + '<td>' + esc(dataBR(x.data_anterior) || 'nunca') + '</td><td>' + esc(x.data_nova == null ? '?' : (dataBR(x.data_nova) || 'nunca')) + '</td><td>' + esc(x.por_email) + '</td><td class="td-livre">' + esc(x.motivo || '') + '</td></tr>';
         }).join('') + '</tbody></table>' : '<div class="hint">Nenhum fechamento registrado pelo Hub.</div>';
     } catch (e) { info('bd-acao-info', e.message, true); }
+  }
+
+  // Publicar o 900A pelo Hub: só em "Pronto para publicar" (comentários públicos e conferência ok);
+  // publicado, oferece retirar a publicação. O servidor confere tudo de novo antes de gravar.
+  function desenharPublicacao(s, podeGravar) {
+    var ult = s.ultimo_900a;
+    if (!podeGravar || !window.PublicarSL || !ult || !el('bd-cond')) return;
+    var publicado = s.etapa === 'publicado' && !!ult.publicado;
+    if (s.etapa !== 'pronto_publicar' && !publicado) return;
+    el('bd-cond').insertAdjacentHTML('beforeend', '<div id="bd-publicar"></div>');
+    PublicarSL.painel(el('bd-publicar'), {
+      url: '/api/financeiro/balancete-digital/' + encodeURIComponent(est.cond.id) + '/publicar',
+      corpo: { competencia: est.mes, id_impressao: ult.id }, publicado: publicado,
+      idSuperlogica: est.cond.id, nomeCond: s.nome || est.cond.nome,
+      aoTerminar: function () { setTimeout(function () { carregarCond(true); }, 1500); }
+    });
   }
 
   if (typeof window.showPanel === 'function') {

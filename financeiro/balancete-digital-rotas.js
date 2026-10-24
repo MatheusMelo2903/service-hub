@@ -682,6 +682,38 @@ function criarRotasBalanceteDigital(app, d) {
       motivo: motivo || null, ok: !!r.ok, incerto: !!r.incerto, msg: String(r.msg || '').slice(0, 300), por: (req.user && req.user.sub) || null, por_email: quemDe(req) }).catch(() => null);
   }
 
+  // POST /:id/publicar { competencia, id_impressao, acao: publicar|despublicar, avisar }
+  // Publica o 900A do mês para os condôminos pelo Hub (rotina única em superlogica/publicar-documento.js).
+  // Publicar só com a etapa "Pronto para publicar": comentários públicos e a conferência do mesmo 900A ok.
+  // Retirar a publicação (corrigir publicação errada) vale para qualquer 900A publicado do mês.
+  app.post('/api/financeiro/balancete-digital/:idSuperlogica/publicar', requireAuth, express.json({ limit: '4kb' }), async (req, res) => {
+    const v = validar(req, res, true); if (!v) return;
+    if (!(await podeGravar(req, res, v.id))) return;
+    if (!d.publicador) return res.status(503).json({ erro: 'indisponivel', detalhe: 'Publicação pelo Hub indisponível neste ambiente.' });
+    const b = req.body || {};
+    const idImp = String(b.id_impressao || '');
+    if (!/^[1-9]\d{0,9}$/.test(idImp)) return res.status(400).json({ erro: 'documento_invalido', detalhe: 'Informe o 900A a publicar.' });
+    let validarItem;
+    if (b.acao === 'publicar') {
+      let sit;
+      try { sit = await comTempo(calcularSituacao(req, v.id, v.c, false, false)); } catch (e) { return falha(res, e, 'publicar situação ' + v.id); }
+      if (!sit) return res.status(202).json({ calculando: true, detalhe: 'Conferindo o balancete antes de publicar. Tente de novo em instantes.' });
+      const ult = sit.ultimo_900a;
+      const conf = sit.conferencia;
+      if (sit.etapa !== 'pronto_publicar') return res.status(409).json({ erro: 'nao_pronto', detalhe: 'O balancete ainda não está "Pronto para publicar" (' + (sit.etapa_nome || sit.etapa) + '). Resolva o que está travando primeiro.' });
+      if (sit.comentarios_privados) return res.status(409).json({ erro: 'comentarios_privados', detalhe: 'Antes, confirme "Tornar públicos os comentários do balancete".' });
+      if (!ult || String(ult.id) !== idImp) return res.status(409).json({ erro: 'outro_900a', detalhe: 'Esse não é o 900A mais novo do mês. Calcule de novo e publique o que a tela mostrar.' });
+      if (!conf || !conf.ok || String(conf.impressao) !== idImp) return res.status(409).json({ erro: 'conferencia_pendente', detalhe: 'A conferência deste 900A não está ok.' });
+      validarItem = (it) => (/^900A\b/.test(it.titulo) ? null : 'Esse documento não é um 900A.');
+    } else {
+      validarItem = (it) => (/^900A\b/.test(it.titulo) && new RegExp('M[eê]s\\s+' + v.c.chave.slice(5) + '/' + v.c.chave.slice(0, 4)).test(it.descricao) ? null : 'Esse documento não é o 900A deste mês.');
+    }
+    try {
+      const r = await d.publicador.executar(req, res, { idCond: v.id, alvo: { id: idImp }, acao: b.acao, avisar: b.avisar, documento: 'Balancete digital (900A)', competencia: v.c.rotulo, validarItem });
+      if (r && r.estado === 'ok') calcularSituacao(req, v.id, v.c, false, false).catch(() => null);
+    } catch (e) { falha(res, e, 'publicar ' + v.id); }
+  });
+
   app.get('/api/financeiro/balancete-digital/:idSuperlogica/fechamentos', requireAuth, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const id = String(req.params.idSuperlogica || '');

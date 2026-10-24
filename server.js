@@ -5230,6 +5230,45 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
 });
 
 // ─────────────────────────────────────────────────────────────────────────
+// Publicar pelo Hub (prestação de contas arquivada; o balancete 900A usa a mesma rotina em
+// financeiro/balancete-digital-rotas.js). A pessoa escolhe com ou sem aviso aos moradores; política
+// única (documento_publicar e documento_despublicar, sensíveis). Detalhes em superlogica/publicar-documento.js.
+// POST /api/condominio/:id/documentos/publicar { id_documento?, titulo?, acao: publicar|despublicar, avisar }
+// ─────────────────────────────────────────────────────────────────────────
+const _publicadorDoc = require('./superlogica/publicar-documento').criarPublicador({
+  cred: () => _credSL(), cliente: () => clienteSL(), politica: politicaEscrita, auditoria,
+});
+app.post('/api/condominio/:idSuperlogica/documentos/publicar', requireAuth, express.json({ limit: '4kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  if (!slModulo.idValido(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Código do Superlógica inválido.' });
+  if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
+  const b = req.body || {};
+  // Mesma permissão de arquivar a prestação: módulo com "gerar" (ou GESTOR) e a carteira.
+  if (req.authMode !== 'internal') {
+    if (!SUPABASE_SERVICE_ROLE_KEY) return res.status(503).json({ erro: 'service_role_nao_configurada' });
+    let perfil = null;
+    try { perfil = await lerPerfil(req.user && req.user.sub); } catch (e) { perfil = null; }
+    const p = perfil && perfil.permissoes && perfil.permissoes.prestacao_contas;
+    const pode = perfil && (perfil.role === 'GESTOR' || (p && p.visivel === true && Array.isArray(p.acoes) && p.acoes.includes('gerar')));
+    if (!pode) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não pode publicar a prestação de contas.' });
+    if (!(await _exigirCarteira(req, res, id))) return;
+  }
+  const idDoc = b.id_documento == null || b.id_documento === '' ? null : String(b.id_documento);
+  if (idDoc && !/^[1-9]\d{0,9}$/.test(idDoc)) return res.status(400).json({ erro: 'documento_invalido', detalhe: 'Documento inválido.' });
+  const titulo = slModulo.documentos.tituloSeguro(b.titulo || '');
+  if (!idDoc && titulo.length < 5) return res.status(400).json({ erro: 'documento_invalido', detalhe: 'Informe o documento a publicar.' });
+  try {
+    await _publicadorDoc.executar(req, res, { idCond: id, alvo: { id: idDoc, titulo: titulo || null }, acao: b.acao, avisar: b.avisar, documento: 'Prestação de contas',
+      // O balancete 900A tem rota própria, que exige a conferência e os comentários públicos.
+      validarItem: (it) => (/^900A\b/.test(it.titulo) ? 'Este é o balancete 900A: publique pela tela do balancete digital, que confere antes.' : null) });
+  } catch (e) {
+    console.warn('[documentos publicar] ' + String((e && e.message) || e).slice(0, 80));
+    if (!res.headersSent) res.status(502).json({ erro: 'falha', detalhe: 'Não foi possível concluir agora. Confira no Superlógica antes de tentar de novo.' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // Leitura de medidores em lote (T20). A foto passa por /api/processar/medidor (leitura, unidade
 // e bloco); aqui ficam a lista de unidades com a última leitura, a conferência (casamento com a
 // unidade e suspeitas) e o lançamento no Superlógica (consumo/put), uma unidade por chamada,
@@ -5467,6 +5506,22 @@ require('./servico/rotas-email-financeiro').criarRotasEmailFinanceiro(app, {
 if (require.main === module && superlogicaNativa() && SUPABASE_SERVICE_ROLE_KEY) _leitorEmail.agendar();
 
 // ─────────────────────────────────────────────────────────────────────────
+// Conta do Superlógica de cada pessoa (senha cifrada com SUPERLOGICA_CRED_CHAVE, só a própria
+// pessoa grava) e o botão "Abrir no Superlógica" (link de uso único de 60 segundos, amarrado a
+// quem pediu). Hoje o botão só abre a tela certa: o login fica com a pessoa. Detalhes em
+// servico/superlogica-conta.js.
+// ─────────────────────────────────────────────────────────────────────────
+require('./servico/superlogica-conta').criarRotasContaSuperlogica(app, {
+  requireAuth, express, banco: supabaseAdminRequest, auditoria,
+  verificarUsuario: async (jwt) => {
+    if (!SUPABASE_URL || !jwt) return null;
+    const p = await verifySupabaseJwt(jwt);
+    if (!p || await usuarioBloqueado(p.sub)) return null;
+    return p;
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // Fechamento do mês e conferência dos anexos (T38), dentro do item Financeiro: rotas em
 // servico/rotas-fechamento.js. Só GET no Superlógica; marca de conferido só no banco de teste.
 // ─────────────────────────────────────────────────────────────────────────
@@ -5493,7 +5548,7 @@ const _balDigital = require('./financeiro/balancete-digital-rotas').criarRotasBa
   exigirCarteira: _exigirCarteira, carteiraEstrita: _carteiraEstrita, exigirEscopoFinanceiro: _exigirEscopoFinanceiro, escopoFinanceiro: _escopoFinanceiro, gruposCarteiras,
   clienteSL, credSL: _credSL, politica: politicaEscrita, auditoria, fechamentoT38: _fechamentoT38, painelFin: _painelFin,
   condominios: async () => [...(await require('./financeiro/entrada').cadastroCondominios(clienteSL())).porId.values()],
-  supabase: { url: SUPABASE_URL, chave: SUPABASE_SERVICE_ROLE_KEY },
+  supabase: { url: SUPABASE_URL, chave: SUPABASE_SERVICE_ROLE_KEY }, publicador: _publicadorDoc,
 });
 if (require.main === module && superlogicaNativa() && SUPABASE_SERVICE_ROLE_KEY) _balDigital.agendar();
 // Contas a pagar (contas esperadas, prazos, baixa com comprovante do banco, fornecedor novo): rotas em

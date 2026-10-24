@@ -42,6 +42,7 @@
         + '<div style="border:2px solid var(--accent);border-radius:var(--radius);padding:12px 14px;margin-bottom:14px;background:var(--gs-blue-light)">'
         + '<div style="font-size:11px;font-family:var(--mono);color:var(--muted);margin-bottom:4px">CONDOMÍNIO</div>'
         + '<div style="font-size:18px;font-weight:700;color:var(--text)">' + esc(r.condominio || '') + '</div></div>'
+        + (r.destaque ? '<div style="border:2px solid var(--warning);border-radius:var(--radius);padding:10px 14px;margin-bottom:12px;font-size:16px;font-weight:700;text-align:center">' + esc(r.destaque) + '</div>' : '')
         + (linhas ? '<table style="width:100%;font-size:13px;border-collapse:collapse;margin-bottom:10px">' + linhas + '</table>' : '')
         + (r.quantidade > 1 ? '<div style="font-size:13px;margin-bottom:8px"><b>' + esc(r.quantidade) + '</b> itens serão gravados.</div>' : '')
         + (r.aviso ? '<div style="font-size:12px;color:var(--warning);margin-bottom:8px">' + esc(r.aviso) + '</div>' : '')

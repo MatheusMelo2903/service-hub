@@ -28,6 +28,7 @@
           + '<button class="btn btn-primary arq-enviar" style="font-size:12px;padding:6px 12px">Enviar para o Superlógica</button>'
           + '</div>')
       + '<div class="arq-status" style="margin-top:8px"></div>'
+      + '<div class="arq-publicar"></div>'
       + '</div>';
     var btn = host.querySelector('.arq-enviar');
     if (btn) btn.addEventListener('click', function () { enviar(host, false); });
@@ -71,6 +72,11 @@
         + (j.publicado === true ? 'Atenção: o Superlógica marcou como publicado; confira lá.' : 'Não foi publicado para os condôminos (publique no Superlógica depois de conferir).'), 'var(--success)');
       if (btn) btn.style.display = 'none';
       if (typeof toast === 'function') toast('Arquivado no Superlógica', 'ok');
+      // Prestação pronta lá: publicar pelo Hub (com ou sem aviso) ou, como segunda opção, abrir no Superlógica.
+      if (o.tipo === 'prestacao' && j.publicado !== true && window.PublicarSL) {
+        PublicarSL.painel(host.querySelector('.arq-publicar'), { url: '/api/condominio/' + encodeURIComponent(o.idSuperlogica) + '/documentos/publicar',
+          corpo: { id_documento: j.id_documento || null, titulo: j.titulo }, publicado: false, idSuperlogica: o.idSuperlogica, nomeCond: o.nomeCond });
+      }
     } catch (e) {
       status(host, '✕ ' + esc(e.message || e), 'var(--danger)');
     } finally {

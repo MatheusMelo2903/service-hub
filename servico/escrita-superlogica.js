@@ -45,6 +45,9 @@ const OPERACOES = {
   comunicado_disparar: { rotulo: 'Disparo dos comunicados pendentes de todos os condomínios', sensivel: true, global: true, chave: 'COMUNICADOS_DISPARO_LIBERADO' },
   balancete_gerar: { rotulo: 'Geração do balancete digital (900A)', legado: 'BALANCETE_GERACAO_LIBERADA', sensivel: true },
   documento_arquivar: { rotulo: 'Arquivamento de documento no Superlógica' },
+  // Publicação para os condôminos (prestação e balancete 900A), com ou sem aviso: superlogica/publicar-documento.js.
+  documento_publicar: { rotulo: 'Publicação de documento para os condôminos', sensivel: true },
+  documento_despublicar: { rotulo: 'Retirada da publicação de documento (corrigir publicação errada)', sensivel: true },
   // Balancete digital feito pelo sistema (financeiro/balancete-digital.js): comentários com anexo e
   // etiqueta no Demonstrativo R&D, fechamento e reabertura do mês (condominios/fecharmes).
   balancete_montar: { rotulo: 'Montagem do balancete digital (comentários com anexo no Demonstrativo R&D, sem publicar)', sensivel: true },
@@ -227,6 +230,7 @@ function criarPoliticaEscrita(deps) {
       linhas: Array.isArray(r.linhas) ? r.linhas.filter((l) => l && l.rotulo).map((l) => ({ rotulo: String(l.rotulo), valor: String(l.valor == null ? '' : l.valor) })) : [],
       quantidade: p.quantidade != null ? Number(p.quantidade) : (r.quantidade != null ? Number(r.quantidade) : undefined),
       aviso: r.aviso ? String(r.aviso) : undefined,
+      destaque: r.destaque ? String(r.destaque).slice(0, 120) : undefined,
       sensivel: prep.reforcada,
     };
   }
