@@ -55,6 +55,9 @@ const OPERACOES = {
   boleto_composicao_excluir: { rotulo: 'Exclusão de item da composição criado pelo Hub' },
   remessa_gerar: { rotulo: 'Geração do arquivo de remessa de cobrança (sem enviar ao banco)' },
   regua_aplicar: { rotulo: 'Régua de cobrança por email do condomínio', sensivel: true },
+  // Conciliação do dia: extratos (só dias novos) e lançamentos já pagos de um condomínio. Um pedido
+  // cobre a lista conferida; acima de 20 itens a confirmação é reforçada.
+  conciliacao_gravar: { rotulo: 'Gravação da conciliação do dia (extratos e lançamentos já pagos)' },
   // Ponte genérica /api/superlogica (importação de unidades e despesas pela tela): cada POST, PUT
   // ou DELETE gasta uma unidade da cota confirmada. Cota acima de 1 envio é lote: confirmação reforçada.
   ponte_superlogica: { rotulo: 'Importação direta no Superlógica', cota: true },
