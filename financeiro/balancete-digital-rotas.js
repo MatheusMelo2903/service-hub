@@ -150,9 +150,10 @@ function criarRotasBalanceteDigital(app, d) {
     // Os meses ANTERIORES ao mês que vai ser montado (o próprio mês ainda não tem os comentários).
     for (let k = 1; k <= MESES_APRENDER; k++) {
       const m = D.somarMeses(c, -k).chave;
+      // Primeiro o balão do Demonstrativo R&D (onde a equipe põe); só sem nada lá, as notas por conta.
       let l = [];
-      // A listagem exige a conta (ID_OBJETO): lê as contas do demonstrativo do mês (receitas e grupos).
-      {
+      try { l = await D.comentariosDoMes(cli, id, m, null); } catch (e) { l = []; }
+      if (!l.length) {
         const cc = D.competencia(m);
         let contas = [];
         try {
@@ -230,6 +231,14 @@ function criarRotasBalanceteDigital(app, d) {
         if (ant && (ant.estado === 'gravado' || ant.estado === 'ja_existia')) continue;
         let r;
         try {
+          // Antes de juntar qualquer documento (o 74A e o 11A criam impressão no Superlógica), relê:
+          // se o comentário já está no mês, não gera nada e não grava nada.
+          const ja = await D.procurarComentario(ctx, item);
+          if (ja && ja.arquivos.length) {
+            resumo.ja_existiam++;
+            await gravarMontagem(id, c.chave, item, { estado: 'ja_existia', id_comentario: ja.id, id_arquivo: ja.arquivos[0].id, visibilidade: ja.visibilidade, msg: 'O comentário já estava no Demonstrativo R&D.' }, por);
+            continue;
+          }
           const doc = await obterDocumento(id, c, item, docs, cad.nome);
           if (doc.falta) { resumo.faltando++; await gravarMontagem(id, c.chave, item, { estado: 'falta_documento', msg: item.fonte.descricao + ' não chegou.' }, por); continue; }
           if (doc.aguardar) { resumo.aguardando++; await gravarMontagem(id, c.chave, item, { estado: 'aguardar', msg: 'O Superlógica está gerando o relatório.' }, por); continue; }
@@ -414,14 +423,52 @@ function criarRotasBalanceteDigital(app, d) {
         prazo: D.prazo(c, hoje(), l.etapa), travas: (l.travas || []).slice(0, 15), total_travas: (l.travas || []).length, fechado_ate: l.fechado_ate,
         reaberturas: reaberturas[l.id_superlogica] || 0, carteira: responsavel[l.id_superlogica] || '', calculado_em: l.calculado_em,
       })).sort((x, y) => D.ETAPAS.indexOf(x.etapa) - D.ETAPAS.indexOf(y.etapa) || x.nome.localeCompare(y.nome, 'pt-BR'));
-      // Quem precisa agir, somando todas as travas (a parte antes dos dois pontos).
+      // Quem precisa agir, somando TODAS as travas de cada condomínio (a parte antes dos dois pontos);
+      // o corte de 15 vale só para a lista que vai para a tela.
       const porQuem = {};
-      conds.forEach((x) => (x.travas || []).forEach((t) => { const q = String(t.quem || '').split(':')[0].trim() || 'Outros'; porQuem[q] = (porQuem[q] || 0) + 1; }));
+      (linhas || []).forEach((x) => (x.travas || []).forEach((t) => { const q = String(t.quem || '').split(':')[0].trim() || 'Outros'; porQuem[q] = (porQuem[q] || 0) + 1; }));
       const porEtapa = {};
       conds.forEach((x) => { porEtapa[x.etapa] = (porEtapa[x.etapa] || 0) + 1; });
-      const semCalculo = ids ? [...ids].filter((x) => !conds.some((k) => k.id === x)).length : null;
-      res.json({ competencia: c.chave, meta: { ideal: D.somarMeses(c, 1).inicio, maximo: D.somarMeses(c, 1).chave + '-05' }, condominios: conds, por_etapa: porEtapa, por_quem: porQuem, sem_calculo: semCalculo });
+      let universo = ids ? [...ids] : null;
+      if (!universo) { try { universo = (await condominios()).map((x) => String(x.id)).filter((x) => ID.test(x) && !D.NAO_CONDOMINIOS.has(x)); } catch (e) { universo = null; } }
+      const semCalculo = universo ? universo.filter((x) => !conds.some((k) => k.id === x)).length : null;
+      res.json({ competencia: c.chave, meta: { ideal: D.somarMeses(c, 1).inicio, maximo: D.somarMeses(c, 1).chave + '-05' }, condominios: conds, por_etapa: porEtapa, por_quem: porQuem, sem_calculo: semCalculo,
+        calculo: calculoCarteira.rodando ? { rodando: true, feitos: calculoCarteira.feitos, total: calculoCarteira.total, competencia: calculoCarteira.competencia } : null,
+        agenda: { modo: String(process.env.BALANCETE_AGENDA || 'teste').trim().toLowerCase(), horas: HORAS_AGENDA } });
     } catch (e) { falha(res, e, 'painel'); }
+  });
+
+  // POST /api/financeiro/balancete-digital/calcular { competencia, carteira? }: calcula agora a situação
+  // de todos os condomínios que a pessoa vê (ou da carteira escolhida), 2 por vez, por trás. Só lê o
+  // Superlógica (e guarda a situação no banco do Hub). Um cálculo de carteira por vez no servidor.
+  const calculoCarteira = { rodando: false, feitos: 0, total: 0, competencia: '' };
+  app.post('/api/financeiro/balancete-digital/calcular', requireAuth, express.json({ limit: '2kb' }), async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const c = D.competencia(String((req.body && req.body.competencia) || ''));
+    if (!c) return res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Informe o mês no formato AAAA-MM.' });
+    if (c.inicio > hoje()) return res.status(400).json({ erro: 'competencia_invalida', detalhe: 'Escolha um mês que já começou.' });
+    const carteira = String((req.body && req.body.carteira) || '');
+    if (carteira && !ID.test(carteira)) return res.status(400).json({ erro: 'carteira_invalida', detalhe: 'Carteira inválida.' });
+    if (!(await podeVer(req, res, null))) return;
+    if (calculoCarteira.rodando) return res.status(409).json({ erro: 'em_andamento', detalhe: 'Já tem um cálculo de carteira rodando (' + calculoCarteira.feitos + ' de ' + calculoCarteira.total + '). Espere terminar.' });
+    let escopo;
+    try { escopo = await escopoFinanceiro(req); } catch (e) { return res.status(503).json({ erro: 'carteira_indisponivel', detalhe: 'Não foi possível conferir sua carteira agora.' }); }
+    let ids;
+    try {
+      if (carteira) {
+        const g = (await gruposCarteiras()).find((x) => String(x.id) === carteira);
+        if (!g) return res.status(404).json({ erro: 'carteira_nao_encontrada', detalhe: 'Essa carteira não existe mais.' });
+        ids = g.condominios.map(String);
+      } else ids = (await condominios()).map((x) => String(x.id));
+    } catch (e) { return falha(res, e, 'calcular lista'); }
+    ids = [...new Set(ids)].filter((x) => ID.test(x) && !D.NAO_CONDOMINIOS.has(x) && (!escopo || escopo.has(x))).slice(0, 200);
+    if (!ids.length) return res.status(400).json({ erro: 'sem_condominios', detalhe: 'Nenhum condomínio para calcular.' });
+    Object.assign(calculoCarteira, { rodando: true, feitos: 0, total: ids.length, competencia: c.chave });
+    auditar(req, 'balancete_calcular_carteira', { competencia: c.chave, quantidade: ids.length, carteira: carteira || null });
+    let i = 0;
+    const trabalhador = async () => { while (i < ids.length) { const id = ids[i++]; try { await calcularSituacao(req, id, c, false, false); } catch (e) { log('[balancete-digital] calcular ' + id + ' falhou: ' + (e && e.message)); } calculoCarteira.feitos++; } };
+    Promise.all([trabalhador(), trabalhador()]).finally(() => { calculoCarteira.rodando = false; });
+    res.status(202).json({ iniciado: true, total: ids.length, detalhe: 'Calculando ' + ids.length + ' condomínio(s), 2 por vez. Só leitura. A tela atualiza sozinha.' });
   });
 
   app.get('/api/financeiro/balancete-digital/:idSuperlogica/situacao', requireAuth, async (req, res) => {
