@@ -48,6 +48,7 @@ const OPERACOES = {
   // Balancete digital feito pelo sistema (financeiro/balancete-digital.js): comentários com anexo e
   // etiqueta no Demonstrativo R&D, fechamento e reabertura do mês (condominios/fecharmes).
   balancete_montar: { rotulo: 'Montagem do balancete digital (comentários com anexo no Demonstrativo R&D, sem publicar)', sensivel: true },
+  balancete_tornar_publico: { rotulo: 'Tornar públicos os comentários do balancete (Demonstrativo R&D)', sensivel: true },
   mes_fechar: { rotulo: 'Fechamento do mês no Superlógica (bloqueia lançamentos até o último dia do mês)', sensivel: true },
   mes_reabrir: { rotulo: 'Reabertura do mês no Superlógica', sensivel: true },
   // Boletos do mês (financeiro/boletos-mes-rotas.js). A geração do lote continua sendo clique humano no Superlógica.

@@ -83,7 +83,10 @@ function criarRotasBalanceteDigital(app, d) {
   async function lerDocumentos(id, comp) {
     const b = banco(); if (!b) return new Map();
     const l = await b.ler('fin_balancete_documento?select=chave_item,sha256,caminho,nome,bytes,origem,enviado_por_email,recebido_em&id_superlogica=eq.' + id + '&competencia=eq.' + comp);
-    return new Map((l || []).map((x) => [x.chave_item, x]));
+    // Vários PDFs no mesmo item: o 1º fica em "<chave>", os outros em "<chave>__2", "__3"... (sem mudar a tabela).
+    const m = new Map();
+    (l || []).sort((a, b) => String(a.recebido_em).localeCompare(String(b.recebido_em))).forEach((x) => { const k = String(x.chave_item).replace(/__\d+$/, ''); if (!m.has(k)) m.set(k, []); m.get(k).push(x); });
+    return m;
   }
   async function lerMontagem(id, comp) {
     const b = banco(); if (!b) return {};
@@ -199,11 +202,24 @@ function criarRotasBalanceteDigital(app, d) {
       pedidosRelatorio.delete(k);
       return { buffer: r.buffer, nome: item.titulo };
     }
-    const doc = docs.get(item.chave);
-    if (!doc) return { falta: true };
-    const buf = await storage.baixar(doc.caminho);
-    if (crypto.createHash('sha256').update(buf).digest('hex') !== doc.sha256) throw Object.assign(new Error('documento_alterado'), { codigo: 'documento' });
-    return { buffer: buf, nome: doc.nome || item.titulo };
+    const recebidos = docs.get(item.chave) || [];
+    if (!recebidos.length) return { falta: true };
+    const lista = [];
+    // Extratos das poupanças: primeiro a movimentação de cada conta (018B), depois os PDFs do banco.
+    if (item.fonte.movimentacao === '018B') {
+      const k = id + '|' + c.chave + '|018B';
+      if (Date.now() - (pedidosRelatorio.get(k) || 0) < 15 * 60000) return { aguardar: true };
+      const mv = await D.gerarMovimentacoes(credSL(), clienteSL(), id, c.chave, { baixar: baixarImpressaoBuffer });
+      if (mv.aguardar) { pedidosRelatorio.set(k, Date.now()); return { aguardar: true }; }
+      pedidosRelatorio.delete(k);
+      mv.documentos.forEach((d) => lista.push({ buffer: d.buffer, nome: d.nome }));
+    }
+    for (const doc of recebidos) {
+      const buf = await storage.baixar(doc.caminho);
+      if (crypto.createHash('sha256').update(buf).digest('hex') !== doc.sha256) throw Object.assign(new Error('documento_alterado'), { codigo: 'documento' });
+      lista.push({ buffer: buf, nome: doc.nome || item.titulo });
+    }
+    return { lista };
   }
   async function baixarImpressaoBuffer(idImp) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'bal-dig-'));
@@ -243,7 +259,7 @@ function criarRotasBalanceteDigital(app, d) {
           if (doc.falta) { resumo.faltando++; await gravarMontagem(id, c.chave, item, { estado: 'falta_documento', msg: item.fonte.descricao + ' não chegou.' }, por); continue; }
           if (doc.aguardar) { resumo.aguardando++; await gravarMontagem(id, c.chave, item, { estado: 'aguardar', msg: 'O Superlógica está gerando o relatório.' }, por); continue; }
           // Incerto de antes: no agendamento só relê (nunca repete a gravação sem prova); a pessoa pode mandar de novo.
-          r = await D.gravarComentario(ctx, item, doc, { soReler: ant && ant.estado === 'incerto' && por === QUEM_SISTEMA });
+          r = await D.gravarComentario(ctx, item, doc.lista || doc, { soReler: ant && ant.estado === 'incerto' && por === QUEM_SISTEMA });
         } catch (e) {
           if (e && e.codigo === 'trava_condominio') throw e;
           r = { estado: 'falhou', msg: e && e.codigo === 'documento' ? 'O documento recebido mudou depois de conferido. Envie de novo.' : 'Falha ao preparar o documento.' };
@@ -302,7 +318,7 @@ function criarRotasBalanceteDigital(app, d) {
       sit.soma = soma;
       sit.modelo = modeloDaLinha(linha);
       sit.montagem = mont || {};
-      sit.documentos = docs ? [...docs.entries()].map(([k, v]) => ({ chave: k, nome: v.nome, bytes: v.bytes, recebido_em: v.recebido_em, por: v.enviado_por_email })) : [];
+      sit.documentos = docs ? [].concat(...[...docs.entries()].map(([k, l]) => l.map((v) => ({ chave: k, nome: v.nome, bytes: v.bytes, recebido_em: v.recebido_em, por: v.enviado_por_email })))) : [];
       sit.ultimo_900a = ultimo || null;
       sit.conferencia = conferencia;
       sit.gravacao = politica.estado('balancete_montar', id).estado;
@@ -337,7 +353,8 @@ function criarRotasBalanceteDigital(app, d) {
     const sit = await calcularSituacao(req, id, c, false, true);
     // 900A: depois do fechamento confirmado e da montagem completa, sem 900A no mês. Mesma política da T41.
     const montagemOk = sit.travas.every((t) => t.etapa !== 'montagem' && t.etapa !== 'extrato' && t.etapa !== 'conciliacao' && t.etapa !== 'comprovantes');
-    if (montarAgora && sit.fechado && montagemOk && !sit.ultimo_900a && politica.estado('balancete_gerar', id).estado === 'livre') {
+    // Só depois de a pessoa tornar públicos os comentários (o 900A só leva anexo de comentário público).
+    if (montarAgora && sit.fechado && montagemOk && sit.montagem_completa && !sit.comentarios_privados && !sit.ultimo_900a && politica.estado('balancete_gerar', id).estado === 'livre') {
       const aut = await politica.autorizar(req, resSilenciosa(), { operacao: 'balancete_gerar', id_condominio: id, conteudo: { competencia: c.chave },
         resumo: { linhas: [{ rotulo: 'Mês', valor: c.rotulo }, { rotulo: 'Origem', valor: 'Agendamento do Hub' }] } });
       if (aut) {
@@ -528,10 +545,15 @@ function criarRotasBalanceteDigital(app, d) {
     if (!b) return res.status(503).json({ erro: 'banco_indisponivel', detalhe: 'Envio de documentos indisponível neste ambiente.' });
     try {
       const sha = crypto.createHash('sha256').update(buf).digest('hex');
+      // Vários PDFs no mesmo item (ex.: o extrato de cada poupança): o mesmo arquivo não entra duas vezes.
+      const ja = (await lerDocumentos(v.id, v.c.chave)).get(chave) || [];
+      if (ja.some((x) => x.sha256 === sha)) return res.json({ ok: true, chave, sha256: sha, bytes: buf.length, repetido: true, detalhe: 'Esse PDF já tinha sido enviado para este item.' });
+      if (ja.length >= 30) return res.status(400).json({ erro: 'muitos_documentos', detalhe: 'Esse item já tem 30 PDFs.' });
+      const chaveDoc = ja.length ? chave + '__' + (ja.length + 1) : chave;
       const caminho = v.id + '/' + v.c.chave + '/' + chave + '-' + sha.slice(0, 16) + '.pdf';
       await storage.enviar(caminho, buf);
-      const nome = String(b0.nome || item.titulo).replace(/[^\p{L}\p{N} ._()-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 100) || item.titulo;
-      await b.upsert('fin_balancete_documento', [{ id_superlogica: Number(v.id), competencia: v.c.chave, chave_item: chave, nome, sha256: sha, bytes: buf.length, caminho,
+      const nome = String(b0.nome || item.titulo).replace(/\.pdf$/i, '').replace(/[^\p{L}\p{N} ._()$,]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 100) || item.titulo;
+      await b.upsert('fin_balancete_documento', [{ id_superlogica: Number(v.id), competencia: v.c.chave, chave_item: chaveDoc, nome, sha256: sha, bytes: buf.length, caminho,
         origem: 'tela', enviado_por_email: quemDe(req), recebido_em: new Date().toISOString() }], 'id_superlogica,competencia,chave_item');
       // Documento novo num item que falhou ou faltava: volta para pendente (o sistema grava na próxima rodada).
       const mont = await lerMontagem(v.id, v.c.chave);
@@ -551,7 +573,7 @@ function criarRotasBalanceteDigital(app, d) {
       const modelo = modeloDaLinha(await lerModelo(v.id));
       if (!modelo || !modelo.itens.length) return res.status(409).json({ erro: 'sem_modelo', detalhe: 'O condomínio ainda não tem modelo do balancete. Clique em Aprender o modelo.' });
       const docs = await lerDocumentos(v.id, v.c.chave);
-      plano = D.planoMontagem(modelo, await lerMontagem(v.id, v.c.chave), new Map([...docs.entries()].map(([k, x]) => [k, x.sha256])));
+      plano = D.planoMontagem(modelo, await lerMontagem(v.id, v.c.chave), new Map([...docs.entries()].map(([k, l]) => [k, l.map((x) => x.sha256)])));
     } catch (e) { return falha(res, e, 'plano ' + v.id); }
     if (!plano.length) return res.status(409).json({ erro: 'nada_a_gravar', detalhe: 'Nada para gravar agora: os comentários já estão gravados ou os documentos ainda não chegaram.' });
     const aut = await politica.autorizar(req, res, { operacao: 'balancete_montar', id_condominio: v.id, conteudo: { competencia: v.c.chave, plano }, quantidade: plano.length,
@@ -562,6 +584,40 @@ function criarRotasBalanceteDigital(app, d) {
     montar(v.id, v.c, aut, quemDe(req)).then(() => calcularSituacao(req, v.id, v.c, false, false))
       .catch((e) => log('[balancete-digital] montagem ' + v.id + ' falhou: ' + (e && e.message)));
     res.status(202).json({ iniciado: true, itens: plano.length, detalhe: 'Montagem iniciada: ' + plano.length + ' comentário(s). A tela atualiza sozinha.' });
+  });
+
+  // POST /:id/tornar-publicos { competencia }: privado até publicar. Com a montagem completa, torna públicos
+  // os comentários que o Hub gravou no mês (POST comentarios/post, VISIBILIDADE=1, relido um por um), pela
+  // política com confirmação reforçada. Vem antes do 900A: o 061B só leva anexo de comentário público.
+  app.post('/api/financeiro/balancete-digital/:idSuperlogica/tornar-publicos', requireAuth, express.json({ limit: '4kb' }), async (req, res) => {
+    const v = validar(req, res, true); if (!v) return;
+    if (!(await podeGravar(req, res, v.id))) return;
+    if (politica.bloqueada(req, res, 'balancete_tornar_publico', v.id)) return;
+    let modelo, mont;
+    try { modelo = modeloDaLinha(await lerModelo(v.id)); mont = await lerMontagem(v.id, v.c.chave); } catch (e) { return falha(res, e, 'tornar públicos ' + v.id); }
+    if (!modelo || !modelo.itens.length) return res.status(409).json({ erro: 'sem_modelo', detalhe: 'O condomínio ainda não tem modelo do balancete.' });
+    const faltam = modelo.itens.filter((i) => !mont[i.chave] || !['gravado', 'ja_existia'].includes(mont[i.chave].estado));
+    if (faltam.length) return res.status(409).json({ erro: 'montagem_incompleta', detalhe: 'Termine a montagem antes: falta ' + faltam.map((i) => '"' + i.titulo + '"').join(', ') + '.' });
+    const alvo = modelo.itens.filter((i) => Number(mont[i.chave].visibilidade) === 0 && mont[i.chave].id_comentario);
+    if (!alvo.length) return res.status(409).json({ erro: 'nada_a_fazer', detalhe: 'Os comentários do balancete deste mês já estão públicos.' });
+    const aut = await politica.autorizar(req, res, { operacao: 'balancete_tornar_publico', id_condominio: v.id, conteudo: { competencia: v.c.chave, comentarios: alvo.map((i) => String(mont[i.chave].id_comentario)) },
+      resumo: { linhas: [{ rotulo: 'Mês', valor: v.c.rotulo }, { rotulo: 'Comentários', valor: alvo.map((i) => i.titulo).join('; ').slice(0, 600) },
+        { rotulo: 'O que acontece', valor: 'Os comentários do Demonstrativo R&D ficam visíveis para os condôminos e passam a entrar no 900A. Nada é publicado agora.' }] } });
+    if (!aut) return;
+    const ctx = { cred: credSL(), cliente: clienteSL(), idCond: v.id, comp: v.c.chave };
+    const out = { publicos: 0, falhas: [] };
+    for (const i of alvo) {
+      const l = mont[i.chave];
+      let r;
+      try { r = await D.tornarPublico(ctx, i, l.id_comentario); } catch (e) { r = { estado: 'falhou', msg: 'Falha ao tornar público.' }; }
+      if (r.estado === 'publico') { out.publicos++; await gravarMontagem(v.id, v.c.chave, i, { estado: l.estado, id_comentario: l.id_comentario, id_arquivo: l.id_arquivo, visibilidade: 1, msg: r.msg }, quemDe(req)); }
+      else out.falhas.push(i.titulo + ': ' + r.msg);
+    }
+    aut.concluir({ ok: !out.falhas.length, competencia: v.c.chave, publicos: out.publicos, falhas: out.falhas.length });
+    auditar(req, 'balancete_comentarios_publicos', { id_superlogica: v.id, competencia: v.c.chave, publicos: out.publicos, falhas: out.falhas.length }, !!out.falhas.length);
+    calcularSituacao(req, v.id, v.c, false, false).catch(() => null);
+    if (out.falhas.length) return res.status(502).json({ erro: 'parcial', detalhe: out.publicos + ' tornado(s) público(s); não deu: ' + out.falhas.join(' | '), publicos: out.publicos });
+    res.json({ ok: true, publicos: out.publicos, detalhe: out.publicos + ' comentário(s) tornado(s) público(s) e conferido(s). O sistema gera o 900A e confere; depois é só publicar.' });
   });
 
   // Fechamento: só com o checklist do mês todo verde e a soma do demonstrativo batendo com o caixa.

@@ -90,7 +90,9 @@ function classificarDocumento(titulo) {
   if (tem(/\b0?11a\b|anual|12 meses|doze meses|comparativ/)) return { tipo: 'relatorio', codigo: '011A', descricao: 'Demonstrativo anual de 12 meses (11A, o Hub gera)', confianca: 'alta' };
   if (tem(/pjbank|pj bank|boletos? pagos|liquidos|liquidados/)) return { tipo: 'relatorio', codigo: '006C', descricao: 'Receitas liquidadas por condômino (006C, o Hub gera)', confianca: 'media' };
   if (tem(/inadimpl/)) return { tipo: 'relatorio', codigo: '003A', descricao: 'Inadimplência do mês (003A, o Hub gera)', confianca: 'media' };
-  if (tem(/extrato/) && tem(/poupan|aplica|fundo|rdc|cdb|invest/)) return { tipo: 'recebido', grupo: 'extrato_poupanca', descricao: 'Extrato da poupança ou aplicação, do banco', quem: 'Financeiro: baixar o PDF no banco e enviar no Hub', confianca: 'alta' };
+  // Como a equipe faz (Buritis e Victoria Bay, 09/2026): uma "Movimentação bancária" de cada poupança
+  // (018B por conta, o Hub gera) mais os PDFs do banco de cada conta (precisam chegar).
+  if (tem(/extrato/) && tem(/poupan|aplica|fundo|rdc|cdb|invest/)) return { tipo: 'recebido', grupo: 'extrato_poupanca', movimentacao: '018B', descricao: 'Movimentação de cada poupança (018B, o Hub gera) e os extratos do banco', quem: 'Financeiro: baixar no banco o extrato de cada poupança e enviar no Hub', confianca: 'alta' };
   if (tem(/mercado ?pago/)) return { tipo: 'recebido', grupo: 'extrato_externo', descricao: 'Extrato do Mercado Pago', quem: 'Financeiro: baixar o PDF no Mercado Pago e enviar no Hub', confianca: 'alta' };
   if (tem(/extrato/)) return { tipo: 'recebido', grupo: 'extrato_conta', descricao: 'Extrato da conta corrente, do banco', quem: 'Financeiro: baixar o PDF no banco e enviar no Hub', confianca: 'alta' };
   if (tem(/garantidora/)) return { tipo: 'recebido', grupo: 'garantidora', descricao: 'Relatório da garantidora', quem: 'Garantidora: mandar o relatório do mês; financeiro envia no Hub', confianca: 'alta' };
@@ -215,7 +217,8 @@ function validarModelo(itens) {
     let fonte;
     if (f.tipo === 'relatorio' && /^\d{3}[A-Z]$/.test(String(f.codigo || ''))) fonte = { tipo: 'relatorio', codigo: f.codigo, descricao: limpar(f.descricao).slice(0, 120) };
     else if (f.tipo === 'capa') fonte = { tipo: 'capa', descricao: 'Capa do balancete (o Hub monta)' };
-    else fonte = { tipo: 'recebido', grupo: limpar(f.grupo || 'outro').slice(0, 30), descricao: limpar(f.descricao || 'Documento do condomínio').slice(0, 120), quem: limpar(f.quem || 'Financeiro: enviar o documento no Hub').slice(0, 160) };
+    else fonte = { tipo: 'recebido', grupo: limpar(f.grupo || 'outro').slice(0, 30), descricao: limpar(f.descricao || 'Documento do condomínio').slice(0, 120), quem: limpar(f.quem || 'Financeiro: enviar o documento no Hub').slice(0, 160),
+      movimentacao: f.movimentacao === '018B' || f.grupo === 'extrato_poupanca' ? '018B' : undefined };
     out.push({ chave, ordem: out.length + 1, titulo, conta, etiqueta_id: etq, etiqueta_nome: limpar(i.etiqueta_nome).slice(0, 40), fonte });
   }
   return { itens: out };
@@ -332,10 +335,10 @@ function montarSoma(s) {
 // Pede um relatório ao Superlógica (cria a impressão só para a administração, sem publicar,
 // como o 900A da T41) e baixa o PDF. Sem id da impressão (gateway cortou): volta 'aguardar' e o
 // agendamento tenta de novo mais tarde, sem repetir o pedido em menos de 15 minutos.
-async function gerarRelatorio(cred, idCond, codigo, comp, { baixar }) {
+async function gerarRelatorio(cred, idCond, codigo, comp, { baixar, params }) {
   const c = competencia(comp);
   if (!/^\d{3}[A-Z]$/.test(String(codigo))) throw Object.assign(new Error('relatorio_invalido'), { codigo: 'relatorio' });
-  const q = { ID_CONDOMINIO_COND: idCond, DT_PADRAO_REL: dois(c.mes) + '/01/' + c.ano, render: 'pdf', getId: '1' };
+  const q = Object.assign({ ID_CONDOMINIO_COND: idCond, DT_PADRAO_REL: dois(c.mes) + '/01/' + c.ano }, params || {}, { render: 'pdf', getId: '1' });
   conferirCampos(idCond, q);
   const r = await pedir(cred, 'GET', 'relatorios/id/' + codigo, q, null);
   const it = Array.isArray(r.json) ? r.json[0] : r.json;
@@ -465,6 +468,62 @@ async function gravarComentario(ctx, item, doc, opcoes) {
   return { estado: 'incerto', id_arquivo: ids[0], ids_arquivos: ids, msg: rc.ok ? 'O Superlógica disse que gravou, mas a releitura não achou o comentário.' : 'Sem resposta do Superlógica ao gravar o comentário.' };
 }
 
+// ── movimentação das poupanças ─────────────────────────────────────────
+// Contas que a equipe põe no comentário dos extratos das poupanças: todas as ativas menos a principal e
+// o caixa interno (tipo 3), e só as que tiveram saldo no mês (Buritis: Poupança Extra e Taxa Extra
+// Veneziana zeradas ficaram de fora; Victoria Bay: Vaga de Garagem e Conta Caixa).
+async function contasDaMovimentacao(cliente, idCond, comp) {
+  const c = competencia(comp);
+  const prox = somarMeses(c, 1);
+  const j = await cliente.get('contabancos/index', { idCondominio: idCond, exibirContasAtivas: 1, exibirDadosBanco: 1 });
+  const ativas = lista(j).filter((x) => x && !limpar(x.dt_datafechamento_cb) && String(x.fl_principal_cb) !== '1' && String(x.id_tipocontabanco_tcb) !== '3');
+  const saldo = async (idConta, cc) => {
+    const r = await cliente.get('caixa/index', { idCondominio: idCond, dtInicio: dois(cc.mes) + '/01/' + cc.ano, dtFim: dois(cc.mes) + '/01/' + cc.ano, idContaBancaria: idConta });
+    const l = lista(r).find((x) => x && x.saldoinicialconta !== undefined);
+    return l ? cent(Number(l.saldoinicialconta)) : null;
+  };
+  const out = [];
+  for (const k of ativas) {
+    const ini = await saldo(k.id_contabanco_cb, c), fim = await saldo(k.id_contabanco_cb, prox);
+    if ((ini != null && Math.abs(ini) > 0.004) || (fim != null && Math.abs(fim) > 0.004) || ini == null || fim == null) out.push({ id: String(k.id_contabanco_cb), descricao: limpar(k.st_descricao_cb), saldo_inicio: ini, saldo_fim: fim });
+  }
+  return out;
+}
+// "Movimentações bancárias em <conta>" do mês, uma por conta (018B com CONTA_BANCARIA, parâmetros da
+// seleção NOVA). A impressão é apagada depois de baixada, como no 74A.
+async function gerarMovimentacoes(cred, cliente, idCond, comp, { baixar, contas }) {
+  const c = competencia(comp);
+  const lista2 = contas || await contasDaMovimentacao(cliente, idCond, comp);
+  const out = [];
+  for (const k of lista2) {
+    const r = await gerarRelatorio(cred, idCond, '018B', comp, { baixar, params: { PERIODO: 'selecionar', PERIODO_INICIO: dois(c.mes) + '/01/' + c.ano, PERIODO_FIM: dois(c.mes) + '/' + dois(c.ultimoDia) + '/' + c.ano,
+      CONTA_BANCARIA: k.id, NAO_EXIBIR_LINK_ANEXOS: '0', DETALHADO: '0', COM_CHEQUE: '1', COM_INDICE: '0', AGRUPAR_ITENS: '0', COM_ITENS_OPCIONAIS: '0' } });
+    if (r.aguardar) return { aguardar: true, feitas: out.length, total: lista2.length };
+    out.push({ buffer: r.buffer, nome: 'Movimentações bancárias em ' + k.descricao, conta: k.id });
+  }
+  return { documentos: out, contas: lista2 };
+}
+
+// ── privado até publicar ───────────────────────────────────────────────
+// A equipe deixa os comentários públicos, e o 061B (os anexos por etiqueta dentro do 900A) só leva o
+// anexo de comentário público (teste no 167 em 24/10/2026: privado "não contém nenhum dado", público
+// "Documentos adicionais"). Por isso o Hub grava privado e torna público logo antes de gerar o 900A.
+// Rota conferida no 167: POST comentarios/post com ID_COMENTARIOCONTEUDO_COMC e VISIBILIDADE=1
+// ("Alterações salvas.", o texto fica igual). Prova: relê e confere fl_visibilidade_comc.
+async function tornarPublico(ctx, item, idComentario) {
+  const id = String(ctx.idCond);
+  if (!ID.test(id) || NAO_CONDOMINIOS.has(id)) throw Object.assign(new Error('nao_condominio'), { codigo: 'trava_condominio' });
+  if (!/^\d+$/.test(String(idComentario || ''))) return { estado: 'falhou', msg: 'Comentário sem id.' };
+  const antes = await procurarComentario(ctx, item);
+  if (!antes || antes.id !== String(idComentario)) return { estado: 'falhou', msg: 'O comentário não está mais no Demonstrativo R&D deste mês. Nada foi alterado.' };
+  if (antes.visibilidade === 1) return { estado: 'publico', msg: 'Já estava público.' };
+  const r = corpoOk(await pedir(ctx.cred, 'POST', 'comentarios/post', { ID_COMENTARIOCONTEUDO_COMC: idComentario }, formulario({ ID_COMENTARIOCONTEUDO_COMC: idComentario, VISIBILIDADE: '1' })));
+  let depois = null;
+  try { depois = await procurarComentario(ctx, item); } catch (e) { depois = null; }
+  if (depois && depois.id === String(idComentario) && depois.visibilidade === 1) return { estado: 'publico', msg: 'Tornado público e conferido.' };
+  return { estado: depois ? 'falhou' : 'incerto', msg: (r.ok ? 'O Superlógica disse que salvou, mas a releitura não mostra público.' : 'Não salvou: ' + r.msg) };
+}
+
 // ── fechamento do mês ─────────────────────────────────────────────────
 // Fecha (data = último dia do mês) ou reabre (data = a de antes). Um condomínio só, sempre:
 // CONDOMINIOS_E_GRUPOS leva só o próprio condomínio e a trava confere todos os campos.
@@ -566,7 +625,7 @@ function montarSituacao(e) {
     m.itens.forEach((i) => {
       const linha = (e.montagem || {})[i.chave];
       const est = linha ? linha.estado : 'pendente';
-      if (est === 'gravado' || est === 'ja_existia') { if (linha.alerta === 'visivel') add('conferencia', '"' + i.titulo + '" ficou visível para o condômino no Superlógica.', 'Pessoa: desmarcar "visível" no comentário'); return; }
+      if (est === 'gravado' || est === 'ja_existia') return;
       if (i.fonte.tipo === 'recebido' && !(e.documentos && e.documentos.has(i.chave))) { add('montagem', i.fonte.descricao + ' não chegou ("' + i.titulo + '").', i.fonte.quem || 'Financeiro: enviar o documento no Hub', { item: i.chave }); return; }
       if (est === 'falhou') add('montagem', '"' + i.titulo + '" não gravou: ' + (linha.msg || ''), 'Sistema: tenta de novo; se repetir, avisar o suporte do Hub', { item: i.chave });
       else if (est === 'incerto') add('montagem', '"' + i.titulo + '" ficou sem confirmação do Superlógica: ' + (linha.msg || ''), 'Sistema: relê antes de tentar de novo', { item: i.chave });
@@ -577,11 +636,17 @@ function montarSituacao(e) {
   // Fechamento: o sistema deixa pronto; a pessoa confirma.
   const fechado = !!(e.fechadoAte && e.fechadoAte >= c.fim);
   if (!fechado && e.fechadoAte !== null) add('conferencia', 'Fechamento do mês não confirmado' + (e.fechadoAte ? ' (fechado até ' + isoBR(e.fechadoAte) + ')' : ' (nunca fechado)') + '.', 'Pessoa: confirmar o fechamento no Hub');
-  // 900A e conferência final.
+  // Privado até publicar: com a montagem completa, os comentários do Hub ainda privados seguram o 900A
+  // (o 061B só leva anexo de comentário público). A pessoa confirma "Tornar públicos" e o sistema gera.
   const imps = (e.impressoes || []).filter((x) => x.da_competencia);
   const publicado = imps.some((x) => x.publicado);
+  const feitos = m && Array.isArray(m.itens) ? m.itens.map((i) => (e.montagem || {})[i.chave]).filter((l) => l && (l.estado === 'gravado' || l.estado === 'ja_existia')) : [];
+  const montagemCompleta = !!(m && m.itens && m.itens.length && feitos.length === m.itens.length);
+  const privados = feitos.filter((l) => l.visibilidade != null && Number(l.visibilidade) === 0).length;
+  if (!publicado && montagemCompleta && privados) add('conferencia', privados + ' comentário(s) do balancete ainda privado(s): o 900A só leva os anexos dos comentários públicos.', 'Pessoa: confirmar "Tornar públicos os comentários do balancete"');
+  // 900A e conferência final.
   if (!publicado) {
-    if (!imps.length) add('conferencia', '900A do mês ainda não gerado.', fechado ? 'Sistema: gera depois da montagem' : 'Sistema: gera depois do fechamento');
+    if (!imps.length) add('conferencia', '900A do mês ainda não gerado.', !fechado ? 'Sistema: gera depois do fechamento' : privados ? 'Sistema: gera depois de tornar públicos os comentários' : 'Sistema: gera depois da montagem');
     else if (!e.conferencia) add('conferencia', 'Conferência final do 900A pendente.', 'Sistema: confere o PDF sozinho');
     else if (!e.conferencia.ok) add('conferencia', 'Conferência final: ' + (e.conferencia.problemas || 0) + ' ponto(s) marcados no 900A.', 'Pessoa: conferir o que o sistema marcou');
   }
@@ -591,7 +656,7 @@ function montarSituacao(e) {
     const idx = travas.reduce((mn, t) => Math.min(mn, ETAPAS.indexOf(t.etapa)), ETAPAS.indexOf('pronto_publicar'));
     etapa = ETAPAS[idx];
   }
-  return { competencia: c.chave, etapa, etapa_nome: NOME_ETAPA[etapa], travas, avisos, publicado, fechado, prazo: prazo(c, e.hoje, etapa) };
+  return { competencia: c.chave, etapa, etapa_nome: NOME_ETAPA[etapa], travas, avisos, publicado, fechado, montagem_completa: montagemCompleta, comentarios_privados: privados, prazo: prazo(c, e.hoje, etapa) };
 }
 function splitTrava(t) { return String(t || '').replace(/\.$/, '').split(/;\s*/).map((x) => x.trim()).filter(Boolean).slice(0, 10); }
 
@@ -612,7 +677,7 @@ function planoMontagem(modelo, montagem, documentos) {
     const l = (montagem || {})[i.chave];
     return !l || !['gravado', 'ja_existia'].includes(l.estado);
   }).map((i) => ({ chave: i.chave, titulo: i.titulo, conta: i.conta, etiqueta_id: i.etiqueta_id || null, fonte: i.fonte.tipo === 'relatorio' ? 'relatorio:' + i.fonte.codigo : i.fonte.tipo,
-    sha256: i.fonte.tipo === 'recebido' ? ((documentos && documentos.get && documentos.get(i.chave)) || null) : undefined }))
+    sha256: i.fonte.tipo === 'recebido' ? ([].concat((documentos && documentos.get && documentos.get(i.chave)) || []).join(',') || null) : undefined }))
     .filter((p) => p.fonte !== 'recebido' || p.sha256);
 }
 
@@ -631,5 +696,5 @@ module.exports = {
   OBJETO_RD, lugarDoComentario, NAO_CONDOMINIOS, NUNCA_FECHADO, ETAPAS, NOME_ETAPA, ETIQUETAS_RESERVA, MAX_ARQUIVO,
   competencia, somarMeses, isoParaSL, slParaIso, isoBR, hojeSP, chaveTitulo, classificarDocumento, lerComentario, aprenderModelo, validarModelo,
   pedir, corpoOk, conferirCampos, etiquetasDoSuperlogica, comentariosDoMes, dataFechamento, datasFechamento, conferirSoma, montarSoma,
-  gerarRelatorio, ehPdf, montarCapa, procurarComentario, gravarComentario, gravarFechamento, dataReabertura, montarSituacao, prazo, planoMontagem, competenciasDoDia,
+  gerarRelatorio, ehPdf, montarCapa, procurarComentario, gravarComentario, gravarFechamento, contasDaMovimentacao, gerarMovimentacoes, tornarPublico, dataReabertura, montarSituacao, prazo, planoMontagem, competenciasDoDia,
 };
