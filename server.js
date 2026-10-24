@@ -4750,6 +4750,16 @@ app.post('/api/cobranca/condominio/:idSuperlogica/segunda-via', requireAuth, exp
   }
 });
 
+// Execução da cobrança (acordo à vista, contato no CRM, status financeiro, cadastro, relatório de
+// inadimplência e política de acordo): rotas em servico/rotas-cobranca-execucao.js, gravação pela política única.
+require('./servico/rotas-cobranca-execucao').registrar({
+  app, express, requireAuth, lerPerfil, exigirLeituraSuperlogica, exigirCarteira: (req, res, id) => _exigirCarteira(req, res, id), politica: politicaEscrita,
+  clienteSL: () => clienteSL(), credSL: () => _credSL(), supabase: { url: SUPABASE_URL, chave: SUPABASE_SERVICE_ROLE_KEY },
+  auditar: (req, acao, det) => auditoria.evento(req, acao, det, false),
+  limparPainel: (id) => _cachePainelCob.limpar('cob:' + id + ':' + _hojeBrasilia().toISOString().slice(0, 10)),
+  nomeCondominio: async (id) => { const c = await slModulo.buscarCadastro(clienteSL(), id); return c ? (c.nome_fantasia || c.nome || '') : ''; },
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // Comparativo entre condomínios (T14). Só leitura; mesma regra de acesso e de carteira
 // da cobrança. Últimos 12 meses fechados. Detalhes em superlogica/comparativo.js.
