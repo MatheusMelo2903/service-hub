@@ -45,7 +45,7 @@
     card.className = 'card';
     card.id = 'bal-card';
     card.innerHTML = '<div class="card-header"><span class="card-title">Balancete digital (900A)</span></div>'
-      + '<div class="hint" style="margin-bottom:8px">Condomínio ativo no topo. O Hub confere o PDF do 900A gerado no Superlógica. Publicar para os condôminos continua no Superlógica, depois da conferência. Ao gerar, o Hub troca o mês da seleção NOVA no Superlógica, que fica no último mês gerado.</div>'
+      + '<div class="hint" style="margin-bottom:8px">Condomínio ativo no topo. O Hub confere o PDF do 900A gerado no Superlógica. A publicação para os condôminos é feita no Balancete do mês, depois da conferência. Ao gerar, o Hub troca o mês da seleção NOVA no Superlógica, que fica no último mês gerado.</div>'
       + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
       + '<label style="font-size:12px">Mês da prestação <input type="month" id="bal-mes" value="' + mesISO(-1) + '" max="' + mesISO(0) + '" style="width:auto"></label>'
       + '<button class="btn btn-primary" id="bal-listar">Listar 900A do mês</button>'
