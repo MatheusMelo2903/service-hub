@@ -120,6 +120,8 @@ function comentarioAntigo(mes, conta, titulo, etq, plano) {
   const sm = D.montarSoma({ saldo_inicial: 1000, receitas: 500, despesas: -400, saldo_final_caixa: 1090 });
   t('soma não bate mostra a diferença', sm.ok === false && sm.diferenca === -10);
   t('trava de condomínio', (() => { try { D.conferirCampos('167', { ID_CONDOMINIO_COND: '167', 'CONDOMINIOS_E_GRUPOS[1][ID_CONDOMINIO_COND]': '136' }); return false; } catch (e) { return e.codigo === 'trava_condominio'; } })());
+  t('título do modelo sem hífen', D.validarModelo([{ titulo: 'Extrato - conta corrente', conta: '1.1' }]).itens[0].titulo === 'Extrato conta corrente');
+  t('soma em reais no formato brasileiro', /R\$ 1\.000,00/.test(D.montarSituacao({ comp: '2026-09', hoje: '2026-10-01', soma: D.montarSoma({ saldo_inicial: 1000, receitas: 500, despesas: -400, saldo_final_caixa: 1090 }), fechadoAte: '' }).travas.map((x) => x.causa).join(' ')));
   t('modelo inválido recusado', !!D.validarModelo([{ titulo: 'Extrato', conta: 'abc' }]).erro);
   t('modelo repetido recusado', !!D.validarModelo([{ titulo: 'Extrato', conta: '1.1' }, { titulo: 'Extrato', conta: '1.1' }]).erro);
   const pz = (h) => D.prazo(D.competencia('2026-09'), h, 'montagem').situacao;
@@ -252,7 +254,9 @@ function comentarioAntigo(mes, conta, titulo, etq, plano) {
   let fechPronto = false;
   const papel = { atual: 'GESTOR' };
   const passa = async () => true;
+  const limites = [];
   const R = require('../financeiro/balancete-digital-rotas').criarRotasBalanceteDigital(app, {
+    dentroDoLimite: (req, tipo, n) => { limites.push(tipo + ':' + n); return true; },
     requireAuth: (req, res, next) => { req.user = { sub: '00000000-0000-0000-0000-000000000001', email: 'teste@example.com' }; req.authMode = 'jwt'; next(); },
     express, exigirFinanceiro: passa, exigirModuloItem: passa, exigirLeituraSuperlogica: passa, exigirCarteira: passa, carteiraEstrita: passa,
     exigirEscritaSuperlogica: async (req, res) => { if (papel.atual === 'GESTOR') return true; res.status(403).json({ erro: 'acesso_negado' }); return false; },
@@ -293,6 +297,7 @@ function comentarioAntigo(mes, conta, titulo, etq, plano) {
   const chaveExtrato = tabelas.fin_balancete_modelo[0].itens.find((i) => i.fonte.tipo === 'recebido').chave;
   const dr = await chamar('POST', '/api/financeiro/balancete-digital/167/documento', { competencia: '2026-09', chave: chaveExtrato, nome: 'extrato set.pdf', pdf_base64: pdf('extrato set').toString('base64') });
   t('documento recebido', dr.status === 200, dr);
+  t('limite de envio de documentos consultado', limites.some((x) => x === 'documento_upload:30'));
   const nao = await chamar('POST', '/api/financeiro/balancete-digital/167/documento', { competencia: '2026-09', chave: chaveExtrato, pdf_base64: Buffer.from('oi').toString('base64') });
   t('documento que não é PDF recusado', nao.status === 400);
   const mr = await chamar('POST', '/api/financeiro/balancete-digital/167/montar', { competencia: '2026-09' });

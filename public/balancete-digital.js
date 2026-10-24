@@ -11,7 +11,14 @@
 (function () {
   var est = { seq: 0, sit: null, cond: null, mes: '', proposta: null };
   function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
-  function mesISO(delta) { var d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + delta); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+  // Mês no horário de Brasília (o fuso do navegador pode ser outro).
+  function mesISO(delta) {
+    var p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).formatToParts(new Date());
+    var ano = 0, mes = 0;
+    p.forEach(function (x) { if (x.type === 'year') ano = Number(x.value); if (x.type === 'month') mes = Number(x.value); });
+    var t = ano * 12 + (mes - 1) + delta;
+    return Math.floor(t / 12) + '-' + String((t % 12) + 1).padStart(2, '0');
+  }
   function dataBR(iso) { var m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; }
   function temBal(acao) {
     if (window.USER_ROLE === 'GESTOR' && window.USER_PERMS) return true;
@@ -26,7 +33,7 @@
   }
   function el(id) { return document.getElementById(id); }
   function info(alvo, texto, erro) { var e = el(alvo); if (e) e.innerHTML = texto ? '<div style="font-size:12px;font-family:var(--mono);color:' + (erro ? 'var(--danger)' : 'var(--muted)') + '">' + esc(texto) + '</div>' : ''; }
-  var COR_ETAPA = { extrato: 'var(--danger)', conciliacao: 'var(--danger)', comprovantes: 'var(--warning)', montagem: 'var(--warning)', conferencia: 'var(--accent)', pronto_publicar: 'var(--success, #2e7d32)', publicado: 'var(--success, #2e7d32)' };
+  var COR_ETAPA = { extrato: 'var(--danger)', conciliacao: 'var(--danger)', comprovantes: 'var(--warning)', montagem: 'var(--warning)', conferencia: 'var(--warning)', pronto_publicar: 'var(--success, #2e7d32)', publicado: 'var(--success, #2e7d32)' };
   var COR_PRAZO = { em_dia: 'var(--muted)', passou_ideal: 'var(--warning)', atrasado: 'var(--danger)', publicado: 'var(--success, #2e7d32)' };
   function selo(texto, cor) { return '<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;color:#fff;background:' + cor + '">' + esc(texto) + '</span>'; }
   function listaTravas(travas) {
@@ -156,7 +163,7 @@
     if (gravar) {
       html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">'
         + '<button class="btn btn-ghost" id="bd-montar">Montar agora</button>'
-        + '<button class="btn btn-primary" id="bd-fechar"' + (s.fechado ? ' disabled' : '') + '>Confirmar o fechamento do mês</button>'
+        + '<button class="btn btn-primary" id="bd-fechar"' + (s.fechado ? ' disabled title="' + esc('Mês já fechado em ' + dataBR(s.fechado_ate)) + '"' : '') + '>Confirmar o fechamento do mês</button>'
         + (s.fechado && (window.USER_ROLE === 'GESTOR' || window.USER_ROLE === 'GERENTE') ? '<button class="btn btn-ghost" id="bd-reabrir">Reabrir o mês</button>' : '')
         + '<button class="btn btn-ghost" id="bd-historico">Quem fechou e reabriu</button></div>'
         + '<div id="bd-reabrir-box"></div><div id="bd-acao-info" style="margin-top:6px"></div><div id="bd-hist"></div>';

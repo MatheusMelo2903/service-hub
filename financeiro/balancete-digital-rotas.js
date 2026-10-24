@@ -40,7 +40,7 @@ const MESES_APRENDER = 3;
 const QUEM_SISTEMA = 'Sistema (agendamento do Hub)';
 
 function criarRotasBalanceteDigital(app, d) {
-  const { requireAuth, express, exigirFinanceiro, exigirModuloItem, exigirLeituraSuperlogica, exigirEscritaSuperlogica, exigirCarteira, carteiraEstrita,
+  const { requireAuth, express, dentroDoLimite, exigirFinanceiro, exigirModuloItem, exigirLeituraSuperlogica, exigirEscritaSuperlogica, exigirCarteira, carteiraEstrita,
     exigirEscopoFinanceiro, escopoFinanceiro, gruposCarteiras, clienteSL, credSL, politica, auditoria, fechamentoT38, painelFin, condominios, supabase } = d;
   const hoje = d.hoje || (() => D.hojeSP());
   const log = d.log || ((m) => console.warn(m));
@@ -470,6 +470,8 @@ function criarRotasBalanceteDigital(app, d) {
     if (!/^[a-z0-9_]{1,60}$/.test(chave)) return res.status(400).json({ erro: 'item_invalido', detalhe: 'Escolha o item do modelo.' });
     if (typeof b0.pdf_base64 !== 'string' || b0.pdf_base64.length > Math.ceil(D.MAX_ARQUIVO / 3) * 4 + 8) return res.status(413).json({ erro: 'arquivo_grande', detalhe: 'O PDF passa de 15 MB, limite do Superlógica.' });
     if (!(await podeGravar(req, res, v.id))) return;
+    // Até 30 envios por pessoa por hora (cada um pode ter 15 MB).
+    if (dentroDoLimite && !dentroDoLimite(req, 'documento_upload', 30)) return res.status(429).json({ erro: 'limite', detalhe: 'Você enviou muitos documentos nesta hora. Tente de novo mais tarde.' });
     const buf = Buffer.from(b0.pdf_base64, 'base64');
     if (!D.ehPdf(buf) || buf.length > D.MAX_ARQUIVO) return res.status(400).json({ erro: 'nao_e_pdf', detalhe: 'O arquivo enviado não é um PDF de até 15 MB.' });
     const modelo = modeloDaLinha(await lerModelo(v.id).catch(() => null));
@@ -548,7 +550,7 @@ function criarRotasBalanceteDigital(app, d) {
     const motivo = String((req.body && req.body.motivo) || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
     if (motivo.length < 10 || motivo.length > 300) return res.status(400).json({ erro: 'motivo_obrigatorio', detalhe: 'Escreva o motivo da reabertura (de 10 a 300 letras).' });
     if (!(await podeGravar(req, res, v.id))) return;
-    if (!(await exigirEscritaSuperlogica(req, res))) return; // só gestor ou gerente reabre
+    if (!(await exigirEscritaSuperlogica(req, res, 'Só gestor ou gerente pode fazer esta operação.'))) return; // só gestor ou gerente reabre
     if (politica.bloqueada(req, res, 'mes_reabrir', v.id)) return;
     const cli = clienteSL();
     let antes, ultimo;

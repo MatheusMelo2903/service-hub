@@ -4943,14 +4943,15 @@ app.put('/api/admin/usuarios/:id/carteiras',
 // ─────────────────────────────────────────────────────────────────────────
 const slComunicados = require('./superlogica/comunicados');
 function _credSL() { return { base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }; }
-async function exigirEscritaSuperlogica(req, res) {
+// detalhe: mensagem da recusa (padrão: a dos comunicados e multas).
+async function exigirEscritaSuperlogica(req, res, detalhe) {
   if (!(await exigirLeituraSuperlogica(req, res))) return false;
   if (req.authMode === 'internal') return true;
   if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) { res.status(503).json({ erro: 'service_role_nao_configurada' }); return false; }
   let p = null;
   try { p = await lerPerfil(req.user && req.user.sub); } catch (e) { p = null; }
   if (p && (p.role === 'GESTOR' || p.role === 'GERENTE')) return true;
-  res.status(403).json({ erro: 'acesso_negado', detalhe: 'Só gestor ou gerente pode publicar comunicados e registrar multas.' });
+  res.status(403).json({ erro: 'acesso_negado', detalhe: detalhe || 'Só gestor ou gerente pode publicar comunicados e registrar multas.' });
   return false;
 }
 // Mesma publicação (condomínio, título e texto) não repete em 10 minutos (duplo clique, reenvio).
@@ -5473,7 +5474,7 @@ const _fechamentoT38 = require('./servico/rotas-fechamento').criarRotasFechament
 // Balancete digital e fechamento do mês feitos pelo sistema (agendamento próprio, BALANCETE_AGENDA).
 // Rotas, documentos recebidos e agenda em financeiro/balancete-digital-rotas.js; gravação pela política única.
 const _balDigital = require('./financeiro/balancete-digital-rotas').criarRotasBalanceteDigital(app, {
-  requireAuth, express, exigirFinanceiro: _exigirFinanceiro, exigirModuloItem: _exigirModuloItem, exigirLeituraSuperlogica, exigirEscritaSuperlogica,
+  requireAuth, express, dentroDoLimite, exigirFinanceiro: _exigirFinanceiro, exigirModuloItem: _exigirModuloItem, exigirLeituraSuperlogica, exigirEscritaSuperlogica,
   exigirCarteira: _exigirCarteira, carteiraEstrita: _carteiraEstrita, exigirEscopoFinanceiro: _exigirEscopoFinanceiro, escopoFinanceiro: _escopoFinanceiro, gruposCarteiras,
   clienteSL, credSL: _credSL, politica: politicaEscrita, auditoria, fechamentoT38: _fechamentoT38, painelFin: _painelFin,
   condominios: async () => [...(await require('./financeiro/entrada').cadastroCondominios(clienteSL())).porId.values()],

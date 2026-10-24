@@ -27,7 +27,12 @@ const limpar = (v) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
 const semAcento = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
 const dois = (n) => String(n).padStart(2, '0');
 const cent = (v) => Math.round(Number(v || 0) * 100) / 100;
-const brl = (v) => 'R$ ' + cent(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Formato brasileiro feito à mão (R$ 1.234,56): o toLocaleString do servidor pode não ter o pt-BR.
+function brl(v) {
+  const n = cent(v);
+  const [int, dec] = Math.abs(n).toFixed(2).split('.');
+  return (n < 0 ? '-' : '') + 'R$ ' + int.replace(/\B(?=(\d{3})+(?!\d))/g, '.') + ',' + dec;
+}
 
 // ── datas ───────────────────────────────────────────────────────────────
 // 'AAAA-MM' -> { ano, mes, chave, inicio, fim (ISO), rotulo 'MM/AAAA' }
@@ -180,7 +185,7 @@ function validarModelo(itens) {
   const chaves = new Set();
   for (const [k, i] of itens.entries()) {
     if (!i || typeof i !== 'object') return { erro: 'Item ' + (k + 1) + ' inválido.' };
-    const titulo = limpar(i.titulo).replace(/[^\p{L}\p{N} .,_()\/&+-]/gu, ' ').slice(0, 120).trim();
+    const titulo = limpar(String(i.titulo || '').replace(/[-\u2010-\u2015]/g, ' ').replace(/[^\p{L}\p{N} .,_()\/&+]/gu, ' ')).slice(0, 120).trim();
     if (titulo.length < 3) return { erro: 'Item ' + (k + 1) + ': título muito curto.' };
     const conta = limpar(i.conta);
     if (!/^\d+(\.\d+){0,4}$/.test(conta)) return { erro: '"' + titulo + '": conta do R&D inválida (ex.: 1.1).' };
