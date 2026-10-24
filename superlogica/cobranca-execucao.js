@@ -163,6 +163,8 @@ async function inadimplencia(sl, id, hoje) {
 // Acordos da unidade nos últimos 5 anos, com as parcelas e as cobranças de origem.
 // fl_tipo_acoi 10 = cobrança de origem, 11 = parcela do acordo. Parcela paga: liquidação preenchida
 // ou status 3.
+// O caminho 'Acordos' com maiúscula funciona: a API não diferencia maiúscula (conferido em 23/10/2026,
+// Acordos, acordos e acordos/index devolvem a mesma resposta).
 async function acordosDaUnidade(sl, id, idUnidade, hoje) {
   const ini = new Date(hoje.getFullYear() - 5, hoje.getMonth(), hoje.getDate());
   const lista = await paginas(sl, 'Acordos', { idCondominio: id, dtInicio: dataSL(ini), dtFim: dataSL(hoje), exibirDadosDasParcelas: 1 }, 40);
@@ -367,7 +369,16 @@ async function conferirAcordo(sl, id, plano, idAcordo, hoje) {
   const divergencias = [];
   let acordos = [];
   try { acordos = await acordosDaUnidade(sl, id, plano.id_unidade, hoje); } catch (e) { return { conferido: false, divergencias: ['Não foi possível reler os acordos da unidade agora.'] }; }
-  const a = idAcordo ? acordos.find((x) => x.id === idAcordo) : acordos.filter((x) => !x.desfeito).sort((x, y) => (y.data || 0) - (x.data || 0))[0];
+  // Sem o id na resposta do Superlógica, só aceita o acordo ativo que contém as cobranças do plano.
+  // Se houver mais de um assim, não escolhe: pede para a pessoa conferir pelo número do acordo.
+  let a = null;
+  if (idAcordo) a = acordos.find((x) => x.id === idAcordo);
+  else {
+    const ids = plano.origem.map((r) => r.id);
+    const candidatos = acordos.filter((x) => !x.desfeito && ids.some((i) => x.origem.includes(i)));
+    if (candidatos.length > 1) return { conferido: false, divergencias: ['A unidade tem ' + candidatos.length + ' acordos ativos com estas cobranças. Confira no Superlógica pelo número do acordo.'] };
+    a = candidatos[0] || null;
+  }
   if (!a) return { conferido: false, divergencias: ['O acordo não apareceu na releitura da unidade.'] };
   const faltam = plano.origem.map((r) => r.id).filter((x) => !a.origem.includes(x));
   if (faltam.length) divergencias.push('Cobranças que não entraram no acordo: ' + faltam.join(', ') + '.');

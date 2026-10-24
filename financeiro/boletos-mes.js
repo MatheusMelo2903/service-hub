@@ -111,6 +111,9 @@ async function lerCondominios(cliente) {
 
 // Lote mensal do mês de vencimento: cobranças com id de lote negativo (-AAAAMM). Uma página basta
 // para saber se o lote existe e quando foi gerado (o lote é a maior parte das cobranças do mês).
+// O lote mensal se reconhece pelo id_lote_recb negativo: é a convenção que o Superlógica usa para
+// cobranças geradas pelo processamento do mês (avulsas vêm com lote zero ou positivo). Foi conferida
+// no 167; se a API mudar a convenção, a página cheia sem nenhum lote cai no aviso abaixo, nunca em silêncio.
 function resumirLote(rows) {
   const lista = Array.isArray(rows) ? rows : [];
   const lote = lista.filter((r) => Number(r && r.id_lote_recb) < 0);
@@ -120,7 +123,9 @@ function resumirLote(rows) {
 async function loteDoMes(cliente, id, c) {
   const j = await cliente.get('cobranca/index', { idCondominio: id, status: 'validos', dtInicio: sl(inicioMes(c)), dtFim: sl(fimMes(c)), apenasColunasPrincipais: 1, itensPorPagina: POR_PAGINA, pagina: 1 });
   if (!Array.isArray(j)) { const e = new Error('resposta_sem_lista'); e.status = 502; throw e; }
-  return resumirLote(j);
+  const r = resumirLote(j);
+  if (!r.gerado && j.length > 0) console.warn('[boletos-mes] condominio ' + id + ' ' + c.chave + ': ' + j.length + ' cobranças sem lote mensal (id_lote_recb negativo); conferir a convenção do Superlógica');
+  return r;
 }
 
 // Situação de um condomínio no calendário. Texto pronto para a tela, sem hífen nem travessão.

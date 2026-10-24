@@ -19,6 +19,7 @@
 // GET  /api/financeiro/boletos-mes/:id/pjbank[?dias=60][&forcar=1]                      202 enquanto lê
 const https = require('https');
 const M = require('./boletos-mes');
+const consumo = require('../superlogica/consumo-lote');
 const { criarBanco } = require('./banco');
 
 const ID = /^[1-9][0-9]{0,8}$/;
@@ -329,7 +330,6 @@ function registrar(d) {
         const cond = cr ? M.enxugarCondominio(cr) : null;
         const vencimento = cond && cond.dia ? M.vencimentoEm(comp, cond.dia) : '';
         const hist = [1, 2, 3].map((n) => M.somarMeses(comp, -n));
-        const consumo = require('../superlogica/consumo-lote');
         const refLeitura = consumo.mesRef(M.somarMeses(comp, -1).chave);
         const leitura = async (tipo) => { if (!refLeitura) return null; try { return await consumo.unidadesConsumo(cli, t.id, tipo, refLeitura); } catch (e) { return null; } };
         const [simulacao, composicoes, historico, agua, gas] = await Promise.all([
@@ -375,6 +375,8 @@ function registrar(d) {
     const aut = await politica.autorizar(req, res, { operacao: 'remessa_gerar', id_condominio: t.id, conteudo: { id_conta: conta },
       resumo: { linhas: [{ rotulo: 'Conta', valor: c.descricao }, { rotulo: 'O que acontece', valor: 'O Superlógica gera o arquivo de remessa dos boletos marcados desta conta. Nada vai para o banco: você baixa o arquivo e sobe no site do banco.' }] } });
     if (!aut) return;
+    // O id do condomínio vai na query e no corpo porque foi assim que o remessa/gerar funcionou no teste
+    // do 167 (a tela do Superlógica também manda nos dois). Não foi testado com um só: não tirar sem testar.
     const r = await enviar('POST', 'remessa/gerar', { ID_CONDOMINIO_COND: t.id, daConta: conta }, { ID_CONDOMINIO_COND: t.id });
     const x = M.lerRespostaRemessa(r);
     const nome = 'remessa_' + t.id + '_' + conta + '_' + hoje().replace(/-/g, '') + '.rem';

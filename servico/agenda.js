@@ -160,7 +160,7 @@ function lerData(v, mes) {
   let m;
   if ((m = s.match(/^(\d{4})-(\d{2})-(\d{2})/))) return dataValida(m[0]) ? m[0] : null;
   if ((m = s.match(/\b(\d{1,2})[/.](\d{1,2})(?:[/.](\d{2,4}))?\b/))) {
-    const y = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : (Number(m[2]) < mm - 6 ? ym + 1 : ym);
+    const y = m[3] ? (m[3].length === 2 ? 2000 + Number(m[3]) : Number(m[3])) : (Number(m[2]) - mm < -6 ? ym + 1 : Number(m[2]) - mm > 6 ? ym - 1 : ym);
     const iso = y + '-' + pad(m[2]) + '-' + pad(m[1]);
     return dataValida(iso) ? iso : null;
   }
