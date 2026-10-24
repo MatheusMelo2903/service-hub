@@ -3453,8 +3453,11 @@ function buildUrl(path, params) {
 
 function getHeaders(contentType = 'application/x-www-form-urlencoded') {
   if (slNativa()) {
-    // Modo nativo: so o login do usuario; as chaves sao injetadas no servidor
-    return { 'Content-Type': contentType, 'Authorization': 'Bearer ' + (window.AUTH_TOKEN || '') };
+    // Modo nativo: so o login do usuario; as chaves sao injetadas no servidor.
+    // Importacao confirmada fora do condominio de teste: cada envio leva a confirmacao (confirmar-gravacao.js).
+    const h = { 'Content-Type': contentType, 'Authorization': 'Bearer ' + (window.AUTH_TOKEN || '') };
+    if (window.__confirmacaoPonte && window.__confirmacaoPonte.token) h['X-Confirmacao-Gravacao'] = window.__confirmacaoPonte.token;
+    return h;
   }
   return {
     'Content-Type': contentType,

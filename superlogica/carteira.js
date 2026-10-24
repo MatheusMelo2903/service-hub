@@ -447,6 +447,8 @@ function criarCarteira({ lerPerfil, lerCarteirasPerfis, semColuna, gruposCarteir
       achados.todos = achados.todos || doCorpo.todos;
       // O proxy repassa o corpo com req.pipe: entrega o que já foi lido.
       req.pipe = (destino) => { destino.end(buf); return destino; };
+      req._corpoProxy = buf; // a política de gravação da ponte confere o mesmo corpo
+
     }
     if (achados.invalidos.length) {
       return recusar(req, res, 400, 'condominio_invalido', 'O código do condomínio precisa ser um número só.');

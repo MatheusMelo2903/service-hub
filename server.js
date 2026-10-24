@@ -472,6 +472,27 @@ app.use('/api/superlogica', requireAuth, async (req, res) => {
     return res.status(400).json({ erro: 'caminho_invalido' });
   }
   if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) return res.status(405).json({ erro: 'metodo_nao_permitido' });
+  // GET segue livre como sempre. POST, PUT e DELETE passam pela política de gravação: condomínio
+  // tirado da query ou do corpo (um só), livre no condomínio de teste, nos outros só com a cota
+  // confirmada na tela (cabeçalho X-Confirmacao-Gravacao, rota /api/ponte-superlogica/:id/previa).
+  let autPonte = null;
+  if (req.method !== 'GET') {
+    let corpo = Buffer.isBuffer(req._corpoProxy) ? req._corpoProxy : null;
+    if (!corpo && req.method !== 'DELETE') {
+      try { corpo = await _lerCorpoPonte(req, 5 * 1024 * 1024); } catch (e) {
+        return res.status(e.status === 413 ? 413 : 400).json({ erro: e.status === 413 ? 'corpo_grande' : 'corpo_invalido', detalhe: 'Não foi possível ler o envio.' });
+      }
+      const lido = corpo;
+      req.pipe = (destino) => { destino.end(lido); return destino; };
+    }
+    if (corpo && corpo.length && String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase() !== 'application/x-www-form-urlencoded') {
+      return res.status(415).json({ erro: 'tipo_nao_aceito', detalhe: 'Envio ao Superlógica só como formulário.' });
+    }
+    autPonte = await politicaEscrita.autorizarPonte(req, res, { url: req.url, corpo, token: req.headers['x-confirmacao-gravacao'] });
+    if (!autPonte) return;
+  }
+  const rotaPonte = req.url.split('?')[0].replace('/v2/condor/', '').slice(0, 80);
+  const concluirPonte = (ok, http) => { if (autPonte) autPonte.concluir({ ok, http, metodo: req.method, caminho: rotaPonte }); };
   const alvo = new URL(SUPERLOGICA_API_BASE + req.url);
   const headers = { app_token: SUPERLOGICA_APP_TOKEN, access_token: SUPERLOGICA_ACCESS_TOKEN };
   // GET e DELETE saem sem corpo (ver o fim desta rota): sem content-length nem content-type,
@@ -482,6 +503,7 @@ app.use('/api/superlogica', requireAuth, async (req, res) => {
   const pr = https.request({ hostname: alvo.hostname, path: alvo.pathname + alvo.search, method: req.method, headers, timeout: 120000 }, (r) => {
     const ct = String(r.headers['content-type'] || '');
     const status = r.statusCode || 502;
+    concluirPonte(status >= 200 && status < 300, status);
     const bloquear = (erro, detalhe) => {
       res.removeHeader('Content-Type');
       res.removeHeader('Content-Disposition');
@@ -522,10 +544,46 @@ app.use('/api/superlogica', requireAuth, async (req, res) => {
       res.end(bruto);
     });
   });
-  pr.on('timeout', () => { pr.destroy(); if (!res.headersSent) res.status(504).json({ erro: 'timeout_superlogica' }); });
-  pr.on('error', (e) => { if (!res.headersSent) res.status(502).json({ erro: 'falha_superlogica', detalhe: e.message }); });
+  pr.on('timeout', () => { concluirPonte(false, 504); pr.destroy(); if (!res.headersSent) res.status(504).json({ erro: 'timeout_superlogica' }); });
+  pr.on('error', (e) => { concluirPonte(false, 0); if (!res.headersSent) res.status(502).json({ erro: 'falha_superlogica', detalhe: e.message }); });
   req.on('aborted', () => pr.destroy());
   if (semCorpo) pr.end(); else req.pipe(pr);
+});
+// Lê o corpo da ponte (para a política conferir o condomínio) com teto de tamanho.
+function _lerCorpoPonte(req, max) {
+  return new Promise((ok, falha) => {
+    const partes = []; let total = 0;
+    req.on('data', (c) => { total += c.length; if (total > max) { falha(Object.assign(new Error('corpo_grande'), { status: 413 })); req.destroy(); return; } partes.push(c); });
+    req.on('end', () => ok(Buffer.concat(partes)));
+    req.on('error', falha);
+  });
+}
+
+// POST /api/ponte-superlogica/:id/previa { quantidade, caminhos:['unidades/post'|'despesas'], descricao?, confirmacao_gravacao? }
+// Antes de uma importação pela ponte (unidades, despesas): no condomínio de teste 200 { livre };
+// nos outros 428 com o resumo (reforçada quando há mais de 1 envio) e, confirmado, 200 { confirmado,
+// confirmacao } com o token que a tela manda no cabeçalho X-Confirmacao-Gravacao de cada envio.
+app.post('/api/ponte-superlogica/:idSuperlogica/previa', requireAuth, express.json({ limit: '10kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  const b = req.body || {};
+  const W = require('./servico/escrita-superlogica');
+  const quantidade = Number(b.quantidade);
+  const caminhos = Array.isArray(b.caminhos) ? [...new Set(b.caminhos.map(String))] : [];
+  if (!Number.isInteger(quantidade) || quantidade < 1 || quantidade > 5000) return res.status(400).json({ erro: 'quantidade_invalida', detalhe: 'Quantidade de envios inválida (de 1 a 5000).' });
+  if (!caminhos.length || caminhos.some((c) => !W.CAMINHOS_PONTE[c])) return res.status(400).json({ erro: 'caminho_invalido', detalhe: 'Essa importação não pode ser confirmada por aqui.' });
+  if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado' });
+  if (req.authMode !== 'internal') {
+    let ac = null;
+    try { ac = await acessoSuperlogica(req.user && req.user.sub); } catch (e) { ac = null; }
+    if (!ac || !ac.ok) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso aos módulos do Superlógica.' });
+  }
+  if (!(await _exigirCarteira(req, res, id))) return;
+  if (politicaEscrita.bloqueada(req, res, 'ponte_superlogica', id, { quantidade, sensivel: quantidade > 1 })) return;
+  const descricao = String(b.descricao || '').replace(/[\r\n\t<>]/g, ' ').trim().slice(0, 200);
+  await politicaEscrita.previaCota(req, res, { operacao: 'ponte_superlogica', id_condominio: id, quantidade, caminhos,
+    resumo: { linhas: [{ rotulo: 'O que vai ser gravado', valor: caminhos.map((c) => W.CAMINHOS_PONTE[c]).join(', ') }, { rotulo: 'Envios ao Superlógica', valor: String(quantidade) }]
+      .concat(descricao ? [{ rotulo: 'Conteúdo informado pela tela', valor: descricao }] : []) } });
 });
 
 // ─────────────────────────────────────────────────────────────────────────

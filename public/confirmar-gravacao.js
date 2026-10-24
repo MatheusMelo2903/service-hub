@@ -94,6 +94,24 @@
     return r;
   }
 
+  // Importação pela ponte do Superlógica (unidades, despesas): confirma a importação inteira antes de
+  // começar. Devolve true para seguir (no teste sem janela) ou lança erro com a mensagem para a tela.
+  // Confirmado, cada envio da ponte leva o token no cabeçalho até encerrarPonteSuperlogica().
+  async function confirmarPonteSuperlogica(idCondominio, quantidade, caminhos, descricao) {
+    window.__confirmacaoPonte = null;
+    var r = await gravarNoSuperlogica('/api/ponte-superlogica/' + encodeURIComponent(idCondominio) + '/previa', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quantidade: quantidade, caminhos: caminhos, descricao: descricao || '' }),
+    });
+    var j = await r.clone().json().catch(function () { return {}; });
+    if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+    if (j.confirmado && j.confirmacao && j.confirmacao.token) window.__confirmacaoPonte = { token: j.confirmacao.token, id_condominio: j.confirmacao.id_condominio };
+    return true;
+  }
+  function encerrarPonteSuperlogica() { window.__confirmacaoPonte = null; }
+
   window.gravarNoSuperlogica = gravarNoSuperlogica;
+  window.confirmarPonteSuperlogica = confirmarPonteSuperlogica;
+  window.encerrarPonteSuperlogica = encerrarPonteSuperlogica;
   window.ConfirmarGravacao = { abrir: abrirJanela, gravar: gravarNoSuperlogica, normalizar: normalizar };
 })();

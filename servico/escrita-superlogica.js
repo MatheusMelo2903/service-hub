@@ -45,7 +45,12 @@ const OPERACOES = {
   comunicado_disparar: { rotulo: 'Disparo dos comunicados pendentes de todos os condomínios', sensivel: true, global: true, chave: 'COMUNICADOS_DISPARO_LIBERADO' },
   balancete_gerar: { rotulo: 'Geração do balancete digital (900A)', legado: 'BALANCETE_GERACAO_LIBERADA', sensivel: true },
   documento_arquivar: { rotulo: 'Arquivamento de documento no Superlógica' },
+  // Ponte genérica /api/superlogica (importação de unidades e despesas pela tela): cada POST, PUT
+  // ou DELETE gasta uma unidade da cota confirmada. Cota acima de 1 envio é lote: confirmação reforçada.
+  ponte_superlogica: { rotulo: 'Importação direta no Superlógica', cota: true },
 };
+// Caminhos da ponte que a tela pode confirmar fora do condomínio de teste (o resto só no teste).
+const CAMINHOS_PONTE = { 'unidades/post': 'Cadastro de unidades e moradores', despesas: 'Lançamento de despesas' };
 
 const DETALHE_BLOQUEIO = {
   escrita_desligada: 'A gravação no Superlógica pelo Hub está desligada pela administração. Nada foi gravado.',
@@ -141,6 +146,9 @@ function criarPoliticaEscrita(deps) {
 
   const usuarioDe = (req) => (req.authMode === 'internal' ? 'interno' : String((req.user && req.user.sub) || ''));
 
+  // Tira do mapa os tokens vencidos há mais de 10 minutos. O token fica guardado mais 10 minutos
+  // depois de vencer de propósito: assim um reenvio atrasado recebe "vencido" ou "já usado" (e a
+  // recusa vai para a auditoria) em vez de parecer um token desconhecido. Teto de MAX_TOKENS.
   function limpar() {
     const t = agora();
     for (const [k, r] of tokens) if (t - r.expira > VALIDADE_MS) tokens.delete(k);
@@ -389,6 +397,90 @@ function criarPoliticaEscrita(deps) {
     return autorizacao(req, p, prep, true);
   }
 
+  // Prévia de uma cota (ponte): a tela diz quantos envios vai fazer e em quais caminhos. Sem token,
+  // 428 com o resumo; com o token confirmado, 200 { confirmado, confirmacao }. No teste: 200 { livre }.
+  // p: { operacao, id_condominio, quantidade, caminhos, resumo }. Mais de 1 envio: reforçada.
+  async function previaCota(req, res, p) {
+    const quantidade = Number(p.quantidade);
+    const caminhos = [...new Set((p.caminhos || []).map(String))].sort();
+    const q = Object.assign({}, p, { quantidade, sensivel: quantidade > 1 });
+    const prep = await preparar(req, res, q);
+    if (!prep) return false;
+    if (prep.livre) { res.json({ livre: true }); return true; }
+    const hash = hashDe({ operacao: p.operacao, alvo: prep.alvo, quantidade, caminhos });
+    const registro = { hash, cota: { restante: quantidade, caminhos }, confirmado: false };
+    const c = req.body && req.body.confirmacao_gravacao;
+    const r = conferirToken(req, prep, p.operacao, c);
+    if (r.motivo === 'sem_token') return pedirConfirmacao(req, res, q, prep, registro);
+    if (r.motivo) {
+      const fim = await recusarToken(req, res, q, prep, r);
+      if (fim === false) return false;
+      return pedirConfirmacao(req, res, q, prep, registro, r.motivo === 'token_invalido' ? 'token_vencido' : r.motivo);
+    }
+    if (!r.rec.cota || r.rec.hash !== hash || r.rec.confirmado) {
+      await recusarToken(req, res, q, prep, { motivo: 'conteudo_alterado', rec: r.rec, chave: r.chave });
+      return pedirConfirmacao(req, res, q, prep, registro, 'conteudo_alterado');
+    }
+    if (!nomeConfere(r.rec, c.nome_digitado)) {
+      tokens.delete(r.chave);
+      auditar(req, 'gravacao_recusada', { operacao: p.operacao, id_superlogica: prep.ids[0], condominios: prep.ids, motivo: 'nome_nao_confere', confirmada: false }, false, 'nome_nao_confere');
+      return pedirConfirmacao(req, res, q, prep, registro, 'nome_nao_confere');
+    }
+    r.rec.confirmado = true;
+    auditar(req, 'gravacao_lote_confirmado', { operacao: p.operacao, id_superlogica: prep.ids[0], condominios: prep.ids, quantidade, caminhos, resumo: r.rec.resumo, confirmada: true });
+    res.json({ confirmado: true, confirmacao: { token: r.chave, id_condominio: prep.alvo, expira_em: new Date(r.rec.expira).toISOString() } });
+    return true;
+  }
+
+  // Um envio da cota. O token vem à parte (cabeçalho da ponte). Sem token válido: 428 sem token novo
+  // (a tela confirma a importação inteira antes). A cada envio a validade volta a 10 minutos (uma
+  // importação grande não vence no meio enquanto está andando; parada por 10 minutos, vence).
+  async function autorizarCota(req, res, p) {
+    const prep = await preparar(req, res, p);
+    if (!prep) return false;
+    if (prep.livre) return autorizacao(req, p, prep, false);
+    const recusa = (status, erro, motivo, detalhe, suspeito) => {
+      auditar(req, 'gravacao_recusada', { operacao: p.operacao, id_superlogica: prep.ids[0], condominios: prep.ids, motivo, caminho: p.caminho || null, confirmada: false }, !!suspeito, motivo);
+      res.status(status).json({ erro, motivo, detalhe });
+      return false;
+    };
+    const r = conferirToken(req, prep, p.operacao, { token: typeof p.token === 'string' ? p.token.trim() : '', id_condominio: prep.alvo });
+    const precisa = 'Gravação fora do condomínio de teste: confirme a importação na tela antes de enviar. Nada foi gravado.';
+    if (r.motivo === 'sem_token' || r.motivo === 'token_invalido') return recusa(428, 'confirmacao_necessaria', r.motivo, precisa, false);
+    if (r.motivo === 'token_vencido') { tokens.delete(r.chave); return recusa(428, 'confirmacao_necessaria', 'token_vencido', 'A confirmação da importação venceu. Confirme de novo para continuar. Nada foi gravado.', false); }
+    if (r.motivo === 'token_usado') return recusa(409, 'confirmacao_ja_usada', 'token_usado', 'Os envios confirmados acabaram. Confirme de novo para continuar. Nada foi gravado.', false);
+    if (r.motivo) { tokens.delete(r.chave); return recusa(403, 'confirmacao_invalida', r.motivo, 'Essa confirmação não vale para este envio. Nada foi gravado.', true); }
+    if (!r.rec.cota || !r.rec.confirmado) return recusa(428, 'confirmacao_necessaria', 'nao_confirmado', precisa, !r.rec.cota);
+    if (!r.rec.cota.caminhos.includes(String(p.caminho || ''))) return recusa(409, 'caminho_fora_da_confirmacao', 'caminho_fora_da_confirmacao', 'Este envio não faz parte da importação confirmada. Nada foi gravado.', true);
+    if (r.rec.cota.restante <= 0) { r.rec.usado = true; return recusa(409, 'confirmacao_ja_usada', 'token_usado', 'Os envios confirmados acabaram. Confirme de novo para continuar. Nada foi gravado.', false); }
+    r.rec.cota.restante--;
+    r.rec.expira = agora() + VALIDADE_MS;
+    if (r.rec.cota.restante === 0) r.rec.usado = true;
+    return autorizacao(req, p, prep, true);
+  }
+
+  // Escrita pela ponte genérica (POST, PUT, DELETE em /api/superlogica/v2/condor/...). O condomínio
+  // sai do ID_CONDOMINIO_COND/idCondominio da query ou do corpo (formulário); sem um condomínio só,
+  // recusa. Devolve a autorização (quem chama registra o resultado com concluir) ou false (já respondeu).
+  async function autorizarPonte(req, res, { url, corpo, token }) {
+    const C = require('../superlogica/carteira');
+    const rota = C.rotaDoProxy(url);
+    let pares = [];
+    try { pares = Array.from(new URL(String(url || ''), 'http://x').searchParams.entries()); } catch (e) { pares = []; }
+    if (corpo && corpo.length) pares = pares.concat(C.camposDoCorpo(corpo, 'application/x-www-form-urlencoded'));
+    const achou = C.idsCondominio(rota, pares);
+    const ids = [...new Set(achou.explicitos.map(String))];
+    if (!rota || achou.invalidos.length || achou.todos || ids.length !== 1) {
+      const motivo = !rota ? 'caminho_nao_aceito' : 'sem_condominio';
+      auditar(req, 'gravacao_recusada', { operacao: 'ponte_superlogica', id_superlogica: ids.length === 1 ? ids[0] : null, condominios: ids, motivo, caminho: rota, metodo: req.method, confirmada: false }, true, motivo);
+      res.status(400).json({ erro: motivo, detalhe: !rota ? 'Endereço do Superlógica não aceito para gravação. Nada foi gravado.' : 'A gravação direta no Superlógica precisa indicar um condomínio só (ID_CONDOMINIO_COND). Nada foi gravado.' });
+      return false;
+    }
+    if (bloqueada(req, res, 'ponte_superlogica', ids[0])) return false;
+    return autorizarCota(req, res, { operacao: 'ponte_superlogica', id_condominio: ids[0], caminho: rota, token,
+      resumo: { linhas: [{ rotulo: 'Envio', valor: req.method + ' ' + rota }] } });
+  }
+
   // Para a tela e para quem precisa saber o estado sem gravar.
   function estado(operacao, idCondominio, extra) { return situacao(operacao, idCondominio, extra, lerEnv()); }
   function configuracao() {
@@ -397,7 +489,10 @@ function criarPoliticaEscrita(deps) {
     return { modo: modo(env), teste: [...condominiosTeste(env)], legados: comLegado };
   }
 
-  return { autorizar, previaLote, autorizarItem, bloqueada, estado, configuracao, _tokens: tokens };
+  const api = { autorizar, previaLote, autorizarItem, previaCota, autorizarCota, autorizarPonte, bloqueada, estado, configuracao };
+  // O mapa dos tokens só aparece nos testes (NODE_ENV=test), nunca no servidor.
+  if (process.env.NODE_ENV === 'test') Object.defineProperty(api, '_tokens', { value: tokens, enumerable: false });
+  return api;
 }
 
-module.exports = { criarPoliticaEscrita, situacao, modo, condominiosTeste, legados, nomeCurto, normalizar, canonico, hashDe, OPERACOES, NUNCA, VALIDADE_MS, LIMITE_LOTE };
+module.exports = { criarPoliticaEscrita, situacao, modo, condominiosTeste, legados, nomeCurto, normalizar, canonico, hashDe, OPERACOES, CAMINHOS_PONTE, NUNCA, VALIDADE_MS, LIMITE_LOTE };

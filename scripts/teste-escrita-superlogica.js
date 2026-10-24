@@ -3,6 +3,7 @@
 // Cobre: 167 grava direto; outro condomínio sem token dá 428 com resumo; token de outro usuário,
 // de outro condomínio, com conteúdo alterado ou vencido é recusado; token usado duas vezes é recusado;
 // sensível exige o nome digitado; interruptor off bloqueia tudo; lista antiga; lote item a item; auditoria.
+process.env.NODE_ENV = 'test'; // libera o mapa dos tokens (_tokens) só para este teste
 const W = require('../servico/escrita-superlogica');
 
 let ok = 0, falhou = 0;
@@ -240,7 +241,81 @@ const ultimo = (acao) => eventos.filter((e) => e.acao === acao).slice(-1)[0];
   r = res();
   t('167 grava mesmo sem estar na tabela da base', (await P3.autorizar(req('u1'), r, pedido('167'))).livre === true);
 
-  // ---------- 11. textos de tela sem hífen nem travessão ----------
+  // ---------- 11. ponte genérica /api/superlogica (POST, PUT, DELETE) ----------
+  const form = (o) => Buffer.from(new URLSearchParams(o).toString());
+  const ponte = async (sub, metodo, url, corpo, token) => { const x = res(); const q = req(sub); q.method = metodo; const v = await P.autorizarPonte(q, x, { url, corpo: corpo ? form(corpo) : null, token }); return { v, x }; };
+  env = {};
+  let pt = await ponte('u1', 'POST', '/v2/condor/unidades/post', { ID_CONDOMINIO_COND: '136', ST_UNIDADE_UNI: '101' });
+  t('ponte: fora do 167 no modo teste recusa', pt.v === false && pt.x.st === 423 && pt.x.j.motivo === 'so_teste');
+  pt = await ponte('u1', 'POST', '/v2/condor/unidades/post', { ID_CONDOMINIO_COND: '167', ST_UNIDADE_UNI: '101' });
+  t('ponte: no 167 passa', pt.v && pt.v.livre === true);
+  pt.v.concluir({ ok: true, http: 200, metodo: 'POST', caminho: 'unidades/post' });
+  t('ponte: gravação no 167 auditada', ultimo('gravacao_superlogica').det.operacao === 'ponte_superlogica' && ultimo('gravacao_superlogica').det.id_superlogica === '167');
+  pt = await ponte('u1', 'PUT', '/v2/condor/unidades/post', { ST_UNIDADE_UNI: '101' });
+  t('ponte: sem condomínio recusa', pt.v === false && pt.x.st === 400 && pt.x.j.erro === 'sem_condominio' && ultimo('gravacao_recusada').susp === true);
+  pt = await ponte('u1', 'POST', '/v2/condor/unidades/post?ID_CONDOMINIO_COND=167', { ID_CONDOMINIO_COND: '136' });
+  t('ponte: dois condomínios recusa', pt.v === false && pt.x.st === 400);
+  pt = await ponte('u1', 'POST', '/v2/condor/unidades/post', { 'ID_CONDOMINIO_COND[]': '167' });
+  t('ponte: lista de condomínios recusa', pt.v === false && pt.x.st === 400);
+  pt = await ponte('u1', 'POST', '/v2/condor/despesas/', { ID_CONDOMINIO_COND: '-1' });
+  t('ponte: todos os condomínios recusa', pt.v === false && pt.x.st === 400);
+  pt = await ponte('u1', 'DELETE', '/v2/condor/despesas/?idCondominio=167', null);
+  t('ponte: DELETE com condomínio na query no 167 passa', pt.v && pt.v.livre === true);
+  pt = await ponte('u1', 'POST', '/v2/condor/a/b/c', { ID_CONDOMINIO_COND: '167' });
+  t('ponte: caminho fora do padrão recusa', pt.v === false && pt.x.st === 400 && pt.x.j.erro === 'caminho_nao_aceito');
+  for (const adm of ['143', '144', '145', '160', '162']) {
+    env = { ESCRITA_SUPERLOGICA: 'confirmacao', ESCRITA_TESTE: adm };
+    pt = await ponte('u1', 'POST', '/v2/condor/despesas/', { ID_CONDOMINIO_COND: adm });
+    t('ponte: administração ' + adm + ' nunca', pt.v === false && pt.x.st === 423 && pt.x.j.motivo === 'nao_condominio');
+  }
+  env = { ESCRITA_SUPERLOGICA: 'off' };
+  pt = await ponte('u1', 'POST', '/v2/condor/despesas/', { ID_CONDOMINIO_COND: '167' });
+  t('ponte: off recusa até o 167', pt.v === false && pt.x.st === 423);
+  env = { ESCRITA_SUPERLOGICA: 'confirmacao' };
+  pt = await ponte('u1', 'POST', '/v2/condor/unidades/post', { ID_CONDOMINIO_COND: '136' });
+  t('ponte: 136 sem confirmação 428 sem token', pt.v === false && pt.x.st === 428 && !pt.x.j.confirmacao);
+  const cota = (corpo, qtd, cams) => { r = res(); return P.previaCota(req('u1', corpo), r, { operacao: 'ponte_superlogica', id_condominio: '136', quantidade: qtd, caminhos: cams || ['unidades/post'], resumo: { linhas: [] } }); };
+  await cota(undefined, 3);
+  t('cota de 3: 428 reforçado', r.st === 428 && r.j.confirmacao.reforcada === true && r.j.confirmacao.nome_curto === 'Casablanca');
+  const tc = r.j.confirmacao.token;
+  pt = await ponte('u1', 'POST', '/v2/condor/unidades/post', { ID_CONDOMINIO_COND: '136' }, tc);
+  t('ponte: token da cota antes de confirmar recusa', pt.v === false && pt.x.st === 428);
+  await cota({ confirmacao_gravacao: { id_condominio: '136', token: tc } }, 3);
+  t('cota sem o nome recusa', r.st === 428 && r.j.motivo === 'nome_nao_confere');
+  await cota(undefined, 3); const tc2 = r.j.confirmacao.token;
+  await cota({ confirmacao_gravacao: { id_condominio: '136', token: tc2, nome_digitado: 'casablanca' } }, 3);
+  t('cota confirmada', r.st === 200 && r.j.confirmado === true);
+  pt = await ponte('u2', 'POST', '/v2/condor/unidades/post', { ID_CONDOMINIO_COND: '136' }, tc2);
+  t('ponte: cota de outro usuário recusa', pt.v === false && pt.x.st === 403);
+  await cota(undefined, 3); const tc3 = r.j.confirmacao.token;
+  await cota({ confirmacao_gravacao: { id_condominio: '136', token: tc3, nome_digitado: 'Casablanca' } }, 3);
+  pt = await ponte('u1', 'POST', '/v2/condor/despesas/', { ID_CONDOMINIO_COND: '136' }, tc3);
+  t('ponte: caminho fora da cota recusa', pt.v === false && pt.x.st === 409 && pt.x.j.erro === 'caminho_fora_da_confirmacao');
+  pt = await ponte('u1', 'POST', '/v2/condor/unidades/post', { ID_CONDOMINIO_COND: '140' }, tc3);
+  t('ponte: cota de outro condomínio recusa', pt.v === false && pt.x.st === 403);
+  await cota(undefined, 3); const tc4 = r.j.confirmacao.token;
+  await cota({ confirmacao_gravacao: { id_condominio: '136', token: tc4, nome_digitado: 'Casablanca' } }, 3);
+  let passou = 0;
+  for (let i = 0; i < 3; i++) { relogio += 9 * 60 * 1000; pt = await ponte('u1', i === 1 ? 'PUT' : 'POST', '/v2/condor/unidades/post', { ID_CONDOMINIO_COND: '136' }, tc4); if (pt.v && pt.v.confirmada) { passou++; pt.v.concluir({ ok: true }); } }
+  t('ponte: 3 envios da cota passam (validade renova a cada envio)', passou === 3 && ultimo('gravacao_superlogica').det.confirmada === true);
+  pt = await ponte('u1', 'POST', '/v2/condor/unidades/post', { ID_CONDOMINIO_COND: '136' }, tc4);
+  t('ponte: quarto envio recusa', pt.v === false && pt.x.st === 409 && pt.x.j.erro === 'confirmacao_ja_usada');
+  await cota(undefined, 1); const tc5 = r.j.confirmacao.token;
+  t('cota de 1 envio: confirmação simples', r.j.confirmacao.reforcada === false);
+  await cota({ confirmacao_gravacao: { id_condominio: '136', token: tc5 } }, 1);
+  relogio += 10 * 60 * 1000 + 1;
+  pt = await ponte('u1', 'POST', '/v2/condor/unidades/post', { ID_CONDOMINIO_COND: '136' }, tc5);
+  t('ponte: cota parada por 10 minutos vence', pt.v === false && pt.x.st === 428 && pt.x.j.motivo === 'token_vencido');
+  const tOutra = await novo('136');
+  pt = await ponte('u1', 'POST', '/v2/condor/unidades/post', { ID_CONDOMINIO_COND: '136' }, tOutra);
+  t('ponte: token de outra operação recusa', pt.v === false && pt.x.st === 403 && ultimo('gravacao_recusada').det.motivo === 'token_de_outra_operacao');
+  env = {};
+  const antes = process.env.NODE_ENV; process.env.NODE_ENV = 'production';
+  const P4 = W.criarPoliticaEscrita({ env: () => ({}) });
+  process.env.NODE_ENV = antes;
+  t('mapa de tokens fora do objeto no servidor', P4._tokens === undefined && !Object.keys(P4).includes('_tokens') && !Object.keys(P).includes('_tokens'));
+
+  // ---------- 12. textos de tela sem hífen nem travessão ----------
   const fonte = require('fs').readFileSync(require('path').join(__dirname, '..', 'servico', 'escrita-superlogica.js'), 'utf8');
   const textos = (fonte.match(/'[^'\n]*[A-Za-zÀ-ú][^'\n]*'/g) || []).filter((s) => / /.test(s));
   t('textos sem travessão', !textos.some((s) => /[–—]/.test(s)));
