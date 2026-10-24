@@ -4,18 +4,17 @@
 // Uso: NODE_PATH=<repo>/node_modules node scripts/teste-superlogica-conta.js
 const http = require('http');
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
-process.env.NODE_ENV = 'test';
 const SC = require('../servico/superlogica-conta');
-SC.decifrar = SC.decifrarParaTeste;
 
 let ok = 0, falhou = 0;
 function t(nome, cond) { if (cond) ok++; else { falhou++; console.log('FALHOU: ' + nome); } }
 
+// Senha que alguém tente mandar no corpo: nunca pode ser guardada nem aparecer em lugar nenhum.
 const SENHA = 'Senha#Superlogica-Teste-4471';
 const SENHA2 = 'OutraSenha!Bem$Diferente90';
-const ENV = { SUPERLOGICA_CRED_CHAVE: 'chave-de-teste-com-mais-de-trinta-e-dois-caracteres-abcdef' };
-const ENV_SEM = {};
 const A = crypto.randomUUID(), B = crypto.randomUUID();
 
 // Tudo o que for escrito no console (para conferir que a senha nunca aparece).
@@ -23,31 +22,21 @@ const saida = [];
 const orig = { log: console.log, warn: console.warn, error: console.error };
 ['log', 'warn', 'error'].forEach((k) => { console[k] = function () { saida.push([].slice.call(arguments).join(' ')); return orig[k].apply(console, arguments); }; });
 
-// ── 1. Cifra ──
-{
-  const fora = require('child_process').execFileSync(process.execPath, ['-e', "const m=require('./servico/superlogica-conta');process.stdout.write(typeof m.decifrar+','+typeof m.decifrarParaTeste)"],
-    { cwd: require('path').join(__dirname, '..'), env: Object.assign({}, process.env, { NODE_ENV: 'production' }) }).toString();
-  t('decifrar não sai do módulo fora dos testes', fora === 'undefined,undefined');
-}
-const c1 = SC.cifrar(SENHA, A, ENV);
-t('cifrado não contém a senha', !c1.includes(SENHA) && c1.startsWith('v1:'));
-t('decifra com o mesmo usuário', SC.decifrar(c1, A, ENV) === SENHA);
-t('não decifra com outro usuário', SC.decifrar(c1, B, ENV) === null);
-t('não decifra com outra chave', SC.decifrar(c1, A, { SUPERLOGICA_CRED_CHAVE: 'x'.repeat(40) }) === null);
-t('não decifra valor estragado', SC.decifrar(c1.slice(0, -4) + 'AAAA', A, ENV) === null);
-t('duas cifras da mesma senha são diferentes', SC.cifrar(SENHA, A, ENV) !== c1);
-let semChave = null; try { SC.cifrar(SENHA, A, ENV_SEM); } catch (e) { semChave = e.code; }
-t('sem chave não cifra', semChave === 'sem_chave');
-let chaveCurta = null; try { SC.cifrar(SENHA, A, { SUPERLOGICA_CRED_CHAVE: 'curta' }); } catch (e) { chaveCurta = e.code; }
-t('chave curta não vale', chaveCurta === 'sem_chave');
+// ── 1. Sem senha no código ──
+const raiz = path.join(__dirname, '..');
+const codigo = fs.readFileSync(path.join(raiz, 'servico/superlogica-conta.js'), 'utf8');
+const migr = fs.readFileSync(path.join(raiz, 'migrations/2026-10-24_035_superlogica_contas.sql'), 'utf8');
+const tela = fs.readFileSync(path.join(raiz, 'public/superlogica-conta.js'), 'utf8');
+t('módulo sem cifra nem chave de senha', !/createCipheriv|createDecipheriv|SUPERLOGICA_CRED_CHAVE|senha_cifrada/.test(codigo) && !('cifrar' in SC) && !('decifrar' in SC) && !('chaveDe' in SC));
+t('migration sem coluna de senha', !/senha_cifrada\s+text/.test(migr) && /drop column if exists senha_cifrada/.test(migr) && /enable row level security/.test(migr) && /revoke all on public\.superlogica_contas from anon, authenticated/.test(migr));
+t('tela sem campo de senha', !/type="password"/.test(tela) && !/corpo\.senha/.test(tela));
 
 // ── 2. Validação e tela ──
-t('email inválido recusa', !SC.validar({ email: 'semarroba', senha: SENHA }, null).ok);
-t('conta nova sem senha recusa', !SC.validar({ email: 'a@b.com' }, null).ok);
-t('troca sem senha mantém', SC.validar({ email: 'a@b.com' }, { email: 'a@b.com' }).ok && SC.validar({ email: 'a@b.com' }, { email: 'a@b.com' }).senha === null);
-t('senha com quebra de linha recusa', !SC.validar({ email: 'a@b.com', senha: 'a\nb' }, null).ok);
-const tela = SC.contaParaTela({ user_id: A, email: 'a@b.com', senha_cifrada: c1, atualizado_em: 'x' });
-t('tela só vê senha guardada', tela.senha_guardada === true && !JSON.stringify(tela).includes(c1) && !('senha_cifrada' in tela));
+t('email inválido recusa', !SC.validar({ email: 'semarroba' }).ok);
+const v1 = SC.validar({ email: ' Pessoa@Exemplo.com ', senha: SENHA });
+t('senha no corpo é ignorada na validação', v1.ok && v1.email === 'pessoa@exemplo.com' && !('senha' in v1) && !JSON.stringify(v1).includes(SENHA));
+const vista = SC.contaParaTela({ user_id: A, email: 'a@b.com', senha_cifrada: 'v1:x', atualizado_em: 'x' });
+t('tela só vê email e data', JSON.stringify(Object.keys(vista).sort()) === JSON.stringify(['atualizado_em', 'email']));
 
 // ── 3. Destino ──
 t('destino documentos', SC.montarDestino('documentos', {}).url === 'https://condominioes.superlogica.net/clients/condor/impressoes/index');
@@ -93,7 +82,6 @@ function criarBanco() {
 (async () => {
   const fb = criarBanco();
   const eventos = [];
-  const envAtual = { v: ENV };
   let relogio2 = 5000000;
   const links = SC.criarLinks({ agora: () => relogio2 });
   const JWT = { ['jwt-a']: { sub: A }, ['jwt-b']: { sub: B } };
@@ -108,7 +96,7 @@ function criarBanco() {
     express, banco: fb.banco, links,
     auditoria: { evento: (req, acao, det, suspeito) => eventos.push({ acao, det, suspeito, quem: req.user && req.user.sub }) },
     verificarUsuario: async (jwt) => JWT[jwt] || null,
-    get env() { return envAtual.v; },
+    env: {},
   });
   const srv = app.listen(0);
   const porta = srv.address().port;
@@ -128,43 +116,33 @@ function criarBanco() {
   const respostas = [];
   const guardar = (r) => { respostas.push(r.txt); return r; };
 
-  // Sem chave configurada: não salva nada.
-  envAtual.v = ENV_SEM;
-  let r = guardar(await pedir(A, 'PUT', '/api/conta-superlogica', { email: 'pessoa.a@exemplo.com', senha: SENHA }));
-  t('sem chave responde 503', r.status === 503 && r.j.erro === 'sem_chave');
-  t('sem chave nada no banco', fb.linhas.length === 0);
-  r = guardar(await pedir(A, 'GET', '/api/conta-superlogica'));
-  t('sem chave a tela sabe', r.status === 200 && r.j.chave_configurada === false && r.j.conta === null);
-  envAtual.v = ENV;
-
-  // A grava a própria conta.
-  r = guardar(await pedir(A, 'PUT', '/api/conta-superlogica', { email: 'Pessoa.A@Exemplo.com', senha: SENHA, user_id: B }));
-  t('A grava', r.status === 200 && r.j.conta.email === 'pessoa.a@exemplo.com' && r.j.conta.senha_guardada === true);
+  // A grava o próprio email; senha e user_id no corpo são ignorados.
+  let r = guardar(await pedir(A, 'PUT', '/api/conta-superlogica', { email: 'Pessoa.A@Exemplo.com', senha: SENHA, senha_cifrada: 'v1:falso', user_id: B }));
+  t('A grava o email', r.status === 200 && r.j.conta.email === 'pessoa.a@exemplo.com');
   t('gravou no id de A, não no do corpo', fb.linhas.length === 1 && fb.linhas[0].user_id === A);
-  t('banco guarda cifrado e abre só com A', fb.linhas[0].senha_cifrada !== SENHA && SC.decifrar(fb.linhas[0].senha_cifrada, A, ENV) === SENHA && SC.decifrar(fb.linhas[0].senha_cifrada, B, ENV) === null);
-  t('resposta sem senha cifrada', !r.txt.includes('senha_cifrada') && !r.txt.includes(fb.linhas[0].senha_cifrada));
+  t('nada de senha guardada mesmo vindo no corpo', JSON.stringify(Object.keys(fb.linhas[0]).sort()) === JSON.stringify(['atualizado_em', 'email', 'user_id']));
+  t('resposta sem senha', !r.txt.includes(SENHA) && !/senha/i.test(r.txt));
   t('cache no-store', /no-store/.test(r.h['cache-control'] || ''));
 
-  // B não vê nem mexe na de A.
+  // B não vê nem mexe na de A; chave interna e sessão sem id não gravam.
   r = guardar(await pedir(B, 'GET', '/api/conta-superlogica'));
   t('B não vê a conta de A', r.status === 200 && r.j.conta === null);
   r = guardar(await pedir(B, 'DELETE', '/api/conta-superlogica'));
   t('B apagar não apaga a de A', r.status === 200 && fb.linhas.length === 1 && fb.linhas[0].user_id === A);
-  r = guardar(await pedir('interno', 'PUT', '/api/conta-superlogica', { email: 'x@exemplo.com', senha: SENHA2 }));
-  t('chave interna não grava', r.status === 403 && fb.linhas.length === 1);
+  r = guardar(await pedir('interno', 'PUT', '/api/conta-superlogica', { email: 'x@exemplo.com' }));
+  t('chave interna não grava', r.status === 403 && fb.linhas.length === 1 && fb.linhas[0].email === 'pessoa.a@exemplo.com');
   r = guardar(await pedir('interno', 'GET', '/api/conta-superlogica'));
   t('chave interna não lê', r.status === 403);
-  r = guardar(await pedir('nao-e-uuid', 'PUT', '/api/conta-superlogica', { email: 'x@exemplo.com', senha: SENHA2 }));
+  r = guardar(await pedir('nao-e-uuid', 'PUT', '/api/conta-superlogica', { email: 'x@exemplo.com' }));
   t('sessão sem id válido não grava', r.status === 403);
+  r = guardar(await pedir(A, 'PUT', '/api/conta-superlogica', { senha: SENHA2 }));
+  t('só senha, sem email, recusa e não muda nada', r.status === 400 && fb.linhas[0].email === 'pessoa.a@exemplo.com' && Object.keys(fb.linhas[0]).length === 3);
 
-  // A troca só o email (senha mantém) e depois a senha.
-  const cifradoAntes = fb.linhas[0].senha_cifrada;
-  r = guardar(await pedir(A, 'PUT', '/api/conta-superlogica', { email: 'nova.a@exemplo.com' }));
-  t('troca o email e mantém a senha', r.status === 200 && fb.linhas[0].email === 'nova.a@exemplo.com' && fb.linhas[0].senha_cifrada === cifradoAntes);
+  // A troca o email (com senha no corpo, de novo ignorada).
   r = guardar(await pedir(A, 'PUT', '/api/conta-superlogica', { email: 'nova.a@exemplo.com', senha: SENHA2 }));
-  t('troca a senha', r.status === 200 && SC.decifrar(fb.linhas[0].senha_cifrada, A, ENV) === SENHA2);
+  t('troca o email', r.status === 200 && fb.linhas[0].email === 'nova.a@exemplo.com' && Object.keys(fb.linhas[0]).length === 3);
   r = guardar(await pedir(A, 'GET', '/api/conta-superlogica'));
-  t('A lê só senha guardada', r.status === 200 && r.j.conta.senha_guardada === true && r.j.conta.email === 'nova.a@exemplo.com' && !r.txt.includes('v1:'));
+  t('A lê o próprio email', r.status === 200 && r.j.conta.email === 'nova.a@exemplo.com' && !('senha_guardada' in r.j.conta));
 
   // Abrir no Superlógica: link de uso único pela aba nova.
   r = guardar(await pedir(A, 'POST', '/api/conta-superlogica/abrir', { destino: 'https://mal.exemplo' }));
@@ -212,11 +190,11 @@ function criarBanco() {
   const acoes = eventos.map((e) => e.acao);
   t('auditoria de gravar, trocar e apagar', acoes.includes('superlogica_conta_gravada') && acoes.includes('superlogica_conta_trocada') && acoes.includes('superlogica_conta_apagada'));
   const tudoAuditoria = JSON.stringify(eventos);
-  t('auditoria sem senha', ![SENHA, SENHA2].some((s) => tudoAuditoria.includes(s)) && !tudoAuditoria.includes('v1:'));
+  t('auditoria sem senha', ![SENHA, SENHA2].some((s) => tudoAuditoria.includes(s)) && !/senha/i.test(tudoAuditoria));
   const tudoResp = respostas.join('\n');
-  t('nenhuma resposta com a senha', ![SENHA, SENHA2].some((s) => tudoResp.includes(s)) && !/v1:[A-Za-z0-9+/=]+:/.test(tudoResp));
+  t('nenhuma resposta com a senha', ![SENHA, SENHA2].some((s) => tudoResp.includes(s)));
   t('nenhum log com a senha', ![SENHA, SENHA2].some((s) => saida.join('\n').includes(s)));
-  t('pedidos ao banco só com a senha cifrada', !JSON.stringify(fb.pedidos).includes(SENHA) && !JSON.stringify(fb.pedidos).includes(SENHA2));
+  t('nenhum pedido ao banco com senha', !JSON.stringify(fb.pedidos).includes(SENHA) && !JSON.stringify(fb.pedidos).includes(SENHA2) && !/senha/i.test(JSON.stringify(fb.pedidos)));
 
   srv.close();
   orig.log((falhou ? 'FALHOU ' : 'OK ') + ok + ' de ' + (ok + falhou));
