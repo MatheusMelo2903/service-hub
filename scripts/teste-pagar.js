@@ -432,6 +432,10 @@ const sl = (iso) => E.isoParaSL(iso) + ' 00:00:00';
   t('rota: fornecedor gravado', r.st === 200 && r.j.id_contato === '90001' && pedido.situacao === 'gravado' && pedido.aprovado_por_email === 'gil@x');
   r = await chamar('ana', 'POST', '/api/pagar/fornecedores', { id_superlogica: '167', cnpj: '11.222.333/0001-81', nome: 'Fornecedor Teste' });
   t('rota: fornecedor que já existe não vira pedido', r.st === 409);
+  r = await chamar('bia', 'GET', '/api/pagar/fornecedores');
+  t('rota: analista vê só o tipo da chave Pix', r.st === 200 && r.j.itens[0].pix && r.j.itens[0].pix.tipo === 'Email' && r.j.itens[0].pix.chave === undefined);
+  r = await chamar('gil', 'GET', '/api/pagar/fornecedores');
+  t('rota: gestor ou gerente vê a chave completa', r.st === 200 && r.j.itens[0].pix.chave === 'f@exemplo.com');
   srv.close();
 
   // Textos de tela sem hífen ou travessão como pontuação e sem citar fornecedor de leitura automática.

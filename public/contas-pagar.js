@@ -25,6 +25,25 @@
   function tabela(cab, linhas) { return '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead><tr>' + cab.map(function (c) { return '<th ' + TH + '>' + esc(c) + '</th>'; }).join('') + '</tr></thead><tbody>' + linhas.join('') + '</tbody></table></div>'; }
   function secao(titulo, dica, corpo) { return '<div style="margin-top:16px"><div style="font-weight:700;font-size:14px;margin-bottom:4px">' + esc(titulo) + '</div>' + (dica ? '<p class="hint" style="margin:0 0 8px">' + esc(dica) + '</p>' : '') + corpo + '</div>'; }
 
+  // Pergunta um texto curto numa janela da própria tela (motivo, como confirmou). null = cancelou.
+  function pedirTexto(titulo) {
+    return new Promise(function (fim) {
+      var fundo = document.createElement('div');
+      fundo.className = 'modal-overlay open'; fundo.style.zIndex = '1000';
+      fundo.setAttribute('role', 'dialog'); fundo.setAttribute('aria-modal', 'true');
+      fundo.innerHTML = '<div class="modal" style="width:480px;max-width:95vw"><div class="modal-title">' + esc(titulo) + '</div>'
+        + '<input id="cp-pergunta" type="text" autocomplete="off" style="width:100%;padding:8px 10px;margin-top:10px">'
+        + '<div class="modal-actions"><button type="button" class="btn btn-ghost" id="cp-perg-nao">Cancelar</button><button type="button" class="btn btn-primary" id="cp-perg-sim">Confirmar</button></div></div>';
+      document.body.appendChild(fundo);
+      var campo = fundo.querySelector('#cp-pergunta');
+      function fechar(v) { fundo.remove(); fim(v); }
+      fundo.querySelector('#cp-perg-nao').addEventListener('click', function () { fechar(null); });
+      fundo.querySelector('#cp-perg-sim').addEventListener('click', function () { fechar(campo.value.trim() || null); });
+      campo.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') fechar(campo.value.trim() || null); if (ev.key === 'Escape') fechar(null); });
+      setTimeout(function () { campo.focus(); }, 0);
+    });
+  }
+
   var est = { montado: false, seq: 0, cond: null, dados: null, rascunho: null, contas: [] };
 
   async function pegar(url, vivo, aoEsperar) {
@@ -151,13 +170,13 @@
       + (j.pode_gravar && prontas.length && j.gravacao !== 'bloqueado' ? '<button class="btn btn-primary" data-cp="baixar">Baixar as marcadas</button>' : '') + '</div><div id="cp-bx-msg"></div>'
       + (bx.length ? tabela(['', 'Situação', 'Fornecedor', 'Pago em', 'Lançado', 'Pago', 'Juros', 'Multa', 'Por quê', ''], bx.map(function (b) {
         var s = SIT[b.situacao] || [b.situacao, 'var(--muted)'];
-        var marca = b.situacao === 'pronta' && !b.eu_lancei ? '<input type="checkbox" data-cp-bx="' + b.id + '" checked>' : '';
+        var marca = b.situacao === 'pronta' && !b.eu_lancei ? '<input type="checkbox" data-cp-bx="' + esc(b.id) + '" checked>' : '';
         var acoes = '';
-        if (j.pode_gravar && (b.situacao === 'conferir' || b.situacao === 'incerto') && b.id_parcela && !b.eu_lancei && j.gravacao !== 'bloqueado') acoes += '<button class="btn btn-ghost" data-cp="conferir" data-id="' + b.id + '">' + (b.situacao === 'incerto' ? 'Reler e baixar' : 'Conferir e baixar') + '</button> ';
-        if (j.pode_gravar && ['pronta', 'conferir', 'incerto'].indexOf(b.situacao) >= 0) acoes += '<button class="btn btn-ghost" data-cp="descartar" data-id="' + b.id + '">Não é este pagamento</button>';
+        if (j.pode_gravar && (b.situacao === 'conferir' || b.situacao === 'incerto') && b.id_parcela && !b.eu_lancei && j.gravacao !== 'bloqueado') acoes += '<button class="btn btn-ghost" data-cp="conferir" data-id="' + esc(b.id) + '">' + (b.situacao === 'incerto' ? 'Reler e baixar' : 'Conferir e baixar') + '</button> ';
+        if (j.pode_gravar && ['pronta', 'conferir', 'incerto'].indexOf(b.situacao) >= 0) acoes += '<button class="btn btn-ghost" data-cp="descartar" data-id="' + esc(b.id) + '">Não é este pagamento</button>';
         if (b.eu_lancei && b.situacao !== 'baixada') acoes += '<span class="hint">Você lançou esta despesa: outra pessoa confirma.</span>';
-        var jm = b.situacao === 'conferir' || b.situacao === 'incerto' ? '<input data-cp-juros="' + b.id + '" value="' + esc(String(b.juros || 0).replace('.', ',')) + '" style="width:70px">' : brl(b.juros);
-        var mm = b.situacao === 'conferir' || b.situacao === 'incerto' ? '<input data-cp-multa="' + b.id + '" value="' + esc(String(b.multa || 0).replace('.', ',')) + '" style="width:70px">' : brl(b.multa);
+        var jm = b.situacao === 'conferir' || b.situacao === 'incerto' ? '<input data-cp-juros="' + esc(b.id) + '" value="' + esc(String(b.juros || 0).replace('.', ',')) + '" style="width:70px">' : brl(b.juros);
+        var mm = b.situacao === 'conferir' || b.situacao === 'incerto' ? '<input data-cp-multa="' + esc(b.id) + '" value="' + esc(String(b.multa || 0).replace('.', ',')) + '" style="width:70px">' : brl(b.multa);
         return '<tr><td ' + TD + '>' + marca + '</td><td ' + TD + '>' + selo(s[0], s[1]) + (b.baixado_por ? '<div class="hint" style="margin:2px 0 0">' + esc(b.baixado_por === 'sistema' ? 'pelo sistema' : b.baixado_por) + ' ' + esc(horaBR(b.baixado_em)) + '</div>' : '') + '</td>'
           + '<td ' + TD + '>' + esc(b.fornecedor || '') + '<div class="hint" style="margin:0">' + esc(b.origem === 'retorno' ? 'retorno do banco' : 'extrato') + '</div></td><td ' + TD + '>' + esc(dataBR(b.data_pagamento)) + '</td><td ' + TD + '>' + (b.valor_parcela != null ? brl(b.valor_parcela) : '') + '</td><td ' + TD + '>' + (b.valor_pago != null ? brl(b.valor_pago) : '') + '</td>'
           + '<td ' + TD + '>' + jm + '</td><td ' + TD + '>' + mm + '</td><td ' + TD + '>' + esc(b.motivo || '') + '</td><td ' + TD + '>' + acoes + '</td></tr>';
@@ -182,7 +201,7 @@
     try {
       if (acao === 'atualizar') return abrirCondominio(id, true);
       if (acao === 'ignorar' || acao === 'voltar') {
-        var motivo = acao === 'ignorar' ? window.prompt('Por que esta conta não é mais esperada? (contrato encerrado, por exemplo)') : '';
+        var motivo = acao === 'ignorar' ? await pedirTexto('Por que esta conta não é mais esperada? (contrato encerrado, por exemplo)') : '';
         if (acao === 'ignorar' && !motivo) return;
         await enviar('PUT', '/api/pagar/condominio/' + id + '/esperadas/' + b.getAttribute('data-chave'), { ignorar: acao === 'ignorar', motivo: motivo });
         return abrirCondominio(id);
@@ -220,7 +239,7 @@
         return abrirCondominio(id);
       }
       if (acao === 'descartar') {
-        var mot = window.prompt('Por que este pagamento não é desta despesa?');
+        var mot = await pedirTexto('Por que este pagamento não é desta despesa?');
         if (!mot) return;
         await enviar('POST', '/api/pagar/baixas/' + b.getAttribute('data-id') + '/descartar', { motivo: mot });
         return abrirCondominio(id);
@@ -392,14 +411,14 @@
       msg(info, 'Pedidos de cadastro de fornecedor. O cadastro vale para todos os condomínios do Superlógica.');
       el.innerHTML = (j.itens || []).length ? tabela(['Fornecedor', 'CNPJ', 'Pix', 'Situação', 'Pedido', ''], j.itens.map(function (x) {
         var acoes = x.situacao === 'pendente' ? ((j.pode_aprovar && !x.eu_pedi ? '<button class="btn btn-primary" data-cpf="aprovar" data-id="' + esc(x.id) + '" data-pix="' + (x.pix || x.banco ? '1' : '') + '">Aprovar e cadastrar</button> ' : '') + '<button class="btn btn-ghost" data-cpf="cancelar" data-id="' + esc(x.id) + '">Cancelar</button>') : esc(x.motivo || '');
-        return '<tr><td ' + TD + '>' + esc(x.nome) + '</td><td ' + TD + '>' + esc(x.cnpj) + '</td><td ' + TD + '>' + (x.pix ? esc(x.pix.tipo + ' ' + x.pix.chave) : '') + '</td><td ' + TD + '>' + esc(x.situacao) + (x.id_contato ? ' (código ' + esc(x.id_contato) + ')' : '') + '</td>'
+        return '<tr><td ' + TD + '>' + esc(x.nome) + '</td><td ' + TD + '>' + esc(x.cnpj) + '</td><td ' + TD + '>' + (x.pix ? esc(x.pix.tipo + (x.pix.chave ? ' ' + x.pix.chave : '')) : '') + '</td><td ' + TD + '>' + esc(x.situacao) + (x.id_contato ? ' (código ' + esc(x.id_contato) + ')' : '') + '</td>'
           + '<td ' + TD + '>' + esc(x.pedido_por || '') + ' ' + esc(horaBR(x.pedido_em)) + '</td><td ' + TD + '>' + acoes + '</td></tr>';
       })) : '<div class="hint">Nenhum pedido.</div>';
       el.querySelectorAll('[data-cpf]').forEach(function (b) {
         b.addEventListener('click', async function () {
           try {
             if (b.getAttribute('data-cpf') === 'cancelar') { await enviar('POST', '/api/pagar/fornecedores/' + b.getAttribute('data-id') + '/cancelar', {}); return carregarFornecedores(); }
-            var como = b.getAttribute('data-pix') ? window.prompt('Como a chave Pix ou a conta foi confirmada com o fornecedor? (telefone, com quem falou)') : '';
+            var como = b.getAttribute('data-pix') ? await pedirTexto('Como a chave Pix ou a conta foi confirmada com o fornecedor? (telefone, com quem falou)') : '';
             if (b.getAttribute('data-pix') && !como) return;
             b.disabled = true;
             await enviar('POST', '/api/pagar/fornecedores/' + b.getAttribute('data-id') + '/aprovar', { confirmado_como: como }, true);

@@ -619,7 +619,8 @@ function registrar(d) {
     try {
       const l = await lerTabela('fin_pagar_fornecedores?select=*&order=pedido_em.desc&limit=200');
       res.json({ pode_aprovar: q.gestor, itens: l.filter((x) => !escopo || escopo.has(String(x.id_superlogica))).map((x) => ({ id: x.id, id_superlogica: x.id_superlogica, entrada: x.entrada, cnpj: E.formatarCnpj(x.cnpj),
-        nome: x.dados && x.dados.nome, pix: x.dados && x.dados.pix ? { tipo: P.NOME_TIPO_PIX[x.dados.pix.tipo] || x.dados.pix.tipo, chave: x.dados.pix.chave } : null,
+        nome: x.dados && x.dados.nome, // Chave Pix completa só para quem aprova (gestor ou gerente); os outros veem só o tipo.
+        pix: x.dados && x.dados.pix ? Object.assign({ tipo: P.NOME_TIPO_PIX[x.dados.pix.tipo] || x.dados.pix.tipo }, q.gestor ? { chave: x.dados.pix.chave } : {}) : null,
         banco: x.dados && x.dados.banco ? { banco: x.dados.banco.banco, agencia: x.dados.banco.agencia, conta_final: '***' + String(x.dados.banco.conta).slice(-4) } : null,
         situacao: x.situacao, motivo: x.motivo, pedido_por: x.pedido_por_email, pedido_em: x.pedido_em, aprovado_por: x.aprovado_por_email, aprovado_em: x.aprovado_em, id_contato: x.id_contato,
         eu_pedi: !!(q.id && x.pedido_por && String(x.pedido_por) === q.id) })) });
@@ -633,6 +634,7 @@ function registrar(d) {
     const id = String(b.id_superlogica || '');
     if (!ID.test(id) || NAO_CONDOMINIOS.has(id)) return res.status(400).json({ erro: 'id_invalido', detalhe: 'Escolha o condomínio.' });
     if (b.entrada && !UUID.test(String(b.entrada))) return res.status(400).json({ erro: 'id_invalido' });
+    if (d.dentroDoLimite && !d.dentroDoLimite(req, 'pagar_fornecedor', 30)) return res.status(429).json({ erro: 'limite', detalhe: 'Muitos pedidos de fornecedor nesta hora. Tente mais tarde.' });
     if (!(await travas(req, res, id))) return;
     const q = await exigirLanca(req, res); if (!q) return;
     const f = P.conferirFornecedor(b);
