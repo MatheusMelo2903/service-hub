@@ -5506,10 +5506,9 @@ require('./servico/rotas-email-financeiro').criarRotasEmailFinanceiro(app, {
 if (require.main === module && superlogicaNativa() && SUPABASE_SERVICE_ROLE_KEY) _leitorEmail.agendar();
 
 // ─────────────────────────────────────────────────────────────────────────
-// Conta do Superlógica de cada pessoa (senha cifrada com SUPERLOGICA_CRED_CHAVE, só a própria
-// pessoa grava) e o botão "Abrir no Superlógica" (link de uso único de 60 segundos, amarrado a
-// quem pediu). Hoje o botão só abre a tela certa: o login fica com a pessoa. Detalhes em
-// servico/superlogica-conta.js.
+// Email do Superlógica de cada pessoa (só o email, nunca senha; só a própria pessoa grava) e o
+// botão "Abrir no Superlógica" (link de uso único de 60 segundos, amarrado a quem pediu). O botão
+// abre a tela certa e o login fica com a pessoa. Detalhes em servico/superlogica-conta.js.
 // ─────────────────────────────────────────────────────────────────────────
 require('./servico/superlogica-conta').criarRotasContaSuperlogica(app, {
   requireAuth, express, banco: supabaseAdminRequest, auditoria,

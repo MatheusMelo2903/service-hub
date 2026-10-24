@@ -5,21 +5,17 @@
 // pronto lá e o botão leva a pessoa direto à tela de publicação. O Hub nunca resolve nem contorna
 // essa verificação.
 //
-// Caminho usado hoje (investigação de 24/10/2026): C. O login fica em outro endereço
-// (login.superlogica.net), que redireciona na hora quando já existe sessão e não pode ser lido
-// enquanto a pessoa está conectada; o mesmo sistema traz o módulo de reCAPTCHA do Google V2 nos
-// formulários; e a documentação pública só oferece login por token para a Área do condômino
-// (morador), não para quem administra. Sem ver o formulário de login não dá para mandar email e
-// senha por ele com segurança. Então o botão abre a tela certa e, se o Superlógica pedir login,
-// a pessoa entra uma vez com a própria conta (o navegador guarda a sessão).
-// O link do botão já é de uso único, vale 60 segundos e fica amarrado a quem pediu: se um dia o
-// login direto for confirmado (caminho A), a troca fica só na página de passagem.
+// Caminho usado (decisão do Matheus, 24/10/2026): C. O login do Superlógica é hospedado em
+// login.superlogica.net/u/login/identifier?state=... (um state por tentativa), em duas etapas
+// (email e depois senha), às vezes com código por email, com "Continuar com Google" e sessão
+// guardada por 30 dias no navegador. Login direto pelo Hub (caminho A) está descartado e o Hub
+// NÃO guarda senha do Superlógica: guarda só o email, que aparece como dica no botão.
+// O botão abre a tela certa; se o Superlógica pedir login, a pessoa entra com a própria conta.
+// O link do botão é de uso único, vale 60 segundos e fica amarrado a quem pediu.
 //
 // Regras deste arquivo:
-// - A senha fica CIFRADA no banco (AES 256 GCM, chave SUPERLOGICA_CRED_CHAVE do ambiente, com o
-//   id da pessoa como dado autenticado: a senha de uma pessoa não abre com o id de outra).
-// - Só a própria pessoa grava, troca ou apaga. Ninguém lê a senha, nem o gestor: a tela só
-//   recebe "senha guardada". A senha nunca vai para resposta, log ou auditoria.
+// - Só o email do Superlógica da própria pessoa. Senha que vier no corpo é ignorada e nunca é guardada.
+// - Só a própria pessoa grava, troca ou apaga. Ninguém vê a conta de outra pessoa, nem o gestor.
 // Testes em scripts/teste-superlogica-conta.js.
 
 const crypto = require('crypto');
@@ -38,58 +34,19 @@ const DESTINOS = {
   documentos: { caminho: '/clients/condor/impressoes/index', nome: 'Documentos do condomínio' },
 };
 
-// ---------- senha cifrada ----------
-// A chave vem do ambiente (pelo menos 32 caracteres; gerar com "openssl rand -base64 48").
-function chaveDe(env) {
-  const s = String((env || process.env).SUPERLOGICA_CRED_CHAVE || '');
-  if (s.length < 32) return null;
-  return crypto.createHash('sha256').update('hub-superlogica-conta:' + s).digest();
-}
-function cifrar(texto, idUsuario, env) {
-  const k = chaveDe(env);
-  if (!k) { const e = new Error('sem_chave'); e.code = 'sem_chave'; throw e; }
-  if (!UUID.test(String(idUsuario || ''))) { const e = new Error('usuario_invalido'); e.code = 'usuario_invalido'; throw e; }
-  const iv = crypto.randomBytes(12);
-  const c = crypto.createCipheriv('aes-256-gcm', k, iv);
-  c.setAAD(Buffer.from('usuario:' + idUsuario, 'utf8'));
-  const ct = Buffer.concat([c.update(String(texto), 'utf8'), c.final()]);
-  return 'v1:' + iv.toString('base64') + ':' + c.getAuthTag().toString('base64') + ':' + ct.toString('base64');
-}
-// Devolve a senha aberta ou null (chave errada, outro usuário ou valor estragado).
-// USO RESTRITO: só o login direto (caminho A, ainda não construído) pode chamar esta função, e nunca
-// numa rota que devolva a senha para a tela, log ou auditoria. Por isso ela não sai do arquivo
-// (só nos testes, com NODE_ENV=test).
-function decifrar(valor, idUsuario, env) {
-  const k = chaveDe(env);
-  const p = String(valor || '').split(':');
-  if (!k || p.length !== 4 || p[0] !== 'v1') return null;
-  try {
-    const d = crypto.createDecipheriv('aes-256-gcm', k, Buffer.from(p[1], 'base64'));
-    d.setAAD(Buffer.from('usuario:' + idUsuario, 'utf8'));
-    d.setAuthTag(Buffer.from(p[2], 'base64'));
-    return Buffer.concat([d.update(Buffer.from(p[3], 'base64')), d.final()]).toString('utf8');
-  } catch (e) { return null; }
-}
-
 // ---------- cadastro ----------
-// Confere o que veio da tela. atual: a conta já gravada ou null.
-// Devolve { ok: true, email, senha } (senha só quando foi digitada) ou { ok: false, detalhe }.
-function validar(b, atual) {
+// Confere o email que veio da tela. Qualquer outro campo (inclusive senha) é ignorado.
+// Devolve { ok: true, email } ou { ok: false, detalhe }.
+function validar(b) {
   const x = b || {};
-  const email = String(x.email == null ? (atual ? atual.email : '') : x.email).replace(/\s+/g, '').toLowerCase();
+  const email = String(x.email == null ? '' : x.email).replace(/\s+/g, '').toLowerCase();
   if (!EMAIL.test(email) || email.length > 200) return { ok: false, detalhe: 'Email inválido.' };
-  let senha = null;
-  if (typeof x.senha === 'string' && x.senha !== '') {
-    if (x.senha.length > 200 || /[\r\n]/.test(x.senha)) return { ok: false, detalhe: 'Senha inválida.' };
-    senha = x.senha;
-  }
-  if (!atual && !senha) return { ok: false, detalhe: 'Informe a senha do Superlógica.' };
-  return { ok: true, email, senha };
+  return { ok: true, email };
 }
-// O que a tela vê: nunca a senha (nem cifrada).
+// O que a tela vê da conta.
 function contaParaTela(c) {
   if (!c) return null;
-  return { email: c.email || '', senha_guardada: !!c.senha_cifrada, atualizado_em: c.atualizado_em || null };
+  return { email: c.email || '', atualizado_em: c.atualizado_em || null };
 }
 
 // ---------- destino ----------
@@ -181,7 +138,7 @@ function criarRotasContaSuperlogica(app, d) {
     if (!res.headersSent) res.status(502).json({ erro: 'falha', detalhe: 'Não foi possível concluir agora. Tente de novo em instantes.' });
   }
   async function ler(id) {
-    const r = await banco('GET', tabela + '?select=user_id,email,senha_cifrada,atualizado_em&user_id=eq.' + id + '&limit=1');
+    const r = await banco('GET', tabela + '?select=user_id,email,atualizado_em&user_id=eq.' + id + '&limit=1');
     if (r.status !== 200 || !Array.isArray(r.body)) throw new Error('banco_' + r.status);
     return r.body[0] || null;
   }
@@ -189,29 +146,24 @@ function criarRotasContaSuperlogica(app, d) {
   app.get('/api/conta-superlogica', requireAuth, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const id = dono(req, res); if (!id) return;
-    try { res.json({ conta: contaParaTela(await ler(id)), chave_configurada: !!chaveDe(env()), modo: MODO }); } catch (e) { falha(res, 'ler', e); }
+    try { res.json({ conta: contaParaTela(await ler(id)), modo: MODO }); } catch (e) { falha(res, 'ler', e); }
   });
 
-  // Grava ou troca. A senha só muda quando vem preenchida; o id é sempre o de quem está logado.
+  // Grava ou troca o email. O id é sempre o de quem está logado; senha no corpo é ignorada.
   app.put('/api/conta-superlogica', requireAuth, json, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const id = dono(req, res); if (!id) return;
     let atual;
     try { atual = await ler(id); } catch (e) { return falha(res, 'ler', e); }
-    const v = validar(req.body, atual);
+    const v = validar(req.body);
     if (!v.ok) return res.status(400).json({ erro: 'campo_invalido', detalhe: v.detalhe });
     const linha = { email: v.email, atualizado_em: new Date().toISOString() };
-    if (v.senha) {
-      try { linha.senha_cifrada = cifrar(v.senha, id, env()); } catch (e) {
-        return res.status(503).json({ erro: 'sem_chave', detalhe: 'A chave de cifra (SUPERLOGICA_CRED_CHAVE) não está configurada no servidor. Nada foi salvo.' });
-      }
-    }
     try {
       const r = atual
-        ? await banco('PATCH', tabela + '?user_id=eq.' + id + '&select=user_id,email,senha_cifrada,atualizado_em', linha)
-        : await banco('POST', tabela + '?select=user_id,email,senha_cifrada,atualizado_em', Object.assign({ user_id: id }, linha));
+        ? await banco('PATCH', tabela + '?user_id=eq.' + id + '&select=user_id,email,atualizado_em', linha)
+        : await banco('POST', tabela + '?select=user_id,email,atualizado_em', Object.assign({ user_id: id }, linha));
       if (!(r.status === 200 || r.status === 201) || !Array.isArray(r.body) || !r.body[0]) throw new Error('banco_' + r.status);
-      auditoria.evento(req, atual ? 'superlogica_conta_trocada' : 'superlogica_conta_gravada', { senha_trocada: !!v.senha, email_trocado: !atual || atual.email !== v.email });
+      auditoria.evento(req, atual ? 'superlogica_conta_trocada' : 'superlogica_conta_gravada', { email_trocado: !atual || atual.email !== v.email });
       res.json({ conta: contaParaTela(r.body[0]) });
     } catch (e) { falha(res, 'salvar', e); }
   });
@@ -239,7 +191,7 @@ function criarRotasContaSuperlogica(app, d) {
     try { conta = await ler(id); } catch (e) { /* sem a conta a dica sai sem o email */ }
     const token = links.emitir(id, alvo.url);
     auditoria.evento(req, 'superlogica_abrir', { destino: String(b.destino), id_superlogica: b.id_superlogica ? Number(b.id_superlogica) : null, modo: MODO });
-    res.json({ token, validade_segundos: LINK_VALIDADE_MS / 1000, modo: MODO, tela: alvo.nome, email: conta ? conta.email : null, conta_guardada: !!(conta && conta.senha_cifrada) });
+    res.json({ token, validade_segundos: LINK_VALIDADE_MS / 1000, modo: MODO, tela: alvo.nome, email: conta ? conta.email : null });
   });
 
   // A aba nova chega aqui por formulário (token e sessão do Hub no corpo, nunca na URL).
@@ -255,7 +207,7 @@ function criarRotasContaSuperlogica(app, d) {
       auditoria.evento(req, 'superlogica_link_recusado', { motivo: r.motivo }, r.motivo === 'outro_usuario', r.motivo === 'outro_usuario' ? 'link_de_outra_pessoa' : null);
       return res.status(r.motivo === 'outro_usuario' ? 403 : 410).type('html').send(paginaAviso(MOTIVO_TEXTO[r.motivo] || MOTIVO_TEXTO.nao_existe));
     }
-    // Caminho C: leva direto à tela. A senha não é aberta aqui.
+    // Caminho C: leva direto à tela.
     res.redirect(303, r.url);
   });
 
@@ -263,8 +215,6 @@ function criarRotasContaSuperlogica(app, d) {
 }
 
 module.exports = {
-  chaveDe, cifrar, validar, contaParaTela, telaBase, montarDestino, criarLinks, paginaAviso,
+  validar, contaParaTela, telaBase, montarDestino, criarLinks, paginaAviso,
   criarRotasContaSuperlogica, DESTINOS, MODO, LINK_VALIDADE_MS,
 };
-// Só os testes abrem a senha cifrada para conferir a cifra.
-if (process.env.NODE_ENV === 'test') Object.defineProperty(module.exports, 'decifrarParaTeste', { value: decifrar, enumerable: false });
