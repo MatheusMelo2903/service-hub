@@ -4649,6 +4649,8 @@ app.get('/api/financeiro/conciliacao/condominio/:idSuperlogica/regras', requireA
   if (!(await _travasConciliacao(req, res, id))) return;
   try { res.json(await _conciliacao.regras(id, req.query.forcar === '1')); } catch (e) { _erroConciliacao(res, e, 'regras ' + id); }
 });
+// Conciliação do dia (extrato no Superlógica, regras, fila para conferir e avisos). Rotas em financeiro/conciliacao-auto-rotas.js.
+require('./financeiro/conciliacao-auto-rotas').registrar({ app, express, requireAuth, requireGestor, exigirFinanceiro: _exigirFinanceiro, exigirModuloItem: _exigirModuloItem, exigirLeituraSuperlogica, exigirCarteira: (req, res, id) => _exigirCarteira(req, res, id), exigirEscopo: (req, res, id) => _exigirEscopoFinanceiro(req, res, id), escopoFinanceiro: _escopoFinanceiro, gruposCarteiras, lerPerfil, podeModulo, idValido: slModulo.idValido, cliente: () => clienteSL(), cred: () => ({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }), politica: politicaEscrita, auditar: (req, acao, det, susp) => auditoria.evento(req, acao, det, susp), supabase: supabaseAdminRequest, temBanco: !!(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY), superlogicaNativa, env: process.env });
 
 // GET /api/cobranca/condominio/:id[?forcar=1]
 app.get('/api/cobranca/condominio/:idSuperlogica', requireAuth, async (req, res) => {

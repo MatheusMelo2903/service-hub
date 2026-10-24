@@ -45,6 +45,9 @@ const OPERACOES = {
   comunicado_disparar: { rotulo: 'Disparo dos comunicados pendentes de todos os condomínios', sensivel: true, global: true, chave: 'COMUNICADOS_DISPARO_LIBERADO' },
   balancete_gerar: { rotulo: 'Geração do balancete digital (900A)', legado: 'BALANCETE_GERACAO_LIBERADA', sensivel: true },
   documento_arquivar: { rotulo: 'Arquivamento de documento no Superlógica' },
+  // Conciliação do dia: extratos (só dias novos) e lançamentos já pagos de um condomínio. Um pedido
+  // cobre a lista conferida; acima de 20 itens a confirmação é reforçada.
+  conciliacao_gravar: { rotulo: 'Gravação da conciliação do dia (extratos e lançamentos já pagos)' },
   // Ponte genérica /api/superlogica (importação de unidades e despesas pela tela): cada POST, PUT
   // ou DELETE gasta uma unidade da cota confirmada. Cota acima de 1 envio é lote: confirmação reforçada.
   ponte_superlogica: { rotulo: 'Importação direta no Superlógica', cota: true },
