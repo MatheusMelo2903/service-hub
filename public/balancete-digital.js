@@ -169,7 +169,11 @@
         + '<div id="bd-reabrir-box"></div><div id="bd-acao-info" style="margin-top:6px"></div><div id="bd-hist"></div>';
     }
     html += '<div class="hint" style="margin-top:8px">Publicar para os condôminos continua sendo confirmado por uma pessoa, depois que o sistema marcar "Pronto para publicar".</div>';
+    var prontoPublicar = s.etapa === 'pronto_publicar' && !!window.AbrirSuperlogica;
+    if (prontoPublicar) html += '<div id="bd-publicar"></div>';
     el('bd-cond').innerHTML = html;
+    // Pronto para publicar: o botão leva à tela de documentos do Superlógica, onde a pessoa confirma.
+    if (prontoPublicar) AbrirSuperlogica.botao(el('bd-publicar'), { destino: 'documentos', idSuperlogica: est.cond.id, nomeCond: s.nome || est.cond.nome, passos: AbrirSuperlogica.PASSOS_PUBLICAR });
     el('bd-recalc').addEventListener('click', function (ev) { ev.preventDefault(); carregarCond(true); });
     if (el('bd-aprender')) el('bd-aprender').addEventListener('click', aprender);
     if (el('bd-confirmar-modelo')) el('bd-confirmar-modelo').addEventListener('click', function () { confirmarModelo(m.itens); });

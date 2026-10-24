@@ -5467,6 +5467,22 @@ require('./servico/rotas-email-financeiro').criarRotasEmailFinanceiro(app, {
 if (require.main === module && superlogicaNativa() && SUPABASE_SERVICE_ROLE_KEY) _leitorEmail.agendar();
 
 // ─────────────────────────────────────────────────────────────────────────
+// Conta do Superlógica de cada pessoa (senha cifrada com SUPERLOGICA_CRED_CHAVE, só a própria
+// pessoa grava) e o botão "Abrir no Superlógica" (link de uso único de 60 segundos, amarrado a
+// quem pediu). Hoje o botão só abre a tela certa: o login fica com a pessoa. Detalhes em
+// servico/superlogica-conta.js.
+// ─────────────────────────────────────────────────────────────────────────
+require('./servico/superlogica-conta').criarRotasContaSuperlogica(app, {
+  requireAuth, express, banco: supabaseAdminRequest, auditoria,
+  verificarUsuario: async (jwt) => {
+    if (!SUPABASE_URL || !jwt) return null;
+    const p = await verifySupabaseJwt(jwt);
+    if (!p || await usuarioBloqueado(p.sub)) return null;
+    return p;
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────
 // Fechamento do mês e conferência dos anexos (T38), dentro do item Financeiro: rotas em
 // servico/rotas-fechamento.js. Só GET no Superlógica; marca de conferido só no banco de teste.
 // ─────────────────────────────────────────────────────────────────────────
