@@ -4547,6 +4547,9 @@ require('./financeiro/juros-rotas').registrar({
   auditar: (req, acao, det) => auditoria.evento(req, acao, det, false),
 });
 
+// Boletos do mês (calendário, composição, conferência antes de gerar, remessa, régua, trocas do PJBank). Rotas em financeiro/boletos-mes-rotas.js.
+require('./financeiro/boletos-mes-rotas').registrar({ app, express, requireAuth, exigirFinanceiro: _exigirFinanceiro, exigirModuloItem: _exigirModuloItem, exigirLeituraSuperlogica, exigirCarteira: (req, res, id) => _exigirCarteira(req, res, id), exigirEscopo: (req, res, id) => _exigirEscopoFinanceiro(req, res, id), escopoFinanceiro: _escopoFinanceiro, lerPerfil, clienteSL: () => clienteSL(), cred: () => ({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }), politica: politicaEscrita, supabase: { url: SUPABASE_URL, chave: SUPABASE_SERVICE_ROLE_KEY }, auditar: (req, acao, det) => auditoria.evento(req, acao, det, false) });
+
 // ─────────────────────────────────────────────────────────────────────────
 // Conciliação (T35), item próprio do menu desde a T37 (módulos financeiro e conciliacao). Só GET no Superlógica (extrato já importado
 // pela equipe: conciliacao/index por condomínio e conta, e contabancos/index), no máximo
