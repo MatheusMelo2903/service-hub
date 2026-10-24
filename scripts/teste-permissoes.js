@@ -60,5 +60,15 @@ t('dono da todas_carteiras', P.conferirMudanca(dono, antes, Object.assign({}, an
 t('concede com todas_carteiras recusado', !P.concedeBemFormado({ configuracoes: ['todas_carteiras'] }));
 t('raiane nao edita quem ve todas as carteiras', !P.podeEditarAlvo(raiane2, { id: 'tc', role: 'OPERACIONAL', permissoes: { configuracoes: { visivel: false, acoes: ['todas_carteiras'] } } }).ok);
 
+// Painel da gestão (Agenda do mês): só um GESTOR dá ou tira; nunca vai no concede.
+const painel = { gestao_painel: { visivel: true, acoes: ['ver'] } };
+const raianePainel = Object.assign({}, raiane, { permissoes: Object.assign({}, raiane.permissoes, painel), concede: { gestao_painel: ['ver'] } });
+t('dono libera o painel da gestao', P.conferirMudanca(dono, antes, Object.assign({}, antes, painel)).ok);
+t('raiane com o painel nao repassa', P.conferirMudanca(raianePainel, antes, Object.assign({}, antes, painel)).motivo === 'so_gestor_concede');
+t('raiane nao tira o painel de ninguem', !P.conferirMudanca(raianePainel, Object.assign({}, antes, painel), antes).ok);
+t('gestor comum sem o painel nao libera', !P.conferirMudanca(gestor2, antes, Object.assign({}, antes, painel)).ok);
+t('concede com o painel recusado', !P.concedeBemFormado({ gestao_painel: ['ver'] }));
+t('mudanca sem o painel segue a regra de antes', P.conferirMudanca(raiane, antes, { atas: { visivel: true, acoes: ['gerar', 'transcricao_livre'] } }).ok);
+
 console.log(ok + '/' + (ok + falha));
 process.exit(falha ? 1 : 0);

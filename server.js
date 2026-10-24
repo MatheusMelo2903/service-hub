@@ -5945,6 +5945,9 @@ require('./servico/trabalhos').criarRotasTrabalhos(app, {
   storageUpload: supabaseStorageUpload, storageSignedUrl: supabaseStorageSignedUrl, storageDelete: supabaseStorageDelete,
 });
 
+// Agenda do mês e Painel da gestão. Detalhes em servico/rotas-agenda.js.
+require('./servico/rotas-agenda').criarRotasAgenda(app, { requireAuth, express, banco: supabaseAdminRequest, perfilDe, auditoria, dentroDoLimite, modelos, condominioDaBase: SUPABASE_SERVICE_ROLE_KEY ? condominioDaBase : null, escopo: (req) => carteiraT18.escopo(req), storageUpload: supabaseStorageUpload, storageSignedUrl: supabaseStorageSignedUrl, storageDelete: supabaseStorageDelete, porta: PORT, segredo: INTERNAL_API_SECRET });
+
 // Middleware 404 para rotas /api/* desconhecidas.
 // Posicionado depois de todas as rotas reais de /api e antes do catch-all geral.
 // Retorna JSON estruturado e loga via console.warn (404 é erro de cliente, não falha de servidor).

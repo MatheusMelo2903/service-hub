@@ -8,6 +8,9 @@
 
 // todas_carteiras (T18, ver todas as carteiras) também: só o dono dá ou tira, nunca vai no concede.
 const RESTRITAS = ['ver_chaves', 'ver_auditoria', 'auditoria_total', 'todas_carteiras'];
+// Módulos que só um GESTOR dá ou tira (23/10/2026, pedido do Matheus): o Painel da gestão da
+// Agenda do mês. Um GERENTE que recebeu não repassa, e o módulo nunca vai no concede.
+const SO_GESTOR = ['gestao_painel'];
 const NOME = /^[a-z_]{1,40}$/;
 
 const acoesDe = (perms, m) => {
@@ -46,6 +49,7 @@ function conferirMudanca(editor, antes, depois, interno) {
   const mexidas = adicionadas.concat(removidas);
   if (mexidas.some((x) => x.endsWith('.auditoria_total'))) return { ok: false, motivo: 'acesso_de_dono', adicionadas, removidas };
   if (interno) return { ok: true, adicionadas, removidas };
+  if (mexidas.some((x) => SO_GESTOR.includes(x.split('.')[0])) && !(editor && editor.role === 'GESTOR')) return { ok: false, motivo: 'so_gestor_concede', adicionadas, removidas };
   if (ehDono(editor)) return { ok: true, adicionadas, removidas };
   if (mexidas.some((x) => RESTRITAS.includes(x.split('.')[1]))) return { ok: false, motivo: 'acesso_restrito', adicionadas, removidas };
   const concede = (editor && editor.concede) || {};
@@ -62,8 +66,8 @@ function conferirMudanca(editor, antes, depois, interno) {
 // Formato do "concede" que o dono grava para alguém.
 function concedeBemFormado(c) {
   if (!c || typeof c !== 'object' || Array.isArray(c)) return false;
-  return Object.entries(c).every(([m, l]) => NOME.test(m) && Array.isArray(l) && l.length <= 20
+  return Object.entries(c).every(([m, l]) => NOME.test(m) && !SO_GESTOR.includes(m) && Array.isArray(l) && l.length <= 20
     && l.every((a) => typeof a === 'string' && NOME.test(a) && !RESTRITAS.includes(a)));
 }
 
-module.exports = { RESTRITAS, ehDono, temRestrita, temConcede, podeEditarAlvo, conferirMudanca, concedeBemFormado };
+module.exports = { RESTRITAS, SO_GESTOR, ehDono, temRestrita, temConcede, podeEditarAlvo, conferirMudanca, concedeBemFormado };
