@@ -65,7 +65,7 @@ function criarSL() {
       if (acao === 'contabancos/index') return s.contas;
       if (acao === 'conciliacao/index') return { itens: linhasConc(String(p.idConta), isoDeSl(p.dtInicio), isoDeSl(p.dtFim)) };
       if (acao === 'despesas/index') return Number(p.pagina) > 1 ? [] : (s.despesas[String(p.idCondominio)] || []).filter((d) => { const v = isoDeSl(d.dt_vencimento_pdes); return v >= isoDeSl(p.dtInicio) && v <= isoDeSl(p.dtFim); });
-      if (acao === 'condominios/get') return [{ id_condominio_cond: '167', st_fantasia_cond: 'Residencial Teste' }, { id_condominio_cond: '136', st_fantasia_cond: 'Casablanca' }];
+      if (acao === 'condominios/get') return [{ id_condominio_cond: '167', st_fantasia_cond: 'Residencial Teste' }, { id_condominio_cond: '136', st_fantasia_cond: 'Casablanca' }, { id_condominio_cond: '150', st_fantasia_cond: 'Novo Ainda' }];
       if (acao === 'fornecedores/index') return String(p.id) === '777' ? [{ id_contato_con: '777', st_nome_con: 'FORNECEDOR XYZ' }] : [];
       throw new Error('rota não dublada ' + acao);
     },
@@ -317,6 +317,8 @@ function ofxTexto({ banco, agencia, conta, itens }) {
   const env = { ESCRITA_SUPERLOGICA: 'confirmacao' };
   const eventos = [];
   const politica = W.criarPoliticaEscrita({ env: () => env, auditar: (rq, acao, det) => eventos.push({ acao, det }), condominioDaBase: async (id) => ({ 167: { nome: 'Residencial Teste' }, 136: { nome: 'Condomínio Casablanca' } }[id] || null) });
+  sl.contas.push({ id_contabanco_cb: '990', id_condominio_cond: '150', st_descricao_cb: 'Conta', st_nome_banc: 'SICOOB', id_tipocontabanco_tcb: '1', fl_principal_cb: '1', st_conta_cb: '1-1', st_numero_agb: '1' },
+    { id_contabanco_cb: '991', id_condominio_cond: '151', st_descricao_cb: 'Conta', st_nome_banc: 'SICOOB', id_tipocontabanco_tcb: '1', fl_principal_cb: '1', st_conta_cb: '2-2', st_numero_agb: '1' });
   const app = express();
   app.use((rq, rs, nx) => { rq.user = { sub: '11111111-1111-1111-1111-111111111111', email: 'a@b' }; rq.authMode = 'supabase'; nx(); });
   const sim = async () => true;
@@ -349,6 +351,10 @@ function ofxTexto({ banco, agencia, conta, itens }) {
   const g4 = await chamar('POST', '/api/financeiro/conciliacao-dia/condominio/136/gravar', {});
   t('rota: no modo teste outro condomínio é bloqueado', g4.st === 423 && g4.j.motivo === 'so_teste');
   const rs = await chamar('GET', '/api/financeiro/conciliacao-dia/resumo');
+  const c150 = rs.j.condominios.find((c) => c.id_condominio === '150');
+  t('rota: resumo traz condomínio ainda não conciliado, com nome', c150 && c150.conciliado === false && c150.condominio === 'Novo Ainda' && !c150.ultima_conciliacao);
+  t('rota: resumo deixa fora inativo e cadastro da administração', !rs.j.condominios.some((c) => c.id_condominio === '151' || c.id_condominio === '144'));
+  t('rota: conciliados vêm marcados', rs.j.condominios.find((c) => c.id_condominio === '167').conciliado === true);
   t('rota: resumo por condomínio e por analista', rs.st === 200 && rs.j.condominios.some((c) => c.id_condominio === '136' && c.extratos_prontos === 1) && Array.isArray(rs.j.por_analista));
   t('rota: resumo nunca leva número de conta', !JSON.stringify(rs.j).includes('123456789') && !JSON.stringify(rs.j).includes('37407'));
   const fl = await chamar('POST', '/api/financeiro/conciliacao-dia/condominio/167/fila/' + p136.chave, { acao: 'aceitar' });

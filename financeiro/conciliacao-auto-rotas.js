@@ -126,13 +126,29 @@ function registrar(d) {
       imps.filter(dentro).forEach((x) => { const c = pegar(x.id_condominio); if (x.status === 'planejada') { c.extratos_prontos++; c.linhas_prontas += x.quantidade || 0; } else c.incertos++; });
       lancs.forEach((x) => { const c = pegar(x.id_condominio); if (x.status === 'planejado') { c.lancamentos_prontos++; c.valor_prontos += Number(x.valor_centavos) || 0; } else c.incertos++; });
       fila.forEach((x) => { pegar(x.id_condominio).fila++; });
-      const linhas = [...conds.values()];
-      for (const c of linhas) {
+      // Todos os condomínios de quem abre entram na lista, mesmo os que ainda não foram conciliados
+      // (assim a pessoa abre e clica em Conciliar agora). Sem carteira: os que têm conta no Superlógica.
+      let todos = lista;
+      if (!todos) { try { todos = [...new Set((await servico.contasTodas()).map((k) => k.id_condominio))]; } catch (e) { todos = []; } }
+      const novos = new Set();
+      for (const idc of todos) {
+        const k = String(idc);
+        if (!/^[1-9][0-9]{0,8}$/.test(k) || NAO_CONDOMINIOS.has(k) || conds.has(k)) continue;
+        pegar(k);
+        novos.add(k);
+      }
+      const linhas = [];
+      for (const c of conds.values()) {
         if (!c.condominio) c.condominio = await servico.nomeDe(c.id_condominio);
+        // Sem nome na lista de ativos e sem nada no Hub: condomínio inativo, fica fora.
+        if (novos.has(c.id_condominio) && !c.condominio) continue;
+        c.conciliado = !!c.ultima_conciliacao;
+        linhas.push(c);
         const s = d.politica ? d.politica.estado('conciliacao_gravar', c.id_condominio) : { estado: 'bloqueado' };
         c.gravacao_politica = s.estado;
       }
-      linhas.sort((a, b) => (b.fila + b.incertos) - (a.fila + a.incertos) || a.condominio.localeCompare(b.condominio));
+      // Primeiro o que tem pendência, depois os conciliados e por fim os que ainda não foram, por nome.
+      linhas.sort((a, b) => (b.fila + b.incertos) - (a.fila + a.incertos) || (b.conciliado - a.conciliado) || a.condominio.localeCompare(b.condominio));
       const porAnalista = new Map();
       avisos.forEach((a) => {
         const k = a.analista || 'Sem analista';
