@@ -79,7 +79,20 @@
       if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       info('bd-info', '');
       desenharPainel(j);
-    } catch (e) { if (seq === est.seq) info('bd-info', e.message, true); }
+      // Cálculo da carteira rodando: pergunta de novo em 10 segundos.
+      if (j.calculo && j.calculo.rodando) setTimeout(function () { if (seq === est.seq) carregarPainel(); }, 10000);
+    } catch (e) { if (seq === est.seq) { el('bd-painel').innerHTML = ''; info('bd-info', e.message, true); } }
+  }
+  async function calcularCarteira() {
+    var mes = (el('bd-mes') || {}).value || '';
+    var b = el('bd-calcular'); if (b) b.disabled = true;
+    try {
+      var r = await apiAuthFetch('/api/financeiro/balancete-digital/calcular', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ competencia: mes }) });
+      var j = await r.json().catch(function () { return {}; });
+      if (!r.ok && r.status !== 202) throw new Error(j.detalhe || ('Falha ' + r.status));
+      info('bd-info', j.detalhe || 'Calculando.');
+      setTimeout(carregarPainel, 8000);
+    } catch (e) { info('bd-info', e.message, true); if (b) b.disabled = false; }
   }
   function desenharPainel(j) {
     var conds = j.condominios || [];
@@ -95,8 +108,16 @@
           + '<td>' + selo(c.prazo && c.prazo.texto || '', COR_PRAZO[c.prazo && c.prazo.situacao] || 'var(--muted)') + '</td>'
           + '<td class="td-livre">' + listaTravas((c.travas || []).slice(0, 4)) + (c.total_travas > 4 ? '<div class="hint">Mais ' + esc(c.total_travas - 4) + ' trava(s).</div>' : '') + '</td></tr>';
       }).join('') + '</tbody></table>';
-    if (!conds.length) html = '<div class="hint">Nenhum condomínio calculado neste mês ainda. O sistema calcula sozinho no agendamento; abra o condomínio ativo para calcular agora.</div>';
-    el('bd-painel').innerHTML = html;
+    // Explica quando o cálculo automático roda e oferece calcular agora (só leitura, 2 por vez).
+    var ag = j.agenda || {};
+    var quando = ag.modo === 'off' ? 'O cálculo automático está desligado.'
+      : 'O cálculo automático roda às ' + (ag.horas || [6, 11, 16]).map(function (h) { return h + 'h'; }).join(', ') + ' do dia 1 ao 15 e no último dia do mês' + (ag.modo === 'todos' ? '.' : ', por enquanto só nos condomínios de teste.');
+    var calc = j.calculo && j.calculo.rodando ? '<div class="hint">Calculando a carteira: ' + esc(j.calculo.feitos) + ' de ' + esc(j.calculo.total) + '.</div>'
+      : (j.sem_calculo ? '<div style="margin:6px 0"><button class="btn btn-ghost" id="bd-calcular" style="font-size:12px">Calcular a carteira agora</button> <span class="hint">' + esc(j.sem_calculo) + ' condomínio(s) sem cálculo neste mês. Só lê o Superlógica, 2 por vez.</span></div>' : '');
+    if (!conds.length) html = '<div class="hint">Nenhum condomínio calculado neste mês ainda. ' + esc(quando) + '</div>';
+    else html += '<div class="hint" style="margin-top:6px">' + esc(quando) + '</div>';
+    el('bd-painel').innerHTML = html + calc;
+    if (el('bd-calcular')) el('bd-calcular').addEventListener('click', calcularCarteira);
   }
 
   // ── condomínio ativo ──
@@ -123,7 +144,10 @@
         return;
       }
       throw new Error('O cálculo está demorando mais que o normal. Tente de novo em alguns minutos.');
-    } catch (e) { if (seq === est.seq) info('bd-info', e.message, true); }
+    } catch (e) {
+      // Erro (ex.: mês que ainda não começou): limpa o que era de outro mês e mostra só a mensagem.
+      if (seq === est.seq) { est.sit = null; el('bd-cond').innerHTML = ''; info('bd-info', e.message, true); }
+    }
   }
 
   function nomeFonte(f) { return f ? (f.descricao || f.tipo) : ''; }
@@ -135,7 +159,8 @@
       + selo(s.prazo && s.prazo.texto || '', COR_PRAZO[s.prazo && s.prazo.situacao] || 'var(--muted)') + '</div>'
       + '<div class="hint">Fechado até: ' + esc(s.fechado_ate ? dataBR(s.fechado_ate) : (s.fechado_ate === '' ? 'nunca fechado' : 'não lido')) + '. Calculado em ' + esc(new Date(s.calculado_em).toLocaleString('pt-BR')) + '. <a href="#" id="bd-recalc">Calcular de novo</a></div>'
       + (s.gravacao && s.gravacao !== 'livre' ? '<div class="hint" style="color:var(--warning)">Neste condomínio a gravação no Superlógica pede a sua confirmação (o sistema prepara e você confirma em Montar agora).</div>' : '')
-      + '<div style="margin-top:8px"><b style="font-size:13px">O que está travando</b>' + listaTravas(s.travas) + '</div>';
+      + '<div style="margin-top:8px"><b style="font-size:13px">O que está travando</b>' + listaTravas(s.travas) + '</div>'
+      + ((s.avisos || []).length ? '<div class="hint" style="margin-top:4px">Avisos que não seguram o balancete: ' + s.avisos.map(esc).join('<br>') + '</div>' : '');
     if (s.soma && s.soma.ok != null) html += '<div class="hint" style="margin-top:6px">Demonstrativo contra o caixa: ' + (s.soma.ok ? 'bate' : 'diferença de ' + esc(Number(s.soma.diferenca).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }))) + '.</div>';
 
     // Modelo e montagem
@@ -144,7 +169,7 @@
       + (gravar ? ' <button class="btn btn-ghost" id="bd-aprender" style="font-size:11px;padding:3px 10px">Aprender de novo dos últimos meses</button>' : '') + '</div>';
     if (m && m.itens && m.itens.length) {
       var docs = {}; (s.documentos || []).forEach(function (d) { docs[d.chave] = d; });
-      html += '<table class="tbl" style="width:100%;font-size:12px;margin-top:4px"><thead><tr><th>#</th><th>Comentário</th><th>Conta</th><th>Etiqueta</th><th>Documento</th><th>No Superlógica</th></tr></thead><tbody>'
+      html += '<table class="tbl" style="width:100%;font-size:12px;margin-top:4px"><thead><tr><th>#</th><th>Comentário</th><th>Onde</th><th>Etiqueta</th><th>Documento</th><th>No Superlógica</th></tr></thead><tbody>'
         + m.itens.map(function (i) {
           var mo = (s.montagem || {})[i.chave] || {};
           var est2 = mo.estado || 'pendente';
@@ -153,7 +178,7 @@
             doc = docs[i.chave] ? 'Recebido: ' + esc(docs[i.chave].nome) + ' (' + esc(Math.max(1, Math.round(docs[i.chave].bytes / 1024))) + ' KB)' : '<span style="color:var(--danger)">Não chegou</span>';
             if (gravar && est2 !== 'gravado' && est2 !== 'ja_existia') doc += ' <label class="btn btn-ghost" style="font-size:11px;padding:2px 8px;cursor:pointer">Enviar PDF<input type="file" accept="application/pdf" data-bd-doc="' + esc(i.chave) + '" style="display:none"></label>';
           } else doc = esc(nomeFonte(i.fonte));
-          return '<tr><td>' + esc(i.ordem) + '</td><td class="td-livre">' + esc(i.titulo) + '</td><td>' + esc(i.conta) + '</td><td>' + esc(i.etiqueta_nome || i.etiqueta_id || 'sem etiqueta') + '</td>'
+          return '<tr><td>' + esc(i.ordem) + '</td><td class="td-livre">' + esc(i.titulo) + '</td><td>' + esc(i.conta === 'DIAGNOSTICO' ? 'Balão do R&D' : i.conta) + '</td><td>' + esc(i.etiqueta_nome || i.etiqueta_id || 'sem etiqueta') + '</td>'
             + '<td class="td-livre">' + doc + '</td><td class="td-livre">' + esc(NOME_ESTADO[est2] || est2) + (mo.msg && est2 !== 'gravado' ? '<div class="hint" style="margin:0">' + esc(mo.msg) + '</div>' : '') + '</td></tr>';
         }).join('') + '</tbody></table>';
       if ((m.avisos || []).length) html += '<div class="hint" style="margin-top:4px">' + m.avisos.map(esc).join('<br>') + '</div>';

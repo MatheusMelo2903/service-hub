@@ -38,8 +38,10 @@ function responder(metodo, url, f) {
     const id = SL.proximoCom++;
     const ref = f.DT_REFERENCIA.slice(6) + f.DT_REFERENCIA.slice(0, 2);
     // Formato real (167): o título enviado não fica; o nome do comentário é o texto.
-    SL.comentarios.push({ id_comentarioconteudo_comc: String(id), st_texto_comc: f.TEXTO, fl_visibilidade_comc: f.VISIBILIDADE, st_identificadororigem_como: f.ID_CONDOMINIO + '_' + f.ID_PLANOCONTA + '_' + f.ID_OBJETO + '/' + ref,
-      arquivos: [{ id_arquivo_arq: f['ARQUIVOS[0][ID_ARQUIVO_ARQ]'], st_nome_arq: 'x', st_extensao_arq: 'pdf', st_nomeetiqueta_eti: 'Extrato', etiquetas: [{ id_etiqueta_eti: String((SL.arquivos.get(f['ARQUIVOS[0][ID_ARQUIVO_ARQ]']) || {}).etiqueta || ''), st_nomeabreviadoetiqueta_eti: '' }] }] });
+    const ident = f.TIPO_OBJETO === 'FERRAMENTA' ? f.ID_CONDOMINIO + '_' + f.ID_OBJETO + '/' + ref : f.ID_CONDOMINIO + '_' + f.ID_PLANOCONTA + '_' + f.ID_OBJETO + '/' + ref;
+    const arqs = Object.keys(f).filter((k) => /^ARQUIVOS\[\d+\]\[ID_ARQUIVO_ARQ\]$/.test(k)).map((k) => f[k]);
+    SL.comentarios.push({ id_comentarioconteudo_comc: String(id), st_texto_comc: f.TEXTO, fl_visibilidade_comc: f.VISIBILIDADE, st_identificadororigem_como: ident, _tipo: f.TIPO_OBJETO,
+      arquivos: arqs.map((x) => ({ id_arquivo_arq: x, st_nome_arq: 'x', st_extensao_arq: 'pdf', st_nomeetiqueta_eti: 'Extrato', etiquetas: [{ id_etiqueta_eti: String((SL.arquivos.get(x) || {}).etiqueta || ''), st_nomeabreviadoetiqueta_eti: '' }] })) });
     if (SL.engolirComentario) SL.comentarios.pop();
     return ok({ id_comentarioconteudo_comc: String(id) });
   }
@@ -76,8 +78,12 @@ const cliente = {
     if (rota === 'comentarios/index') {
       const ref = q.DT_REFERENCIA.slice(6) + q.DT_REFERENCIA.slice(0, 2);
       // Formato conferido no 167: conta obrigatória e resposta embrulhada.
-      if (!q.ID_OBJETO) return [{ status: '500', msg: 'Identificador de objeto não informado.' }];
-      return [{ status: '200', data: SL.comentarios.filter((c) => { const m = /^(\d+)_(\d+)_([\d.]+)\/(\d{6})$/.exec(c.st_identificadororigem_como); return m && m[1] === String(q.ID_CONDOMINIO) && m[4] === ref && m[3] === q.ID_OBJETO; }) }];
+      if (!q.ID_OBJETO || !q.TIPO_OBJETO) return [{ status: '500', msg: 'Identificador de objeto não informado.' }];
+      // Balão do Demonstrativo R&D (FERRAMENTA/DIAGNOSTICO): identificador "<cond>_DIAGNOSTICO/AAAAMM" (formato real, 24/10/2026).
+      return [{ status: '200', data: SL.comentarios.filter((c) => {
+        const f = /^(\d+)_DIAGNOSTICO\/(\d{6})$/.exec(c.st_identificadororigem_como);
+        if (f) return q.TIPO_OBJETO === 'FERRAMENTA' && q.ID_OBJETO === 'DIAGNOSTICO' && f[1] === String(q.ID_CONDOMINIO) && f[2] === ref;
+        const m = /^(\d+)_(\d+)_([\d.]+)\/(\d{6})$/.exec(c.st_identificadororigem_como); return q.TIPO_OBJETO === 'CONTACATEGORIA' && m && m[1] === String(q.ID_CONDOMINIO) && m[4] === ref && m[3] === q.ID_OBJETO; }) }];
     }
     if (rota === 'condominios/get') return [{ id_condominio_cond: String(q.id), st_fantasia_cond: 'Residencial Teste', dt_fechamento_cond: SL.fechamento }];
     if (rota === 'arquivos/etiquetas') return [{ id_etiqueta_eti: '8', st_nomeetiqueta_eti: 'Extrato' }, { id_etiqueta_eti: '4', st_nomeetiqueta_eti: 'Orçamento' }, { id_etiqueta_eti: '9', st_nomeetiqueta_eti: 'Consumo' }];
@@ -139,7 +145,7 @@ function comentarioAntigo(mes, conta, titulo, etq, plano) {
   comentarioAntigo('2026-09', '1.2', 'Certidões', 4);
   const porMes = {};
   for (const m of ['2026-07', '2026-08', '2026-09']) { porMes[m] = []; for (const conta of ['1.1', '1.2']) porMes[m] = porMes[m].concat(await D.comentariosDoMes(cliente, '167', m, conta)); }
-  t('listagem sem conta é recusada', await D.comentariosDoMes(cliente, '167', '2026-09', null).then(() => false, (e) => e.message === 'conta_obrigatoria'));
+  t('listagem sem conta lê o balão do Demonstrativo R&D', (await D.comentariosDoMes(cliente, '167', '2026-09', null)).length === 0 && SL.chamadas.some((c) => c.rota === 'comentarios/index' && c.q.TIPO_OBJETO === 'FERRAMENTA' && c.q.ID_OBJETO === 'DIAGNOSTICO'));
   const mdl = D.aprenderModelo(porMes, {});
   t('aprende 3 comentários frequentes', mdl.itens.length === 3, mdl.itens.map((i) => i.titulo));
   t('certidões ficam como às vezes', mdl.as_vezes.length === 1 && /Certid/.test(mdl.as_vezes[0].titulo));
@@ -224,6 +230,41 @@ function comentarioAntigo(mes, conta, titulo, etq, plano) {
   t('conferência final com pontos marcados', s3.etapa === 'conferencia' && /2 ponto/.test(s3.travas[0].causa));
   const s4 = D.montarSituacao({ comp: '2026-09', hoje: '2026-10-01', fechamento: tudoOk, modelo: { plano: '17', itens: val.itens }, montagem: {}, documentos: new Set(), gravacao: 'reforcada', fechadoAte: '2026-09-30', impressoes: [] });
   t('fora do teste: quem confirma a gravação', s4.travas.some((x) => /confirmar a gravação/.test(x.quem)));
+
+  // ── formato real da equipe (Buritis e Victoria Bay, 24/10/2026): balão do Demonstrativo R&D ──
+  const real = (mes, id, texto, arquivos) => SL.comentarios.push({ id_comentarioconteudo_comc: String(id), st_texto_comc: texto, fl_visibilidade_comc: '1', st_identificadororigem_como: '167_DIAGNOSTICO/' + mes.replace('-', ''),
+    arquivos: arquivos.map(([ida, nome, etq, etqNome]) => ({ id_arquivo_arq: String(ida), st_nome_arq: nome, st_extensao_arq: 'pdf', st_nomeetiqueta_eti: etqNome, etiquetas: [{ id_etiqueta_eti: String(etq), st_nomeabreviadoetiqueta_eti: '' }] })) });
+  let k = 80000;
+  ['2026-05', '2026-06', '2026-07'].forEach((m) => {
+    real(m, k++, 'Capa', [[k, 'capa', 26, 'Jurídico']]); real(m, k++, 'Relatorio 11A', [[k, '011A', 5, 'Contrato']]); real(m, k++, 'Extrato conta corrente', [[k, 'cc', 8, 'Extrato']]);
+    real(m, k++, 'Extratos poupanças', [[k, 'Movimentações bancárias Fundo', 6, 'Orçamento'], [k + 1000, 'R$ 7.372,55', 6, 'Orçamento'], [k + 2000, 'P. energia', 6, 'Orçamento']]);
+    real(m, k++, 'Pjbank', [[k, 'Pjbank', 7, 'Comunicado']]); real(m, k++, 'Simulação', [[k, '074A', 9, 'Consumo']]);
+  });
+  const pm = {}; for (const m of ['2026-05', '2026-06', '2026-07']) pm[m] = await D.comentariosDoMes(cliente, '167', m, null);
+  const mreal = D.aprenderModelo(pm, {});
+  t('real: aprende os 6 do balão do R&D na ordem da equipe', mreal.itens.map((i) => i.titulo).join('|') === 'Capa|Relatorio 11A|Extrato conta corrente|Extratos poupanças|Pjbank|Simulação', mreal.itens.map((i) => i.titulo));
+  t('real: lugar DIAGNOSTICO e etiquetas trocadas (Capa em Jurídico, Simulação em Consumo)', mreal.itens.every((i) => i.conta === 'DIAGNOSTICO') && mreal.itens[0].etiqueta_id === 26 && mreal.itens[5].etiqueta_id === 9 && mreal.itens[3].etiqueta_nome === 'Orçamento');
+  t('real: poupanças com 3 anexos por mês', mreal.itens[3].anexos_por_mes === 3);
+  t('real: avisa que a equipe deixa visível', mreal.visibilidade_equipe === 1 && mreal.avisos.some((x) => /visíveis/.test(x)));
+  t('real: modelo com DIAGNOSTICO é válido', !D.validarModelo(mreal.itens).erro);
+  SL.chamadas = [];
+  const ctxR = { cred, cliente, idCond: '167', plano: '17', comp: '2026-08' };
+  const rr = await D.gravarComentario(ctxR, mreal.itens[3], [{ buffer: pdf('a'), nome: 'Movimentações Fundo.pdf' }, { buffer: pdf('b'), nome: 'R$ 7.372,55.pdf' }]);
+  const putR = SL.chamadas.find((c) => c.rota === 'comentarios/put').f;
+  t('real: grava no balão do R&D (FERRAMENTA/DIAGNOSTICO) com o nome da equipe', rr.estado === 'gravado' && putR.TIPO_OBJETO === 'FERRAMENTA' && putR.ID_OBJETO === 'DIAGNOSTICO' && putR.TEXTO === 'Extratos poupanças' && putR.VISIBILIDADE === '0', rr);
+  t('real: dois anexos no mesmo comentário', rr.ids_arquivos.length === 2 && putR['ARQUIVOS[1][ID_ARQUIVO_ARQ]'] === rr.ids_arquivos[1] && SL.chamadas.filter((c) => c.rota === 'arquivos/put').length === 2);
+  SL.chamadas = [];
+  const rr2 = await D.gravarComentario(ctxR, mreal.itens[3], [{ buffer: pdf('a') }]);
+  t('real: mês que já tem o comentário: ja_existia, nenhuma gravação', rr2.estado === 'ja_existia' && escritas().length === 0);
+  real('2026-08', 89999, 'Capa', []);
+  SL.chamadas = [];
+  const rr3 = await D.gravarComentario(ctxR, mreal.itens[0], { buffer: pdf('c') });
+  t('real: comentário que existe sem anexo não é criado de novo', rr3.estado === 'incerto' && escritas().length === 0, rr3);
+  const s5 = D.montarSituacao({ comp: '2026-09', hoje: '2026-10-01', fechamento: { itens: [{ chave: 'pre_balancete', situacao: 'pendente' }].concat(['conciliacao', 'extrato', 'boletos', 'anexos'].map((x) => ({ chave: x, situacao: 'ok' }))) },
+    pre: { pendencias: 2, grupos: [{ chave: 'vencida', itens: [{ gravidade: 'alta', fornecedor: 'ATLAS', valor: 4563, dt_vencimento: '2025-03-28' }, { gravidade: 'alta', fornecedor: 'EDP', valor: 100, dt_vencimento: '2026-09-10' }] }] },
+    modelo: { plano: '17', itens: [] }, fechadoAte: '2026-09-30', impressoes: [] });
+  t('vencida de mês anterior vira aviso; a do mês trava', s5.avisos.length === 1 && /28\/03\/2025/.test(s5.avisos[0]) && s5.travas.filter((x) => /vencida sem baixa/.test(x.causa)).length === 1 && !s5.travas.some((x) => /Mais \d+ pendência/.test(x.causa)), { avisos: s5.avisos, travas: s5.travas.map((x) => x.causa) });
+  SL.comentarios = SL.comentarios.filter((c) => !/_DIAGNOSTICO\//.test(c.st_identificadororigem_como));
 
   // ── rotas e agendamento (express de verdade, banco em memória) ──
   const express = require('express');
@@ -329,6 +370,26 @@ function comentarioAntigo(mes, conta, titulo, etq, plano) {
   t('reabertura registrada com motivo', (tabelas.fin_balancete_fechamento_log || []).some((x) => x.acao === 'reabrir' && /EDP/.test(x.motivo)));
   const pn = await chamar('GET', '/api/financeiro/balancete-digital/painel?competencia=2026-09');
   t('painel mostra causa, quem age, carteira e reaberturas', pn.status === 200 && pn.j.condominios.length === 1 && pn.j.condominios[0].carteira === 'Michele' && pn.j.condominios[0].reaberturas === 1 && Object.keys(pn.j.por_quem).length > 0, pn.j);
+  // não duplicar: mês que já tem todos os comentários (montagem esquecida do zero): só ja_existia, sem gerar nem gravar nada
+  tabelas.fin_balancete_montagem = [];
+  SL.chamadas = [];
+  const rnd = await R.montar('167', D.competencia('2026-09'), null, 'teste');
+  t('não duplicar: tudo ja_existia', rnd.ja_existiam === 3 && rnd.gravados === 0 && rnd.falhas === 0, rnd);
+  t('não duplicar: nenhuma gravação e nenhum relatório gerado', escritas().length === 0 && !SL.chamadas.some((c) => /^relatorios\//.test(c.rota)), SL.chamadas.filter((c) => !c.leitura).map((c) => c.rota));
+  // painel: quem precisa agir conta TODAS as travas; a lista vai cortada em 15
+  tabelas.fin_balancete_situacao.push({ id_superlogica: 94, competencia: '2026-09', nome: 'Victoria Bay', etapa: 'comprovantes', travas: Array.from({ length: 40 }, (_, i) => ({ etapa: 'comprovantes', causa: 'x' + i, quem: i < 30 ? 'Quem lançou a despesa: anexar' : 'Síndico: autorizar' })), calculado_em: new Date().toISOString() });
+  const pq = await chamar('GET', '/api/financeiro/balancete-digital/painel?competencia=2026-09');
+  const vb = pq.j.condominios.find((x) => x.id === '94');
+  t('painel: lista cortada em 15, total 40', vb.travas.length === 15 && vb.total_travas === 40);
+  t('painel: quem precisa agir soma todas as travas', pq.j.por_quem['Quem lançou a despesa'] >= 30 && pq.j.por_quem['Síndico'] >= 10, pq.j.por_quem);
+  t('painel: diz quando a agenda roda', pq.j.agenda && pq.j.agenda.horas.length === 3);
+  const cc = await chamar('POST', '/api/financeiro/balancete-digital/calcular', { competencia: '2026-09' });
+  t('calcular a carteira agora (só leitura)', cc.status === 202 && cc.j.total === 1, cc);
+  const cc2 = await chamar('POST', '/api/financeiro/balancete-digital/calcular', { competencia: '2026-09' });
+  t('um cálculo de carteira por vez', cc2.status === 409 || cc2.status === 202);
+  const nov = await chamar('GET', '/api/financeiro/balancete-digital/167/situacao?competencia=2026-11');
+  t('mês que não começou: 400', nov.status === 400);
+  await new Promise((ok) => setTimeout(ok, 300));
   srv.close();
 
   console.log('\n' + (total - falhas) + ' de ' + total + ' testes passaram');

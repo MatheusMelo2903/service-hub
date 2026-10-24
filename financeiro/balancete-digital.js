@@ -99,6 +99,13 @@ function classificarDocumento(titulo) {
   return { tipo: 'recebido', grupo: 'outro', descricao: 'Documento do condomínio', quem: 'Financeiro: enviar o documento no Hub', confianca: 'baixa' };
 }
 
+// Onde a equipe põe os comentários do balancete (conferido na tela e na API em 24/10/2026, Buritis 80 e
+// Victoria Bay 94): no balão do título do Demonstrativo R&D ("Como você arrecada..."), que é
+// TIPO_OBJETO=FERRAMENTA e ID_OBJETO=DIAGNOSTICO, com identificador "<cond>_DIAGNOSTICO/AAAAMM".
+// Nota por categoria (TIPO_OBJETO=CONTACATEGORIA, ID_OBJETO=conta) é outro lugar e a equipe não usa.
+const OBJETO_RD = 'DIAGNOSTICO';
+const lugarDoComentario = (conta) => (!conta || conta === OBJETO_RD ? { TIPO_OBJETO: 'FERRAMENTA', ID_OBJETO: OBJETO_RD } : { TIPO_OBJETO: 'CONTACATEGORIA', ID_OBJETO: conta });
+
 // Um comentário lido do Superlógica, em formato do Hub. Formato conferido no 167 (23/10/2026):
 // id_comentarioconteudo_comc, st_texto_comc (o "nome" do comentário: o TITULO enviado não é
 // guardado), fl_visibilidade_comc, st_identificadororigem_como "<cond>_<plano>_<conta>/AAAAMM" e
@@ -114,6 +121,8 @@ function lerComentario(c) {
   for (const k of Object.keys(c)) {
     const m = /^(\d+)_(\d+)_([\d.]+)\/(\d{6})$/.exec(String(c[k] || ''));
     if (m) { plano = m[2]; if (!conta) conta = m[3]; ref = m[4].slice(0, 4) + '-' + m[4].slice(4); break; }
+    const f = /^(\d+)_([A-Z]+)\/(\d{6})$/.exec(String(c[k] || ''));
+    if (f) { if (!conta) conta = f[2]; ref = f[3].slice(0, 4) + '-' + f[3].slice(4); break; }
   }
   if (!ref) { const iso = slParaIso(pega(/^dt_referencia/i)); if (iso) ref = iso.slice(0, 7); }
   const vis = pega(/visibilidade/i);
@@ -135,6 +144,7 @@ function lerComentario(c) {
 function aprenderModelo(porMes, opcoes) {
   const meses = Object.keys(porMes || {}).sort();
   const grupos = new Map();
+  const visibilidades = new Map();
   let plano = '';
   for (const mes of meses) {
     const lista = (porMes[mes] || []).map(lerComentario).filter((c) => c && c.titulo);
@@ -142,7 +152,9 @@ function aprenderModelo(porMes, opcoes) {
       if (c.plano && !plano) plano = c.plano;
       const chave = chaveTitulo(c.titulo);
       if (!chave) return;
-      const g = grupos.get(chave) || { chave, titulos: new Map(), contas: new Map(), etiquetas: new Map(), meses: new Set(), posicoes: [], anexos: 0 };
+      const g = grupos.get(chave) || { chave, titulos: new Map(), contas: new Map(), etiquetas: new Map(), meses: new Set(), posicoes: [], anexos: 0, qtdAnexos: [] };
+      if (c.visibilidade != null) visibilidades.set(c.visibilidade, (visibilidades.get(c.visibilidade) || 0) + 1);
+      g.qtdAnexos.push(c.arquivos.length);
       g.titulos.set(c.titulo, (g.titulos.get(c.titulo) || 0) + 1);
       if (c.conta) g.contas.set(c.conta, (g.contas.get(c.conta) || 0) + 1);
       c.arquivos.forEach((a) => { if (a.etiqueta_id) { const k = a.etiqueta_id + '|' + a.etiqueta_nome; g.etiquetas.set(k, (g.etiquetas.get(k) || 0) + 1); } });
@@ -163,6 +175,7 @@ function aprenderModelo(porMes, opcoes) {
       chave: g.chave.replace(/\s+/g, '_').slice(0, 60), titulo: titulo.replace(/\s*\b\d{1,2}\/\d{4}\b/g, '').trim() || titulo, conta,
       etiqueta_id: etq ? Number(etq[0]) : null, etiqueta_nome: etq ? etq[1] : '',
       fonte: doc, meses: g.meses.size, frequente: g.meses.size >= minimo, com_anexo: g.anexos > 0,
+      anexos_por_mes: g.qtdAnexos.slice().sort((a, b) => a - b)[Math.floor(g.qtdAnexos.length / 2)] || 0,
       ordem_media: g.posicoes.reduce((s, x) => s + x, 0) / g.posicoes.length,
     };
   }).sort((a, b) => a.ordem_media - b.ordem_media);
@@ -171,11 +184,15 @@ function aprenderModelo(porMes, opcoes) {
   const asVezes = itens.filter((i) => !(i.frequente && i.com_anexo)).map((i) => { delete i.ordem_media; return i; });
   const avisos = [];
   usar.forEach((i) => {
-    if (!i.conta) avisos.push('"' + i.titulo + '": não foi possível saber em que conta do R&D o comentário fica.');
+    if (!i.conta) i.conta = OBJETO_RD;
     if (!i.etiqueta_id) avisos.push('"' + i.titulo + '": anexo sem etiqueta nos meses lidos.');
     if (i.fonte.confianca !== 'alta') avisos.push('"' + i.titulo + '": o sistema não tem certeza de onde vem o documento (' + i.fonte.descricao + ').');
   });
-  return { meses_lidos: meses, plano: plano || (opcoes && opcoes.plano) || '', itens: usar, as_vezes: asVezes, avisos, aprendido_em: new Date().toISOString() };
+  // A equipe deixa os comentários públicos (fl_visibilidade 1 em todos os lidos em 24/10/2026); o Hub grava
+  // invisível (decisão de segurança). Fica registrado para o Matheus decidir.
+  const vis = visibilidades.size ? maisComum(visibilidades)[0] : null;
+  if (vis === 1 && usar.length) avisos.push('A equipe deixa estes comentários visíveis para o condômino; o sistema grava invisível até o Matheus decidir.');
+  return { meses_lidos: meses, plano: plano || (opcoes && opcoes.plano) || '', itens: usar, as_vezes: asVezes, avisos, visibilidade_equipe: vis, aprendido_em: new Date().toISOString() };
 }
 
 // Confere um modelo salvo ou editado pela pessoa. Devolve { itens } normalizados ou { erro }.
@@ -188,7 +205,7 @@ function validarModelo(itens) {
     const titulo = limpar(String(i.titulo || '').replace(/[-\u2010-\u2015]/g, ' ').replace(/[^\p{L}\p{N} .,_()\/&+]/gu, ' ')).slice(0, 120).trim();
     if (titulo.length < 3) return { erro: 'Item ' + (k + 1) + ': título muito curto.' };
     const conta = limpar(i.conta);
-    if (!/^\d+(\.\d+){0,4}$/.test(conta)) return { erro: '"' + titulo + '": conta do R&D inválida (ex.: 1.1).' };
+    if (conta !== OBJETO_RD && !/^\d+(\.\d+){0,4}$/.test(conta)) return { erro: '"' + titulo + '": lugar do comentário inválido (DIAGNOSTICO para o balão do Demonstrativo R&D ou uma conta, ex.: 1.1).' };
     const etq = i.etiqueta_id == null || i.etiqueta_id === '' ? null : Number(i.etiqueta_id);
     if (etq !== null && !(Number.isInteger(etq) && etq > 0 && etq < 100000)) return { erro: '"' + titulo + '": etiqueta inválida.' };
     const chave = limpar(i.chave || chaveTitulo(titulo).replace(/\s+/g, '_')).replace(/[^a-z0-9_]/g, '').slice(0, 60);
@@ -259,13 +276,12 @@ async function etiquetasDoSuperlogica(cliente) {
   // Campo do nome conferido no 167 em 23/10/2026: st_nomeetiqueta_eti (8 = Extrato).
   return lista(j).map((e) => ({ id: Number(e.id_etiqueta_eti || e.id), nome: limpar(e.st_nomeetiqueta_eti || e.st_nome_eti || e.st_etiqueta_eti || e.nome) })).filter((e) => Number.isInteger(e.id) && e.id > 0 && e.nome);
 }
-// Comentários de uma conta do R&D num mês. Conferido no 167 (23/10/2026): a conta (ID_OBJETO) é
-// obrigatória ("Identificador de objeto não informado.") e a resposta vem embrulhada em
-// [{ status:'200', data:[...] }]. Erro de regra vem com status diferente de 200: lança.
+// Comentários do mês: sem conta, os do balão do Demonstrativo R&D (onde a equipe põe); com conta,
+// a nota da categoria. O objeto é obrigatório ("Identificador de objeto não informado.") e a resposta
+// vem embrulhada em [{ status:'200', data:[...] }]. Erro de regra vem com status diferente de 200: lança.
 async function comentariosDoMes(cliente, idCond, comp, conta) {
   const c = competencia(comp);
-  if (!conta) throw Object.assign(new Error('conta_obrigatoria'), { codigo: 'leitura' });
-  const j = await cliente.get('comentarios/index', { ID_CONDOMINIO: idCond, TIPO_OBJETO: 'CONTACATEGORIA', ID_OBJETO: conta, DT_REFERENCIA: dois(c.mes) + '/01/' + c.ano });
+  const j = await cliente.get('comentarios/index', Object.assign({ ID_CONDOMINIO: idCond }, lugarDoComentario(conta), { DT_REFERENCIA: dois(c.mes) + '/01/' + c.ano }));
   const arr = Array.isArray(j) ? j : (j ? [j] : []);
   const emb = arr.length === 1 && arr[0] && typeof arr[0] === 'object' && 'status' in arr[0] && !Object.keys(arr[0]).some((k) => /_comc$/i.test(k)) ? arr[0] : null;
   if (emb && String(emb.status) !== '200') throw Object.assign(new Error('comentarios_' + emb.status + ': ' + limpar(emb.msg).slice(0, 80)), { codigo: 'leitura' });
@@ -373,67 +389,80 @@ function montarCapa(nomeCondominio, comp) {
 // do arquivo subir, apaga o arquivo (não deixa sobra). Sem resposta: 'incerto', e a próxima rodada
 // relê antes de qualquer tentativa.
 // item: { chave, titulo, conta, etiqueta_id }; doc: { buffer, nome }; ctx: { cred, cliente, idCond, plano, comp }
+// O comentário do item no mês, se já existir no Superlógica (relido agora). null = não existe.
+async function procurarComentario(ctx, item) {
+  const c = competencia(ctx.comp);
+  const alvo = chaveTitulo(item.titulo);
+  return (await comentariosDoMes(ctx.cliente, String(ctx.idCond), ctx.comp, item.conta)).map(lerComentario).find((x) => x && chaveTitulo(x.titulo) === alvo && (!x.referencia || x.referencia === c.chave)) || null;
+}
+
 async function gravarComentario(ctx, item, doc, opcoes) {
   const { cred, cliente, idCond, plano, comp } = ctx;
   const id = String(idCond);
   if (!ID.test(id) || NAO_CONDOMINIOS.has(id)) throw Object.assign(new Error('nao_condominio'), { codigo: 'trava_condominio' });
   if (!/^\d+$/.test(String(plano || ''))) return { estado: 'falhou', msg: 'Plano de contas do condomínio não encontrado.' };
   const c = competencia(comp);
-  const alvoChave = chaveTitulo(item.titulo);
-  const procurar = async () => (await comentariosDoMes(cliente, id, comp, item.conta)).map(lerComentario).find((x) => x && chaveTitulo(x.titulo) === alvoChave && (!x.referencia || x.referencia === c.chave));
+  const procurar = () => procurarComentario({ cliente, idCond: id, comp }, item);
   let existente;
   try { existente = await procurar(); } catch (e) { return { estado: 'incerto', msg: 'Não foi possível reler os comentários antes de gravar. Nada foi gravado.' }; }
-  if (existente && existente.arquivos.length) return { estado: 'ja_existia', id_comentario: existente.id, id_arquivo: existente.arquivos[0].id, visibilidade: existente.visibilidade, msg: 'O comentário já estava no Demonstrativo R&D.' };
+  if (existente && existente.arquivos.length) return { estado: 'ja_existia', id_comentario: existente.id, id_arquivo: existente.arquivos[0].id, ids_arquivos: existente.arquivos.map((a) => a.id), visibilidade: existente.visibilidade, msg: 'O comentário já estava no Demonstrativo R&D.' };
+  // Já existe sem anexo (a equipe às vezes cria o comentário e anexa depois): nunca cria outro igual.
+  if (existente) return { estado: 'incerto', id_comentario: existente.id, msg: 'O comentário já existe no Demonstrativo R&D, mas sem anexo. Confira; o sistema não cria outro igual.' };
   // Resultado incerto de antes: o agendamento só relê. Gravar de novo sem prova pode duplicar o comentário.
   if (opcoes && opcoes.soReler) return { estado: 'incerto', msg: 'Gravação anterior sem confirmação e a releitura não achou o comentário. Confira no Demonstrativo R&D; o sistema não grava de novo sozinho.' };
-  if (!ehPdf(doc.buffer) || doc.buffer.length > MAX_ARQUIVO) return { estado: 'falhou', msg: 'O documento não é um PDF de até 15 MB.' };
+  // Um comentário pode ter vários anexos (a equipe põe, nos extratos das poupanças, um por conta).
+  const docs = (Array.isArray(doc) ? doc : [doc]).filter(Boolean);
+  if (!docs.length || docs.length > 30 || docs.some((x) => !ehPdf(x.buffer) || x.buffer.length > MAX_ARQUIVO)) return { estado: 'falhou', msg: 'Os documentos não são PDFs de até 15 MB (até 30 por comentário).' };
+  const subidos = [];
+  const desfazer = async () => { let todos = true; for (const a of subidos) { const r = corpoOk(await pedir(cred, 'POST', 'arquivos/delete', { ID_ARQUIVO_ARQ: a.id }, null)); if (!r.ok) todos = false; } return todos; };
+  const falhar = async (estado, msg) => { const apagou = await desfazer(); return { estado, msg: msg + (subidos.length ? (apagou ? ' (anexos apagados)' : ' (sobrou anexo sem uso: ' + subidos.map((a) => a.id).join(', ') + ')') : ''), ids_arquivos: apagou ? [] : subidos.map((a) => a.id) }; };
 
-  // 1. arquivo
-  const fronteira = '----hub' + crypto.randomBytes(12).toString('hex');
-  const campos = { MAX_FILE_SIZE: String(MAX_ARQUIVO), FL_TIPO_ARQ: '15', ID_FERRAMENTA_ARF: '7', ID_RESPONSAVEL_ARQ: id, ID_CONDOMINIO_COND: id };
-  if (item.etiqueta_id) campos.ID_ETIQUETA_ETI = String(item.etiqueta_id);
-  conferirCampos(id, campos);
-  const nome = (semAcento(doc.nome || item.titulo).replace(/[^A-Za-z0-9 ._-]+/g, ' ').replace(/\s+/g, '_').slice(0, 80) || 'documento') + (/\.pdf$/i.test(doc.nome || '') ? '' : '.pdf');
-  const corpo = Buffer.concat(Object.entries(campos).map(([k, v]) => Buffer.from('--' + fronteira + '\r\nContent-Disposition: form-data; name="' + k + '"\r\n\r\n' + v + '\r\n', 'utf8'))
-    .concat([Buffer.from('--' + fronteira + '\r\nContent-Disposition: form-data; name="ARQUIVO[]"; filename="' + nome + '"\r\nContent-Type: application/pdf\r\n\r\n', 'utf8'), doc.buffer, Buffer.from('\r\n--' + fronteira + '--\r\n', 'utf8')]));
-  const ra = corpoOk(await pedir(cred, 'POST', 'arquivos/put', null, corpo, 'multipart/form-data; boundary=' + fronteira));
-  const da = ra.item && ra.item.data && typeof ra.item.data === 'object' ? (Array.isArray(ra.item.data) ? ra.item.data[0] : ra.item.data) : null;
-  const idArq = da && /^\d+$/.test(String(da.id_arquivo_arq || da.id || '')) ? String(da.id_arquivo_arq || da.id) : '';
-  if (!ra.ok || !idArq) return { estado: ra.semResposta ? 'incerto' : 'falhou', msg: 'Anexo não subiu: ' + ra.msg };
-  const hashArq = limpar(da.st_hash_arq || da.hash || '');
-  const desfazerArquivo = async () => { const r = corpoOk(await pedir(cred, 'POST', 'arquivos/delete', { ID_ARQUIVO_ARQ: idArq }, null)); return r.ok; };
-
-  // 2. etiqueta (o anexo cai na posição certa do livro pela etiqueta)
-  if (item.etiqueta_id) {
-    const re = corpoOk(await pedir(cred, 'PUT', 'arquivos/adicionaretiqueta', { idEtiqueta: item.etiqueta_id, idDocumento: idArq }, formulario({ idDocumento: idArq, idEtiqueta: item.etiqueta_id })));
-    // Mandar ID_ETIQUETA_ETI no upload já aplica a etiqueta: a resposta "já está adicionada" é sucesso (167, 23/10/2026).
-    if (!re.ok && !/sucesso|j[aá] est[aá] adicionada/i.test(re.msg)) { const apagou = await desfazerArquivo(); return { estado: 'falhou', msg: 'Etiqueta não gravou: ' + re.msg + (apagou ? ' (anexo apagado)' : ' (anexo ' + idArq + ' ficou sem uso)'), id_arquivo: apagou ? null : idArq }; }
+  // 1. arquivos e 2. etiqueta de cada um (o anexo cai na posição certa do livro pela etiqueta)
+  for (const d of docs) {
+    const fronteira = '----hub' + crypto.randomBytes(12).toString('hex');
+    const campos = { MAX_FILE_SIZE: String(MAX_ARQUIVO), FL_TIPO_ARQ: '15', ID_FERRAMENTA_ARF: '7', ID_RESPONSAVEL_ARQ: id, ID_CONDOMINIO_COND: id };
+    if (item.etiqueta_id) campos.ID_ETIQUETA_ETI = String(item.etiqueta_id);
+    conferirCampos(id, campos);
+    const nome = (semAcento(d.nome || item.titulo).replace(/\.pdf$/i, '').replace(/[^A-Za-z0-9 ._]+/g, ' ').replace(/\s+/g, '_').slice(0, 80) || 'documento') + '.pdf';
+    const corpo = Buffer.concat(Object.entries(campos).map(([k, v]) => Buffer.from('--' + fronteira + '\r\nContent-Disposition: form-data; name="' + k + '"\r\n\r\n' + v + '\r\n', 'utf8'))
+      .concat([Buffer.from('--' + fronteira + '\r\nContent-Disposition: form-data; name="ARQUIVO[]"; filename="' + nome + '"\r\nContent-Type: application/pdf\r\n\r\n', 'utf8'), d.buffer, Buffer.from('\r\n--' + fronteira + '--\r\n', 'utf8')]));
+    const ra = corpoOk(await pedir(cred, 'POST', 'arquivos/put', null, corpo, 'multipart/form-data; boundary=' + fronteira));
+    const da = ra.item && ra.item.data && typeof ra.item.data === 'object' ? (Array.isArray(ra.item.data) ? ra.item.data[0] : ra.item.data) : null;
+    const idArq = da && /^\d+$/.test(String(da.id_arquivo_arq || da.id || '')) ? String(da.id_arquivo_arq || da.id) : '';
+    if (!ra.ok || !idArq) return falhar(ra.semResposta ? 'incerto' : 'falhou', 'Anexo não subiu: ' + ra.msg);
+    subidos.push({ id: idArq, hash: limpar(da.st_hash_arq || da.hash || ''), nome: nome.replace(/\.pdf$/i, '') });
+    if (item.etiqueta_id) {
+      const re = corpoOk(await pedir(cred, 'PUT', 'arquivos/adicionaretiqueta', { idEtiqueta: item.etiqueta_id, idDocumento: idArq }, formulario({ idDocumento: idArq, idEtiqueta: item.etiqueta_id })));
+      // Mandar ID_ETIQUETA_ETI no upload já aplica a etiqueta: a resposta "já está adicionada" é sucesso (167, 23/10/2026).
+      if (!re.ok && !/sucesso|j[aá] est[aá] adicionada/i.test(re.msg)) return falhar('falhou', 'Etiqueta não gravou: ' + re.msg);
+    }
   }
-  // 3. vincular o arquivo ao comentário que ainda não existe (-1)
-  const ext = 'pdf';
-  const rv = corpoOk(await pedir(cred, 'POST', 'comentarios/putarquivos', null, formulario({
-    ID_COMENTARIOCONTEUDO_COMC: '-1', 'ARQUIVOS[0][ID_ARQUIVO_ARQ]': idArq, 'ARQUIVOS[0][ST_NOME_ARQ]': nome.replace(/\.pdf$/i, ''),
-    'ARQUIVOS[0][ST_EXTENSAO_ARQ]': ext, 'ARQUIVOS[0][ST_HASH_ARQ]': hashArq, 'ARQUIVOS[0][ID_FERRAMENTA_ARF]': '7',
-  })));
-  if (!rv.ok) { const apagou = await desfazerArquivo(); return { estado: rv.semResposta ? 'incerto' : 'falhou', msg: 'Vínculo do anexo não gravou: ' + rv.msg + (apagou ? ' (anexo apagado)' : ''), id_arquivo: apagou ? null : idArq }; }
+  // 3. vincular os arquivos ao comentário que ainda não existe (-1)
+  const vinc = { ID_COMENTARIOCONTEUDO_COMC: '-1' };
+  subidos.forEach((a, i) => Object.assign(vinc, { ['ARQUIVOS[' + i + '][ID_ARQUIVO_ARQ]']: a.id, ['ARQUIVOS[' + i + '][ST_NOME_ARQ]']: a.nome, ['ARQUIVOS[' + i + '][ST_EXTENSAO_ARQ]']: 'pdf', ['ARQUIVOS[' + i + '][ST_HASH_ARQ]']: a.hash, ['ARQUIVOS[' + i + '][ID_FERRAMENTA_ARF]']: '7' }));
+  const rv = corpoOk(await pedir(cred, 'POST', 'comentarios/putarquivos', null, formulario(vinc)));
+  if (!rv.ok) return falhar(rv.semResposta ? 'incerto' : 'falhou', 'Vínculo dos anexos não gravou: ' + rv.msg);
 
-  // 4. comentário, sempre invisível para o condômino (a tela do Superlógica vem marcada por padrão)
-  const camposC = {
-    COMENTARIOS: '[]', ID_CONDOMINIO: id, ID_PLANOCONTA: String(plano), DT_REFERENCIA: dois(c.mes) + '/01/' + c.ano, TIPO_OBJETO: 'CONTACATEGORIA',
-    ID_OBJETO: item.conta, TEXTO: item.titulo + ' ' + c.rotulo, VISIBILIDADE: '0', TITULO: item.titulo, CONTINUAR_CADASTRANDO_APOS_SALVAR: '0', 'ARQUIVOS[0][ID_ARQUIVO_ARQ]': idArq,
-  };
+  // 4. comentário no balão do Demonstrativo R&D, com o nome do jeito da equipe ("Capa", "11A"),
+  //    sempre invisível para o condômino (a tela do Superlógica vem marcada por padrão).
+  const lugar = lugarDoComentario(item.conta);
+  const camposC = { COMENTARIOS: '[]', ID_CONDOMINIO: id, ID_PLANOCONTA: String(plano), DT_REFERENCIA: dois(c.mes) + '/01/' + c.ano, TIPO_OBJETO: lugar.TIPO_OBJETO, ID_OBJETO: lugar.ID_OBJETO,
+    TEXTO: item.titulo, VISIBILIDADE: '0', TITULO: item.titulo, CONTINUAR_CADASTRANDO_APOS_SALVAR: '0' };
+  subidos.forEach((a, i) => { camposC['ARQUIVOS[' + i + '][ID_ARQUIVO_ARQ]'] = a.id; });
   conferirCampos(id, camposC);
   const rc = corpoOk(await pedir(cred, 'POST', 'comentarios/put', null, formulario(camposC)));
-  if (!rc.ok && !rc.semResposta) { const apagou = await desfazerArquivo(); return { estado: 'falhou', msg: 'Comentário não gravou: ' + rc.msg + (apagou ? ' (anexo apagado)' : ''), id_arquivo: apagou ? null : idArq }; }
+  if (!rc.ok && !rc.semResposta) return falhar('falhou', 'Comentário não gravou: ' + rc.msg);
 
-  // 5. prova: relê e confere título, anexo e visibilidade
+  // 5. prova: relê e confere nome, todos os anexos e a visibilidade
   let lido = null;
   try { lido = await procurar(); } catch (e) { lido = null; }
-  if (lido && lido.arquivos.some((a) => a.id === idArq)) {
-    if (lido.visibilidade === 1) return { estado: 'gravado', alerta: 'visivel', id_comentario: lido.id, id_arquivo: idArq, visibilidade: 1, msg: 'Gravado, mas o Superlógica deixou visível para o condômino. Confira.' };
-    return { estado: 'gravado', id_comentario: lido.id, id_arquivo: idArq, visibilidade: lido.visibilidade, msg: 'Gravado e conferido.' };
+  const ids = subidos.map((a) => a.id);
+  if (lido && ids.every((x) => lido.arquivos.some((a) => a.id === x))) {
+    const base = { estado: 'gravado', id_comentario: lido.id, id_arquivo: ids[0], ids_arquivos: ids, visibilidade: lido.visibilidade };
+    if (lido.visibilidade === 1) return Object.assign(base, { alerta: 'visivel', msg: 'Gravado, mas o Superlógica deixou visível para o condômino. Confira.' });
+    return Object.assign(base, { msg: 'Gravado e conferido.' });
   }
-  return { estado: 'incerto', id_arquivo: idArq, msg: rc.ok ? 'O Superlógica disse que gravou, mas a releitura não achou o comentário.' : 'Sem resposta do Superlógica ao gravar o comentário.' };
+  return { estado: 'incerto', id_arquivo: ids[0], ids_arquivos: ids, msg: rc.ok ? 'O Superlógica disse que gravou, mas a releitura não achou o comentário.' : 'Sem resposta do Superlógica ao gravar o comentário.' };
 }
 
 // ── fechamento do mês ─────────────────────────────────────────────────
@@ -486,6 +515,7 @@ function desc(a) {
 //      erroLeitura: [] }
 function montarSituacao(e) {
   const travas = [];
+  const avisos = [];
   const add = (etapa, causa, quem, extra) => travas.push(Object.assign({ etapa, causa, quem }, extra || {}));
   const c = competencia(e.comp);
   const f = e.fechamento;
@@ -503,14 +533,20 @@ function montarSituacao(e) {
     const pre = e.pre;
     const ip = itemF('pre_balancete');
     if (pre && Array.isArray(pre.grupos) && pendenteF(ip)) {
-      let n = 0;
+      let n = 0, antigas = 0, maisAntiga = '';
       pre.grupos.forEach((g) => (g.itens || []).forEach((a) => {
-        if (a.gravidade === 'baixa' || n >= 30) return;
+        if (a.gravidade === 'baixa') return;
+        // Conta vencida de mês anterior ao do balancete não segura este balancete (a equipe fecha o
+        // mês com elas, simulação do Buritis e do Victoria Bay em 24/10/2026): vira aviso, uma linha só.
+        const venc = String(a.dt_vencimento || '').slice(0, 10);
+        if (g.chave === 'vencida' && /^\d{4}-\d{2}-\d{2}$/.test(venc) && venc < c.inicio) { antigas++; n++; if (!maisAntiga || venc < maisAntiga) maisAntiga = venc; return; }
+        if (n - antigas >= 30) { return; }
         const fn = NOME_GRUPO_PRE[g.chave];
         if (!fn) return;
         const t = fn(a); n++;
         add('comprovantes', t.causa, t.quem, { grupo: g.chave });
       }));
+      if (antigas) avisos.push(antigas + ' conta(s) vencida(s) de meses anteriores ainda sem baixa (a mais antiga venceu em ' + isoBR(maisAntiga) + '). Não seguram este balancete.');
       const resto = (pre.pendencias || 0) - n;
       if (resto > 0) add('comprovantes', 'Mais ' + resto + ' pendência(s) de despesas no pré balancete.', 'Financeiro: abrir o pré balancete');
     } else if (pendenteF(ip)) add('comprovantes', 'Pré balancete: ' + (ip.trava || 'pendências'), 'Financeiro: abrir o pré balancete');
@@ -555,7 +591,7 @@ function montarSituacao(e) {
     const idx = travas.reduce((mn, t) => Math.min(mn, ETAPAS.indexOf(t.etapa)), ETAPAS.indexOf('pronto_publicar'));
     etapa = ETAPAS[idx];
   }
-  return { competencia: c.chave, etapa, etapa_nome: NOME_ETAPA[etapa], travas, publicado, fechado, prazo: prazo(c, e.hoje, etapa) };
+  return { competencia: c.chave, etapa, etapa_nome: NOME_ETAPA[etapa], travas, avisos, publicado, fechado, prazo: prazo(c, e.hoje, etapa) };
 }
 function splitTrava(t) { return String(t || '').replace(/\.$/, '').split(/;\s*/).map((x) => x.trim()).filter(Boolean).slice(0, 10); }
 
@@ -592,8 +628,8 @@ function competenciasDoDia(hojeIso) {
 }
 
 module.exports = {
-  NAO_CONDOMINIOS, NUNCA_FECHADO, ETAPAS, NOME_ETAPA, ETIQUETAS_RESERVA, MAX_ARQUIVO,
+  OBJETO_RD, lugarDoComentario, NAO_CONDOMINIOS, NUNCA_FECHADO, ETAPAS, NOME_ETAPA, ETIQUETAS_RESERVA, MAX_ARQUIVO,
   competencia, somarMeses, isoParaSL, slParaIso, isoBR, hojeSP, chaveTitulo, classificarDocumento, lerComentario, aprenderModelo, validarModelo,
   pedir, corpoOk, conferirCampos, etiquetasDoSuperlogica, comentariosDoMes, dataFechamento, datasFechamento, conferirSoma, montarSoma,
-  gerarRelatorio, ehPdf, montarCapa, gravarComentario, gravarFechamento, dataReabertura, montarSituacao, prazo, planoMontagem, competenciasDoDia,
+  gerarRelatorio, ehPdf, montarCapa, procurarComentario, gravarComentario, gravarFechamento, dataReabertura, montarSituacao, prazo, planoMontagem, competenciasDoDia,
 };
