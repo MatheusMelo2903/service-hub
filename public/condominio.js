@@ -23,7 +23,7 @@ function fichaPainelAberto() {
 async function fichaGet(url) {
   var r = await apiAuthFetch(url);
   var j = await r.json().catch(function () { return {}; });
-  if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+  if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
   return j;
 }
 

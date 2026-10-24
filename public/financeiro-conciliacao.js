@@ -49,7 +49,7 @@
         await new Promise(function (ok) { setTimeout(ok, 5000); });
         continue;
       }
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       return j;
     }
     throw new Error('A leitura está demorando mais que o normal. Tente de novo em alguns minutos.');

@@ -36,7 +36,7 @@ async function relatorioSindicoBaixar() {
   try {
     var r = await apiAuthFetch('/api/condominio/' + encodeURIComponent(cond.id_superlogica) + '/relatorio-mensal' + (mes ? '?mes=' + encodeURIComponent(mes) : ''));
     var d = await r.json().catch(function () { return {}; });
-    if (!r.ok) throw new Error(d.detalhe || ('Falha ' + r.status));
+    if (!r.ok) throw new Error(d.detalhe || (textoFalha(r.status)));
     if ((getCondominioAtivo() || {}).id_superlogica !== cond.id_superlogica) return; // trocou no meio
     var doc = relMontarPDF(d);
     var pm = String(d.mes || '').split('-');

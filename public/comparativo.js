@@ -15,7 +15,7 @@ function cmpBRL(v) { return v == null ? '' : Number(v).toLocaleString('pt-BR', {
 async function cmpJson(url) {
   var r = await apiAuthFetch(url);
   var j = await r.json().catch(function () { return {}; });
-  if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+  if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
   return j;
 }
 

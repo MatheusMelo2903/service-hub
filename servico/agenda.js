@@ -214,16 +214,59 @@ function classificarItemPauta(texto) {
 // Período da prestação: o que o item diz; sem período no texto, AGO usa o exercício (os 12 meses
 // fechados antes do mês da assembleia) e AGE os 3 meses fechados antes. Devolve
 // { inicio, fim, fonte, aviso? }.
-function periodoPrestacao(textoItem, tipoAss, dataAss) {
+// outros: { pauta: [textos], edital } onde procurar o exercício quando o item não diz.
+function periodoPrestacao(textoItem, tipoAss, dataAss, outros) {
+  const base = RE_MES.test(String(dataAss || '').slice(0, 7)) ? dataAss.slice(0, 7) : null;
+  const fim = base ? mesAnterior(base, 1) : null;
+  // "2025/2026" vem antes: o leitor geral leria "exercício 2025/2026" como o ano de 2025.
+  const anos = exercicioDoisAnos(textoItem, fim);
+  if (anos) return { inicio: anos.inicio, fim: anos.fim, fonte: 'texto' };
   const p = fin.periodoDoTexto(textoItem || '');
   if (p) return { inicio: p.inicio, fim: p.fim, fonte: 'texto' };
-  const base = RE_MES.test(String(dataAss || '').slice(0, 7)) ? dataAss.slice(0, 7) : null;
+  // O item não diz: procura o exercício nas outras linhas da pauta e no edital.
+  const fontes = ((outros && outros.pauta) || []).map((x) => ({ texto: x, fonte: 'pauta' }))
+    .concat(outros && outros.edital ? [{ texto: outros.edital, fonte: 'edital' }] : []);
+  const ex = exercicioNosTextos(fontes, fim);
+  if (ex) return { inicio: ex.inicio, fim: ex.fim, fonte: ex.fonte };
   if (!base) return null;
-  const fim = mesAnterior(base, 1);
   if (tipoAss === 'AGO' || tipoAss === 'AGO_AGE') {
     return { inicio: mesAnterior(base, 12), fim, fonte: 'exercicio', aviso: 'A pauta não diz o período; usei o exercício de ' + mesRotulo(mesAnterior(base, 12)) + ' a ' + mesRotulo(fim) + '. Confira.' };
   }
   return { inicio: mesAnterior(base, 3), fim, fonte: 'padrao', aviso: 'A pauta não diz o período; usei os 3 meses antes da assembleia (' + mesRotulo(mesAnterior(base, 3)) + ' a ' + mesRotulo(fim) + '). Confira.' };
+}
+
+// Exercício escrito como "2025/2026" (ou 2025 a 2026, 2025-2026): 12 meses que começam em um
+// ano e terminam no seguinte. O mês do corte vem da assembleia (os 12 meses fechados antes dela,
+// como já era); se a assembleia cair fora desses dois anos, fica no último corte possível.
+function exercicioDoisAnos(texto, fimPadrao) {
+  const m = String(texto || '').match(/\b(20\d{2})\s*(?:\/|\s(?:a|e)\s|-)\s*(20\d{2})\b/i);
+  if (!m || Number(m[2]) !== Number(m[1]) + 1) return null;
+  const a1 = Number(m[1]); const a2 = Number(m[2]);
+  let fim = fimPadrao && RE_MES.test(fimPadrao) ? fimPadrao : a2 + '-12';
+  if (fim > a2 + '-11') fim = a2 + '-11';
+  if (fim < a2 + '-01') fim = a2 + '-01';
+  const inicio = mesAnterior(fim, 11);
+  return inicio.slice(0, 4) === String(a1) ? { inicio, fim } : null;
+}
+// Exercício nas outras linhas da pauta ou no edital. Só olha frase que fala de contas ou
+// exercício (senão "mandato 2025/2026" ou a data da assembleia virariam período) e só aceita os
+// formatos de exercício: "2025/2026", "exercício 2025", "11/2025 a 10/2026" e "novembro de 2025 a
+// outubro de 2026". Devolve { inicio, fim, fonte: 'pauta' | 'edital' } ou null.
+const RE_FALA_DE_CONTAS = /contas|exerc[íi]cio|presta[çc][ãa]o|balancete|demonstrativo/i;
+// fontes: [{ texto, fonte }].
+function exercicioNosTextos(fontes, fimPadrao) {
+  for (const { texto, fonte } of fontes || []) {
+    const frases = String(texto || '').split(/[\n;]+|\.\s+/).filter((f) => RE_FALA_DE_CONTAS.test(f));
+    for (const f of frases) {
+      const anos = exercicioDoisAnos(f, fimPadrao);
+      if (anos) return Object.assign(anos, { fonte });
+      const sem = f.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      const faixa = /\b\d{1,2}\/\d{4}\s*(?:a|ate|-)\s*\d{1,2}\/\d{4}\b/.test(sem) || /\b(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s*(?:de\s*)?\d{4}\s*(?:a|ate|-)\s*(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s*(?:de\s*)?\d{4}\b/.test(sem);
+      const ano = /\bexercicio\s*(?:de\s*)?\d{4}\b/.test(sem);
+      if (faixa || ano) { const p = fin.periodoDoTexto(f); if (p) return { inicio: p.inicio, fim: p.fim, fonte }; }
+    }
+  }
+  return null;
 }
 
 // Pauta classificada: [{ texto, trabalhos: [...] }].
@@ -362,7 +405,7 @@ function gerarPlano(itens, config) {
     const base = { item_id: it.id, id_superlogica: it.id_superlogica || null };
     if (tr.has('prestacao_contas')) {
       const p = pauta.find((x) => (x.trabalhos || []).includes('prestacao_contas'));
-      const per = periodoPrestacao(p && p.texto, it.tipo_assembleia, ass);
+      const per = periodoPrestacao(p && p.texto, it.tipo_assembleia, ass, { pauta: pauta.filter((x) => x !== p).map((x) => x.texto), edital: it.edital_texto || '' });
       const prazo = naData(somarDias(ass, -cfg.prestacao_dias_antes));
       out.push(Object.assign({ chave: it.id + ':prestacao', tipo: 'prestacao_contas', titulo: 'Prestação de contas ' + nome, data_execucao: prazo, prazo,
         parametros: per ? { inicio: per.inicio, fim: per.fim, fonte: per.fonte } : { sem_periodo: true }, automatica: true, avisos: per && per.aviso ? [per.aviso] : [] }, base));
@@ -480,14 +523,19 @@ function certidoesFaltando(linhas, tipos, ate) {
 
 // ── Tendências do Painel da gestão (meses anteriores) ──
 // tarefas e itens: de vários meses. custoPorMes: { 'AAAA-MM': { usd, chamadas } } das funções de
-// prestação e apresentação. Devolve uma linha por mês (do mais antigo ao atual).
-function tendencias(meses, itens, tarefas, custoPorMes) {
+// prestação e apresentação. hoje ('AAAA-MM-DD'): quando vem, "no prazo" só conta o que já
+// venceu (prazo antes de hoje) ou já ficou pronto; mês sem nada vencido volta nada_venceu (antes
+// aparecia "0 (0%)" num mês em que nada vencia ainda). Devolve uma linha por mês.
+function tendencias(meses, itens, tarefas, custoPorMes, hoje) {
   return meses.map((m) => {
     const it = (itens || []).filter((i) => i.mes === m && !i.cancelado);
     const ts = (tarefas || []).filter((t) => t.mes === m && t.status !== 'cancelada');
     const ger = ts.filter((t) => GERACOES.has(t.tipo));
     const prontas = ger.filter((t) => t.pronta_em);
     const noPrazo = prontas.filter((t) => t.prazo && String(t.pronta_em).length >= 10 && hojeBrasilia(Date.parse(t.pronta_em)) <= t.prazo);
+    const vencidas = hoje ? ger.filter((t) => t.prazo && t.prazo < hoje) : ger;
+    const avaliadas = hoje ? ger.filter((t) => t.pronta_em || (t.prazo && t.prazo < hoje)) : ger;
+    const nadaVenceu = !!hoje && ger.length > 0 && !vencidas.length;
     const travas = {};
     ts.forEach((t) => (Array.isArray(t.travas) ? t.travas : []).forEach((x) => { if (x && x.motivo) travas[x.motivo] = (travas[x.motivo] || 0) + 1; }));
     const maisTravou = Object.entries(travas).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, n]) => ({ motivo: k, texto: MOTIVOS[k] || k, vezes: n }));
@@ -499,7 +547,8 @@ function tendencias(meses, itens, tarefas, custoPorMes) {
       prestacoes: ts.filter((t) => t.tipo === 'prestacao_contas').length,
       apresentacoes: ts.filter((t) => t.tipo === 'apresentacao').length,
       prontas: prontas.length, no_prazo: noPrazo.length,
-      pct_no_prazo: ger.length ? Math.round(noPrazo.length / ger.length * 100) : null,
+      pct_no_prazo: !nadaVenceu && avaliadas.length ? Math.round(noPrazo.length / avaliadas.length * 100) : null,
+      nada_venceu: nadaVenceu,
       mais_travou: maisTravou,
       horas_material_ate_pronto: esperas.length ? Math.round(esperas.reduce((s, h) => s + h, 0) / esperas.length * 10) / 10 : null,
       geracoes: ger.reduce((s, t) => s + (Number(t.tentativas) || 0), 0),

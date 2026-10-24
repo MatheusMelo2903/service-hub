@@ -27,7 +27,7 @@
     var op = corpo ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) } : {};
     var r = await apiAuthFetch(url, op);
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) { var e = new Error(j.detalhe || ('Falha ' + r.status)); e.status = r.status; throw e; }
+    if (!r.ok) { var e = new Error(j.detalhe || (textoFalha(r.status))); e.status = r.status; throw e; }
     return j;
   }
 

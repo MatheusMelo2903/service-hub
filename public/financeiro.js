@@ -103,7 +103,7 @@
         await new Promise(function (ok) { setTimeout(ok, 6000); });
         continue;
       }
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       return j;
     }
     throw new Error('O cálculo está demorando mais que o normal. Tente de novo em alguns minutos.');

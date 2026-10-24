@@ -91,7 +91,7 @@
     try {
       var r = await apiAuthFetch('/api/alertas/prazos-manutencao');
       var j = await r.json().catch(function () { return {}; });
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       prazosEstado.dados = j;
       render(j.prazos);
       var info = document.getElementById('prazos-info');
@@ -119,7 +119,7 @@
     try {
       var r = await apiAuthFetch('/api/alertas/prazos-manutencao', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prazos: prazos }) });
       var j = await r.json().catch(function () { return {}; });
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       render(j.prazos);
       var info = document.getElementById('prazos-info');
       if (info) info.textContent = '';

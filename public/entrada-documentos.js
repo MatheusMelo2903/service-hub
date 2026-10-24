@@ -42,7 +42,7 @@
   async function api(url, opt, gravar) {
     var r = await (gravar && window.gravarNoSuperlogica ? window.gravarNoSuperlogica : apiAuthFetch)(url, opt || {});
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) { var e = new Error(j.detalhe || ('Falha ' + r.status)); e.status = r.status; e.corpo = j; throw e; }
+    if (!r.ok) { var e = new Error(j.detalhe || (textoFalha(r.status))); e.status = r.status; e.corpo = j; throw e; }
     return j;
   }
   var NOME_TIPO = { boleto: 'Boleto', nota: 'Nota fiscal', guia: 'Guia', fatura: 'Fatura', comprovante: 'Comprovante', outro: 'Outro' };

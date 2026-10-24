@@ -1404,7 +1404,7 @@ async function ataCadastroCarregar(forcar) {
     const r = await apiAuthFetch('/api/condominio/' + encodeURIComponent(cond.id_superlogica) + '/cadastro');
     const j = await r.json().catch(() => ({}));
     if (seq !== _ataCadastroSeq) return; // trocou no meio
-    if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+    if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
     _ataCadastro = { ok: true, id: cond.id_superlogica, dados: j };
     // T49: ata reaberta da pasta: os campos ficam como estavam na geração (o cadastro não sobrescreve).
     if (_ataRestauradaCond && _ataRestauradaCond === String(cond.id_superlogica)) {

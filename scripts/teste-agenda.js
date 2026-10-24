@@ -273,6 +273,15 @@ const PLANILHA = [
     const ap2 = await pedir('gerente', 'POST', '/api/agenda/mes/2026-11/aprovar', {});
     t('aprovar tudo', ap2.j.aprovadas === plano.length - 1 && fb.tabelas().agenda_tarefas.every((x) => x.aprovacao === 'aprovada'));
     t('aprovação vai para a auditoria', eventos.includes('agenda_plano_aprovado'));
+    // Rodar agora pela rota: só a gestão, com a execução automática desligada, mesmas travas.
+    const itemMar = mesG.j.itens.find((i) => i.id_superlogica === 11);
+    const ataMar = fb.tabelas().agenda_tarefas.find((x) => x.item_id === itemMar.id && x.tipo === 'ata');
+    t('analista não roda agora', (await pedir('analista', 'POST', '/api/agenda/tarefas/' + ataMar.id + '/rodar')).status === 403);
+    const rodou = await pedir('gerente', 'POST', '/api/agenda/tarefas/' + ataMar.id + '/rodar');
+    const ataDepois = fb.tabelas().agenda_tarefas.find((x) => x.id === ataMar.id);
+    t('gerente roda agora com a execução desligada e antes da data', rodou.status === 200 && rodou.j.status === 'manual' && ataDepois.resultado.avisado === '2026-10-23' && eventos.includes('agenda_tarefa_rodar_agora'));
+    t('rodar de novo o que já rodou é recusado', (await pedir('gerente', 'POST', '/api/agenda/tarefas/' + ataMar.id + '/rodar')).status === 409);
+    t('rodar agora com id inválido', (await pedir('gerente', 'POST', '/api/agenda/tarefas/xyz/rodar')).status === 400);
     const put = await pedir('gerente', 'PUT', '/api/agenda/itens/' + item0.id, { data: '2026-11-19' });
     const doItem = fb.tabelas().agenda_tarefas.filter((x) => x.item_id === item0.id && x.status !== 'cancelada');
     t('mudança depois de aprovar volta para aprovação', put.status === 200 && doItem.length && doItem.every((x) => x.aprovacao === 'pendente'));
@@ -375,12 +384,61 @@ const PLANILHA = [
   T5.agenda_tarefas.push(tarefa({ chave: 'v', tipo: 'prestacao_contas', item_id: ITEM_PREST, id_superlogica: 10, data_execucao: '2026-11-05', parametros: { inicio: '2026-07', fim: '2026-09' }, status: 'rodando', trava_ate: '2026-11-06T12:00:00.000Z', trava_dono: 'outra' }));
   await execucao.criarAgendador({ banco: fb5.banco, executores, salvarTrabalho: async () => 'x', baixarMaterial: async () => Buffer.alloc(0), tiposCertidao: [], ligado: () => true, agora: () => AGORA2, horaInicio: () => 6 }).rodar();
   t('trava vencida volta e roda', T5.agenda_tarefas[0].status === 'pronta_conferir');
+  // Rodar agora (agendador): sem esperar a data, desligado e fora do horário, com as travas.
+  const fb6 = criarBanco(); const T6 = fb6.tabelas();
+  T6.condominios.push(...BASE);
+  T6.agenda_itens.push(Object.assign({}, T.agenda_itens.find((x) => x.id === ITEM_PREST)));
+  const R1 = tarefa({ chave: 'r1', tipo: 'prestacao_contas', item_id: ITEM_PREST, id_superlogica: 10, data_execucao: '2026-11-30', parametros: { inicio: '2026-07', fim: '2026-09' } });
+  const R2 = tarefa({ chave: 'r2', tipo: 'prestacao_contas', item_id: ITEM_PREST, id_superlogica: 10, data_execucao: '2026-11-30', parametros: { inicio: '2026-06', fim: '2026-09' } });
+  const RP = tarefa({ chave: 'rp', tipo: 'prestacao_contas', item_id: ITEM_PREST, id_superlogica: 10, data_execucao: '2026-11-30', parametros: { inicio: '2026-05', fim: '2026-09' }, aprovacao: 'pendente' });
+  T6.agenda_tarefas.push(R1, R2, RP);
+  let limiteMes = false;
+  const ag6 = execucao.criarAgendador({ banco: fb6.banco, executores, salvarTrabalho: async () => crypto.randomUUID(), baixarMaterial: async () => Buffer.alloc(0), tiposCertidao: [],
+    ligado: () => false, agora: () => AGORA2, maxHora: () => 1, horaInicio: () => 23, passouLimiteMensal: async () => limiteMes });
+  const antes6 = chamadasGer.length;
+  const naoAprov = await ag6.rodarUma(RP.id);
+  t('rodar agora: sem aprovação não roda', !naoAprov.iniciada && naoAprov.motivo === 'nao_aprovada' && T6.agenda_tarefas.find((x) => x.id === RP.id).status === 'agendada');
+  const [u1, u2] = await Promise.all([ag6.rodarUma(R1.id), ag6.rodarUma(R1.id)]);
+  t('rodar agora: dois cliques ao mesmo tempo, uma execução só (trava no banco)', [u1, u2].filter((x) => x.iniciada).length === 1);
+  await (u1.fim || u2.fim);
+  t('rodar agora: roda desligado, fora do horário e antes da data', chamadasGer.length - antes6 === 1 && T6.agenda_tarefas.find((x) => x.id === R1.id).status === 'pronta_conferir');
+  const lim = await ag6.rodarUma(R2.id);
+  t('rodar agora: respeita o limite de gerações por hora', !lim.iniciada && lim.motivo === 'limite_hora' && T6.agenda_tarefas.find((x) => x.id === R2.id).status === 'agendada' && chamadasGer.length - antes6 === 1);
+  t('rodar agora: o que já ficou pronto não roda de novo', (await ag6.rodarUma(R1.id)).motivo === 'status');
+  limiteMes = true;
+  const ag7 = execucao.criarAgendador({ banco: fb6.banco, executores, salvarTrabalho: async () => crypto.randomUUID(), baixarMaterial: async () => Buffer.alloc(0), tiposCertidao: [],
+    ligado: () => false, agora: () => AGORA2, maxHora: () => 6, horaInicio: () => 6, passouLimiteMensal: async () => limiteMes });
+  t('rodar agora: respeita o limite de gasto do mês', (await ag7.rodarUma(R2.id)).motivo === 'limite_mes');
+  t('rodar agora: id inválido', (await ag7.rodarUma('x')).motivo === 'id_invalido');
+
+  // Exercício na pauta e no edital: usa e não avisa.
+  const ex1 = agenda.periodoPrestacao('Prestação de contas do exercício 2025/2026', 'AGO', '2026-11-12');
+  t('exercício 2025/2026 no item', ex1.inicio === '2025-11' && ex1.fim === '2026-10' && !ex1.aviso);
+  const ex2 = agenda.periodoPrestacao('Prestação de contas', 'AGO', '2026-11-12', { pauta: ['Eleição'], edital: 'EDITAL. Ordem do dia: 1) Prestação de contas do exercício 2025/2026; 2) Eleição. Dia 12/11/2026.' });
+  t('exercício 2025/2026 no edital', ex2.inicio === '2025-11' && ex2.fim === '2026-10' && ex2.fonte === 'edital' && !ex2.aviso);
+  const ex3 = agenda.periodoPrestacao('Prestação de contas', 'AGO', '2026-03-12', { pauta: [], edital: 'Aprovação das contas do exercício 2025. Serra, 12 de março de 2026.' });
+  t('exercício 2025 no edital', ex3.inicio === '2025-01' && ex3.fim === '2025-12' && !ex3.aviso);
+  const ex4 = agenda.periodoPrestacao('Prestação de contas', 'AGO', '2026-11-12', { pauta: ['Contas de 11/2025 a 10/2026'], edital: '' });
+  t('exercício 11/2025 a 10/2026 na pauta', ex4.inicio === '2025-11' && ex4.fim === '2026-10' && ex4.fonte === 'pauta' && !ex4.aviso);
+  const ex5 = agenda.periodoPrestacao('Prestação de contas', 'AGO', '2026-11-12', { pauta: [], edital: 'Prestação de contas de novembro de 2025 a outubro de 2026.' });
+  t('exercício novembro de 2025 a outubro de 2026 no edital', ex5.inicio === '2025-11' && ex5.fim === '2026-10' && !ex5.aviso);
+  const ex6 = agenda.periodoPrestacao('Prestação de contas', 'AGO', '2026-11-12', { pauta: ['Eleição do síndico para o mandato 2026/2027'], edital: 'Serra, 01 de novembro de 2026.' });
+  t('mandato e data do edital não viram período (segue com o aviso)', ex6.fonte === 'exercicio' && /não diz o período/.test(ex6.aviso));
+  const planoEx = agenda.gerarPlano([{ id: 'ix', mes: '2026-11', tipo_item: 'assembleia', id_superlogica: 10, condominio_nome: 'Bosque', data: '2026-11-12', tipo_assembleia: 'AGO', cancelado: false,
+    pauta: agenda.classificarPauta(['Prestação de contas', 'Eleição']), edital_texto: 'Ordem do dia: 1) Prestação de contas do exercício 2025/2026; 2) Eleição.' }], {});
+  const prEx = planoEx.find((x) => x.tipo === 'prestacao_contas');
+  t('plano usa o exercício do edital sem aviso', prEx.parametros.inicio === '2025-11' && prEx.parametros.fim === '2026-10' && !prEx.avisos.length);
+
   // Tendências.
   const tend = agenda.tendencias(['2026-10', '2026-11'], [{ mes: '2026-11', tipo_item: 'assembleia' }, { mes: '2026-10', tipo_item: 'assembleia' }],
     [{ mes: '2026-11', tipo: 'prestacao_contas', status: 'pronta_conferir', prazo: '2026-11-05', pronta_em: '2026-11-05T13:00:00Z', tentativas: 1, travas: [{ motivo: 'falta_edital' }], resultado: { material_em: '2026-11-04T13:00:00Z' } },
       { mes: '2026-11', tipo: 'apresentacao', status: 'pendente_material', prazo: '2026-11-09', tentativas: 0, travas: [{ motivo: 'falta_edital' }, { motivo: 'falta_orcamentos' }] }],
     { '2026-11': { usd: 1.234, chamadas: 9 } });
   t('tendências: no prazo, o que mais travou, tempo do material e custo', tend[1].no_prazo === 1 && tend[1].pct_no_prazo === 50 && tend[1].mais_travou[0].motivo === 'falta_edital' && tend[1].horas_material_ate_pronto === 24 && tend[1].custo_usd === 1.23 && tend[0].pct_no_prazo === null);
+  const naoVenceu = agenda.tendencias(['2026-11'], [], [{ mes: '2026-11', tipo: 'prestacao_contas', status: 'agendada', prazo: '2026-11-05', tentativas: 0 }, { mes: '2026-11', tipo: 'apresentacao', status: 'agendada', prazo: '2026-11-09', tentativas: 0 }], {}, '2026-10-23');
+  t('tendências: mês sem nada vencido mostra nada venceu ainda (não 0%)', naoVenceu[0].nada_venceu === true && naoVenceu[0].pct_no_prazo === null);
+  const metade = agenda.tendencias(['2026-11'], [], [{ mes: '2026-11', tipo: 'prestacao_contas', status: 'pronta_conferir', prazo: '2026-11-05', pronta_em: '2026-11-04T13:00:00Z', tentativas: 1 }, { mes: '2026-11', tipo: 'apresentacao', status: 'erro', prazo: '2026-11-09', tentativas: 1 }, { mes: '2026-11', tipo: 'apresentacao', status: 'agendada', prazo: '2026-11-20', tentativas: 0 }], {}, '2026-11-12');
+  t('tendências: no prazo só conta o que já venceu ou ficou pronto', metade[0].nada_venceu === false && metade[0].pct_no_prazo === 50);
 
   console.log(ok + ' ok, ' + falha + ' falha(s)');
   process.exit(falha ? 1 : 0);

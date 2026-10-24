@@ -63,7 +63,7 @@ async function despesasVerificarNoSuperlogica(linhas) {
     }),
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+  if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
   return j;
 }
 

@@ -33,7 +33,7 @@
       var r = await apiAuthFetch(url);
       var j = await r.json().catch(function () { return {}; });
       if (r.status === 202) { if (aoEsperar) aoEsperar(j); await new Promise(function (ok) { setTimeout(ok, 5000); }); url = url.replace(/[?&]forcar=1/, ''); continue; }
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       return j;
     }
     throw new Error('A leitura demorou demais. Tente de novo em alguns minutos.');
@@ -44,13 +44,13 @@
     var r = await f(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo || {}) });
     var j = await r.json().catch(function () { return {}; });
     if (r.status === 499) throw new Error(j.detalhe || 'Gravação cancelada. Nada foi gravado.');
-    if (!r.ok && r.status !== 207) throw new Error(j.detalhe || ('Falha ' + r.status));
+    if (!r.ok && r.status !== 207) throw new Error(j.detalhe || (textoFalha(r.status)));
     return j;
   }
   async function enviar(url, corpo) {
     var r = await apiAuthFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo || {}) });
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+    if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
     return j;
   }
   function base(id) { return '/api/financeiro/boletos-mes/' + encodeURIComponent(id); }
@@ -102,7 +102,7 @@
     document.getElementById('bm-cal-ler').addEventListener('click', function () { calendario(false); });
     document.getElementById('bm-cal-forcar').addEventListener('click', function () { calendario(true); });
     document.getElementById('bm-cal-filtro').addEventListener('change', function () { if (est.cal) renderCal(est.cal); });
-    document.getElementById('bm-ler').addEventListener('click', lerComposicao);
+    document.getElementById('bm-ler').addEventListener('click', function () { lerComposicao(); });
     document.getElementById('bm-antes-ler').addEventListener('click', function () { conferirAntes(false); });
     document.getElementById('bm-antes-forcar').addEventListener('click', function () { conferirAntes(true); });
     document.getElementById('bm-pos').addEventListener('click', conferirDepois);
@@ -143,18 +143,26 @@
   }
 
   // ── 2. composição ──
-  async function lerComposicao() {
+  // Lê a composição do mês. guardada: { texto, erro } do que acabou de ser gravado ou excluído;
+  // fica visível em cima do resumo da releitura (antes a releitura apagava o resultado).
+  async function lerComposicao(guardada) {
     var c = cond(); if (!c) return semCond('bm-prep-info');
     var mes = mesEscolhido(); if (!mes) return msg('bm-prep-info', 'Escolha o mês do vencimento.', true);
     var seq = ++est.seq;
-    msg('bm-prep-info', 'Lendo a composição de ' + c.nome + '...');
+    var comGuardada = function (texto, erro) {
+      if (!guardada || !guardada.texto) return msg('bm-prep-info', texto, erro);
+      msg('bm-prep-info', guardada.texto, guardada.erro);
+      var el = document.getElementById('bm-prep-info');
+      if (el && texto) { var d = document.createElement('div'); d.style.cssText = 'font-size:12px;font-family:var(--mono);margin-top:4px;color:' + (erro ? 'var(--danger)' : 'var(--muted)'); d.textContent = texto; el.appendChild(d); }
+    };
+    comGuardada('Lendo a composição de ' + c.nome + '...');
     try {
       var j = await pegar(base(c.id) + '/composicao?competencia=' + mes);
       if (seq !== est.seq) return;
       est.comp = { id: c.id, mes: mes, dados: j }; est.contas = j.contas || [];
-      msg('bm-prep-info', (j.composicoes || []).length + ' item(ns) na composição de ' + mes.split('-').reverse().join('/') + '. ' + textoGravacao(j.gravacao) + ' ' + (j.aviso || ''));
+      comGuardada((j.composicoes || []).length + ' item(ns) na composição de ' + mes.split('-').reverse().join('/') + '. ' + textoGravacao(j.gravacao) + ' ' + (j.aviso || ''));
       renderComposicao(j); renderForm(); renderNovos();
-    } catch (e) { if (seq === est.seq) msg('bm-prep-info', e.message, true); }
+    } catch (e) { if (seq === est.seq) comGuardada(e.message, true); }
   }
   function renderComposicao(j) {
     var hub = {}; (j.itens_do_hub || []).forEach(function (h) { hub[String(h.id_composicao)] = h; });
@@ -221,14 +229,15 @@
     try {
       var j = await gravar(base(c.id) + '/composicao/gravar', { competencia: est.comp.mes, itens: est.itens });
       var falhas = (j.resultados || []).filter(function (r) { return !r.ok || !r.conferido; });
-      msg('bm-prep-info', j.detalhe + (falhas.length ? ' ' + falhas.map(function (r) { return r.texto + ': ' + (r.msg || (r.ok ? 'gravado sem prova' : 'não gravado')); }).join('; ') : ''), !j.ok);
+      var resultado = { texto: j.detalhe + (falhas.length ? ' ' + falhas.map(function (r) { return r.texto + ': ' + (r.msg || (r.ok ? 'gravado sem prova' : 'não gravado')); }).join('; ') : ''), erro: !j.ok };
+      msg('bm-prep-info', resultado.texto, resultado.erro);
       if (j.ok) { est.itens = []; est.previa = null; }
-      await lerComposicao();
+      await lerComposicao(resultado);
     } catch (e) { msg('bm-prep-info', e.message, true); b.disabled = false; }
   }
   async function excluir(idc) {
     var c = cond(); if (!c || !est.comp || c.id !== est.comp.id) return;
-    try { var j = await gravar(base(c.id) + '/composicao/excluir', { competencia: est.comp.mes, id_composicao: idc }); msg('bm-prep-info', j.detalhe, !j.ok); await lerComposicao(); }
+    try { var j = await gravar(base(c.id) + '/composicao/excluir', { competencia: est.comp.mes, id_composicao: idc }); msg('bm-prep-info', j.detalhe, !j.ok); await lerComposicao({ texto: j.detalhe, erro: !j.ok }); }
     catch (e) { msg('bm-prep-info', e.message, true); }
   }
 

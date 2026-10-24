@@ -104,7 +104,7 @@
       body: JSON.stringify({ quantidade: quantidade, caminhos: caminhos, descricao: descricao || '' }),
     });
     var j = await r.clone().json().catch(function () { return {}; });
-    if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+    if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
     if (j.confirmado && j.confirmacao && j.confirmacao.token) window.__confirmacaoPonte = { token: j.confirmacao.token, id_condominio: j.confirmacao.id_condominio };
     return true;
   }

@@ -22,7 +22,7 @@ function comSet(id, v) { var el = document.getElementById(id); if (el) el.value 
 async function comPost(url, corpo, gravar) {
   var r = await (gravar && window.gravarNoSuperlogica ? window.gravarNoSuperlogica : apiAuthFetch)(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
   var j = await r.json().catch(function () { return {}; });
-  if (!r.ok) { var e = new Error(j.detalhe || ('Falha ' + r.status)); e.status = r.status; e.corpo = j; throw e; }
+  if (!r.ok) { var e = new Error(j.detalhe || (textoFalha(r.status))); e.status = r.status; e.corpo = j; throw e; }
   j._status = r.status;
   return j;
 }

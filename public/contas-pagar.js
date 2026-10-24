@@ -53,7 +53,7 @@
       var r = await apiAuthFetch(url);
       var j = await r.json().catch(function () { return {}; });
       if (r.status === 202) { if (aoEsperar) aoEsperar(j); await new Promise(function (ok) { setTimeout(ok, 5000); }); url = url.replace(/[?&]forcar=1/, ''); continue; }
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       return j;
     }
     throw new Error('A leitura demorou demais. Tente de novo em alguns minutos.');
@@ -63,7 +63,7 @@
     var op = { method: metodo, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo || {}) };
     var r = gravar && window.gravarNoSuperlogica ? await window.gravarNoSuperlogica(url, op) : await apiAuthFetch(url, op);
     var j = await r.json().catch(function () { return {}; });
-    if (!r.ok) { var e = new Error(j.detalhe || ('Falha ' + r.status)); e.status = r.status; e.j = j; throw e; }
+    if (!r.ok) { var e = new Error(j.detalhe || (textoFalha(r.status))); e.status = r.status; e.j = j; throw e; }
     return j;
   }
 

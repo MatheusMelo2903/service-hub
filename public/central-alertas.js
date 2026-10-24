@@ -884,7 +884,7 @@
     try {
       var r = await apiAuthFetch('/api/alertas/' + a.alerta_id, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: status }) });
       var j = await r.json().catch(function () { return {}; });
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       a.status = normSit(j.status || status);
       renderTudo();
       avisar(status === 'novo' ? 'Alerta reaberto.' : status === 'visto' ? 'Alerta marcado como visto.' : 'Alerta marcado como resolvido.', 'ok');
@@ -1040,7 +1040,7 @@
       var r = await apiAuthFetch('/api/alertas/preferencias', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
       var j = await r.json().catch(function () { return {}; });
       if (r.status === 403) throw new Error('você não tem permissão para silenciar alertas');
-      if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
+      if (!r.ok) throw new Error(j.detalhe || (textoFalha(r.status)));
       est.pref.silenciados = Array.isArray(j.silenciados) ? j.silenciados.map(String) : corpo.silenciados;
       est.pref.pausado = typeof j.pausado === 'boolean' ? j.pausado : corpo.pausado;
       fecharPref();
