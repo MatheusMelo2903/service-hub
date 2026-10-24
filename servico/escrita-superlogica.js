@@ -2,7 +2,7 @@
 // Política única de gravação no Superlógica (decisão do Matheus, 23/10/2026): "por enquanto o Hub
 // grava só no 167; depois vai poder gravar em todos, pedindo confirmação". Toda rota do Hub que
 // grava no Superlógica passa por aqui antes de gravar (entrada de documentos, consumo, 2ª via,
-// multa, comunicados, balancete digital e arquivamento de ata ou prestação).
+// multa, comunicados, balancete digital, montagem do balancete, fechamento do mês e arquivamento).
 //
 // Interruptor geral ESCRITA_SUPERLOGICA:
 //   teste (padrão)  grava sem confirmação só nos condomínios de ESCRITA_TESTE (padrão "167").
@@ -45,6 +45,11 @@ const OPERACOES = {
   comunicado_disparar: { rotulo: 'Disparo dos comunicados pendentes de todos os condomínios', sensivel: true, global: true, chave: 'COMUNICADOS_DISPARO_LIBERADO' },
   balancete_gerar: { rotulo: 'Geração do balancete digital (900A)', legado: 'BALANCETE_GERACAO_LIBERADA', sensivel: true },
   documento_arquivar: { rotulo: 'Arquivamento de documento no Superlógica' },
+  // Balancete digital feito pelo sistema (financeiro/balancete-digital.js): comentários com anexo e
+  // etiqueta no Demonstrativo R&D, fechamento e reabertura do mês (condominios/fecharmes).
+  balancete_montar: { rotulo: 'Montagem do balancete digital (comentários com anexo no Demonstrativo R&D, sem publicar)', sensivel: true },
+  mes_fechar: { rotulo: 'Fechamento do mês no Superlógica (bloqueia lançamentos até o último dia do mês)', sensivel: true },
+  mes_reabrir: { rotulo: 'Reabertura do mês no Superlógica', sensivel: true },
   // Ponte genérica /api/superlogica (importação de unidades e despesas pela tela): cada POST, PUT
   // ou DELETE gasta uma unidade da cota confirmada. Cota acima de 1 envio é lote: confirmação reforçada.
   ponte_superlogica: { rotulo: 'Importação direta no Superlógica', cota: true },

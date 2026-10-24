@@ -237,7 +237,9 @@ function criarRotasFechamento(app, d) {
     res.json({ competencia: comp.rotulo, condominios: out });
   });
 
-  return { anexos };
+  // calcular também serve ao balancete digital (financeiro/balancete-digital-rotas.js), que usa o
+  // mesmo checklist como primeira parte das travas, sem repetir as leituras.
+  return { anexos, calcular, guardarStatus };
 }
 
 module.exports = { criarRotasFechamento };

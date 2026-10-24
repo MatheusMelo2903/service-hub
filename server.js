@@ -5455,7 +5455,7 @@ if (require.main === module && superlogicaNativa() && SUPABASE_SERVICE_ROLE_KEY)
 // servico/rotas-fechamento.js. Só GET no Superlógica; marca de conferido só no banco de teste.
 // ─────────────────────────────────────────────────────────────────────────
 const _forcarBolFech = new Map();
-require('./servico/rotas-fechamento').criarRotasFechamento(app, {
+const _fechamentoT38 = require('./servico/rotas-fechamento').criarRotasFechamento(app, {
   requireAuth, express, exigirFinanceiro: _exigirFinanceiro, exigirModuloItem: _exigirModuloItem, exigirLeituraSuperlogica,
   exigirCarteira: _exigirCarteira, exigirEscopoFinanceiro: _exigirEscopoFinanceiro, escopoFinanceiro: _escopoFinanceiro, gruposCarteiras,
   clienteSL, credSL: _credSL, painelFin: _painelFin, conciliacao: _conciliacao,
@@ -5469,6 +5469,17 @@ require('./servico/rotas-fechamento').criarRotasFechamento(app, {
   dentroDoLimite, auditoria, processar, linkDe: finPainel.linkLancamento,
   supabase: { url: SUPABASE_URL, chave: SUPABASE_SERVICE_ROLE_KEY },
 });
+
+// Balancete digital e fechamento do mês feitos pelo sistema (agendamento próprio, BALANCETE_AGENDA).
+// Rotas, documentos recebidos e agenda em financeiro/balancete-digital-rotas.js; gravação pela política única.
+const _balDigital = require('./financeiro/balancete-digital-rotas').criarRotasBalanceteDigital(app, {
+  requireAuth, express, exigirFinanceiro: _exigirFinanceiro, exigirModuloItem: _exigirModuloItem, exigirLeituraSuperlogica, exigirEscritaSuperlogica,
+  exigirCarteira: _exigirCarteira, carteiraEstrita: _carteiraEstrita, exigirEscopoFinanceiro: _exigirEscopoFinanceiro, escopoFinanceiro: _escopoFinanceiro, gruposCarteiras,
+  clienteSL, credSL: _credSL, politica: politicaEscrita, auditoria, fechamentoT38: _fechamentoT38, painelFin: _painelFin,
+  condominios: async () => [...(await require('./financeiro/entrada').cadastroCondominios(clienteSL())).porId.values()],
+  supabase: { url: SUPABASE_URL, chave: SUPABASE_SERVICE_ROLE_KEY },
+});
+if (require.main === module && superlogicaNativa() && SUPABASE_SERVICE_ROLE_KEY) _balDigital.agendar();
 
 // ─────────────────────────────────────────────────────────────────────────
 // Relatório mensal do síndico (T13). GET /api/condominio/:id/relatorio-mensal?mes=AAAA-MM
