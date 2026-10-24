@@ -73,6 +73,9 @@
       if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
       est.lista = j.impressoes || [];
       document.getElementById('bal-gerar').style.display = (j.geracao_liberada && temBal('gerar')) ? '' : 'none';
+      // null no condomínio de teste (a tela confirma); 'reforcada' fora dele (a janela da política confirma).
+      est.geracaoConfirmacao = j.geracao_confirmacao || null;
+      est.gerarArmado = false;
       desenharLista();
       info(est.lista.length ? '' : 'Nenhum 900A gerado para este mês ainda.');
     } catch (e) { if (seq === est.seq) info(e.message, true); }
@@ -155,15 +158,27 @@
     var mes = (document.getElementById('bal-mes') || {}).value || '';
     // O botão vale para o condomínio e o mês da última lista: se mudou, lista de novo antes.
     if (!est.cond || !c || c.id !== est.cond.id || mes !== est.mes) { document.getElementById('bal-gerar').style.display = 'none'; info('O condomínio ou o mês mudou. Clique em Listar 900A do mês de novo.', true); return; }
-    if (!confirm('Pedir ao Superlógica o 900A de ' + est.mes + ' de ' + est.cond.nome + '? Ele fica só para a administração, sem publicar e sem envio por email.')) return;
     var b = document.getElementById('bal-gerar');
+    var mesTela = est.mes.slice(5) + '/' + est.mes.slice(0, 4);
+    // No condomínio de teste a política não pede confirmação: a própria tela pede o segundo clique.
+    // Fora dele, quem confirma é a janela da política (confirmar-gravacao.js), sem pergunta extra aqui.
+    if (!est.geracaoConfirmacao && !est.gerarArmado) {
+      est.gerarArmado = true;
+      b.textContent = 'Confirmar: gerar o 900A de ' + mesTela;
+      info('Clique de novo para pedir ao Superlógica o 900A de ' + mesTela + ' de ' + est.cond.nome + '. Ele fica só para a administração, sem publicar e sem envio por email.');
+      return;
+    }
+    est.gerarArmado = false;
+    b.textContent = 'Gerar balancete (sem publicar)';
     b.disabled = true;
     try {
-      var r = await apiAuthFetch('/api/financeiro/balancete/' + encodeURIComponent(est.cond.id) + '/gerar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ competencia: est.mes }) });
+      // Fora do condomínio de teste o servidor pede a confirmação reforçada (confirmar-gravacao.js).
+      var r = await (window.gravarNoSuperlogica || apiAuthFetch)('/api/financeiro/balancete/' + encodeURIComponent(est.cond.id) + '/gerar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ competencia: est.mes }) });
       var j = await r.json().catch(function () { return {}; });
       if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
       info(j.detalhe || 'Pedido enviado.');
-    } catch (e) { info(e.message, true); } finally { setTimeout(function () { b.disabled = false; }, 60000); }
+      setTimeout(function () { b.disabled = false; }, 60000); // pedido feito: segura um minuto contra clique repetido
+    } catch (e) { info(e.message, true); b.disabled = false; }
   }
 
   if (typeof window.showPanel === 'function') {

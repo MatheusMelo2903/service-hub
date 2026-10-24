@@ -348,6 +348,7 @@ async function testesLeitor() {
     requireAuth: (req, res, next) => next(), express, banco: mem.banco, perfilDe: async () => ({ role: papel }),
     podeModulo: (p, m) => m === 'entrada_documentos', carteiraT18: { escopo: async () => carteira }, exigirLeituraSuperlogica: async () => true, superlogicaNativa: () => true,
     clienteSL: () => cliSL, credSL: () => ({}), dentroDoLimite: () => true, auditoria, processar, carteiraEstrita: async () => true,
+    politica: require('../servico/escrita-superlogica').criarPoliticaEscrita({ auditar: () => {}, condominioDaBase: async (id) => ({ 167: { nome: 'Residencial Teste' }, 136: { nome: 'Condomínio Casablanca' }, 140: { nome: 'Condomínio Teste 140' } })[id] || null }),
   });
   const grupos = async () => [{ id: 5, nome: 'Carteira B', condominios: [136, 140] }, { id: 6, nome: 'Carteira C', condominios: [167] }];
   const leitorEnv = Object.assign({}, ENV);
@@ -507,7 +508,7 @@ async function testesLeitor() {
     r = await chama('PUT', '/api/entrada/' + X1.id, { conta: '2.2', confirmar_valor: true, confirmar_vencimento: true });
     r = await chama('POST', '/api/entrada/' + X1.id + '/lancar', { confirmacao: 'LANCAR' });
     t('trava do condomínio continua valendo', r.st === 423 && gravados.length === 0);
-    process.env.ENTRADA_LANCAMENTO_LIBERADO = '136';
+    process.env.ESCRITA_TESTE = '136'; // condomínio de teste grava sem confirmação (política única de gravação)
     r = await chama('POST', '/api/entrada/' + X1.id + '/lancar', { confirmacao: 'LANCAR', aceitar_alertas: ['recebido_de_novo'] });
     t('XML da nota lançado com o próprio XML anexado', r.st === 200 && gravados.length === 1 && gravados[0].mime === 'application/xml' && gravados[0].cond === '136');
     E.lancar = origLancar;
@@ -537,7 +538,7 @@ async function testesLeitor() {
     const tudo = respostas.join('\n') + '\n' + saidaConsole.join('\n') + '\n' + JSON.stringify(eventos) + '\n' + JSON.stringify(mem.tabelas.fin_entrada.map((l) => [l.origem, l.dados, l.alertas])) + JSON.stringify(mem.tabelas.fin_email_mensagens);
     t('senha nunca aparece em resposta, log ou auditoria', !tudo.includes(SENHA) && !tudo.includes(SENHA2) && !tudo.includes('senha-errada') && !tudo.includes('senha-certa-do-servidor'));
     t('senha cifrada também nunca sai', !respostas.join('\n').includes(mem.tabelas.fin_email_caixas[0].senha_cifrada.split(':')[3]));
-  } finally { srv.close(); E.lancar = origLancar; delete process.env.ENTRADA_LANCAMENTO_LIBERADO; }
+  } finally { srv.close(); E.lancar = origLancar; delete process.env.ENTRADA_LANCAMENTO_LIBERADO; delete process.env.ESCRITA_TESTE; }
 }
 
 (async () => {

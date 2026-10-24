@@ -17,8 +17,9 @@ function cobIsoDias(n) {
   var d = new Date(); d.setDate(d.getDate() + n);
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 }
-async function cobJson(url, opts) {
-  var r = await apiAuthFetch(url, opts);
+// gravar: true quando a chamada grava no Superlógica (janela de confirmação em confirmar-gravacao.js).
+async function cobJson(url, opts, gravar) {
+  var r = await (gravar && window.gravarNoSuperlogica ? window.gravarNoSuperlogica : apiAuthFetch)(url, opts);
   var j = await r.json().catch(function () { return {}; });
   if (!r.ok) throw new Error(j.detalhe || ('Falha ' + r.status));
   return j;
@@ -209,15 +210,18 @@ async function cobSegundaVia(idSL, k, btn) {
   // T48: pede ao Superlógica um boleto atualizado; confirma unidade e data antes.
   if (!confirm('Gerar a 2ª via no Superlógica para a unidade ' + u.unidade + ', para pagamento até ' + String(tr.querySelector('.cob-a').value || '').split('-').reverse().join('/') + '?')) return;
   if (btn) btn.disabled = true; // sem clique duplo: cada clique pode gerar um boleto atualizado
-  setTimeout(function () { if (btn) btn.disabled = false; }, 15000);
+  var espera = setTimeout(function () { if (btn) btn.disabled = false; }, 15000);
   res.innerHTML = '<div class="cond-loading">Gerando o link no Superlógica...</div>';
   try {
     var r = await cobJson('/api/cobranca/condominio/' + encodeURIComponent(idSL) + '/segunda-via', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id_unidade: u.id_unidade, id_recebimento: tr.querySelector('.cob-r').value, pagar_ate: tr.querySelector('.cob-a').value }),
-    });
+    }, true);
     res.innerHTML = cobTextoArea(r.texto);
   } catch (e) {
+    // Erro ou gravação cancelada na janela (nada gerado): o botão volta na hora.
+    clearTimeout(espera);
+    if (btn) btn.disabled = false;
     res.innerHTML = '<div class="ficha-erro">' + cobEsc(e.message) + '</div>';
   }
 }

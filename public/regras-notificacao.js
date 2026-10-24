@@ -50,10 +50,11 @@
   }
 
   // Chamada com o login; erro vira exceção com a mensagem do servidor.
-  async function api(url, metodo, corpo) {
+  // gravar: true quando a chamada grava no Superlógica (janela de confirmação em confirmar-gravacao.js).
+  async function api(url, metodo, corpo, gravar) {
     var op = { method: metodo || 'GET' };
     if (corpo !== undefined) { op.headers = { 'Content-Type': 'application/json' }; op.body = JSON.stringify(corpo); }
-    var r = await apiAuthFetch(url, op);
+    var r = await (gravar && window.gravarNoSuperlogica ? window.gravarNoSuperlogica : apiAuthFetch)(url, op);
     var j = await r.json().catch(function () { return {}; });
     if (!r.ok) { var e = new Error(j.detalhe || ('Falha ' + r.status)); e.status = r.status; e.corpo = j; throw e; }
     j._status = r.status;
@@ -921,11 +922,11 @@
     var travada = false;
     var j;
     try {
-      try { j = await api('/api/multas/registrar', 'POST', corpo); } catch (e) {
+      try { j = await api('/api/multas/registrar', 'POST', corpo, true); } catch (e) {
         // Cobrança travada: o servidor recusa ANTES de gravar; registra só a ocorrência (dito na confirmação).
-        if (e.status !== 423 || !corpo.cobranca) throw e;
+        if (e.status !== 423 || !corpo.cobranca || !e.corpo || e.corpo.erro !== 'cobranca_travada') throw e;
         travada = true; delete corpo.cobranca;
-        j = await api('/api/multas/registrar', 'POST', corpo);
+        j = await api('/api/multas/registrar', 'POST', corpo, true);
       }
     } catch (e) {
       res.textContent = (e.status === 504 ? '' : 'Não registrado: ') + e.message;

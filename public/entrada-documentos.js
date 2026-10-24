@@ -38,8 +38,9 @@
   function brl(v) { return v == null ? '' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
   function dataBR(iso) { var m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? m[3] + '/' + m[2] + '/' + m[1] : ''; }
   function msg(id, texto, erro) { var el = document.getElementById(id); if (el) el.innerHTML = texto ? '<div style="font-size:12px;font-family:var(--mono);color:' + (erro ? 'var(--danger)' : 'var(--muted)') + '">' + esc(texto) + '</div>' : ''; }
-  async function api(url, opt) {
-    var r = await apiAuthFetch(url, opt || {});
+  // gravar: true nas chamadas que gravam no Superlógica (janela de confirmação em confirmar-gravacao.js).
+  async function api(url, opt, gravar) {
+    var r = await (gravar && window.gravarNoSuperlogica ? window.gravarNoSuperlogica : apiAuthFetch)(url, opt || {});
     var j = await r.json().catch(function () { return {}; });
     if (!r.ok) { var e = new Error(j.detalhe || ('Falha ' + r.status)); e.status = r.status; e.corpo = j; throw e; }
     return j;
@@ -185,7 +186,7 @@
     msg('ent-lote-info', 'Lançando no Superlógica...');
     try {
       var j = await api('/api/entrada/lancar-lote', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmacao: 'LANCAR_LOTE', itens: s.map(function (it) { return { id: it.id, valor: (it.dados || {}).valor, vencimento: (it.dados || {}).vencimento }; }) }) });
+        body: JSON.stringify({ confirmacao: 'LANCAR_LOTE', itens: s.map(function (it) { return { id: it.id, valor: (it.dados || {}).valor, vencimento: (it.dados || {}).vencimento }; }) }) }, true);
       var res = j.resultados || [];
       var ok = res.filter(function (r) { return r.ok; }).length;
       var log = document.getElementById('ent-log');
@@ -381,7 +382,7 @@
     var aceitosAgora = aceitos.filter(function (c) { return (est.atual.alertas || []).some(function (a) { return a.codigo === c; }); });
     msg('ent-det-info', 'Lançando no Superlógica...');
     try {
-      var j = await api('/api/entrada/' + encodeURIComponent(est.atual.id) + '/lancar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmacao: 'LANCAR', aceitar_alertas: aceitosAgora }) });
+      var j = await api('/api/entrada/' + encodeURIComponent(est.atual.id) + '/lancar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmacao: 'LANCAR', aceitar_alertas: aceitosAgora }) }, true);
       var tudo = j.anexado && j.conferido;
       toast('Despesa ' + j.id_despesa + ' lançada' + (j.anexado ? ' com o documento anexado' : '; o documento não anexou: anexe no Superlógica') + (j.conferido ? '.' : '; a releitura não bateu: confira no Superlógica.'), tudo ? 'ok' : 'warn');
       window.entAbrirItem(est.atual.id);

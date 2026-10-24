@@ -345,6 +345,18 @@ const MODELO_DA_ATA = 'modelo_da_ata';
 const audioMod = require('./servico/audio');
 const ataMensagem = require('./servico/ata-mensagem');
 const permRegras = require('./servico/permissoes');
+// Política única de gravação no Superlógica (servico/escrita-superlogica.js): ESCRITA_SUPERLOGICA
+// (teste, padrão; confirmacao; off) e ESCRITA_TESTE (padrão 167). Fora do teste, só com confirmação
+// da pessoa naquela operação. Usada por todas as rotas que gravam no Superlógica.
+const politicaEscrita = require('./servico/escrita-superlogica').criarPoliticaEscrita({
+  auditar: (req, acao, det, susp, motivo) => auditoria.evento(req, acao, det, susp, motivo),
+  condominioDaBase: (id) => condominioDaBase(id),
+});
+// Valor em reais para o resumo da confirmação (R$ 1.234,56).
+function _brl(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // /api/config — público (não precisa auth). Devolve ENVs públicas pro frontend.
@@ -460,6 +472,27 @@ app.use('/api/superlogica', requireAuth, async (req, res) => {
     return res.status(400).json({ erro: 'caminho_invalido' });
   }
   if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) return res.status(405).json({ erro: 'metodo_nao_permitido' });
+  // GET segue livre como sempre. POST, PUT e DELETE passam pela política de gravação: condomínio
+  // tirado da query ou do corpo (um só), livre no condomínio de teste, nos outros só com a cota
+  // confirmada na tela (cabeçalho X-Confirmacao-Gravacao, rota /api/ponte-superlogica/:id/previa).
+  let autPonte = null;
+  if (req.method !== 'GET') {
+    let corpo = Buffer.isBuffer(req._corpoProxy) ? req._corpoProxy : null;
+    if (!corpo && req.method !== 'DELETE') {
+      try { corpo = await _lerCorpoPonte(req, 5 * 1024 * 1024); } catch (e) {
+        return res.status(e.status === 413 ? 413 : 400).json({ erro: e.status === 413 ? 'corpo_grande' : 'corpo_invalido', detalhe: 'Não foi possível ler o envio.' });
+      }
+      const lido = corpo;
+      req.pipe = (destino) => { destino.end(lido); return destino; };
+    }
+    if (corpo && corpo.length && String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase() !== 'application/x-www-form-urlencoded') {
+      return res.status(415).json({ erro: 'tipo_nao_aceito', detalhe: 'Envio ao Superlógica só como formulário.' });
+    }
+    autPonte = await politicaEscrita.autorizarPonte(req, res, { url: req.url, corpo, token: req.headers['x-confirmacao-gravacao'] });
+    if (!autPonte) return;
+  }
+  const rotaPonte = req.url.split('?')[0].replace('/v2/condor/', '').slice(0, 80);
+  const concluirPonte = (ok, http) => { if (autPonte) autPonte.concluir({ ok, http, metodo: req.method, caminho: rotaPonte }); };
   const alvo = new URL(SUPERLOGICA_API_BASE + req.url);
   const headers = { app_token: SUPERLOGICA_APP_TOKEN, access_token: SUPERLOGICA_ACCESS_TOKEN };
   // GET e DELETE saem sem corpo (ver o fim desta rota): sem content-length nem content-type,
@@ -470,6 +503,7 @@ app.use('/api/superlogica', requireAuth, async (req, res) => {
   const pr = https.request({ hostname: alvo.hostname, path: alvo.pathname + alvo.search, method: req.method, headers, timeout: 120000 }, (r) => {
     const ct = String(r.headers['content-type'] || '');
     const status = r.statusCode || 502;
+    concluirPonte(status >= 200 && status < 300, status);
     const bloquear = (erro, detalhe) => {
       res.removeHeader('Content-Type');
       res.removeHeader('Content-Disposition');
@@ -510,10 +544,46 @@ app.use('/api/superlogica', requireAuth, async (req, res) => {
       res.end(bruto);
     });
   });
-  pr.on('timeout', () => { pr.destroy(); if (!res.headersSent) res.status(504).json({ erro: 'timeout_superlogica' }); });
-  pr.on('error', (e) => { if (!res.headersSent) res.status(502).json({ erro: 'falha_superlogica', detalhe: e.message }); });
+  pr.on('timeout', () => { concluirPonte(false, 504); pr.destroy(); if (!res.headersSent) res.status(504).json({ erro: 'timeout_superlogica' }); });
+  pr.on('error', (e) => { concluirPonte(false, 0); if (!res.headersSent) res.status(502).json({ erro: 'falha_superlogica', detalhe: e.message }); });
   req.on('aborted', () => pr.destroy());
   if (semCorpo) pr.end(); else req.pipe(pr);
+});
+// Lê o corpo da ponte (para a política conferir o condomínio) com teto de tamanho.
+function _lerCorpoPonte(req, max) {
+  return new Promise((ok, falha) => {
+    const partes = []; let total = 0;
+    req.on('data', (c) => { total += c.length; if (total > max) { falha(Object.assign(new Error('corpo_grande'), { status: 413 })); req.destroy(); return; } partes.push(c); });
+    req.on('end', () => ok(Buffer.concat(partes)));
+    req.on('error', falha);
+  });
+}
+
+// POST /api/ponte-superlogica/:id/previa { quantidade, caminhos:['unidades/post'|'despesas'], descricao?, confirmacao_gravacao? }
+// Antes de uma importação pela ponte (unidades, despesas): no condomínio de teste 200 { livre };
+// nos outros 428 com o resumo (reforçada quando há mais de 1 envio) e, confirmado, 200 { confirmado,
+// confirmacao } com o token que a tela manda no cabeçalho X-Confirmacao-Gravacao de cada envio.
+app.post('/api/ponte-superlogica/:idSuperlogica/previa', requireAuth, express.json({ limit: '10kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const id = String(req.params.idSuperlogica || '');
+  const b = req.body || {};
+  const W = require('./servico/escrita-superlogica');
+  const quantidade = Number(b.quantidade);
+  const caminhos = Array.isArray(b.caminhos) ? [...new Set(b.caminhos.map(String))] : [];
+  if (!Number.isInteger(quantidade) || quantidade < 1 || quantidade > 5000) return res.status(400).json({ erro: 'quantidade_invalida', detalhe: 'Quantidade de envios inválida (de 1 a 5000).' });
+  if (!caminhos.length || caminhos.some((c) => !W.CAMINHOS_PONTE[c])) return res.status(400).json({ erro: 'caminho_invalido', detalhe: 'Essa importação não pode ser confirmada por aqui.' });
+  if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado' });
+  if (req.authMode !== 'internal') {
+    let ac = null;
+    try { ac = await acessoSuperlogica(req.user && req.user.sub); } catch (e) { ac = null; }
+    if (!ac || !ac.ok) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não tem acesso aos módulos do Superlógica.' });
+  }
+  if (!(await _exigirCarteira(req, res, id))) return;
+  if (politicaEscrita.bloqueada(req, res, 'ponte_superlogica', id, { quantidade, sensivel: quantidade > 1 })) return;
+  const descricao = String(b.descricao || '').replace(/[\r\n\t<>]/g, ' ').trim().slice(0, 200);
+  await politicaEscrita.previaCota(req, res, { operacao: 'ponte_superlogica', id_condominio: id, quantidade, caminhos,
+    resumo: { linhas: [{ rotulo: 'O que vai ser gravado', valor: caminhos.map((c) => W.CAMINHOS_PONTE[c]).join(', ') }, { rotulo: 'Envios ao Superlógica', valor: String(quantidade) }]
+      .concat(descricao ? [{ rotulo: 'Conteúdo informado pela tela', valor: descricao }] : []) } });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -4458,12 +4528,12 @@ app.get('/api/financeiro/condominio/:idSuperlogica/pre-balancete', requireAuth, 
 });
 
 // T41 Balancete digital: lista dos 900A do mês, conferência automática do PDF (só leitura) e
-// geração sem publicar para condomínio liberado (BALANCETE_GERACAO_LIBERADA). Rotas em financeiro/balancete-rotas.js.
+// geração sem publicar pela política de gravação (politicaEscrita). Rotas em financeiro/balancete-rotas.js.
 require('./financeiro/balancete-rotas').criarRotasBalancete(app, {
   requireAuth, express, exigirFinanceiro: _exigirFinanceiro, exigirModuloItem: _exigirModuloItem,
   exigirCarteira: (req, res, id) => _exigirCarteira(req, res, id), exigirEscopo: (req, res, id) => _exigirEscopoFinanceiro(req, res, id), exigirLeituraSuperlogica, exigirEscritaSuperlogica, idValido: slModulo.idValido,
   cred: () => ({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }),
-  cliente: () => clienteSL(), auditar: (req, acao, det, susp) => auditoria.evento(req, acao, det, susp),
+  cliente: () => clienteSL(), auditar: (req, acao, det, susp) => auditoria.evento(req, acao, det, susp), politica: politicaEscrita,
 });
 
 // Juros e atrasos (dossiê por caso), dentro do item Financeiro. Rotas em financeiro/juros-rotas.js.
@@ -4646,10 +4716,10 @@ app.post('/api/cobranca/condominio/:idSuperlogica/segunda-via', requireAuth, exp
     if (!require('./superlogica/carteira').temModulo(p, 'cobranca', 'segunda_via')) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'Seu usuário não pode gerar a 2ª via.' });
   }
   if (!(await _exigirCarteira(req, res, id))) return;
-  // T48: a 2ª via ainda não foi validada de ponta a ponta. Só nos condomínios de
-  // COBRANCA_SEGUNDA_VIA_LIBERADA (padrão: só o 167, de teste), igual à Entrada e ao Consumo.
-  const liberadosVia = String(process.env.COBRANCA_SEGUNDA_VIA_LIBERADA || '167').split(/[\s,;]+/).filter((x) => slModulo.idValido(x));
-  if (!liberadosVia.includes(id)) return res.status(423).json({ erro: 'segunda_via_travada', detalhe: 'A 2ª via pelo Hub ainda não está liberada para este condomínio. Gere no Superlógica.' });
+  // T48 + política de gravação (servico/escrita-superlogica.js): livre no condomínio de teste; nos
+  // outros, só com confirmação. COBRANCA_SEGUNDA_VIA_LIBERADA vale como lista antiga (com confirmação).
+  if (politicaEscrita.bloqueada(req, res, 'segunda_via', id)) return;
+  let aut = null;
   try {
     const painel = await _painelCobranca(id, false);
     const u = painel.unidades.find((x) => x.id_unidade === String(b.id_unidade || ''));
@@ -4657,17 +4727,24 @@ app.post('/api/cobranca/condominio/:idSuperlogica/segunda-via', requireAuth, exp
     if (!r) return res.status(404).json({ erro: 'cobranca_nao_encontrada', detalhe: 'Essa cobrança não está em aberto para a unidade.' });
     const m = r.vencimento.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
     if (!m) return res.status(422).json({ erro: 'sem_vencimento', detalhe: 'Essa cobrança está sem data de vencimento no Superlógica.' });
+    const ate = String(pagarAte.getDate()).padStart(2, '0') + '/' + String(pagarAte.getMonth() + 1).padStart(2, '0') + '/' + pagarAte.getFullYear();
+    aut = await politicaEscrita.autorizar(req, res, { operacao: 'segunda_via', id_condominio: id,
+      conteudo: { id_unidade: u.id_unidade, id_recebimento: r.id, pagar_ate: String(b.pagar_ate) },
+      resumo: { linhas: [{ rotulo: 'Unidade', valor: u.unidade }, { rotulo: 'Responsável', valor: u.responsavel }, { rotulo: 'Vencimento original', valor: r.vencimento },
+        { rotulo: 'Valor original', valor: _brl(r.valor) }, { rotulo: 'Pagamento até', valor: ate }] } });
+    if (!aut) return;
     const link = await slCobranca.linkSegundaVia(clienteSL(), id, r, m[2] + '/' + m[1] + '/' + m[3], pagarAte);
+    aut.concluir({ ok: true, id_unidade: u.id_unidade, recebimento: r.id });
     const cad = await slModulo.buscarCadastro(clienteSL(), id).catch(() => null);
     const nomeCond = cad ? (cad.nome_fantasia || cad.nome) : '';
     const primeiroNome = (u.responsavel.split(' ')[0] || '').toLowerCase().replace(/^./, (c) => c.toUpperCase());
-    const ate = String(pagarAte.getDate()).padStart(2, '0') + '/' + String(pagarAte.getMonth() + 1).padStart(2, '0') + '/' + pagarAte.getFullYear();
     const texto = 'Olá' + (primeiroNome ? ', ' + primeiroNome : '') + '. Segue o link da 2ª via do boleto'
       + (nomeCond ? ' do ' + nomeCond : '') + ', unidade ' + u.unidade + ', com vencimento original em ' + r.vencimento
       + ', atualizado para pagamento até ' + ate + ': ' + link;
     console.log('[cobranca-2via] cond=' + id + ' unidade=' + u.id_unidade + ' recebimento=' + r.id + ' por=' + ((req.user && req.user.sub) || req.authMode));
     res.json({ link, texto });
   } catch (e) {
+    if (aut) aut.concluir({ ok: false, erro: 'falha_superlogica' });
     console.warn('[cobranca-2via] ' + id + ' falhou: ' + (e && e.message));
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'O Superlógica não gerou o link agora. Confira se a 2ª via está liberada para esse boleto.' });
   }
@@ -4890,6 +4967,9 @@ function _textoParaHtml(t) {
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   return String(t || '').split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).map((p) => '<p>' + esc(p).replace(/\n/g, '<br>') + '</p>').join('');
 }
+// Rótulos do resumo da confirmação (os mesmos da tela de comunicados).
+const _COM_DEST = { 1: 'Unidades deste condomínio', 2: 'Responsáveis legais deste condomínio', 3: 'Todos deste condomínio' };
+const _COM_CANAL = { 1: 'Área do condômino', 2: 'Carta', 3: 'Carta e área do condômino', 4: 'Email e área do condômino', 5: 'Email, carta e área do condômino' };
 const _logEscrita = (oque, req, id, ok, extra) => console.log('[escrita-superlogica] ' + oque + ' cond=' + id + ' ok=' + ok + ' por=' + (req.authMode === 'internal' ? 'internal' : (req.user && req.user.sub)) + (extra ? ' ' + extra : ''));
 
 const PROMPT_COMUNICADO = `Você redige comunicados e notificações de condomínio da administradora Condomínio Service (Grupo Service), em português formal e cordial.
@@ -4936,10 +5016,18 @@ app.post('/api/comunicados/publicar', requireAuth, express.json({ limit: '100kb'
   const c = slComunicados.validarComunicado(b);
   if (c.erro) return res.status(400).json({ erro: 'dados_invalidos', detalhe: c.erro });
   if (!(await exigirEscritaSuperlogica(req, res))) return;
-  const chaveDup = id + '|' + crypto.createHash('sha256').update(c.titulo + '\n' + c.texto).digest('hex');
-  if (_jaPublicado(chaveDup)) return res.status(409).json({ erro: 'repetido', detalhe: 'Este mesmo comunicado acabou de ser publicado neste condomínio.' });
+  // Política de gravação: livre no condomínio de teste; nos outros, confirmação reforçada (o comunicado chega aos moradores).
+  const hashTexto = crypto.createHash('sha256').update(c.titulo + '\n' + c.texto).digest('hex');
+  const aut = await politicaEscrita.autorizar(req, res, { operacao: 'comunicado_publicar', id_condominio: id,
+    conteudo: { titulo: c.titulo, texto: hashTexto, dest: c.dest, canal: c.canal, notificar: c.notificar },
+    resumo: { linhas: [{ rotulo: 'Título', valor: c.titulo }, { rotulo: 'Para quem', valor: _COM_DEST[c.dest] || '' }, { rotulo: 'Canal', valor: _COM_CANAL[c.canal] || '' },
+      { rotulo: 'Notificar agora', valor: c.notificar ? 'Sim, fica na fila de envio do Superlógica' : 'Não' }, { rotulo: 'Início do texto', valor: c.texto.replace(/\s+/g, ' ').slice(0, 160) }] } });
+  if (!aut) return;
+  const chaveDup = id + '|' + hashTexto;
+  if (_jaPublicado(chaveDup)) { aut.concluir({ ok: false, erro: 'repetido' }); return res.status(409).json({ erro: 'repetido', detalhe: 'Este mesmo comunicado acabou de ser publicado neste condomínio.' }); }
   c.texto = _textoParaHtml(c.texto);
   const r = await slComunicados.publicarComunicado(_credSL(), id, c);
+  aut.concluir({ ok: r.ok, incerto: !r.ok && /^HTTP 504|sem resposta/.test(r.msg) });
   _logEscrita('comunicado', req, id, r.ok, 'notificar=' + c.notificar);
   if (!r.ok) {
     if (/^HTTP 504|sem resposta/.test(r.msg)) return res.status(504).json({ erro: 'incerto', detalhe: 'O Superlógica não respondeu; o comunicado pode ter sido criado. Confira no Superlógica antes de tentar de novo.' });
@@ -4950,7 +5038,8 @@ app.post('/api/comunicados/publicar', requireAuth, express.json({ limit: '100kb'
 });
 
 // POST /api/comunicados/disparar — TRAVADO: o notificarcomunicado da API dispara os pendentes de
-// TODOS os condomínios da licença. Só libera com COMUNICADOS_DISPARO_LIBERADO=1 (decisão do Matheus).
+// TODOS os condomínios da licença. Só libera com COMUNICADOS_DISPARO_LIBERADO=1 (decisão do Matheus)
+// e, mesmo liberado, passa pela política de gravação com confirmação reforçada.
 app.post('/api/comunicados/disparar', requireAuth, express.json({ limit: '10kb' }), async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!(await exigirEscritaSuperlogica(req, res))) return;
@@ -4958,7 +5047,18 @@ app.post('/api/comunicados/disparar', requireAuth, express.json({ limit: '10kb' 
     return res.status(423).json({ erro: 'disparo_travado', detalhe: 'O disparo pela API envia os comunicados pendentes de TODOS os condomínios de uma vez. Está travado até a administração liberar. O comunicado publicado com "notificar" fica na fila do Superlógica e pode ser disparado por lá.' });
   }
   if ((req.body || {}).confirmacao !== 'DISPARAR') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme o disparo na tela.' });
+  // O disparo vale para todos os condomínios: quem tem carteira restrita não dispara.
+  if (req.authMode !== 'internal') {
+    let esc = null;
+    try { esc = await carteiraT18.escopo(req); } catch (e) { return res.status(503).json({ erro: 'carteira_indisponivel', detalhe: 'Não foi possível conferir sua carteira agora.' }); }
+    if (!esc || !esc.todas) return res.status(403).json({ erro: 'acesso_negado', detalhe: 'O disparo envia para todos os condomínios: só quem vê todas as carteiras pode disparar.' });
+  }
+  // Política de gravação: operação de todos os condomínios, sempre com confirmação reforçada (digitar TODOS).
+  const aut = await politicaEscrita.autorizar(req, res, { operacao: 'comunicado_disparar', id_condominio: 'todos', conteudo: { disparo: 'pendentes' },
+    resumo: { linhas: [{ rotulo: 'O que acontece', valor: 'O Superlógica envia agora todos os comunicados pendentes de notificação, de todos os condomínios' }] } });
+  if (!aut) return;
   const r = slComunicados.resultado(await slComunicados.enviar(_credSL(), 'POST', 'comunicados/notificarcomunicado', {}));
+  aut.concluir({ ok: r.ok });
   _logEscrita('disparo', req, '-', r.ok);
   if (!r.ok) return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'O Superlógica recusou: ' + r.msg });
   res.json({ ok: true });
@@ -4994,15 +5094,32 @@ app.post('/api/multas/registrar', requireAuth, express.json({ limit: '100kb' }),
   // até liberar (MULTA_COBRANCA_LIBERADA=1). Recusa ANTES de gravar qualquer coisa.
   if (m.cobranca && process.env.MULTA_COBRANCA_LIBERADA !== '1') return res.status(423).json({ erro: 'cobranca_travada', detalhe: 'O lançamento da cobrança da multa ainda está travado pela administração. Registre a ocorrência sem a cobrança.' });
   if (!(await exigirEscritaSuperlogica(req, res))) return;
+  // Política de gravação: livre no condomínio de teste; nos outros, confirmação (reforçada quando há cobrança).
+  if (politicaEscrita.bloqueada(req, res, 'multa_registrar', id, { sensivel: !!m.cobranca })) return;
+  const aut = await politicaEscrita.autorizar(req, res, { operacao: 'multa_registrar', id_condominio: id, sensivel: !!m.cobranca,
+    conteudo: { idUni: m.idUni, tipo: m.tipo, notificar: m.notificar, data: m.data, titulo: m.titulo, texto: crypto.createHash('sha256').update(m.texto).digest('hex'), email: m.email, carta: m.carta, cobranca: m.cobranca },
+    // Só monta o resumo (lendo as unidades) quando a confirmação é pedida.
+    resumo: async () => {
+      const us = await slComunicados.listarUnidades(clienteSL(), id).catch(() => []);
+      const u = us.find((x) => x.id_unidade === m.idUni);
+      const dt = String(m.data).split('/');
+      return { linhas: [{ rotulo: 'Unidade', valor: u ? [u.bloco, u.unidade].filter(Boolean).join(' ') + (u.proprietario ? ' (' + u.proprietario + ')' : '') : 'código ' + m.idUni },
+        { rotulo: 'Tipo', valor: m.tipo === 3 ? 'Multa' : 'Notificação ou advertência' }, { rotulo: 'Título', valor: m.titulo }, { rotulo: 'Data do fato', valor: dt.length === 3 ? dt[1] + '/' + dt[0] + '/' + dt[2] : m.data },
+        { rotulo: 'Carta', valor: m.carta ? 'Sim' : 'Não' }, { rotulo: 'Email', valor: m.email ? 'Sim' : 'Não' },
+        { rotulo: 'Cobrança', valor: m.cobranca ? _brl(m.cobranca.valor) + ' com vencimento em ' + m.cobranca.vencimento : 'Sem cobrança' }] };
+    } });
+  if (!aut) return;
   m.texto = _textoParaHtml(m.texto);
   try {
     const r = await slComunicados.registrarMulta(_credSL(), clienteSL(), id, m);
+    aut.concluir({ ok: !!r.ok || !!r.parcial, parcial: !!r.parcial, incerto: !!r.incerto, etapa: r.etapa || null, cobranca: !!m.cobranca });
     _logEscrita('multa', req, id, r.ok, 'unidade=' + m.idUni + ' carta=' + !!m.carta + ' cobranca=' + !!m.cobranca);
     if (r.incerto) return res.status(504).json({ erro: 'incerto', detalhe: r.msg, resultado: r });
     if (r.parcial) return res.status(207).json(r); // ocorrência criada, algum passo opcional falhou
     if (!r.ok) return res.status(r.etapa === 'unidade' || r.etapa === 'conta' ? 400 : 502).json({ erro: 'falha_' + (r.etapa || 'superlogica'), detalhe: r.msg, resultado: r });
     res.json(r);
   } catch (e) {
+    aut.concluir({ ok: false, erro: 'falha_superlogica' });
     console.warn('[multa] ' + id + ' falhou: ' + (e && e.message));
     res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível registrar agora.' });
   }
@@ -5044,6 +5161,7 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
   const modulo = b.tipo === 'ata' ? 'atas' : b.tipo === 'prestacao' ? 'prestacao_contas' : null;
   if (!modulo) return res.status(400).json({ erro: 'tipo_invalido', detalhe: 'Tipo deve ser ata ou prestacao.' });
   if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado', detalhe: 'As chaves do Superlógica não estão configuradas neste ambiente.' });
+  if (politicaEscrita.bloqueada(req, res, 'documento_arquivar', id, { sensivel: b.tipo === 'prestacao' })) return;
   // Permissão antes de decodificar o arquivo: módulo com "gerar" (ou GESTOR) e, para quem
   // tem carteira (T09), só condomínios da carteira. Esta rota grava no Superlógica.
   if (req.authMode !== 'internal') {
@@ -5074,7 +5192,15 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
       return res.status(502).json({ erro: 'falha_superlogica', detalhe: 'Não foi possível conferir os documentos do condomínio no Superlógica agora.' });
     }
   }
+  // Política de gravação: livre no condomínio de teste; nos outros, confirmação (reforçada para a
+  // prestação de contas). Depois da conferência de título, para o "enviar mesmo assim" vir antes da janela.
+  const aut = await politicaEscrita.autorizar(req, res, { operacao: 'documento_arquivar', id_condominio: id, sensivel: b.tipo === 'prestacao',
+    conteudo: { tipo: b.tipo, titulo, pdf: crypto.createHash('sha256').update(buf).digest('hex') },
+    resumo: { linhas: [{ rotulo: 'Documento', valor: b.tipo === 'ata' ? 'Ata' : 'Prestação de contas' }, { rotulo: 'Título', valor: titulo },
+      { rotulo: 'Tamanho', valor: Math.max(1, Math.round(buf.length / 1024)) + ' KB' }, { rotulo: 'O que acontece', valor: 'Fica nos documentos do condomínio, sem publicar para os condôminos' }] } });
+  if (!aut) return;
   const r = await D.enviarDocumento({ base: SUPERLOGICA_API_BASE, appToken: SUPERLOGICA_APP_TOKEN, accessToken: SUPERLOGICA_ACCESS_TOKEN }, id, titulo, buf);
+  aut.concluir({ ok: !!r.ok, tipo: b.tipo, id_documento: r.id || null });
   console.log('[documentos] ' + (req.user && req.user.email ? req.user.email : req.authMode) + ' arquivou ' + b.tipo + ' no condomínio ' + id + ': ' + (r.ok ? 'ok id ' + r.id : 'falhou ' + r.status + ' formato ' + r.formato));
   if (!r.ok) return res.status(502).json({ erro: 'falha_envio', detalhe: 'O Superlógica não confirmou o recebimento do documento' + (r.msg ? ': ' + r.msg : '.') + ' Confira nos documentos do condomínio antes de tentar de novo.' });
   // Regras do condomínio: a ata arquivada entra também no acervo do Hub (consulta, mandatos,
@@ -5092,14 +5218,22 @@ app.post('/api/condominio/:idSuperlogica/documentos', requireAuth, express.json(
 // e bloco); aqui ficam a lista de unidades com a última leitura, a conferência (casamento com a
 // unidade e suspeitas) e o lançamento no Superlógica (consumo/put), uma unidade por chamada,
 // com a foto guardada como arquivo de medição quando o Superlógica aceitar.
-// Lançamento só nos condomínios de CONSUMO_LANCAMENTO_LIBERADO (padrão: só o 167, de teste).
+// Lançamento pela política de gravação (servico/escrita-superlogica.js): livre no condomínio de
+// teste; nos outros, a tela confirma a lista inteira (POST .../previa-lote) e cada leitura grava uma
+// vez com esse token. CONSUMO_LANCAMENTO_LIBERADO vale como lista antiga (com confirmação).
 // ─────────────────────────────────────────────────────────────────────────
 const slConsumo = require('./superlogica/consumo-lote');
 const _cacheConsumo = slModulo.consulta.criarCache(2 * 60 * 1000, 200, 90 * 1000);
 const _consumoEmCurso = new Set(); // um lançamento por condomínio de cada vez
-function _consumoLiberados() {
-  return String(process.env.CONSUMO_LANCAMENTO_LIBERADO || '167').split(/[\s,;]+/).filter((x) => slModulo.idValido(x));
+// Dia da leitura: o informado ou hoje (mês corrente) / último dia (mês fechado). null = inválido.
+function _consumoDia(P, bruto) {
+  const hoje = P.ref.corrente ? new Date(Date.now() - 3 * 3600 * 1000).getUTCDate() : P.ref.ultimoDia;
+  const dia = Number(bruto == null || bruto === '' ? hoje : bruto);
+  return Number.isInteger(dia) && dia >= 1 && dia <= hoje ? dia : null;
 }
+// Item do lote como entra no hash da confirmação (o mesmo na prévia e em cada lançamento).
+const _consumoItem = (idUni, valor, substituir) => ({ id_unidade: idUni, valor, substituir: substituir === true });
+const _rotuloUnidadeConsumo = (u) => (u ? u.unidade + (u.bloco ? ' ' + u.bloco : '') : '');
 // Permissão, chaves do Superlógica e carteira. acao 'ler' para lançar.
 async function _exigirConsumo(req, res, id, acao) {
   if (req.authMode !== 'internal') {
@@ -5156,8 +5290,9 @@ app.get('/api/consumo/:idSuperlogica/unidades', requireAuth, async (req, res) =>
   if (!(await _exigirConsumo(req, res, P.id))) return;
   try {
     const unidades = await _unidadesConsumoCache(P.id, P.tipo, P.ref);
+    const sit = politicaEscrita.estado('consumo_lote', P.id);
     res.json({ tipo: P.tipo, nome_tipo: slConsumo.TIPOS[P.tipo], mes: P.ref.rotulo, ultimo_dia: P.ref.ultimoDia, corrente: P.ref.corrente,
-      lancamento_liberado: _consumoLiberados().includes(P.id), unidades });
+      lancamento_liberado: sit.estado !== 'bloqueado', lancamento_confirmacao: sit.estado === 'confirmacao' || sit.estado === 'reforcada', unidades });
   } catch (e) { _erroConsumo(res, e, 'unidades'); }
 });
 
@@ -5183,20 +5318,16 @@ app.post('/api/consumo/:idSuperlogica/lancar', requireAuth, express.json({ limit
   const P = _consumoParams(req, res, b);
   if (!P) return;
   if (b.confirmacao !== 'LANCAR') return res.status(400).json({ erro: 'sem_confirmacao', detalhe: 'Confirme o lançamento na tela.' });
-  // Trava antes de tudo: só condomínios liberados (padrão: só o de teste).
-  if (!_consumoLiberados().includes(P.id)) {
-    auditoria.evento(req, 'consumo_recusado', { id_superlogica: P.id, motivo: 'lancamento_travado' }, true, 'condominio_nao_liberado');
-    return res.status(423).json({ erro: 'lancamento_travado', detalhe: 'O lançamento de leituras ainda está travado para este condomínio pela administração. A conferência funciona normalmente.' });
-  }
+  // Trava antes de tudo: a política de gravação (padrão: só o condomínio de teste).
+  if (politicaEscrita.bloqueada(req, res, 'consumo_lote', P.id)) return;
   if (!(await _exigirConsumo(req, res, P.id, 'ler'))) return;
   if (!superlogicaNativa()) return res.status(503).json({ erro: 'superlogica_nao_configurado' });
   const idUni = Number(b.id_unidade);
   if (!Number.isInteger(idUni) || idUni <= 0) return res.status(400).json({ erro: 'unidade_invalida', detalhe: 'Escolha a unidade.' });
   const valor = slConsumo.lerValor(b.leitura);
   if (valor == null) return res.status(400).json({ erro: 'leitura_invalida', detalhe: 'Leitura inválida: use só números, com vírgula para a parte decimal.' });
-  const hoje = P.ref.corrente ? new Date(Date.now() - 3 * 3600 * 1000).getUTCDate() : P.ref.ultimoDia;
-  const dia = Number(b.dia == null || b.dia === '' ? hoje : b.dia);
-  if (!Number.isInteger(dia) || dia < 1 || dia > hoje) return res.status(400).json({ erro: 'dia_invalido', detalhe: 'Dia da leitura inválido para o mês escolhido.' });
+  const dia = _consumoDia(P, b.dia);
+  if (dia == null) return res.status(400).json({ erro: 'dia_invalido', detalhe: 'Dia da leitura inválido para o mês escolhido.' });
   let foto = null;
   if (b.foto != null) {
     const f = b.foto;
@@ -5232,7 +5363,16 @@ app.post('/api/consumo/:idSuperlogica/lancar', requireAuth, express.json({ limit
     const aceitas = Array.isArray(b.aceitar_suspeitas) ? b.aceitar_suspeitas.map(String) : [];
     const naoAceitas = cods.filter((c) => slConsumo.SUSPEITAS_GRAVES.includes(c) && !aceitas.includes(c));
     if (naoAceitas.length) return recusar('suspeita', 'Leitura suspeita: confira e marque que conferiu antes de lançar.');
+    // Política de gravação: no condomínio de teste passa direto; nos outros, a leitura tem de estar
+    // na lista confirmada (token da prévia do lote) e grava uma vez só.
+    const aut = await politicaEscrita.autorizarItem(req, res, { operacao: 'consumo_lote', id_condominio: P.id,
+      cabecalho: { tipo: P.tipo, mes: P.ref.rotulo, dia }, item: _consumoItem(idUni, valor, b.substituir),
+      resumo: { linhas: [{ rotulo: 'Leitura', valor: slConsumo.TIPOS[P.tipo] + ' de ' + P.ref.rotulo + ', dia ' + dia }, { rotulo: 'Unidade', valor: _rotuloUnidadeConsumo(u) },
+        { rotulo: 'Valor lido', valor: String(valor).replace('.', ',') }, { rotulo: 'Anterior', valor: u.anterior != null ? String(u.anterior).replace('.', ',') : 'sem leitura anterior' },
+        { rotulo: 'Substitui leitura do mês', valor: b.substituir === true ? 'Sim' : 'Não' }], quantidade: 1 } });
+    if (!aut) return;
     const r = await slConsumo.lancarLeitura(_credSL(), clienteSL(), { id: P.id, tipo: P.tipo, ref: P.ref, dia, u, valor, foto });
+    aut.concluir({ ok: !!r.ok, incerto: !!r.incerto, id_unidade: idUni, mes: P.ref.rotulo, valor });
     _cacheConsumo.limpar(chaveCache);
     if (r.lista) _cacheConsumo.pegar(chaveCache, () => r.lista).catch(() => {});
     auditoria.evento(req, 'consumo_lancado', { id_superlogica: P.id, id_unidade: idUni, tipo: P.tipo, mes: P.ref.rotulo, valor,
@@ -5249,14 +5389,47 @@ app.post('/api/consumo/:idSuperlogica/lancar', requireAuth, express.json({ limit
   }
 });
 
+// POST /api/consumo/:id/previa-lote { tipo, mes, dia, itens:[{ id_unidade, leitura, substituir? }], confirmacao_gravacao? }
+// Antes de lançar a lista: no condomínio de teste responde 200 { livre: true }; nos outros, 428 com o
+// resumo (condomínio, quantidade, unidades e valores) e, depois da confirmação, 200 { confirmado, confirmacao }.
+// Nada é gravado aqui. Acima de 20 leituras a confirmação é reforçada (digitar o nome do condomínio).
+app.post('/api/consumo/:idSuperlogica/previa-lote', requireAuth, express.json({ limit: '300kb' }), async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const b = req.body || {};
+  const P = _consumoParams(req, res, b);
+  if (!P) return;
+  if (!Array.isArray(b.itens) || !b.itens.length || b.itens.length > 500) return res.status(400).json({ erro: 'itens_invalidos', detalhe: 'Envie de 1 a 500 leituras.' });
+  if (politicaEscrita.bloqueada(req, res, 'consumo_lote', P.id, { quantidade: b.itens.length })) return;
+  if (!(await _exigirConsumo(req, res, P.id, 'ler'))) return;
+  const dia = _consumoDia(P, b.dia);
+  if (dia == null) return res.status(400).json({ erro: 'dia_invalido', detalhe: 'Dia da leitura inválido para o mês escolhido.' });
+  const itens = []; const vistos = new Set();
+  for (const x of b.itens) {
+    const idUni = Number(x && x.id_unidade);
+    const valor = slConsumo.lerValor(x && x.leitura);
+    if (!Number.isInteger(idUni) || idUni <= 0 || valor == null || vistos.has(idUni)) return res.status(400).json({ erro: 'itens_invalidos', detalhe: 'Tem leitura sem unidade, com valor inválido ou unidade repetida.' });
+    vistos.add(idUni);
+    itens.push(_consumoItem(idUni, valor, x.substituir));
+  }
+  let lista;
+  try { lista = await _unidadesConsumoCache(P.id, P.tipo, P.ref); } catch (e) { return _erroConsumo(res, e, 'previa'); }
+  const porId = new Map(lista.map((u) => [u.id_unidade, u]));
+  if (itens.some((it) => !porId.has(it.id_unidade))) return res.status(400).json({ erro: 'unidade_fora', detalhe: 'Tem unidade que não é deste condomínio.' });
+  const amostra = itens.slice(0, 12).map((it) => _rotuloUnidadeConsumo(porId.get(it.id_unidade)) + ': ' + String(it.valor).replace('.', ',') + (it.substituir ? ' (substitui)' : '')).join('; ');
+  await politicaEscrita.previaLote(req, res, { operacao: 'consumo_lote', id_condominio: P.id, cabecalho: { tipo: P.tipo, mes: P.ref.rotulo, dia }, itens,
+    resumo: { linhas: [{ rotulo: 'Leituras', valor: itens.length + ' de ' + slConsumo.TIPOS[P.tipo] + ', mês ' + P.ref.rotulo + ', dia ' + dia },
+      { rotulo: 'Substituem leitura já lançada', valor: String(itens.filter((it) => it.substituir).length) },
+      { rotulo: 'Unidades', valor: amostra + (itens.length > 12 ? '; e mais ' + (itens.length - 12) : '') }] } });
+});
+
 // ─────────────────────────────────────────────────────────────────────────
 // Entrada de documentos (T33, substitui o Paybox): rotas em servico/rotas-entrada.js, leitura
-// e lançamento em financeiro/entrada.js. Lançamento só nos condomínios de
-// ENTRADA_LANCAMENTO_LIBERADO (T40; padrão: só o 167, de teste).
+// e lançamento em financeiro/entrada.js. Lançamento pela política de gravação
+// (servico/escrita-superlogica.js; padrão: só o 167, de teste; os outros com confirmação).
 // ─────────────────────────────────────────────────────────────────────────
 const _entradaDocs = require('./servico/rotas-entrada').criarRotasEntrada(app, {
   requireAuth, express, banco: supabaseAdminRequest, perfilDe, podeModulo, carteiraT18, exigirLeituraSuperlogica, superlogicaNativa,
-  clienteSL, credSL: _credSL, dentroDoLimite, auditoria, processar, carteiraEstrita: _carteiraEstrita,
+  clienteSL, credSL: _credSL, dentroDoLimite, auditoria, processar, carteiraEstrita: _carteiraEstrita, politica: politicaEscrita,
 });
 
 // ─────────────────────────────────────────────────────────────────────────

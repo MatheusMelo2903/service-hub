@@ -1672,6 +1672,14 @@ async function enviarUnidades() {
   const nomeCond = condAtivo.nome || condAtivo.nome_fantasia || 'condomínio';
   if (!confirm('Enviar ' + processed.length + ' unidade(s) para o Superlógica no condomínio ' + nomeCond + ' (código ' + condAtivo.id_superlogica + ')?\n\nIsso cria as unidades, proprietários, inquilinos e dependentes no cadastro do cliente.')) return;
 
+  // Política de gravação: fora do condomínio de teste a importação inteira é confirmada antes
+  // (janela de confirmar-gravacao.js); cada envio leva a confirmação. No teste segue direto.
+  if (slNativa() && window.confirmarPonteSuperlogica) {
+    const envios = processed.reduce((s, x) => s + 2 + (Array.isArray(x.contatos_extras) ? x.contatos_extras.length : 0), 0);
+    try { await window.confirmarPonteSuperlogica(condAtivo.id_superlogica, envios, ['unidades/post'], processed.length + ' unidades com proprietários, inquilinos e dependentes'); }
+    catch (e) { toast('Nada enviado: ' + e.message, 'err'); return; }
+  }
+
   state.unidades.importing = true;
   state.unidades.shouldStop = false;
 
@@ -1889,6 +1897,7 @@ async function enviarUnidades() {
 
   // Finalizar
   state.unidades.importing = false;
+  if (window.encerrarPonteSuperlogica) window.encerrarPonteSuperlogica();
   if (btnEnviar) btnEnviar.disabled = false;
   if (btnParar) btnParar.style.display = 'none';
   progressBar.style.width = '100%';

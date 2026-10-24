@@ -486,8 +486,9 @@ function lerPdf(caminho, { tempoMs = 10 * 60 * 1000 } = {}) {
 }
 
 // ── geração do 900A (sem publicar) ─────────────────────────────────────────
-// Só para condomínio da lista BALANCETE_GERACAO_LIBERADA (padrão: só o Residencial Teste 167, T48;
-// Victoria Bay 94 entra pela variável depois da validação; 143, 144, 145, 160 e 162 nunca). Pede pela API v2 o mesmo que a tela pede ao clicar em
+// Quem libera é a política de gravação (servico/escrita-superlogica.js, 23/10/2026): livre no condomínio
+// de teste (167), nos outros só com confirmação reforçada; BALANCETE_GERACAO_LIBERADA continua valendo
+// como lista antiga (com confirmação); 143, 144, 145, 160 e 162 nunca. Pede pela API v2 o mesmo que a tela pede ao clicar em
 // Visualizar: relatorios/id/900A com render=pdf e getId=1 (cria a impressão só para a administração,
 // sem publicar e sem envio por email). O Superlógica leva cerca de 3 minutos num 900A grande e o
 // gateway corta em 60 s (HTTP 504), então o pedido é disparado uma vez e a tela acompanha a lista.
@@ -513,13 +514,15 @@ const TRAVA_GERACAO_MS = 15 * 60 * 1000;
 const TRAVA_MES_MS = 6 * 60 * 1000;
 let ultimaGeracao = null; // { comp, em }
 const selecaoMes = require('./balancete-selecao');
-async function pedirGeracao({ base, appToken, accessToken }, idCondominio, comp, { cliente } = {}) {
+// autorizado: a rota já passou pela política de gravação (servico/escrita-superlogica.js), que
+// decide teste, confirmação e lista antiga. Sem ele vale só a lista antiga (defesa extra).
+async function pedirGeracao({ base, appToken, accessToken }, idCondominio, comp, { cliente, autorizado } = {}) {
   const c = competencia(comp);
   if (!c) throw Object.assign(new Error('competencia_invalida'), { codigo: 'competencia' });
   // Só mês já fechado: o mês corrente ainda está aberto.
   if (c.chave >= mesAtualBrasilia()) throw Object.assign(new Error('mes_aberto'), { codigo: 'mes_aberto' });
   const id = String(idCondominio);
-  if (!liberadosGeracao().has(id)) throw Object.assign(new Error('geracao_nao_liberada'), { codigo: 'nao_liberado' });
+  if (EXCLUIDOS.has(id) || !/^[1-9]\d{0,8}$/.test(id) || (autorizado !== true && !liberadosGeracao().has(id))) throw Object.assign(new Error('geracao_nao_liberada'), { codigo: 'nao_liberado' });
   const agora = Date.now();
   for (const [k, t0] of pedidosGeracao) if (agora - t0 >= TRAVA_GERACAO_MS) pedidosGeracao.delete(k);
   const chave = id + '|' + c.chave;

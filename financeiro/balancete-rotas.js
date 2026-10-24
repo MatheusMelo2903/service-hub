@@ -4,13 +4,14 @@
 //   GET  /api/financeiro/balancete/:id/impressoes?competencia=AAAA-MM   900A do mês (só leitura)
 //   GET  /api/financeiro/balancete/:id/conferencia?competencia=AAAA-MM&impressao=<id>
 //        dispara (ou devolve) a conferência do PDF: 202 enquanto roda, 200 com o resultado
-//   POST /api/financeiro/balancete/:id/gerar { competencia }  pede ao Superlógica o 900A SEM publicar,
-//        só para condomínio de BALANCETE_GERACAO_LIBERADA (padrão só o 167)
+//   POST /api/financeiro/balancete/:id/gerar { competencia, confirmacao_gravacao? }  pede ao Superlógica
+//        o 900A SEM publicar, pela política de gravação (servico/escrita-superlogica.js): livre no
+//        condomínio de teste; nos outros, 428 com o resumo e confirmação reforçada (nome digitado).
 // Publicar para os condôminos não existe aqui: é sempre clique humano no Superlógica.
 const B = require('./balancete');
 
 function criarRotasBalancete(app, h) {
-  const { requireAuth, express, exigirFinanceiro, exigirModuloItem, exigirCarteira, exigirEscopo, exigirLeituraSuperlogica, exigirEscritaSuperlogica, idValido, cred, cliente, auditar } = h;
+  const { requireAuth, express, exigirFinanceiro, exigirModuloItem, exigirCarteira, exigirEscopo, exigirLeituraSuperlogica, exigirEscritaSuperlogica, idValido, cred, cliente, auditar, politica } = h;
 
   // Travas comuns. Devolve { id, comp } ou null (já respondeu).
   async function travas(req, res, competenciaBruta) {
@@ -39,7 +40,8 @@ function criarRotasBalancete(app, h) {
     try {
       const lista = await B.listarImpressoes(cliente(), t.id, t.comp);
       lista.forEach((x) => { const s = B.situacaoConferencia(t.id, t.comp, x.id); x.conferencia = s ? s.estado : ''; });
-      res.json({ competencia: t.comp, impressoes: lista, geracao_liberada: B.liberadosGeracao().has(t.id) });
+      const sit = politica ? politica.estado('balancete_gerar', t.id) : { estado: 'bloqueado' };
+      res.json({ competencia: t.comp, impressoes: lista, geracao_liberada: sit.estado !== 'bloqueado', geracao_confirmacao: sit.estado === 'confirmacao' || sit.estado === 'reforcada' ? sit.estado : null });
     } catch (e) { falhaSL(res, e, 'impressoes ' + t.id); }
   });
 
@@ -67,17 +69,24 @@ function criarRotasBalancete(app, h) {
   app.post('/api/financeiro/balancete/:idSuperlogica/gerar', requireAuth, express.json({ limit: '2kb' }), async (req, res) => {
     const t = await travas(req, res, req.body && req.body.competencia);
     if (!t) return;
-    if (!B.liberadosGeracao().has(t.id)) return res.status(403).json({ erro: 'geracao_nao_liberada', detalhe: 'A geração pelo Hub ainda não está liberada para este condomínio.' });
+    if (!politica) return res.status(503).json({ erro: 'politica_indisponivel', detalhe: 'A gravação no Superlógica está indisponível agora. Nada foi gerado.' });
+    if (politica.bloqueada(req, res, 'balancete_gerar', t.id)) return;
     // Gerar cria uma impressão no Superlógica: exige a ação gerar do módulo, o pré balancete e a trava de escrita.
     if (!(await exigirModuloItem(req, res, 'balancete', 'gerar'))) return;
     if (!(await exigirFinanceiro(req, res, 'pre_balancete'))) return;
     if (!(await exigirEscritaSuperlogica(req, res))) return;
+    const mesTela = t.comp.slice(5) + '/' + t.comp.slice(0, 4);
+    const aut = await politica.autorizar(req, res, { operacao: 'balancete_gerar', id_condominio: t.id, conteudo: { competencia: t.comp },
+      resumo: { linhas: [{ rotulo: 'Mês', valor: mesTela }, { rotulo: 'O que acontece', valor: 'O Superlógica gera o 900A só para a administração, sem publicar e sem envio por email' }] } });
+    if (!aut) return;
     try {
-      const r = await B.pedirGeracao(cred(), t.id, t.comp, { cliente: cliente() });
-      if (auditar) auditar(req, 'balancete_gerar', { id_condominio: t.id, competencia: t.comp, http: r.http, impressao: r.id_impressao || '', selecao_ajustada: r.selecao_ajustada ? r.selecao_ajustada.itens_alterados : 0 }, false);
+      const r = await B.pedirGeracao(cred(), t.id, t.comp, { cliente: cliente(), autorizado: true });
+      aut.concluir({ ok: true, competencia: t.comp, http: r.http, impressao: r.id_impressao || '' });
+      if (auditar) auditar(req, 'balancete_gerar', { id_condominio: t.id, competencia: t.comp, http: r.http, impressao: r.id_impressao || '', selecao_ajustada: r.selecao_ajustada ? r.selecao_ajustada.itens_alterados : 0, confirmada: aut.confirmada }, false);
       console.log('[escrita-superlogica] balancete_gerar cond=' + t.id + ' comp=' + t.comp + ' http=' + r.http + ' impressao=' + (r.id_impressao || '-'));
       res.status(202).json({ pedido: true, id_impressao: r.id_impressao, detalhe: (r.selecao_ajustada && r.selecao_ajustada.mudou ? 'Mês da seleção ajustado para ' + t.comp.slice(5) + '/' + t.comp.slice(0, 4) + '. ' : '') + 'Pedido enviado ao Superlógica sem publicar. O 900A aparece na lista em cerca de 3 minutos; depois confira e, se estiver certo, publique pelo Superlógica.' });
     } catch (e) {
+      aut.concluir({ ok: false, competencia: t.comp, erro: String((e && (e.codigo || e.message)) || 'falha').slice(0, 60) });
       if (e && e.codigo === 'em_andamento') return res.status(409).json({ erro: 'geracao_em_andamento', detalhe: 'Já foi pedido um 900A deste mês há menos de 15 minutos. Aguarde aparecer na lista.' });
       if (e && e.codigo === 'outro_mes_gerando') return res.status(409).json({ erro: 'outro_mes_gerando', detalhe: 'Outro mês está sendo gerado agora. Tente de novo em 6 minutos.' });
       if (e && e.codigo === 'selecao') { console.warn('[balancete] ajuste da seleção falhou: ' + e.message); return res.status(502).json({ erro: 'selecao', detalhe: 'Não foi possível ajustar o mês da seleção no Superlógica. Nada foi gerado.' }); }

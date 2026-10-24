@@ -265,6 +265,12 @@ async function enviarDespesas() {
     toast('Envio travado: não foi possível conferir duplicatas no Superlógica (' + e.message + ').', 'err');
     return;
   }
+  // Política de gravação: fora do condomínio de teste o envio inteiro é confirmado antes
+  // (janela de confirmar-gravacao.js); cada despesa leva a confirmação. No teste segue direto.
+  if (slNativa() && window.confirmarPonteSuperlogica) {
+    try { await window.confirmarPonteSuperlogica(condAtivo.id_superlogica, validos.length, ['despesas'], validos.length + ' despesas' + totalTxt); }
+    catch (e) { btn.disabled = false; btn.textContent = '↑ Enviar para Superlógica'; toast('Nada enviado: ' + e.message, 'err'); return; }
+  }
   btn.textContent = '⏳ Enviando...';
   // Trava a troca de condomínio durante o envio (condTrocaBloqueada)
   window._enviandoDespesas = true;
@@ -324,6 +330,7 @@ async function enviarDespesas() {
   }
 
   window._enviandoDespesas = false;
+  if (window.encerrarPonteSuperlogica) window.encerrarPonteSuperlogica();
   btn.disabled = false;
   btn.textContent = '↑ Enviar para Superlógica';
 
